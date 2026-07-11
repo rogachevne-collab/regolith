@@ -1,0 +1,23 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/launch_vehicle.gd" id="1"]
+
+[node name="LaunchVehicle" type="RigidBody3D"]
+collision_layer = 2
+collision_mask = 3
+mass = 33.0
+gravity_scale = 0.35
+linear_damp = 0.08
+angular_damp = 1.4
+continuous_cd = true
+can_sleep = false
+script = ExtResource("1")
+player_path = NodePath("../Player")
+
+[node name="Status" type="Label3D" parent="."]
+position = Vector3(0, 3.0, 0)
+billboard = 1
+font_size = 28
+outline_size = 8
+text = "ИСПЫТАТЕЛЬНЫЙ КОРАБЛЬ"
+horizontal_alignment = 1

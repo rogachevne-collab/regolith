@@ -1,0 +1,17 @@
+# Godot
+.godot/
+*.import
+*.uid
+
+# Local Godot downloads / editor bundles
+bin/
+*.zip
+
+# Voxel Tools — keep macOS binaries only
+addons/zylann.voxel/bin/libvoxel.android.*
+addons/zylann.voxel/bin/libvoxel.ios.*
+addons/zylann.voxel/bin/libvoxel.linux.*
+addons/zylann.voxel/bin/libvoxel.windows.*
+
+# OS
+.DS_Store

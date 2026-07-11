@@ -1,0 +1,12 @@
+[gd_resource type="ShaderMaterial" load_steps=3 format=3]
+
+[ext_resource type="Shader" path="res://resources/transvoxel_terrain.gdshader" id="1"]
+[ext_resource type="Texture2D" path="res://resources/lunar_regolith.png" id="2"]
+
+[resource]
+render_priority = 0
+shader = ExtResource("1")
+shader_parameter/u_texture_top = ExtResource("2")
+shader_parameter/u_texture_sides = ExtResource("2")
+shader_parameter/u_macro_scale = 0.035
+shader_parameter/u_detail_scale = 0.16

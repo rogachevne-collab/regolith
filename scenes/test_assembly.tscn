@@ -1,0 +1,19 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/test_assembly.gd" id="1_test"]
+[ext_resource type="PackedScene" path="res://scenes/assembly.tscn" id="2_assembly"]
+
+[sub_resource type="BoxShape3D" id="BoxShape_floor"]
+size = Vector3(60, 1, 60)
+
+[node name="AssemblyTest" type="Node3D"]
+script = ExtResource("1_test")
+
+[node name="Floor" type="StaticBody3D" parent="."]
+position = Vector3(0, -0.5, 0)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Floor"]
+shape = SubResource("BoxShape_floor")
+
+[node name="Assembly" parent="." instance=ExtResource("2_assembly")]
+position = Vector3(-2, 2, 0)

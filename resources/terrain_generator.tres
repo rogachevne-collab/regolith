@@ -1,0 +1,14 @@
+[gd_resource type="VoxelGeneratorNoise2D" load_steps=3 format=3]
+
+[ext_resource type="Curve" path="res://resources/terrain_curve.tres" id="1"]
+
+[sub_resource type="FastNoiseLite" id="noise"]
+seed = 1337
+frequency = 0.003
+fractal_octaves = 6
+
+[resource]
+height_start = -8.0
+height_range = 64.0
+noise = SubResource("noise")
+curve = ExtResource("1")
