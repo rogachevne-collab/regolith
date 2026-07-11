@@ -4,7 +4,7 @@ First-person lunar engineering sandbox on **stock Godot 4.5+** + [Voxel Tools 1.
 
 Бурить SDF-реголит, собирать роверы из модулей, перестраивать их на ходу, ездить стоя на платформе. PoC 1–3 закрыты headless-тестами.
 
-Питч и roadmap: [`docs/CONCEPT.md`](docs/CONCEPT.md). Доменный контракт: [`docs/PHYSICAL-LANGUAGE.md`](docs/PHYSICAL-LANGUAGE.md). Шпаргалки для шейдеров и VFX: [`docs/cheatsheets/`](docs/cheatsheets/).
+Питч и roadmap: [`docs/CONCEPT.md`](docs/CONCEPT.md). Доменный контракт: [`docs/PHYSICAL-LANGUAGE.md`](docs/PHYSICAL-LANGUAGE.md). Правила для агентов: [`AGENTS.md`](AGENTS.md). Шпаргалки: [`docs/cheatsheets/`](docs/cheatsheets/).
 
 ## Запуск
 
@@ -82,6 +82,7 @@ unzip -o bin/GodotVoxelExtension.zip -d .
 | `scripts/drill.gd` | SDF `MODE_REMOVE do_sphere()` |
 | `addons/zylann.voxel/` | Voxel Tools GDExtension (macOS in git) |
 | `docs/specs/POC-*.md` | acceptance criteria PoC 1–3 |
+| `docs/cheatsheets/` | Godot shaders, VFX design, `.tscn` authoring |
 | `tests/run_tests.sh` | headless gate |
 
 ## Erebus

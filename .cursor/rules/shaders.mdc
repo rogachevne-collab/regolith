@@ -1,0 +1,9 @@
+---
+description: Правила для шейдеров Godot
+globs: ["**/*.gdshader"]
+---
+Godot shading language, не GLSL: docs/cheatsheets/godot-shaders.md
+(ALBEDO/EMISSION вместо gl_FragColor, TIME/SCREEN_UV, hint_screen_texture,
+float-литералы с точкой). VisualShader-графы не создавать — только текст.
+После изменений: ./run.sh --headless res://scenes/main.tscn — без ошибок компиляции.
+Terrain shader: resources/transvoxel_terrain.gdshader — не ломать uniform'ы material .tres.
