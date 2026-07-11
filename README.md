@@ -4,7 +4,7 @@ First-person lunar engineering sandbox on **stock Godot 4.5+** + [Voxel Tools 1.
 
 Бурить SDF-реголит, собирать роверы из модулей, перестраивать их на ходу, ездить стоя на платформе. PoC 1–3 закрыты headless-тестами.
 
-Питч и roadmap: [`docs/CONCEPT.md`](docs/CONCEPT.md). Доменный контракт: [`docs/PHYSICAL-LANGUAGE.md`](docs/PHYSICAL-LANGUAGE.md).
+Питч и roadmap: [`docs/CONCEPT.md`](docs/CONCEPT.md). Доменный контракт: [`docs/PHYSICAL-LANGUAGE.md`](docs/PHYSICAL-LANGUAGE.md). Шпаргалки для шейдеров и VFX: [`docs/cheatsheets/`](docs/cheatsheets/).
 
 ## Запуск
 

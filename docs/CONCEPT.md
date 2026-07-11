@@ -70,3 +70,6 @@ cd ~/Desktop/regolith
 
 - `docs/PHYSICAL-LANGUAGE.md`
 - `docs/specs/POC-*.md`
+- `docs/cheatsheets/godot-shaders.md` — синтаксис `.gdshader` для агентов
+- `docs/cheatsheets/vfx-design.md` — ритм, силуэт, бюджеты эффектов
+- `docs/cheatsheets/vfx-authoring.md` — декларативные VFX-сцены
