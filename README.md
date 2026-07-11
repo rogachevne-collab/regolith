@@ -22,6 +22,12 @@ chmod +x run.sh tests/run_tests.sh
 
 `run.sh` ищет stock Godot в `/Applications/Godot.app`, `$GODOT` или `PATH`.
 
+После клонирования (один раз, пока нет `.godot/`):
+
+```bash
+./run.sh --headless --import
+```
+
 ## Тесты
 
 ```bash
