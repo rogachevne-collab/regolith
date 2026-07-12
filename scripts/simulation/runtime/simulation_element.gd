@@ -13,6 +13,11 @@ var integrity: float = 0.0
 var condition: float = 1.0
 var state_revision: int = 0
 var installed_materials: Dictionary = {}
+# Persistent record of whether this block was found resting on / embedded in the
+# voxel terrain. Set at placement and re-verified on structural split/dismantle
+# (terrain is destructible). Drives ground anchoring so a construction keeps every
+# ground-touching block anchored, not just the first-placed one.
+var terrain_contact: bool = false
 
 var _archetype: ElementArchetype
 
@@ -189,6 +194,7 @@ func to_dict() -> Dictionary:
 		"integrity": integrity,
 		"condition": condition,
 		"state_revision": state_revision,
+		"terrain_contact": terrain_contact,
 		"installed_materials": installed_materials.duplicate(true),
 	}
 
@@ -204,6 +210,7 @@ static func from_dict(data: Dictionary) -> SimulationElement:
 	element.integrity = float(data.get("integrity", 0.0))
 	element.condition = float(data.get("condition", 1.0))
 	element.state_revision = int(data.get("state_revision", 0))
+	element.terrain_contact = bool(data.get("terrain_contact", false))
 	var materials: Variant = data.get("installed_materials", {})
 	if materials is Dictionary:
 		element.installed_materials = materials.duplicate(true)

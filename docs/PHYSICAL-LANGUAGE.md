@@ -32,8 +32,10 @@ ADR. Интеграция в Erebus — через Erebus Lite addon, когда
   `connect_network`, `disconnect_network`.
 - *Управляющие* (частые, допускают перезапись последним значением):
   `set_actuator_target`, `set_binding_state`.
+- *Мировые* (voxel-edit, идут журналом операций): `terrain_carve`, `voxel_remove`.
 
-Мутации структуры происходят только структурными командами.
+Мутации структуры происходят только структурными командами. Terrain мутируется
+только мировыми операциями, не structural commands.
 
 ### Jolt владеет динамикой
 
@@ -226,7 +228,9 @@ Joint {
 Пассивные виды:
 
 - `Rigid` — сварка; попадает в одно физическое тело;
-- `Anchor` — крепление к миру;
+- `Anchor` — крепление к миру; создаётся только для construction-элементов с
+  подтверждённым контактом collider с voxel terrain (любая грань). После split/dismantle
+  kernel пересчитывает anchors по probe boundary adapter, не читая motion напрямую;
 - `FreeHinge` — дверь или прицеп без мотора;
 - `Suspension` — пружина и демпфер;
 - `Rail` — каретка на направляющей;
@@ -568,7 +572,7 @@ Placement создаёт элемент в состоянии `frame`, но не
 Базовый жизненный цикл:
 
 ```text
-preview -> frame -> healthy -> damaged -> broken
+preview -> frame -> healthy -> damaged -> destroyed (topology removal)
               ^         ^          |
               |         +-- repair-+
               +--------- dismantle
@@ -584,11 +588,27 @@ preview -> frame -> healthy -> damaged -> broken
 6. Каждая отсоединённая компонента становится отдельным Body.
 
 - `damaged` ухудшает параметры;
-- `broken` остаётся частью массы и структуры, но теряет функцию;
-- `detached` становится обломком;
+- lethal `damage` (`integrity → 0`) удаляет элемент из topology без material
+  refund; survivor/split policy совпадает с `dismantle`, но `refund_fraction = 0`;
+- persistent `broken` элемента в topology нет;
+- `detached` становится обломком (вне scope v1);
 - `dismantle` управляемо удаляет элемент и возвращает заданную правилами долю
   ресурсов;
 - ремонт, сварка и демонтаж инициируются Tool, но применяются simulation-командами.
+
+### Кинетический удар (Impact Destruction v0)
+
+Динамическая `RigidBody3D` Assembly может удариться о мир или другую Assembly.
+Jolt авторитетен за импульс контакта; правила на physics boundary:
+
+- удар о voxel terrain → `terrain_carve` (форма collider, сила от импульса) плюс
+  `damage` ударяющего элемента;
+- удар assembly ↔ assembly → `damage` обоим элементам по импульсу на каждой стороне;
+- anchored `StaticBody3D` не источник удара; placement и расширение базы carve не
+  вызывают.
+
+Вырезанный в v0 regolith исчезает (как бур); начисление `raw_regolith` — Industry
+v1. PoC-спека: `docs/specs/IMPACT-DESTRUCTION-V0.md`.
 
 ## Диагностируемость
 
@@ -608,6 +628,15 @@ preview -> frame -> healthy -> damaged -> broken
 - `actuator_broken`.
 
 Игрок и отладчик должны отвечать «почему не работает» без чтения логов.
+
+## Состояние скафандра (SuitState)
+
+`SuitState` — минимальное authoritative состояние выживания игрока: `health`
+(hp), `oxygen` (O₂) и `hydrogen` (H₂), каждое как `current` + `max` с
+нормализованной долей, плюс сигнал изменения. Это самодостаточное survival-state,
+а **не** полная система атмосфер/жизнеобеспечения (герметичные объёмы, давление,
+утечки `volume_leaking`, газообмен) — они остаются вне scope. HUD (`Vitals`)
+только читает `SuitState`; контракт HUD — `docs/specs/HUD-UI-01.md`.
 
 ## Производительность
 
@@ -661,8 +690,9 @@ slice по `docs/specs/VERTICAL-SLICE-01-INDUSTRIAL-BASE.md`:
 1. Player & Interaction v1.
 2. Simulation Kernel v0.
 3. Construction v1.
-4. Industry v1: electric и cargo Flow, стационарная добыча, Recipe.
-5. Интеграция и production-полировка законченного core loop.
+4. Impact Destruction v0: кинетический удар → terrain carve и assembly damage.
+5. Industry v1: electric и cargo Flow, стационарная добыча, Recipe.
+6. Интеграция и production-полировка законченного core loop.
 
 После первого slice лестница доменных возможностей продолжается:
 

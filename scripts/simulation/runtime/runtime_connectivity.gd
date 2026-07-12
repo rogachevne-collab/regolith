@@ -62,6 +62,111 @@ static func materialize_anchor_joints(
 	return joints
 
 
+static func materialize_ground_start_anchors(
+	assembly_id: int,
+	elements: Array[SimulationElement],
+	allocate_joint_id: Callable
+) -> Array[SimulationJoint]:
+	var joints := materialize_anchor_joints(
+		assembly_id,
+		elements,
+		allocate_joint_id
+	)
+	if not joints.is_empty():
+		return joints
+	for element: SimulationElement in elements:
+		var port_id := ground_anchor_port_id(element)
+		if port_id.is_empty():
+			continue
+		joints.append(
+			SimulationJoint.anchor(
+				int(allocate_joint_id.call()),
+				assembly_id,
+				element.element_id,
+				port_id
+			)
+		)
+	joints.sort_custom(_sort_joint)
+	return joints
+
+
+static func reconcile_terrain_anchors(
+	assembly_id: int,
+	elements: Array[SimulationElement],
+	assembly_joints: Array[SimulationJoint],
+	touching_element_ids: Array[int],
+	allocate_joint_id: Callable
+) -> Dictionary:
+	var touching: Dictionary = {}
+	for element_id: int in touching_element_ids:
+		touching[element_id] = true
+	var removed_joint_ids: Array[int] = []
+	var added_joints: Array[SimulationJoint] = []
+	var retained_anchor_elements: Dictionary = {}
+	for joint: SimulationJoint in assembly_joints:
+		if joint.kind != SimulationJoint.Kind.ANCHOR:
+			continue
+		if touching.has(joint.element_a_id):
+			retained_anchor_elements[joint.element_a_id] = joint
+			continue
+		if not TerrainAnchorProbe.is_construction_archetype(
+			_elements_archetype_id(elements, joint.element_a_id)
+		):
+			retained_anchor_elements[joint.element_a_id] = joint
+			continue
+		removed_joint_ids.append(joint.joint_id)
+	for element: SimulationElement in elements:
+		if not touching.has(element.element_id):
+			continue
+		if retained_anchor_elements.has(element.element_id):
+			continue
+		var port_id := ground_anchor_port_id(element)
+		if port_id.is_empty():
+			continue
+		added_joints.append(
+			SimulationJoint.anchor(
+				int(allocate_joint_id.call()),
+				assembly_id,
+				element.element_id,
+				port_id
+			)
+		)
+	removed_joint_ids.sort()
+	added_joints.sort_custom(_sort_joint)
+	return {
+		"removed_joint_ids": removed_joint_ids,
+		"added_joints": added_joints,
+	}
+
+
+static func _elements_archetype_id(
+	elements: Array[SimulationElement],
+	element_id: int
+) -> String:
+	for element: SimulationElement in elements:
+		if element.element_id == element_id:
+			return element.archetype_id
+	return ""
+
+
+static func ground_anchor_port_id(element: SimulationElement) -> String:
+	var archetype: ElementArchetype = element.get_archetype()
+	if archetype == null:
+		return ""
+	for port: PortDefinition in archetype.ports:
+		if _is_anchor_port(port):
+			return port.port_id
+	for port: PortDefinition in archetype.ports:
+		if (
+			port != null
+			and port.kind == PortDefinition.Kind.MECHANICAL
+			and port.compatibility_tags.has("structural")
+			and port.local_face == OrientationUtil.Face.NEG_Y
+		):
+			return port.port_id
+	return ""
+
+
 static func connected_components(
 	element_ids: Array[int],
 	elements_by_id: Dictionary,

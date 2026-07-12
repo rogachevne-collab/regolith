@@ -16,6 +16,13 @@ var _redirects: Dictionary = {}
 var _resource_stores: Dictionary = {}
 var _command_queue: Array[StructuralCommand] = []
 var _flush_scheduled := false
+var _occupancy_index_cache: Dictionary = {}
+var _archetype_validation_cache: Dictionary = {}
+var _terrain_contact_probe: Callable
+
+
+func set_terrain_contact_probe(probe: Callable) -> void:
+	_terrain_contact_probe = probe
 
 
 func get_allocator() -> SimulationIdAllocator:
@@ -367,15 +374,20 @@ func _place_element(
 	)
 	var joint_ids: Array[int] = []
 	if new_assembly:
+		# A first block placed on terrain rests on the surface by construction
+		# (continuous bottom-face contact), so it always starts anchored.
 		var allocate_joint := func() -> int:
 			return _allocator.allocate_joint_id()
-		for joint: SimulationJoint in RuntimeConnectivity.materialize_anchor_joints(
-			assembly.assembly_id,
-			[element],
-			allocate_joint
+		for joint: SimulationJoint in (
+			RuntimeConnectivity.materialize_ground_start_anchors(
+				assembly.assembly_id,
+				[element],
+				allocate_joint
+			)
 		):
 			_joints[joint.joint_id] = joint
 			joint_ids.append(joint.joint_id)
+		element.terrain_contact = true
 		_assemblies[assembly.assembly_id] = assembly
 	else:
 		for connection_variant: Variant in validation.data["connections"]:
@@ -395,6 +407,12 @@ func _place_element(
 	_elements[element_id] = element
 	assembly.element_ids.append(element_id)
 	assembly.element_ids.sort()
+	# Every block placed onto the terrain must anchor immediately, otherwise the
+	# whole construction hangs off the single first-block anchor and detaching it
+	# frees (and physically ejects) everything else. Non-first blocks are probed
+	# live at placement; the fact is stored on the block and re-verified on split.
+	if not new_assembly:
+		_record_placement_terrain_contact(assembly, element, joint_ids)
 	assembly.bump_revision()
 	joint_ids.sort()
 	var event_kind := &"assembly_spawned" if new_assembly else &"assembly_changed"
@@ -495,7 +513,7 @@ func _validate_place_element(
 			return StructuralCommandResult.failed(
 				StructuralCommandResult.REASON_INVALID_TRANSFORM
 			)
-		if not _archetype_has_anchor_port(archetype):
+		if RuntimeConnectivity.ground_anchor_port_id(preview).is_empty():
 			return StructuralCommandResult.failed(
 				StructuralCommandResult.REASON_ANCHOR_REQUIRED
 			)
@@ -522,14 +540,18 @@ func _validate_place_element(
 			return StructuralCommandResult.failed(
 				StructuralCommandResult.REASON_ANCHOR_NOT_ALLOWED
 			)
-		if not _occupancy_is_unique(
-			_elements_for_ids(assembly.element_ids),
-			{-1: preview.occupied_cells()}
-		):
-			return StructuralCommandResult.failed(
-				StructuralCommandResult.REASON_OVERLAP
-			)
-		for existing_id: int in assembly.element_ids:
+		var occupancy := _assembly_occupancy_index(assembly)
+		var preview_cells := preview.occupied_cells()
+		for cell: Vector3i in preview_cells:
+			if occupancy.has(cell):
+				return StructuralCommandResult.failed(
+					StructuralCommandResult.REASON_OVERLAP
+				)
+		# A rigid edge requires the two ports to sit in face-adjacent cells, so
+		# only elements occupying a neighbour of the preview footprint can ever
+		# connect. Gather those instead of scanning the whole assembly.
+		var neighbour_ids := _neighbour_element_ids(preview_cells, occupancy)
+		for existing_id: int in neighbour_ids:
 			var existing := get_element(existing_id)
 			var connection := RuntimeConnectivity.find_rigid_connection(
 				existing,
@@ -559,19 +581,32 @@ func _validate_construction_archetype(
 	archetype: ElementArchetype,
 	orientation_index: int
 ) -> StructuralCommandResult:
-	var placement := BlueprintElementPlacement.new()
-	placement.local_id = "construction_preview"
-	placement.archetype = archetype
-	placement.orientation_index = orientation_index
-	var blueprint := Blueprint.new()
-	blueprint.blueprint_id = "construction_preview"
-	blueprint.allow_disconnected = true
-	blueprint.placements.append(placement)
-	var validation := BlueprintValidator.validate(blueprint)
-	if not validation.ok:
+	if (
+		orientation_index < 0
+		or orientation_index >= OrientationUtil.ORIENTATION_COUNT
+	):
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INVALID_TARGET
+		)
+	# Archetype self-validation depends only on the archetype definition, not on
+	# where or how it is placed, so cache it by identity + fingerprint instead of
+	# rebuilding a throwaway Blueprint on every preview/plan call.
+	var cache_key := archetype.get_instance_id()
+	var fingerprint := ArchetypeRegistry.fingerprint_of(archetype)
+	var cached: Dictionary = _archetype_validation_cache.get(cache_key, {})
+	if str(cached.get("fingerprint", "")) != fingerprint:
+		var validation := BlueprintValidator.validate_archetype(archetype)
+		cached = {
+			"fingerprint": fingerprint,
+			"ok": validation.ok,
+			"errors": validation.errors.duplicate(),
+			"footprint_empty": archetype.footprint_cells.is_empty(),
+		}
+		_archetype_validation_cache[cache_key] = cached
+	if not bool(cached.get("ok", false)) or bool(cached.get("footprint_empty", true)):
 		return StructuralCommandResult.failed(
 			StructuralCommandResult.REASON_INVALID_TARGET,
-			{"errors": validation.errors}
+			{"errors": cached.get("errors", [])}
 		)
 	return StructuralCommandResult.ok()
 
@@ -673,6 +708,13 @@ func _damage_element(
 			StructuralCommandResult.REASON_NO_EFFECT
 		)
 	element.integrity = maxf(element.integrity - command.damage, 0.0)
+	if element.integrity <= 0.000001:
+		return _remove_element_from_topology(
+			element,
+			command.command_id,
+			0.0,
+			null
+		)
 	element.bump_state_revision()
 	_emit_element_state_changed(element, command.command_id, &"damage")
 	return _element_state_result(element)
@@ -758,6 +800,25 @@ func _dismantle_element(
 		return StructuralCommandResult.failed(
 			StructuralCommandResult.REASON_INVALID_REFERENCE
 		)
+	return _remove_element_from_topology(
+		element,
+		command.command_id,
+		0.5,
+		store
+	)
+
+
+func _remove_element_from_topology(
+	element: SimulationElement,
+	command_id: int,
+	refund_fraction: float,
+	store: SimulationResourceStore
+) -> StructuralCommandResult:
+	var assembly := get_assembly_raw(element.assembly_id)
+	if assembly == null or assembly.tombstoned:
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INVALID_REFERENCE
+		)
 
 	var removed_joint_ids: Array[int] = []
 	var remaining_joints: Array[SimulationJoint] = []
@@ -787,10 +848,11 @@ func _dismantle_element(
 			survivor_index = SurvivorPolicy.pick_survivor_index(scores)
 
 	var refunds: Dictionary = {}
-	for resource_id: Variant in element.installed_materials.keys():
-		var amount := float(element.installed_materials[resource_id]) * 0.5
-		if amount > 0.000001:
-			refunds[str(resource_id)] = amount
+	if refund_fraction > 0.000001 and store != null:
+		for resource_id: Variant in element.installed_materials.keys():
+			var amount := float(element.installed_materials[resource_id]) * refund_fraction
+			if amount > 0.000001:
+				refunds[str(resource_id)] = amount
 
 	for joint_id: int in removed_joint_ids:
 		_joints.erase(joint_id)
@@ -803,7 +865,7 @@ func _dismantle_element(
 		_assemblies.erase(assembly.assembly_id)
 		_emit_structural_event({
 			"kind": &"assembly_removed",
-			"command_id": command.command_id,
+			"command_id": command_id,
 			"assembly_id": assembly.assembly_id,
 			"removed_element_id": element.element_id,
 		})
@@ -818,10 +880,11 @@ func _dismantle_element(
 	if components.size() <= 1:
 		assembly.element_ids.assign(remaining_elements)
 		assembly.element_ids.sort()
+		_reconcile_terrain_anchors_for_assemblies([assembly.assembly_id])
 		assembly.bump_revision()
 		_emit_structural_event({
 			"kind": &"assembly_changed",
-			"command_id": command.command_id,
+			"command_id": command_id,
 			"assembly_id": assembly.assembly_id,
 			"topology_revision": assembly.topology_revision,
 			"removed_element_id": element.element_id,
@@ -864,10 +927,13 @@ func _dismantle_element(
 			"topology_revision": split_assembly.topology_revision,
 		})
 	assembly.element_ids.assign(survivor_component)
+	var affected_assembly_ids: Array[int] = [assembly.assembly_id]
+	affected_assembly_ids.append_array(new_ids)
+	_reconcile_terrain_anchors_for_assemblies(affected_assembly_ids)
 	assembly.bump_revision()
 	_emit_structural_event({
 		"kind": &"assembly_split",
-		"command_id": command.command_id,
+		"command_id": command_id,
 		"removed_element_id": element.element_id,
 		"survivor_assembly_id": assembly.assembly_id,
 		"survivor_topology_revision": assembly.topology_revision,
@@ -928,6 +994,7 @@ func _break_rigid_joint(
 	# Apply only after all validation and component planning succeeds.
 	_joints.erase(command.joint_id)
 	if components.size() <= 1:
+		_reconcile_terrain_anchors_for_assemblies([assembly.assembly_id])
 		assembly.bump_revision()
 		_emit_structural_event({
 			"kind": &"rigid_joint_broken",
@@ -971,6 +1038,9 @@ func _break_rigid_joint(
 			"topology_revision": split_assembly.topology_revision,
 		})
 	assembly.element_ids.assign(survivor_component)
+	var split_assembly_ids: Array[int] = [assembly.assembly_id]
+	split_assembly_ids.append_array(new_ids)
+	_reconcile_terrain_anchors_for_assemblies(split_assembly_ids)
 	assembly.bump_revision()
 	_emit_structural_event({
 		"kind": &"assembly_split",
@@ -1354,6 +1424,54 @@ func _cell_key(cell: Vector3i) -> String:
 	return "%d,%d,%d" % [cell.x, cell.y, cell.z]
 
 
+const _CELL_NEIGHBOURS: Array[Vector3i] = [
+	Vector3i.RIGHT,
+	Vector3i.LEFT,
+	Vector3i.UP,
+	Vector3i.DOWN,
+	Vector3i.BACK,
+	Vector3i.FORWARD,
+]
+
+
+func _assembly_occupancy_index(assembly: SimulationAssembly) -> Dictionary:
+	var cached: Dictionary = _occupancy_index_cache.get(
+		assembly.assembly_id,
+		{}
+	)
+	if int(cached.get("revision", -1)) == assembly.topology_revision:
+		return cached["cells"]
+	var cells: Dictionary = {}
+	for element_id: int in assembly.element_ids:
+		var element := get_element(element_id)
+		if element == null:
+			continue
+		for cell: Vector3i in element.occupied_cells():
+			cells[cell] = element_id
+	_occupancy_index_cache[assembly.assembly_id] = {
+		"revision": assembly.topology_revision,
+		"cells": cells,
+	}
+	return cells
+
+
+func _neighbour_element_ids(
+	preview_cells: Array[Vector3i],
+	occupancy: Dictionary
+) -> Array[int]:
+	var seen: Dictionary = {}
+	for cell: Vector3i in preview_cells:
+		for offset: Vector3i in _CELL_NEIGHBOURS:
+			var neighbour: Variant = occupancy.get(cell + offset)
+			if neighbour != null:
+				seen[int(neighbour)] = true
+	var ids: Array[int] = []
+	for element_id: Variant in seen.keys():
+		ids.append(int(element_id))
+	ids.sort()
+	return ids
+
+
 func _joint_belongs_to_component(
 	joint: SimulationJoint,
 	component: Array
@@ -1370,9 +1488,161 @@ func assembly_has_anchor(assembly_id: int) -> bool:
 	return _assembly_has_anchor(assembly_id)
 
 
+func _should_reconcile_assembly(assembly_id: int) -> bool:
+	var assembly := get_assembly_raw(assembly_id)
+	if assembly == null or assembly.tombstoned:
+		return false
+	for element_id: int in assembly.element_ids:
+		var element := get_element(element_id)
+		if (
+			element != null
+			and TerrainAnchorProbe.is_construction_archetype(
+				element.archetype_id
+			)
+		):
+			return true
+	return false
+
+
+func _reconcile_terrain_anchors_for_assemblies(
+	assembly_ids: Array[int]
+) -> void:
+	if not _terrain_contact_probe.is_valid():
+		return
+	var unique_ids: Dictionary = {}
+	for assembly_id_variant: Variant in assembly_ids:
+		var assembly_id := int(assembly_id_variant)
+		if assembly_id <= 0 or unique_ids.has(assembly_id):
+			continue
+		if not _should_reconcile_assembly(assembly_id):
+			continue
+		unique_ids[assembly_id] = true
+		var assembly := get_assembly_raw(assembly_id)
+		if assembly == null or assembly.tombstoned:
+			continue
+		var elements: Array[SimulationElement] = []
+		for element_id: int in assembly.element_ids:
+			var element := get_element(element_id)
+			if (
+				element != null
+				and TerrainAnchorProbe.is_construction_archetype(
+					element.archetype_id
+				)
+			):
+				elements.append(element)
+		if elements.is_empty():
+			continue
+		var touching_variant: Variant = _terrain_contact_probe.call(
+			assembly,
+			elements
+		)
+		if touching_variant is not Array:
+			continue
+		var touching: Array[int] = []
+		for entry: Variant in touching_variant:
+			touching.append(int(entry))
+		# Probe can miss (collider on terrain child, etc.). Never mass-strip anchors
+		# when we already know some blocks were grounded.
+		if touching.is_empty():
+			for joint: SimulationJoint in _joints_for_assembly(assembly_id):
+				if joint.kind != SimulationJoint.Kind.ANCHOR:
+					continue
+				for element: SimulationElement in elements:
+					if element.element_id == joint.element_a_id:
+						touching.append(joint.element_a_id)
+						break
+			touching.sort()
+		# Re-verify and persist the terrain-contact fact per block: the terrain is
+		# destructible, so a block that used to sit on ground may now float (and
+		# vice versa) after a split/dismantle.
+		var touching_lookup: Dictionary = {}
+		for touching_id: int in touching:
+			touching_lookup[touching_id] = true
+		for element: SimulationElement in elements:
+			element.terrain_contact = touching_lookup.has(element.element_id)
+		var result := RuntimeConnectivity.reconcile_terrain_anchors(
+			assembly_id,
+			elements,
+			_joints_for_assembly(assembly_id),
+			touching,
+			func() -> int:
+				return _allocator.allocate_joint_id()
+		)
+		var changed := false
+		for removed_id: int in result["removed_joint_ids"]:
+			if _joints.erase(removed_id):
+				changed = true
+		for added_joint: SimulationJoint in result["added_joints"]:
+			_joints[added_joint.joint_id] = added_joint
+			changed = true
+		if changed:
+			assembly.bump_revision()
+
+
+func _record_placement_terrain_contact(
+	assembly: SimulationAssembly,
+	element: SimulationElement,
+	joint_ids: Array[int]
+) -> void:
+	if not TerrainAnchorProbe.is_construction_archetype(element.archetype_id):
+		return
+	if not _terrain_contact_probe.is_valid():
+		return
+	var touching: Array[int] = _probe_touching_ids(assembly, [element])
+	element.terrain_contact = touching.has(element.element_id)
+	if not element.terrain_contact:
+		return
+	if _element_anchor_joint_id(assembly.assembly_id, element.element_id) != 0:
+		return
+	var port_id := RuntimeConnectivity.ground_anchor_port_id(element)
+	if port_id.is_empty():
+		return
+	var joint_id := _allocator.allocate_joint_id()
+	_joints[joint_id] = SimulationJoint.anchor(
+		joint_id,
+		assembly.assembly_id,
+		element.element_id,
+		port_id
+	)
+	joint_ids.append(joint_id)
+
+
+func _probe_touching_ids(
+	assembly: SimulationAssembly,
+	elements: Array[SimulationElement]
+) -> Array[int]:
+	var out: Array[int] = []
+	if not _terrain_contact_probe.is_valid():
+		return out
+	var touching_variant: Variant = _terrain_contact_probe.call(
+		assembly,
+		elements
+	)
+	if touching_variant is Array:
+		for entry: Variant in touching_variant:
+			out.append(int(entry))
+	return out
+
+
+func _element_anchor_joint_id(assembly_id: int, element_id: int) -> int:
+	for joint_variant: Variant in _joints.values():
+		var joint: SimulationJoint = joint_variant
+		if (
+			joint.assembly_id == assembly_id
+			and joint.kind == SimulationJoint.Kind.ANCHOR
+			and joint.element_a_id == element_id
+		):
+			return joint.joint_id
+	return 0
+
+
 func _assembly_has_anchor(assembly_id: int) -> bool:
-	for joint: SimulationJoint in _joints_for_assembly(assembly_id):
-		if joint.kind == SimulationJoint.Kind.ANCHOR:
+	for joint_variant: Variant in _joints.values():
+		var joint: SimulationJoint = joint_variant
+		if (
+			joint.assembly_id == assembly_id
+			and joint.kind == SimulationJoint.Kind.ANCHOR
+		):
 			return true
 	return false
 

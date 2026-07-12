@@ -63,3 +63,65 @@ static func collider_local_transform(
 		Vector3(element_origin + rotated_cell) + rotated_offset
 	)
 	return Transform3D(element_transform.basis, local_position)
+
+
+static func collider_world_transform(
+	assembly_world_transform: Transform3D,
+	origin_cell: Vector3i,
+	orientation_index: int,
+	collider: ColliderDefinition
+) -> Transform3D:
+	return (
+		assembly_world_transform
+		* collider_local_transform(origin_cell, orientation_index, collider)
+	)
+
+
+static func collider_world_aabb(
+	assembly_world_transform: Transform3D,
+	origin_cell: Vector3i,
+	orientation_index: int,
+	collider: ColliderDefinition
+) -> AABB:
+	var world_transform: Transform3D = collider_world_transform(
+		assembly_world_transform,
+		origin_cell,
+		orientation_index,
+		collider
+	)
+	var half_extents: Vector3 = collider.size * 0.5
+	var bounds := AABB()
+	for sx: int in [-1, 1]:
+		for sy: int in [-1, 1]:
+			for sz: int in [-1, 1]:
+				bounds = bounds.expand(
+					world_transform * Vector3(
+						half_extents.x * sx,
+						half_extents.y * sy,
+						half_extents.z * sz
+					)
+				)
+	return bounds
+
+
+static func projected_element_collider_transforms(
+	assembly_world_transform: Transform3D,
+	origin_cell: Vector3i,
+	orientation_index: int,
+	archetype: ElementArchetype
+) -> Array[Transform3D]:
+	var transforms: Array[Transform3D] = []
+	if archetype == null:
+		return transforms
+	for collider: ColliderDefinition in archetype.colliders:
+		if collider.shape_kind != ColliderDefinition.ShapeKind.BOX:
+			continue
+		transforms.append(
+			collider_world_transform(
+				assembly_world_transform,
+				origin_cell,
+				orientation_index,
+				collider
+			)
+		)
+	return transforms

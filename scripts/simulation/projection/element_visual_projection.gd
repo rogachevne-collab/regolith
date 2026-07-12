@@ -36,6 +36,10 @@ func rebuild_all() -> void:
 		_rebuild_assembly(assembly.assembly_id)
 
 
+func rebuild_assembly(assembly_id: int) -> void:
+	_rebuild_assembly(assembly_id)
+
+
 func _on_structural_event(event: Dictionary) -> void:
 	match StringName(event.get("kind", &"")):
 		&"world_restored":
@@ -66,20 +70,15 @@ func _rebuild_assembly(assembly_id: int) -> void:
 	if is_instance_valid(previous_variant):
 		var previous := previous_variant as PhysicsBody3D
 		if previous != body:
-			_clear_visuals(previous)
-	_clear_visuals(body)
+			_clear_visuals(previous, assembly_id)
+	_clear_visuals(body, assembly_id)
 	_known_bodies[assembly_id] = body
 	for element_id: int in assembly.element_ids:
 		var element := _world.get_element(element_id)
 		if element == null:
 			continue
 		var archetype := element.get_archetype()
-		if (
-			archetype == null
-			or not archetype.resource_path.begins_with(
-				"res://resources/archetypes/slice01/"
-			)
-		):
+		if archetype == null or archetype.colliders.is_empty():
 			continue
 		for collider_index: int in range(archetype.colliders.size()):
 			var collider: ColliderDefinition = archetype.colliders[collider_index]
@@ -101,12 +100,19 @@ func _rebuild_assembly(assembly_id: int) -> void:
 				collider
 			)
 			visual.set_meta("element_visual", true)
+			visual.set_meta("assembly_id", assembly_id)
 			body.add_child(visual)
 
 
-func _clear_visuals(body: PhysicsBody3D) -> void:
+func _clear_visuals(body: PhysicsBody3D, assembly_id: int = 0) -> void:
 	for child: Node in body.get_children():
-		if child.has_meta("element_visual"):
+		if (
+			child.has_meta("element_visual")
+			and (
+				assembly_id == 0
+				or int(child.get_meta("assembly_id", 0)) == assembly_id
+			)
+		):
 			body.remove_child(child)
 			child.queue_free()
 
@@ -114,11 +120,19 @@ func _clear_visuals(body: PhysicsBody3D) -> void:
 func _clear_known_body(assembly_id: int) -> void:
 	var body_variant: Variant = _known_bodies.get(assembly_id)
 	if is_instance_valid(body_variant):
-		_clear_visuals(body_variant as PhysicsBody3D)
+		_clear_visuals(body_variant as PhysicsBody3D, assembly_id)
 	_known_bodies.erase(assembly_id)
 
 
 func _material_for(element: SimulationElement) -> StandardMaterial3D:
+	var archetype := element.get_archetype()
+	if (
+		archetype != null
+		and archetype.resource_path.begins_with(
+			"res://resources/archetypes/rover/"
+		)
+	):
+		return _materials["rover"]
 	var reason := element.status_reason()
 	if reason == &"element_broken":
 		return _materials["broken"]
@@ -133,9 +147,10 @@ func _create_materials() -> void:
 	if not _materials.is_empty():
 		return
 	_materials["frame"] = _material(
-		Color(1.0, 0.42, 0.08, 0.62),
-		0.55,
-		true
+		Color(0.72, 0.48, 0.22, 1.0),
+		0.18,
+		false,
+		0.82
 	)
 	_materials["operational"] = _material(
 		Color(0.23, 0.38, 0.55, 1.0),
@@ -152,17 +167,24 @@ func _create_materials() -> void:
 		0.25,
 		false
 	)
+	_materials["rover"] = _material(
+		Color(0.14, 0.15, 0.17, 1.0),
+		0.55,
+		false,
+		0.78
+	)
 
 
 func _material(
 	color: Color,
 	metallic: float,
-	transparent: bool
+	transparent: bool,
+	roughness: float = 0.42
 ) -> StandardMaterial3D:
 	var material := StandardMaterial3D.new()
 	material.albedo_color = color
 	material.metallic = metallic
-	material.roughness = 0.42
+	material.roughness = roughness
 	if transparent:
 		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	return material

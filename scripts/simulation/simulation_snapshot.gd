@@ -400,15 +400,7 @@ static func _element_has_anchor_port(
 	element: SimulationElement,
 	port_id: String
 ) -> bool:
-	var archetype := element.get_archetype()
-	for port: PortDefinition in archetype.ports:
-		if (
-			port.port_id == port_id
-			and port.kind == PortDefinition.Kind.MECHANICAL
-			and port.compatibility_tags.has("anchor")
-		):
-			return true
-	return false
+	return RuntimeConnectivity.ground_anchor_port_id(element) == port_id
 
 
 static func _sorted_int_keys(values: Dictionary) -> Array[int]:

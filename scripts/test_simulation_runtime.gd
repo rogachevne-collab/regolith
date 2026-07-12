@@ -25,6 +25,8 @@ func _run_tests() -> void:
 		_test_merge_b_wins_fixed_endpoint_order,
 		_test_rotated_frame_derivation,
 		_test_dual_anchor_and_rejections,
+		_test_split_reconciles_ground_anchors,
+		_test_placement_anchors_every_touching_block,
 		_test_custom_archetype_snapshot_restore,
 		_test_malformed_snapshot_atomicity,
 		_test_archetype_conflict_and_allocator_continuity,
@@ -257,6 +259,116 @@ func _test_rotated_frame_derivation() -> bool:
 		return _fail("relative transform was not derived from grid frames")
 	world.free()
 	return true
+
+
+func _test_split_reconciles_ground_anchors() -> bool:
+	var world := SimulationWorld.new()
+	world.set_terrain_contact_probe(
+		func(_assembly: SimulationAssembly, elements: Array[SimulationElement]) -> Array[int]:
+			var touching: Array[int] = []
+			for element: SimulationElement in elements:
+				touching.append(element.element_id)
+			return touching
+	)
+	var result := _spawn(
+		world,
+		_chain_blueprint(3),
+		GridTransform.identity()
+	)
+	if not result.is_ok():
+		return _fail("ground chain spawn failed")
+	var ids: Array = result.data["element_ids"]
+	var center_joint := _joint_between(world, int(ids[1]), int(ids[2]))
+	var command := BreakRigidJointCommand.new()
+	command.joint_id = center_joint
+	command.expected_assembly_revision = int(result.data["topology_revision"])
+	var split := world.apply_structural_command_now(command)
+	if not split.is_ok() or not split.data["split"]:
+		return _fail("ground anchor split failed")
+	var survivor_id := int(split.data["survivor_assembly_id"])
+	for assembly_id: int in [survivor_id] + split.data["new_assembly_ids"]:
+		if not world.assembly_has_anchor(assembly_id):
+			return _fail(
+				"split assembly %d missing terrain anchor"
+				% assembly_id
+			)
+	world.free()
+	return true
+
+
+func _test_placement_anchors_every_touching_block() -> bool:
+	# Every block placed on terrain must anchor at placement, not just the first.
+	# Otherwise the whole construction hangs off one anchor and detaching it frees
+	# (and physically ejects) everything else.
+	var world := SimulationWorld.new()
+	world.ensure_resource_store("player")
+	world.set_resource_amount("player", "construction_component", 100.0)
+	world.set_terrain_contact_probe(
+		func(_a: SimulationAssembly, elements: Array[SimulationElement]) -> Array[int]:
+			var touching: Array[int] = []
+			for element: SimulationElement in elements:
+				touching.append(element.element_id)
+			return touching
+	)
+	var first := _place_frame(world, 0, -1, Vector3i.ZERO, GridTransform.identity())
+	if not first.is_ok():
+		world.free()
+		return _fail("first block placement failed")
+	var assembly_id := int(first.data["assembly_id"])
+	var first_id := int(first.data["element_id"])
+	var second := _place_frame(
+		world,
+		assembly_id,
+		int(first.data["topology_revision"]),
+		Vector3i(1, 0, 0),
+		GridTransform.identity()
+	)
+	if not second.is_ok():
+		world.free()
+		return _fail("second block placement failed")
+	var second_id := int(second.data["element_id"])
+	var second_element := world.get_element(second_id)
+	if second_element == null or not second_element.terrain_contact:
+		world.free()
+		return _fail("placed block did not record terrain contact")
+	if _anchor_for(world, second_id) == 0:
+		world.free()
+		return _fail("placed block on terrain was not anchored at placement")
+	# Detaching the first (originally sole-anchored) block must leave the rest
+	# anchored and static, never freed.
+	var dismantle := DismantleElementCommand.new()
+	dismantle.element_id = first_id
+	dismantle.expected_assembly_revision = (
+		world.get_assembly_raw(assembly_id).topology_revision
+	)
+	dismantle.store_id = "player"
+	var result := world.apply_structural_command_now(dismantle)
+	if not result.is_ok():
+		world.free()
+		return _fail("dismantle of first block failed")
+	if not world.assembly_has_anchor(assembly_id):
+		world.free()
+		return _fail("remaining construction lost its terrain anchor")
+	world.free()
+	return true
+
+
+func _place_frame(
+	world: SimulationWorld,
+	assembly_id: int,
+	expected_revision: int,
+	origin_cell: Vector3i,
+	grid_frame: GridTransform
+) -> StructuralCommandResult:
+	var command := PlaceElementCommand.new()
+	command.assembly_id = assembly_id
+	command.expected_assembly_revision = expected_revision
+	command.archetype = Slice01Archetypes.frame()
+	command.origin_cell = origin_cell
+	command.orientation_index = 0
+	command.new_assembly_grid_frame = grid_frame
+	command.store_id = "player"
+	return world.apply_structural_command_now(command)
 
 
 func _test_dual_anchor_and_rejections() -> bool:

@@ -22,6 +22,7 @@ const REASON_ELEMENT_INCOMPLETE := &"element_incomplete"
 const REASON_ELEMENT_BROKEN := &"element_broken"
 const REASON_ANCHOR_REQUIRED := &"anchor_required"
 const REASON_ANCHOR_NOT_ALLOWED := &"anchor_not_allowed"
+const REASON_NO_GROUND_CONTACT := &"no_ground_contact"
 const REASON_NO_EFFECT := &"no_effect"
 
 var status: StringName = STATUS_FAILED
