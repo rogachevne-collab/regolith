@@ -4,5 +4,5 @@ alwaysApply: true
 ---
 Прочти AGENTS.md в корне — единственный источник правил проекта.
 Доменный контракт: docs/PHYSICAL-LANGUAGE.md. PoC-спеки: docs/specs/.
-После правки геймплея — ./tests/run_tests.sh; .gdshader — ./run.sh --headless res://scenes/main.tscn.
+Тесты: во время итераций гоняй только релевантный test_*.tscn; полный ./tests/run_tests.sh — один раз перед «готово»/коммитом, не на каждую мелкую правку. .gdshader — ./run.sh --headless res://scenes/main.tscn.
 Если задача «удобнее» решается нарушением инварианта R1–R6 — остановись и спроси.

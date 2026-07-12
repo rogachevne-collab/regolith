@@ -30,14 +30,18 @@ Standalone Godot-проект: voxel terrain, Jolt physics, modular machines.
 
 ## Definition of Done
 
+**Дисциплина тестов:** во время итераций гоняй только релевантный `test_*.tscn`
+(`./run.sh --headless res://scenes/test_*.tscn`). Полный `./tests/run_tests.sh` —
+один раз перед «готово»/коммитом, а не после каждой мелкой правки.
+
 | Тип изменения | Обязательные действия |
 |---|---|
 | новый PoC / изменение поведения | обновить `docs/specs/POC-*.md` или `PHYSICAL-LANGUAGE.md` |
-| новый/изменённый `test_*.tscn` | `./tests/run_tests.sh` до чистого прохода |
+| новый/изменённый `test_*.tscn` | релевантный тест зелёный в процессе; полный `./tests/run_tests.sh` один раз перед готово |
 | правка `.gdshader` | `./run.sh --headless res://scenes/main.tscn` без ошибок компиляции |
 | правка VFX `.tscn` | проверка в игре + соответствие `docs/cheatsheets/vfx-*.md` |
 | новая GDExtension-зависимость | строка в README (bootstrap) + лицензия |
-| правка spawn/drill/cart/assembly | `./tests/run_tests.sh`; smoke `main.tscn` |
+| правка spawn/drill/cart/assembly | релевантный `test_*` в процессе; полный `./tests/run_tests.sh` + smoke `main.tscn` один раз перед готово |
 
 ## Дисциплина коммитов
 
@@ -53,7 +57,8 @@ Standalone Godot-проект: voxel terrain, Jolt physics, modular machines.
 Дорогому агенту: Physical Language, structural commands, новые PoC, spawn/physics,
 архитектурные решения, финальная проверка субагентов.
 
-Результат субагента перечитывается и прогоняется через `./tests/run_tests.sh` до «готово».
+Результат субагента перечитывается; во время работы — фокусный `test_*`, полный
+`./tests/run_tests.sh` один раз перед «готово». Не гоняй полный набор на каждую итерацию.
 
 ## Соглашения
 
