@@ -73,7 +73,7 @@ func _prompt_for(hit: InteractionHit) -> String:
 			hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
 			and hit.distance <= 2.2
 		):
-			return "Удерживать ЛКМ — снос блока"
+			return "Удерживать ЛКМ — снос с возвратом материалов"
 		return "ЛКМ — снос только по конструкции"
 	if not hit.valid:
 		return ""
@@ -91,20 +91,11 @@ func _prompt_for(hit: InteractionHit) -> String:
 				hit.metadata.get("status_reason", &"element_incomplete")
 			)
 			if status == &"element_incomplete":
-				return "Удерживать ПКМ/F — сварка каркаса"
+				return "Удерживать ЛКМ — наращивание целостности"
 			if status == &"ok":
-				return "Блок уже заварен"
-		return "ПКМ/F — сварка только по каркасу"
+				return "Блок готов"
+		return "ЛКМ — сварка по конструкции"
 	if _tools.active_tool == &"build":
-		if (
-			hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
-			and hit.distance <= 4.0
-		):
-			var status := StringName(
-				hit.metadata.get("status_reason", &"element_incomplete")
-			)
-			if status == &"element_broken" or status == &"damaged":
-				return "ПКМ/F — ремонт  ·  X — демонтаж"
 		if _preview != null and _preview.has_resolved_placement():
 			var block_name := _gateway.archetype_display_name(
 				_tools.selected_archetype_id
@@ -115,7 +106,7 @@ func _prompt_for(hit: InteractionHit) -> String:
 			if target_kind == InteractionHit.KIND_VOXEL:
 				return "ЛКМ — поставить %s на грунт" % block_name
 			if target_kind == InteractionHit.KIND_SIMULATION_ELEMENT:
-				return "ЛКМ — поставить %s  ·  X — демонт" % block_name
+				return "ЛКМ — поставить %s" % block_name
 		return ""
 	return ""
 
@@ -142,9 +133,8 @@ func _suppress_success_feedback() -> bool:
 	if action == &"tool_primary" and (
 		_tools.active_tool == &"drill"
 		or _tools.active_tool == &"grinder"
+		or _tools.active_tool == &"weld"
 	):
-		return true
-	if action == &"tool_weld":
 		return true
 	return false
 

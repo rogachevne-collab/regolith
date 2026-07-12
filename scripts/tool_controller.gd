@@ -54,12 +54,6 @@ const ACTIONS := {
 		"interval": 0.0,
 		"continuous": false,
 	},
-	&"construction_dismantle": {
-		"command": &"dismantle_element",
-		"max_range": 4.0,
-		"interval": 0.0,
-		"continuous": false,
-	},
 }
 
 const CONSTRUCTION_ARCHETYPES: PackedStringArray = [
@@ -79,6 +73,8 @@ const DRILL_INTERVAL := 0.05
 ## Continuous demolition rate for the grinder (integrity units per second).
 const GRINDER_DPS := 20.0
 const GRINDER_INTERVAL := 0.05
+## Material refund when grinder destroys a block (same as dismantle).
+const GRINDER_REFUND_FRACTION := 0.5
 
 const TOOLBAR_PAGES: Array = [
 	[
@@ -175,26 +171,21 @@ func _physics_process(delta: float) -> void:
 		_issued_for_press = false
 		_locked_hit = (
 			_build_action_hit()
-			if active_tool == &"build" and (
-				requested_action == &"tool_primary"
-				or requested_action == &"tool_secondary"
-			)
+			if active_tool == &"build" and requested_action == &"tool_primary"
 			else (
 				_query.current_hit
 				if (
-					requested_action == &"tool_secondary"
-					or requested_action == &"tool_weld"
-					or requested_action == &"construction_dismantle"
+					requested_action == &"tool_primary"
+					and active_tool == &"weld"
 				)
+				or requested_action == &"tool_secondary"
 				else null
 			)
 		)
 		if requested_action == &"tool_primary" and active_tool == &"build":
 			_construction_mode = &"place"
-		elif requested_action == &"tool_secondary" and active_tool == &"build":
-			_construction_mode = _resolve_construction_mode(_locked_hit)
-		elif requested_action == &"tool_weld":
-			_construction_mode = &"weld"
+		elif requested_action == &"tool_primary" and active_tool == &"weld":
+			_construction_mode = _resolve_welder_mode(_locked_hit)
 		_transition(ActionState.PRESSED)
 
 	var profile: Dictionary = ACTIONS[active_action]
@@ -203,6 +194,8 @@ func _physics_process(delta: float) -> void:
 	elif active_action == &"tool_primary" and active_tool == &"grinder":
 		profile = profile.duplicate()
 		profile["interval"] = GRINDER_INTERVAL
+	elif active_action == &"tool_primary" and active_tool == &"weld":
+		profile = ACTIONS[&"tool_weld"].duplicate()
 	var hit := (
 		_locked_hit
 		if _locked_hit != null
@@ -224,6 +217,17 @@ func _physics_process(delta: float) -> void:
 		active_action == &"tool_primary"
 		and active_tool == &"build"
 		and not _can_place_block()
+	):
+		_transition(ActionState.CANCELLED)
+		progress = 0.0
+		return
+	if (
+		active_action == &"tool_primary"
+		and active_tool == &"weld"
+		and (
+			hit.target_kind != InteractionHit.KIND_SIMULATION_ELEMENT
+			or _construction_mode == &"none"
+		)
 	):
 		_transition(ActionState.CANCELLED)
 		progress = 0.0
@@ -322,9 +326,16 @@ func _emit_command_for_action(
 	if action == &"tool_primary":
 		if active_tool == &"build":
 			command_kind = &"construction_apply"
+		elif active_tool == &"weld":
+			command_kind = &"weld_element"
+			parameters = {}
 		elif active_tool == &"grinder":
 			command_kind = &"damage_element"
-			parameters = {"damage": _grinder_damage_per_tick()}
+			parameters = {
+				"damage": _grinder_damage_per_tick(),
+				"refund_fraction_on_destroy": GRINDER_REFUND_FRACTION,
+				"store_id": "player",
+			}
 		elif hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT:
 			command_kind = &"damage_element"
 			parameters = {"damage": _drill_damage_per_tick()}
@@ -362,12 +373,6 @@ func _pressed_action() -> StringName:
 		not in_vehicle
 		and Input.is_action_pressed(&"tool_secondary")
 	):
-		if active_tool == &"weld":
-			return &"tool_weld"
-		if active_tool == &"build":
-			var hit := _build_action_hit()
-			if _resolve_construction_mode(hit) != &"place":
-				return &"tool_secondary"
 		return StringName()
 	for action: StringName in ACTIONS:
 		if action == &"tool_weld":
@@ -375,7 +380,12 @@ func _pressed_action() -> StringName:
 		if action == &"tool_primary":
 			if in_vehicle:
 				continue
-			if active_tool != &"drill" and active_tool != &"grinder" and active_tool != &"build":
+			if (
+				active_tool != &"drill"
+				and active_tool != &"grinder"
+				and active_tool != &"build"
+				and active_tool != &"weld"
+			):
 				continue
 		if (
 			action != &"interact"
@@ -570,17 +580,12 @@ func _basis_orientation_index(basis: Basis) -> int:
 	return selected_orientation_index
 
 
-func _resolve_construction_mode(hit: InteractionHit) -> StringName:
-	if hit == null:
-		return &"place"
-	if hit.target_kind != InteractionHit.KIND_SIMULATION_ELEMENT:
-		return &"place"
-	var status := StringName(
-		hit.metadata.get("status_reason", &"element_incomplete")
-	)
-	if status == &"element_broken" or status == &"damaged":
-		return &"repair"
-	return &"place"
+func _resolve_welder_mode(hit: InteractionHit) -> StringName:
+	if hit == null or hit.target_kind != InteractionHit.KIND_SIMULATION_ELEMENT:
+		return &"none"
+	if StringName(hit.metadata.get("status_reason", &"element_incomplete")) == &"ok":
+		return &"none"
+	return &"weld"
 
 
 func _build_action_hit() -> InteractionHit:

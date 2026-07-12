@@ -152,12 +152,8 @@ func _process(_delta: float) -> void:
 	_status_val.text = HudTokens.status_label(status)
 	_status_val.add_theme_color_override("font_color", status_color)
 
-	if status == &"element_incomplete":
-		_metric_key.text = "СБОРКА"
-		_metric_val.text = "%d%%" % int(round(float(meta.get("build_progress", 0.0)) * 100.0))
-	else:
-		_metric_key.text = "ЦЕЛОСТНОСТЬ"
-		_metric_val.text = "%d%%" % int(round(_integrity_fraction(archetype_id, meta) * 100.0))
+	_metric_key.text = "ЦЕЛОСТНОСТЬ"
+	_metric_val.text = "%d%%" % int(round(_integrity_fraction(archetype_id, meta) * 100.0))
 	_metric_val.add_theme_color_override("font_color", status_color)
 
 

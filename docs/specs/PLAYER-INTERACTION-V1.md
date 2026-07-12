@@ -186,7 +186,6 @@ compatibility handlers за `CommandGateway`. Это не закрывает Con
 - `toolbar_page_prev`, `toolbar_page_next` — переключение страниц (`[` / `]` на macOS);
 - `construction_rotate_yaw`, `construction_rotate_pitch`, `construction_rotate_roll`
   — ортогональный поворот preview (`C` / `V` / `B`);
-- `construction_dismantle`;
 - `release_mouse`.
 
 Gameplay-код не читает физические keycode или mouse button напрямую.
@@ -198,10 +197,9 @@ Gameplay-код не читает физические keycode или mouse butt
   construction archetypes (`frame` … `fabricator`).
 - Слот **блока** включает placement (`active_tool = build`, preview виден).
 - Слоты **бура**, **сварки** и **болгарки** выходят из placement; preview скрыт.
-- `tool_primary` (ЛКМ): бур/болгарка — воздействие по цели; блок — установка.
-- `tool_secondary` (ПКМ/F): сварка; при выбранном блоке — ремонт повреждённого
-  элемента (не установка).
-- Удержание ПКМ/F при сварке — continuous weld.
+- `tool_primary` (ЛКМ): бур/болгарка — воздействие по цели; блок — установка;
+  сварка — сварка каркаса и ремонт повреждённого элемента.
+- `tool_secondary` (ПКМ/F): в v1 не используется для строительства.
 
 ### Orientation
 
@@ -227,6 +225,8 @@ Gameplay-код не читает физические keycode или mouse butt
   (без прямой мутации projection);
 - cadence continuous action (`interval = 0.05`, `max_range = 2.2`);
 - урон за tick: `GRINDER_DPS * interval` (настраиваемая константа, v0: 20 integrity/s);
+- lethal destruction возвращает `50%` установленных материалов (`GRINDER_REFUND_FRACTION`);
+- бур при lethal destruction материалы не возвращает;
 - voxel и прочие цели отменяют action.
 
 ### Build placement routing
@@ -235,7 +235,14 @@ Gameplay-код не читает физические keycode или mouse butt
 
 - `construction_apply` в режиме `place` через `CommandGateway`;
 - single press на валидный preview (`interval = 0.22`, `max_range = 4.0`);
-- ПКМ/F при выбранном блоке не ставит блоки (только ремонт повреждённой цели).
+- ПКМ/F при выбранном блоке не выполняет действий.
+
+### Welder command routing
+
+При удержании ЛКМ со сварочным пистолетом (слот 2):
+
+- целостность `< 100%` → `weld_element` (continuous, `interval = 0.18`, `max_range = 4.0`);
+- `100%` и прочие цели отменяют action.
 
 ## Feedback
 

@@ -124,7 +124,7 @@ theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.8)
 theme_override_constants/shadow_offset_x = 1
 theme_override_constants/shadow_offset_y = 1
 text = "WASD — ходьба, Shift — бег, Space — прыжок, Esc — настройки
-ЛКМ — бур, 1–7 — блок, 8 — сварка, C — поворот, ПКМ/F — действие, X — демонтаж
+1–9 — инструменты, ЛКМ — действие, C/V/B — поворот блока
 ПКМ/F по грунту — первый блок базы, E у корабля — кокпит
 В кокпите: Space — тяга, WASD — баланс, E — выйти"
 
