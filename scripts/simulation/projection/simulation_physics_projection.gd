@@ -3,11 +3,17 @@ extends Node3D
 
 const BODY_NAME_PREFIX := "AssemblyBody_"
 const MIN_MASS := 0.001
+const FragmentBodyScript := preload(
+	"res://scripts/simulation/projection/projected_assembly_body.gd"
+)
 
 var _world: SimulationWorld
 var _bodies: Dictionary = {}
 var _element_records: Dictionary = {}
 var _projected_revision: Dictionary = {}
+var _mounted_bodies: Dictionary = {}
+var _collision_profiles: Dictionary = {}
+var _body_groups: Dictionary = {}
 
 
 func bind_world(world: SimulationWorld) -> void:
@@ -68,6 +74,76 @@ func compute_b_to_a_grid(
 		assembly_a_id,
 		assembly_b_id
 	)
+
+
+func register_mounted_body(
+	assembly_id: int,
+	body: RigidBody3D
+) -> void:
+	if body == null:
+		return
+	_mounted_bodies[assembly_id] = body
+	body.set_meta("assembly_id", assembly_id)
+
+
+func unregister_mounted_body(assembly_id: int) -> void:
+	_mounted_bodies.erase(assembly_id)
+
+
+func set_collision_profile(
+	assembly_id: int,
+	layer: int,
+	mask: int
+) -> void:
+	_collision_profiles[assembly_id] = {
+		"layer": layer,
+		"mask": mask,
+	}
+
+
+func add_body_group(assembly_id: int, group_name: String) -> void:
+	if group_name.is_empty():
+		return
+	var groups: Array = _body_groups.get(assembly_id, [])
+	if not groups.has(group_name):
+		groups.append(group_name)
+	_body_groups[assembly_id] = groups
+	var body: PhysicsBody3D = get_physics_body(assembly_id)
+	if body != null and body is RigidBody3D:
+		(body as RigidBody3D).add_to_group(group_name)
+
+
+func project_assembly_now(
+	assembly_id: int,
+	motion_override: AssemblyMotionState = null
+) -> void:
+	_project_assembly(assembly_id, motion_override)
+
+
+func sync_body_motion_now(assembly_id: int) -> bool:
+	if _world == null:
+		return false
+	var body := get_physics_body(assembly_id)
+	if body == null:
+		return false
+	return _world.sync_assembly_motion(
+		assembly_id,
+		_capture_body_motion(body)
+	)
+
+
+func align_body_motion(
+	target_assembly_id: int,
+	reference_assembly_id: int
+) -> bool:
+	var target := get_physics_body(target_assembly_id) as RigidBody3D
+	var reference := get_physics_body(reference_assembly_id) as RigidBody3D
+	if target == null or reference == null:
+		return false
+	target.global_transform = reference.global_transform
+	target.linear_velocity = reference.linear_velocity
+	target.angular_velocity = reference.angular_velocity
+	return sync_body_motion_now(target_assembly_id)
 
 
 func _physics_process(_delta: float) -> void:
@@ -270,7 +346,16 @@ func _project_assembly(
 		else assembly.motion
 	)
 	var anchored: bool = _world.assembly_has_anchor(assembly_id)
-	var body: PhysicsBody3D = _create_body(assembly_id, anchored)
+	var mounted: RigidBody3D = _mounted_bodies.get(assembly_id) as RigidBody3D
+	var mounted_motion: AssemblyMotionState = null
+	var body: PhysicsBody3D
+	if mounted != null:
+		mounted_motion = _capture_body_motion(mounted)
+		mounted.freeze = true
+		_clear_body_colliders(mounted)
+		body = mounted
+	else:
+		body = _create_body(assembly_id, anchored)
 	var records: Array[Dictionary] = (
 		ColliderProjectionUtil.build_collision_shapes(_world, assembly)
 	)
@@ -299,8 +384,13 @@ func _project_assembly(
 		motion.linear_velocity = Vector3.ZERO
 		motion.angular_velocity = Vector3.ZERO
 		motion.sleeping = true
-	add_child(body)
-	body.global_transform = motion.transform
+	if mounted == null:
+		add_child(body)
+		body.global_transform = motion.transform
+	else:
+		motion = mounted_motion
+	_apply_collision_profile(assembly_id, body)
+	_apply_body_groups(assembly_id, body)
 	if body is RigidBody3D:
 		var rigid: RigidBody3D = body as RigidBody3D
 		rigid.mass = maxf(
@@ -320,6 +410,8 @@ func _project_assembly(
 		rigid.linear_velocity = motion.linear_velocity
 		rigid.angular_velocity = motion.angular_velocity
 		rigid.sleeping = motion.sleeping
+		if mounted != null:
+			rigid.freeze = motion.frozen
 	_bodies[assembly_id] = body
 	for element_id: int in colliders_by_element:
 		_element_records[element_id] = {
@@ -339,14 +431,48 @@ func _create_body(
 	if anchored:
 		body = StaticBody3D.new()
 	else:
-		var rigid := RigidBody3D.new()
+		var rigid: RigidBody3D
+		if _mounted_bodies.has(assembly_id):
+			rigid = RigidBody3D.new()
+		else:
+			rigid = FragmentBodyScript.new() as RigidBody3D
 		rigid.freeze = false
 		body = rigid
 	body.name = "%s%d" % [BODY_NAME_PREFIX, assembly_id]
 	body.collision_layer = 1
 	body.collision_mask = 1
 	body.set_meta("assembly_id", assembly_id)
+	_apply_collision_profile(assembly_id, body)
 	return body
+
+
+func _apply_collision_profile(
+	assembly_id: int,
+	body: PhysicsBody3D
+) -> void:
+	var profile: Variant = _collision_profiles.get(assembly_id)
+	if profile is Dictionary:
+		body.collision_layer = int(profile.get("layer", body.collision_layer))
+		body.collision_mask = int(profile.get("mask", body.collision_mask))
+
+
+func _apply_body_groups(
+	assembly_id: int,
+	body: PhysicsBody3D
+) -> void:
+	for group_name: Variant in _body_groups.get(assembly_id, []):
+		if body is RigidBody3D:
+			(body as RigidBody3D).add_to_group(str(group_name))
+
+
+func _clear_body_colliders(body: PhysicsBody3D) -> void:
+	var stale: Array[CollisionShape3D] = []
+	for child: Node in body.get_children():
+		if child is CollisionShape3D:
+			stale.append(child as CollisionShape3D)
+	for collider: CollisionShape3D in stale:
+		collider.disabled = true
+		collider.queue_free()
 
 
 func _capture_body_motion(
@@ -409,10 +535,13 @@ func _remove_body(assembly_id: int) -> void:
 	_remove_element_records_for_assembly(assembly_id)
 	var body: PhysicsBody3D = get_physics_body(assembly_id)
 	if body != null:
-		body.collision_layer = 0
-		body.collision_mask = 0
-		body.process_mode = Node.PROCESS_MODE_DISABLED
-		body.queue_free()
+		if _mounted_bodies.get(assembly_id) == body:
+			_clear_body_colliders(body)
+		else:
+			body.collision_layer = 0
+			body.collision_mask = 0
+			body.process_mode = Node.PROCESS_MODE_DISABLED
+			body.queue_free()
 	_bodies.erase(assembly_id)
 	_projected_revision.erase(assembly_id)
 

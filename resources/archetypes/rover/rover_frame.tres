@@ -1,0 +1,60 @@
+[gd_resource type="Resource" script_class="ElementArchetype" format=3]
+
+[ext_resource type="Script" path="res://scripts/simulation/resources/build_requirement.gd" id="1_req"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/collider_definition.gd" id="2_col"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/port_definition.gd" id="3_port"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/element_archetype.gd" id="4_arch"]
+
+[sub_resource type="Resource" id="Requirement"]
+script = ExtResource("1_req")
+resource_id = "construction_component"
+
+[sub_resource type="Resource" id="Collider"]
+script = ExtResource("2_col")
+size = Vector3(0.92, 0.6, 0.92)
+offset_in_cell = Vector3(0, 0, 0)
+
+[sub_resource type="Resource" id="PortPx"]
+script = ExtResource("3_port")
+port_id = "structural_px"
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="PortNx"]
+script = ExtResource("3_port")
+port_id = "structural_nx"
+local_face = 1
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="PortPy"]
+script = ExtResource("3_port")
+port_id = "structural_py"
+local_face = 2
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="PortNy"]
+script = ExtResource("3_port")
+port_id = "structural_ny"
+local_face = 3
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="PortPz"]
+script = ExtResource("3_port")
+port_id = "structural_pz"
+local_face = 4
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="PortNz"]
+script = ExtResource("3_port")
+port_id = "structural_nz"
+local_face = 5
+compatibility_tags = PackedStringArray("structural")
+
+[resource]
+script = ExtResource("4_arch")
+archetype_id = "rover_frame"
+display_name = "Rover Frame Block"
+roles = PackedStringArray("Frame")
+mass_kg = 30.90909090909091
+colliders = Array[ExtResource("2_col")]([SubResource("Collider")])
+ports = Array[ExtResource("3_port")]([SubResource("PortPx"), SubResource("PortNx"), SubResource("PortPy"), SubResource("PortNy"), SubResource("PortPz"), SubResource("PortNz")])
+build_requirements = Array[ExtResource("1_req")]([SubResource("Requirement")])
