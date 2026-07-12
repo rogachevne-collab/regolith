@@ -172,20 +172,10 @@ func _physics_process(delta: float) -> void:
 		_locked_hit = (
 			_build_action_hit()
 			if active_tool == &"build" and requested_action == &"tool_primary"
-			else (
-				_query.current_hit
-				if (
-					requested_action == &"tool_primary"
-					and active_tool == &"weld"
-				)
-				or requested_action == &"tool_secondary"
-				else null
-			)
+			else null
 		)
 		if requested_action == &"tool_primary" and active_tool == &"build":
 			_construction_mode = &"place"
-		elif requested_action == &"tool_primary" and active_tool == &"weld":
-			_construction_mode = _resolve_welder_mode(_locked_hit)
 		_transition(ActionState.PRESSED)
 
 	var profile: Dictionary = ACTIONS[active_action]
@@ -196,11 +186,7 @@ func _physics_process(delta: float) -> void:
 		profile["interval"] = GRINDER_INTERVAL
 	elif active_action == &"tool_primary" and active_tool == &"weld":
 		profile = ACTIONS[&"tool_weld"].duplicate()
-	var hit := (
-		_locked_hit
-		if _locked_hit != null
-		else _target_for_action(active_action)
-	)
+	var hit := _action_hit(active_action, profile)
 	if (
 		_locked_hit != null
 		and _issued_for_press
@@ -209,34 +195,12 @@ func _physics_process(delta: float) -> void:
 		_transition(ActionState.CANCELLED)
 		progress = 0.0
 		return
-	if not hit.valid or hit.distance > float(profile["max_range"]):
-		_transition(ActionState.CANCELLED)
-		progress = 0.0
-		return
-	if (
-		active_action == &"tool_primary"
-		and active_tool == &"build"
-		and not _can_place_block()
-	):
-		_transition(ActionState.CANCELLED)
-		progress = 0.0
-		return
-	if (
-		active_action == &"tool_primary"
-		and active_tool == &"weld"
-		and (
-			hit.target_kind != InteractionHit.KIND_SIMULATION_ELEMENT
-			or _construction_mode == &"none"
-		)
-	):
-		_transition(ActionState.CANCELLED)
-		progress = 0.0
-		return
-	if (
-		active_action == &"tool_primary"
-		and active_tool == &"grinder"
-		and hit.target_kind != InteractionHit.KIND_SIMULATION_ELEMENT
-	):
+	if not _hit_accepts_action(hit, profile, active_action):
+		if _tracks_live_target_while_holding(active_action):
+			_transition(ActionState.HOLDING)
+			progress = 0.0
+			state_changed.emit(active_action, state, progress)
+			return
 		_transition(ActionState.CANCELLED)
 		progress = 0.0
 		return
@@ -578,6 +542,50 @@ func _basis_orientation_index(basis: Basis) -> int:
 		if OrientationUtil.orientation_basis(index).is_equal_approx(basis):
 			return index
 	return selected_orientation_index
+
+
+func _action_hit(action: StringName, profile: Dictionary) -> InteractionHit:
+	if _tracks_live_target_while_holding(action):
+		return _query.current_hit
+	if _locked_hit != null:
+		return _locked_hit
+	return _target_for_action(action)
+
+
+func _tracks_live_target_while_holding(action: StringName) -> bool:
+	return (
+		action == &"tool_primary"
+		and (
+			active_tool == &"drill"
+			or active_tool == &"grinder"
+			or active_tool == &"weld"
+		)
+	)
+
+
+func _hit_accepts_action(
+	hit: InteractionHit,
+	profile: Dictionary,
+	action: StringName
+) -> bool:
+	if not hit.valid or hit.distance > float(profile["max_range"]):
+		return false
+	if action == &"tool_primary" and active_tool == &"build":
+		return _can_place_block()
+	if action == &"tool_primary" and active_tool == &"weld":
+		_construction_mode = _resolve_welder_mode(hit)
+		return (
+			hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
+			and _construction_mode != &"none"
+		)
+	if action == &"tool_primary" and active_tool == &"grinder":
+		return hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
+	if action == &"tool_primary" and active_tool == &"drill":
+		return (
+			hit.target_kind == InteractionHit.KIND_VOXEL
+			or hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
+		)
+	return true
 
 
 func _resolve_welder_mode(hit: InteractionHit) -> StringName:

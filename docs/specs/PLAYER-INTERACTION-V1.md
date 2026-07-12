@@ -160,6 +160,9 @@ idle → pressed → holding → completed
 
 - tap завершается один раз на press;
 - hold публикует progress 0..1;
+- удержание ЛКМ буром/болгаркой/сваркой следует live aim: цель в радиусе
+  обрабатывается каждый tick, без отдельного клика на блок; потеря цели
+  паузит ticks, но не отменяет hold;
 - потеря цели, release, spawn lock и vehicle transition отменяют action;
 - completed action отправляет ровно одну command;
 - непрерывный drill состоит из явно ограниченных command ticks;

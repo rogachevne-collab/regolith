@@ -246,10 +246,51 @@ func _run_test() -> void:
 	_query.current_hit = InteractionHit.empty()
 	Input.action_press("tool_primary")
 	_tools._physics_process(0.016)
-	Input.action_release("tool_primary")
-	if _tools.state != ToolController.ActionState.CANCELLED:
-		_fail("lost target did not cancel the action")
+	if _tools.state != ToolController.ActionState.HOLDING:
+		_fail("drill hold without target should stay holding")
 		return
+	Input.action_release("tool_primary")
+	_tools._physics_process(0.016)
+	if (
+		_tools.state != ToolController.ActionState.IDLE
+		and _tools.state != ToolController.ActionState.CANCELLED
+	):
+		_fail("released drill hold should end the action")
+		return
+
+	_completed_commands = 0
+	_last_command_target = {}
+	Input.action_press("tool_primary")
+	_query.current_hit = InteractionHit.create(
+		Vector3(1.0, 0.0, 0.0),
+		Vector3.UP,
+		1.0,
+		InteractionHit.KIND_SIMULATION_ELEMENT,
+		null,
+		"element_a",
+		{"archetype_id": "frame", "status_reason": &"ok"}
+	)
+	_tools._physics_process(0.016)
+	await get_tree().process_frame
+	_query.current_hit = InteractionHit.create(
+		Vector3(1.2, 0.0, 0.0),
+		Vector3.UP,
+		1.1,
+		InteractionHit.KIND_SIMULATION_ELEMENT,
+		null,
+		"element_b",
+		{"archetype_id": "frame", "status_reason": &"ok"}
+	)
+	_tools._physics_process(0.06)
+	await get_tree().process_frame
+	if _completed_commands < 2:
+		_fail("live drill hold expected ticks on swept targets")
+		return
+	if String(_last_command_target.get("target_id", "")) != "element_b":
+		_fail("live drill hold should track the current target")
+		return
+	Input.action_release("tool_primary")
+	_tools._physics_process(0.016)
 
 	print("PLAYER1: PASS")
 	get_tree().quit(0)
