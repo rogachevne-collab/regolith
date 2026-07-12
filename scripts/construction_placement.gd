@@ -2,6 +2,7 @@ class_name ConstructionPlacement
 extends RefCounted
 
 const SURFACE_EPSILON := 0.05
+const BOTTOM_FACE_CENTER := Vector3(0.5, 0.0, 0.5)
 
 
 static func plan(
@@ -64,25 +65,37 @@ static func plan(
 				floori(local_point.y),
 				floori(local_point.z)
 			)
+		assembly_world_transform = assembly.motion.transform
 		world_transform = (
-			assembly.motion.transform
+			assembly_world_transform
 			* GridPoseUtil.element_local_transform(
 				command.origin_cell,
 				command.orientation_index
 			)
 		)
 	elif target_kind == InteractionHit.KIND_VOXEL:
-		if archetype.archetype_id != "foundation":
-			return _failed(StructuralCommandResult.REASON_ANCHOR_REQUIRED)
-		var normal := Vector3(target.get("normal", Vector3.UP)).normalized()
 		var metadata: Dictionary = target.get("metadata", {})
 		var aim_direction := Vector3(
 			metadata.get("aim_direction", Vector3.FORWARD)
 		)
-		var basis := _surface_basis(normal, aim_direction)
+		var surface_point := Vector3(target.get("point", Vector3.ZERO))
+		# Gravity-upright orientation keeps the base level on slopes; only the
+		# discrete grid frame is snapped. The continuous root keeps the exact
+		# surface contact height so the block neither floats nor tilts.
+		var aim_basis := _upright_basis(aim_direction)
+		command.assembly_id = 0
+		command.origin_cell = Vector3i.ZERO
+		command.new_assembly_grid_frame = (
+			GridSpawnUtil.grid_frame_from_transform(
+				Transform3D(aim_basis, surface_point)
+			)
+		)
+		var upright_basis := OrientationUtil.orientation_basis(
+			command.new_assembly_grid_frame.orientation_index
+		)
 		assembly_world_transform = Transform3D(
-			basis,
-			Vector3(target.get("point", Vector3.ZERO))
+			upright_basis,
+			surface_point - upright_basis * BOTTOM_FACE_CENTER
 		)
 		world_transform = (
 			assembly_world_transform
@@ -90,11 +103,6 @@ static func plan(
 				Vector3i.ZERO,
 				command.orientation_index
 			)
-		)
-		command.assembly_id = 0
-		command.origin_cell = Vector3i.ZERO
-		command.new_assembly_grid_frame = (
-			GridSpawnUtil.grid_frame_from_transform(assembly_world_transform)
 		)
 	else:
 		return _failed(StructuralCommandResult.REASON_INVALID_TARGET)
@@ -106,26 +114,22 @@ static func plan(
 		"data": validation.data,
 		"command": command,
 		"world_transform": world_transform,
-		"assembly_world_transform": (
-			assembly_world_transform
-			if command.assembly_id == 0
-			else Transform3D.IDENTITY
-		),
+		"assembly_world_transform": assembly_world_transform,
+		"preview_root_transform": assembly_world_transform,
+		"origin_cell": command.origin_cell,
+		"orientation_index": command.orientation_index,
 		"archetype": archetype,
 	}
 
 
-static func _surface_basis(up_direction: Vector3, aim_direction: Vector3) -> Basis:
-	var up := up_direction.normalized()
-	var forward := (
-		aim_direction - up * aim_direction.dot(up)
-	).normalized()
+static func _upright_basis(aim_direction: Vector3) -> Basis:
+	var up := Vector3.UP
+	var forward := aim_direction - up * aim_direction.dot(up)
 	if forward.length_squared() < 0.000001:
-		forward = (
-			Vector3.FORWARD - up * Vector3.FORWARD.dot(up)
-		).normalized()
+		forward = Vector3.FORWARD - up * Vector3.FORWARD.dot(up)
+	forward = forward.normalized()
 	if forward.length_squared() < 0.000001:
-		forward = Vector3.RIGHT
+		forward = Vector3.FORWARD
 	var right := forward.cross(up).normalized()
 	forward = up.cross(right).normalized()
 	return Basis(right, up, -forward).orthonormalized()
@@ -148,5 +152,8 @@ static func _failed(reason: StringName) -> Dictionary:
 		"command": null,
 		"world_transform": Transform3D.IDENTITY,
 		"assembly_world_transform": Transform3D.IDENTITY,
+		"preview_root_transform": Transform3D.IDENTITY,
+		"origin_cell": Vector3i.ZERO,
+		"orientation_index": 0,
 		"archetype": null,
 	}
