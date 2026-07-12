@@ -31,6 +31,7 @@ func _run_test() -> void:
 		2.2,
 		InteractionHit.KIND_BODY
 	)
+	Input.action_press("tool_primary")
 	Input.action_press("tool_secondary")
 	_tools._physics_process(0.016)
 	await get_tree().process_frame
@@ -38,7 +39,7 @@ func _run_test() -> void:
 		_fail("place dispatched %d commands" % _completed_commands)
 		return
 	if not _placed_blocks.call("has_block", Vector3i(2, 0, 0)):
-		_fail("place command did not reach compatibility handler")
+		_fail("secondary did not override simultaneous primary")
 		return
 
 	_tools._physics_process(0.05)
@@ -47,6 +48,7 @@ func _run_test() -> void:
 		_fail("place repeated before its action interval")
 		return
 	Input.action_release("tool_secondary")
+	Input.action_release("tool_primary")
 	_tools._physics_process(0.016)
 
 	var seat := SeatProbe.new()

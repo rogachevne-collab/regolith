@@ -191,11 +191,20 @@ func cancel() -> void:
 
 
 func _pressed_action() -> StringName:
+	var player := get_parent()
+	var in_vehicle: bool = (
+		player.has_method("is_in_vehicle")
+		and player.call("is_in_vehicle")
+	)
+	if (
+		not in_vehicle
+		and Input.is_action_pressed(&"tool_secondary")
+	):
+		return &"tool_secondary"
 	for action: StringName in ACTIONS:
 		if (
 			action != &"interact"
-			and get_parent().has_method("is_in_vehicle")
-			and get_parent().call("is_in_vehicle")
+			and in_vehicle
 		):
 			continue
 		if Input.is_action_pressed(action):
