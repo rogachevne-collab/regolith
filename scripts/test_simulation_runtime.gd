@@ -341,7 +341,8 @@ func _test_custom_archetype_snapshot_restore() -> bool:
 	if not spawn.is_ok():
 		return _fail("custom archetype outside Slice-01 failed to spawn")
 	var element := world.get_element(int(spawn.data["element_ids"][0]))
-	element.build_progress = 0.25
+	element.installed_materials = {"custom_component": 0.25}
+	element.recalculate_build_progress()
 	element.integrity = 9.0
 	element.condition = 0.75
 	var snapshot := world.capture_snapshot()
