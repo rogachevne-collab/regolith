@@ -1,4 +1,4 @@
-[gd_scene load_steps=13 format=3 uid="uid://main001"]
+[gd_scene load_steps=12 format=3 uid="uid://main001"]
 
 [ext_resource type="Script" path="res://scripts/bootstrap.gd" id="1"]
 [ext_resource type="PackedScene" uid="uid://player001" path="res://scenes/player.tscn" id="2"]
@@ -7,7 +7,6 @@
 [ext_resource type="Texture2D" path="res://resources/starfield_panorama.png" id="5"]
 [ext_resource type="Script" path="res://scripts/placed_blocks.gd" id="6"]
 [ext_resource type="PackedScene" path="res://scenes/launch_vehicle.tscn" id="7"]
-[ext_resource type="PackedScene" path="res://scenes/cart.tscn" id="8"]
 [ext_resource type="Script" path="res://scripts/world_command_gateway.gd" id="10"]
 [ext_resource type="PackedScene" path="res://scenes/simulation_session.tscn" id="11"]
 
@@ -90,10 +89,6 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -30, 0, 8)
 [node name="LaunchVehicle" parent="." instance=ExtResource("7")]
 position = Vector3(4.5, 0, 16)
 
-[node name="Cart" parent="." instance=ExtResource("8")]
-position = Vector3(-34.5, -4.7, 4.7)
-simulation_session_path = NodePath("../SimulationSession")
-
 [node name="Player" parent="." instance=ExtResource("2")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 16)
 
@@ -129,12 +124,9 @@ theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.8)
 theme_override_constants/shadow_offset_x = 1
 theme_override_constants/shadow_offset_y = 1
 text = "WASD — ходьба, Shift — бег, Space — прыжок, Esc — настройки
-ЛКМ — бур, 1–8 — элемент, C — поворот, ПКМ/F — строить/сварить/чинить, X — демонтаж
-1 + ПКМ/F по грунту — новая foundation, E у корабля — кокпит
-В кокпите: Space — тяга, WASD — баланс, E — выйти
-Тележка: ↑ — привод, ↓ — тормоз, ←/→ — руль, K — толкнуть
-Ровер: B — снять центр, N — вернуть, V — сломать мост, M — колесо
-На ровер можно запрыгнуть и ехать стоя"
+ЛКМ — бур, 1–7 — блок, 8 — сварка, C — поворот, ПКМ/F — действие, X — демонтаж
+ПКМ/F по грунту — первый блок базы, E у корабля — кокпит
+В кокпите: Space — тяга, WASD — баланс, E — выйти"
 
 [node name="Coordinates" type="Label" parent="CanvasLayer"]
 anchors_preset = 1
@@ -150,6 +142,5 @@ theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.8)
 theme_override_constants/shadow_offset_x = 1
 theme_override_constants/shadow_offset_y = 1
 theme_override_font_sizes/font_size = 18
-text = "Игрок:  0.0, 0.0, 0.0
-Тележка: 0.0, 0.0, 0.0"
+text = "Игрок:  0.0, 0.0, 0.0"
 horizontal_alignment = 2

@@ -299,10 +299,15 @@ func _on_structural_event(event: Dictionary) -> void:
 
 func _handle_split(event: Dictionary) -> void:
 	var survivor_id: int = int(event["survivor_assembly_id"])
+	var rover_involved := survivor_id == _rover_assembly_id
 	for mapping_variant: Variant in event.get("new_assemblies", []):
 		var mapping: Dictionary = mapping_variant
 		var assembly_id: int = int(mapping["assembly_id"])
+		if assembly_id == _rover_assembly_id:
+			rover_involved = true
 		_register_fragment(assembly_id)
+	if not rover_involved:
+		return
 	if survivor_id != _rover_assembly_id:
 		_retarget_rover_mount(survivor_id)
 	_emit_structure_event(&"detach")
@@ -313,6 +318,8 @@ func _handle_merge(event: Dictionary) -> void:
 	var loser_id: int = int(event["loser_assembly_id"])
 	_fragment_assembly_ids.erase(loser_id)
 	_fragment_assembly_ids.erase(survivor_id)
+	if survivor_id != _rover_assembly_id and loser_id != _rover_assembly_id:
+		return
 	if survivor_id != _rover_assembly_id:
 		_retarget_rover_mount(survivor_id)
 	_emit_structure_event(&"attach")

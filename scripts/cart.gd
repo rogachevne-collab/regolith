@@ -26,6 +26,7 @@ const CartStructureAdapterScript = preload(
 var _anchors: Array[Marker3D] = []
 var _world: SimulationWorld
 var _projection: SimulationPhysicsProjection
+var _visuals: ElementVisualProjection
 var _structure: RefCounted
 var _locomotion: RefCounted
 
@@ -117,6 +118,7 @@ func _try_bind_external_kernel() -> bool:
 		return false
 	_world = session.world
 	_projection = session.projection
+	_visuals = session.visuals
 	return true
 
 
@@ -128,6 +130,10 @@ func _create_internal_kernel() -> void:
 	_projection.name = "SimulationPhysicsProjection"
 	add_child(_projection)
 	_projection.bind_world(_world)
+	_visuals = ElementVisualProjection.new()
+	_visuals.name = "ElementVisualProjection"
+	add_child(_visuals)
+	_visuals.bind(_world, _projection)
 
 
 func _setup_structure_and_locomotion() -> void:
@@ -135,6 +141,15 @@ func _setup_structure_and_locomotion() -> void:
 	_structure.structure_changed.connect(_on_structure_changed)
 	if not _structure.setup(_world, _projection, self):
 		push_error("Cart rover kernel setup failed")
+		return
+	if not simulation_session_path.is_empty():
+		var session := get_node_or_null(
+			simulation_session_path
+		) as SimulationSession
+		if session != null:
+			session.visuals.rebuild_assembly(
+				_structure.rover_assembly_id()
+			)
 
 	_locomotion = CartLocomotionScript.new()
 	_locomotion.wheel_radius = wheel_radius
@@ -187,4 +202,8 @@ func _physics_process(delta: float) -> void:
 
 
 func _on_structure_changed(change: Dictionary) -> void:
+	if _visuals != null and _structure != null:
+		var rover_id: int = _structure.rover_assembly_id()
+		if rover_id != 0:
+			_visuals.rebuild_assembly(rover_id)
 	structure_event_applied.emit(String(change["kind"]))

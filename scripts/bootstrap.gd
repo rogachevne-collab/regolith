@@ -4,17 +4,20 @@ const SKY_PROBE_Y := 120.0
 const SPAWN_CLEARANCE := 1.05
 const MIN_WARMUP_FRAMES := 30
 const STABLE_PHYSICS_FRAMES := 4
-const CART_HEIGHT_OFFSET := 1.22
 const STARTER_CONSTRUCTION_COMPONENTS := 120.0
 
 @onready var _terrain: VoxelTerrain = $VoxelTerrain
 @onready var _player: Node3D = $Player
 @onready var _launch_vehicle: RigidBody3D = $LaunchVehicle
-@onready var _cart: RigidBody3D = $Cart
 @onready var _session: SimulationSession = $SimulationSession
 @onready var _base_spawn: Node3D = $BaseSpawn
+## Debug overlay (coordinate readout + controls hint) is off by default; the
+## production HUD replaces it. Flip in the inspector for engineering builds.
+@export var debug_overlay := false
+
 @onready var _loading: Label = $CanvasLayer/Loading
 @onready var _coordinates: Label = $CanvasLayer/Coordinates
+@onready var _hint: Label = $CanvasLayer/Hint
 
 var _warmup_frames := 0
 var _stable_player := 0
@@ -28,8 +31,11 @@ func _ready() -> void:
 		"construction_component",
 		STARTER_CONSTRUCTION_COMPONENTS
 	)
+	for archetype: ElementArchetype in Slice01Archetypes.load_all_required():
+		_session.world.get_archetype_registry().register(archetype)
 	_loading.visible = true
-	_cart.freeze = true
+	_coordinates.visible = debug_overlay
+	_hint.visible = debug_overlay
 	_player_spawn_xz = Vector2(_player.global_position.x, _player.global_position.z)
 	if _player.has_method("set_spawn_locked"):
 		_player.set_spawn_locked(true)
@@ -39,18 +45,15 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
+	if not debug_overlay:
+		return
 	var player_position: Vector3 = _player.global_position
-	var cart_position: Vector3 = _cart.global_position
 	_coordinates.text = (
-		"Игрок:  %.1f, %.1f, %.1f\n"
-		+ "Тележка: %.1f, %.1f, %.1f"
+		"Игрок:  %.1f, %.1f, %.1f"
 	) % [
 		player_position.x,
 		player_position.y,
 		player_position.z,
-		cart_position.x,
-		cart_position.y,
-		cart_position.z,
 	]
 
 
@@ -62,18 +65,10 @@ func _place_when_ground_exists() -> void:
 		_launch_vehicle.global_position.x,
 		SKY_PROBE_Y,
 		_launch_vehicle.global_position.z)
-	var cart_origin := Vector3(
-		_cart.global_position.x,
-		SKY_PROBE_Y,
-		_cart.global_position.z)
 	var base_origin := Vector3(
 		_base_spawn.global_position.x,
 		SKY_PROBE_Y,
 		_base_spawn.global_position.z)
-	var cart_x_minus_origin := cart_origin + Vector3.LEFT
-	var cart_x_plus_origin := cart_origin + Vector3.RIGHT
-	var cart_z_minus_origin := cart_origin + Vector3.FORWARD
-	var cart_z_plus_origin := cart_origin + Vector3.BACK
 	var base_x_minus_origin := base_origin + Vector3.LEFT
 	var base_x_plus_origin := base_origin + Vector3.RIGHT
 	var base_z_minus_origin := base_origin + Vector3.FORWARD
@@ -93,18 +88,8 @@ func _place_when_ground_exists() -> void:
 			player_origin, Vector3.DOWN, 200.0)
 		var vehicle_hit: VoxelRaycastResult = tool.raycast(
 			vehicle_origin, Vector3.DOWN, 200.0)
-		var cart_hit: VoxelRaycastResult = tool.raycast(
-			cart_origin, Vector3.DOWN, 200.0)
 		var base_hit: VoxelRaycastResult = tool.raycast(
 			base_origin, Vector3.DOWN, 200.0)
-		var cart_x_minus_hit: VoxelRaycastResult = tool.raycast(
-			cart_x_minus_origin, Vector3.DOWN, 200.0)
-		var cart_x_plus_hit: VoxelRaycastResult = tool.raycast(
-			cart_x_plus_origin, Vector3.DOWN, 200.0)
-		var cart_z_minus_hit: VoxelRaycastResult = tool.raycast(
-			cart_z_minus_origin, Vector3.DOWN, 200.0)
-		var cart_z_plus_hit: VoxelRaycastResult = tool.raycast(
-			cart_z_plus_origin, Vector3.DOWN, 200.0)
 		var base_x_minus_hit: VoxelRaycastResult = tool.raycast(
 			base_x_minus_origin, Vector3.DOWN, 200.0)
 		var base_x_plus_hit: VoxelRaycastResult = tool.raycast(
@@ -116,12 +101,7 @@ func _place_when_ground_exists() -> void:
 		var surfaces_ready := (
 			player_hit != null
 			and vehicle_hit != null
-			and cart_hit != null
 			and base_hit != null
-			and cart_x_minus_hit != null
-			and cart_x_plus_hit != null
-			and cart_z_minus_hit != null
-			and cart_z_plus_hit != null
 			and base_x_minus_hit != null
 			and base_x_plus_hit != null
 			and base_z_minus_hit != null
@@ -141,38 +121,6 @@ func _place_when_ground_exists() -> void:
 				vehicle_origin
 				+ Vector3.DOWN * vehicle_hit.distance
 				+ Vector3.UP * 0.52)
-			var cart_ground: Vector3 = (
-				cart_origin + Vector3.DOWN * cart_hit.distance
-			)
-			var cart_x_minus_ground: Vector3 = (
-				cart_x_minus_origin
-				+ Vector3.DOWN * cart_x_minus_hit.distance
-			)
-			var cart_x_plus_ground: Vector3 = (
-				cart_x_plus_origin
-				+ Vector3.DOWN * cart_x_plus_hit.distance
-			)
-			var cart_z_minus_ground: Vector3 = (
-				cart_z_minus_origin
-				+ Vector3.DOWN * cart_z_minus_hit.distance
-			)
-			var cart_z_plus_ground: Vector3 = (
-				cart_z_plus_origin
-				+ Vector3.DOWN * cart_z_plus_hit.distance
-			)
-			var cart_basis := GridSpawnUtil.terrain_basis(
-				cart_x_plus_ground - cart_x_minus_ground,
-				cart_z_plus_ground - cart_z_minus_ground
-			)
-			_cart.global_transform = GridSpawnUtil.transform_on_terrain(
-				cart_ground,
-				cart_basis,
-				CART_HEIGHT_OFFSET
-			)
-			_cart.linear_velocity = Vector3.ZERO
-			_cart.angular_velocity = Vector3.ZERO
-			_cart.call("sync_kernel_motion_from_mount")
-			_cart.freeze = false
 
 			var base_ground: Vector3 = (
 				base_origin + Vector3.DOWN * base_hit.distance
