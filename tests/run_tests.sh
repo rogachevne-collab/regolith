@@ -35,7 +35,8 @@ for path in "${SCENES[@]}"; do
 	code=$?
 	set -e
 
-	if [[ $code -eq 0 ]] && echo "$output" | grep -qE 'POC[0-9A-Z-]*: PASS'; then
+	if [[ $code -eq 0 ]] && echo "$output" | grep -qE \
+		'(POC[0-9A-Z-]*|PLAYER[0-9A-Z-]*|KERNEL[0-9A-Z-]*): PASS'; then
 		echo "PASS"
 		pass=$((pass + 1))
 	else

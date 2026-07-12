@@ -1,0 +1,65 @@
+[gd_resource type="Resource" script_class="ElementArchetype" format=3]
+
+[ext_resource type="Script" path="res://scripts/simulation/resources/build_requirement.gd" id="1_vn13f"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/collider_definition.gd" id="2_tkxy8"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/port_definition.gd" id="3_y34lf"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/element_archetype.gd" id="4_dde6h"]
+
+[sub_resource type="Resource" id="Resource_4orsx"]
+script = ExtResource("1_vn13f")
+resource_id = "construction_component"
+
+[sub_resource type="Resource" id="Resource_kjr4j"]
+script = ExtResource("2_tkxy8")
+
+[sub_resource type="Resource" id="Resource_kphv1"]
+script = ExtResource("3_y34lf")
+port_id = "structural_0_0_0_px"
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_5mvr5"]
+script = ExtResource("3_y34lf")
+port_id = "structural_0_0_0_nx"
+local_face = 1
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_kg8yg"]
+script = ExtResource("3_y34lf")
+port_id = "structural_0_0_0_py"
+local_face = 2
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_gu7q6"]
+script = ExtResource("3_y34lf")
+port_id = "structural_0_0_0_ny"
+local_face = 3
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_ov1np"]
+script = ExtResource("3_y34lf")
+port_id = "structural_0_0_0_pz"
+local_face = 4
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_3rlf3"]
+script = ExtResource("3_y34lf")
+port_id = "structural_0_0_0_nz"
+local_face = 5
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_f2hpt"]
+script = ExtResource("3_y34lf")
+port_id = "cargo_in"
+kind = 7
+local_face = 2
+compatibility_tags = PackedStringArray("cargo")
+
+[resource]
+script = ExtResource("4_dde6h")
+archetype_id = "cargo_store"
+display_name = "Cargo Store"
+roles = PackedStringArray("CargoHold")
+mass_kg = 90.0
+colliders = Array[ExtResource("2_tkxy8")]([SubResource("Resource_kjr4j")])
+ports = Array[ExtResource("3_y34lf")]([SubResource("Resource_kphv1"), SubResource("Resource_5mvr5"), SubResource("Resource_kg8yg"), SubResource("Resource_gu7q6"), SubResource("Resource_ov1np"), SubResource("Resource_3rlf3"), SubResource("Resource_f2hpt")])
+build_requirements = Array[ExtResource("1_vn13f")]([SubResource("Resource_4orsx")])

@@ -105,11 +105,19 @@ Element {
   id
   archetype
   local_pose
-  mass
-  collider
+  build_progress
   integrity
   condition
+}
+
+ElementArchetype {
+  id
+  roles[]
+  mass
+  colliders[]
+  max_integrity
   ports[]
+  build_requirements[]
 }
 ```
 
@@ -120,6 +128,8 @@ Element {
 - `Source` — генератор или аккумулятор;
 - `Tank` — жидкость, газ, энергия;
 - `CargoHold` — твёрдый или сыпучий груз;
+- `Processor` — преобразование ресурсов по Recipe;
+- `Fabricator` — изготовление дискретных компонентов по Recipe;
 - `Actuator` — сила или момент;
 - `Tool` — воздействие на внешний мир;
 - `Support` — колесо, нога, гусеница;
@@ -128,6 +138,17 @@ Element {
 
 Роль является возможностью, а не закрытой иерархией: один элемент может совмещать
 несколько ролей.
+
+`ElementArchetype` — data-driven определение неизменяемых параметров типа элемента.
+`colliders[]` является typed compound collider: каждый multi-cell footprint cell
+имеет физическое покрытие. `build_requirements[]` — typed bill of materials из
+`resource_id` и положительного `amount`. Экземпляр хранит ссылку на archetype и
+runtime-состояние. Первый обязательный компонент bill of materials расходуется при
+placement; остальные переносятся в каркас командой `weld`.
+
+Archetype `.tres` являются hand-authored source definitions и единственным
+источником их параметров; GDScript не дублирует их factory-значения. Bake-процесс
+применяется к visual Blueprint authoring, но не к archetypes.
 
 ### Port
 
@@ -401,6 +422,47 @@ Binding {
 
 Blueprint является форматом сохранения, обмена и пересборки. Runtime-состояние
 (повреждение, ресурсы, позы тел) хранится отдельно.
+
+В Kernel v0 Blueprint — typed `Resource` с sorted `BlueprintElementPlacement[]`.
+Visual authoring scene выпекает deterministic `.tres`; runtime не читает
+authoring nodes. Подробности — `docs/specs/SIMULATION-KERNEL-V0.md`.
+
+`BlueprintElementPlacement.local_id` уникален только внутри Blueprint и служит
+ссылкой authoring/bake. Каждый spawn Blueprint в `SimulationWorld` выделяет новые
+глобально уникальные persistent `ElementId` и сохраняет mapping
+`local_id → ElementId`. Два экземпляра одного Blueprint не разделяют `ElementId`.
+
+### Identity и topology (Kernel v0)
+
+Доменные ссылки не используют Godot `NodePath`, `RID` или `instance_id`.
+
+| ID | Постоянство | Назначение |
+|---|---|---|
+| `ElementId` | persistent | элемент внутри Assembly |
+| `AssemblyId` | persistent | владеет элементами, joints, revision |
+| Body/projection id | transient | Jolt compound body; пересоздаётся из snapshot |
+
+Placement использует integer grid **1 m** и `orientation_index` из **24**
+ортогональных кубических ориентаций. Один элемент может занимать несколько cells
+через `footprint_cells` archetype.
+
+`orientation_index = 0` — точный identity. Остальные индексы следуют стабильной
+канонической таблице right-handed integer Basis с determinant `+1`.
+
+Жёсткая связь (`Rigid`) возникает только между совместимыми mechanical
+structural faces на соседних cells. В v0 runtime компилирует только `Rigid` и
+`Anchor`; остальные joint kinds — schema placeholders.
+
+При split disconnected component становится отдельной Assembly. Автоматический
+survivor выбирается как `Anchor → element count → dry mass → lowest ElementId
+в компоненте`. Компоненты split происходят из одной Assembly, поэтому
+`AssemblyId` не различает финальную ничью.
+
+Merge использует `Anchor → element count → dry mass → lowest AssemblyId`; loser
+получает tombstone/redirect. Relative grid transform выводится только из
+authoritative grid frames обеих Assembly, а A/B command endpoints не зависят от
+того, какая сторона станет survivor. При merge двух anchored Assembly Anchor
+проигравшей стороны автоматически удаляется.
 
 ## Прочность, разрушение и ремонт
 

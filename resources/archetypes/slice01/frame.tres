@@ -1,0 +1,58 @@
+[gd_resource type="Resource" script_class="ElementArchetype" format=3]
+
+[ext_resource type="Script" path="res://scripts/simulation/resources/build_requirement.gd" id="1_ts8i3"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/collider_definition.gd" id="2_cijrg"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/port_definition.gd" id="3_b10q6"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/element_archetype.gd" id="4_4mnc2"]
+
+[sub_resource type="Resource" id="Resource_pgwiu"]
+script = ExtResource("1_ts8i3")
+resource_id = "construction_component"
+
+[sub_resource type="Resource" id="Resource_rbwyb"]
+script = ExtResource("2_cijrg")
+
+[sub_resource type="Resource" id="Resource_c4y2k"]
+script = ExtResource("3_b10q6")
+port_id = "structural_0_0_0_px"
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_xbcti"]
+script = ExtResource("3_b10q6")
+port_id = "structural_0_0_0_nx"
+local_face = 1
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_yb0sy"]
+script = ExtResource("3_b10q6")
+port_id = "structural_0_0_0_py"
+local_face = 2
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_ab57w"]
+script = ExtResource("3_b10q6")
+port_id = "structural_0_0_0_ny"
+local_face = 3
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_nwgrt"]
+script = ExtResource("3_b10q6")
+port_id = "structural_0_0_0_pz"
+local_face = 4
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_dv0sc"]
+script = ExtResource("3_b10q6")
+port_id = "structural_0_0_0_nz"
+local_face = 5
+compatibility_tags = PackedStringArray("structural")
+
+[resource]
+script = ExtResource("4_4mnc2")
+archetype_id = "frame"
+display_name = "Frame"
+roles = PackedStringArray("Frame")
+mass_kg = 50.0
+colliders = Array[ExtResource("2_cijrg")]([SubResource("Resource_rbwyb")])
+ports = Array[ExtResource("3_b10q6")]([SubResource("Resource_c4y2k"), SubResource("Resource_xbcti"), SubResource("Resource_yb0sy"), SubResource("Resource_ab57w"), SubResource("Resource_nwgrt"), SubResource("Resource_dv0sc")])
+build_requirements = Array[ExtResource("1_ts8i3")]([SubResource("Resource_pgwiu")])

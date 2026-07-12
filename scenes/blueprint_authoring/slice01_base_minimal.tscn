@@ -1,0 +1,63 @@
+[gd_scene load_steps=11 format=3]
+
+[ext_resource type="Script" path="res://scripts/authoring/blueprint_authoring_root.gd" id="1_root"]
+[ext_resource type="Script" path="res://scripts/authoring/element_marker.gd" id="2_marker"]
+[ext_resource type="Resource" path="res://resources/archetypes/slice01/foundation.tres" id="3_foundation"]
+[ext_resource type="Resource" path="res://resources/archetypes/slice01/frame.tres" id="4_frame"]
+[ext_resource type="Resource" path="res://resources/archetypes/slice01/frame_beam.tres" id="5_beam"]
+[ext_resource type="Resource" path="res://resources/archetypes/slice01/power_source.tres" id="6_power"]
+[ext_resource type="Resource" path="res://resources/archetypes/slice01/stationary_drill.tres" id="7_drill"]
+[ext_resource type="Resource" path="res://resources/archetypes/slice01/cargo_store.tres" id="8_store"]
+[ext_resource type="Resource" path="res://resources/archetypes/slice01/processor.tres" id="9_processor"]
+[ext_resource type="Resource" path="res://resources/archetypes/slice01/fabricator.tres" id="10_fabricator"]
+
+[node name="Slice01BaseAuthoring" type="Node3D"]
+script = ExtResource("1_root")
+blueprint_id = "slice01_base_minimal"
+
+[node name="Foundation" type="Node3D" parent="."]
+script = ExtResource("2_marker")
+local_id = "foundation_0"
+archetype = ExtResource("3_foundation")
+
+[node name="FrameA" type="Node3D" parent="."]
+position = Vector3(1, 0, 0)
+script = ExtResource("2_marker")
+local_id = "frame_a"
+archetype = ExtResource("4_frame")
+
+[node name="Beam" type="Node3D" parent="."]
+position = Vector3(2, 0, 0)
+script = ExtResource("2_marker")
+local_id = "beam_0"
+archetype = ExtResource("5_beam")
+
+[node name="Power" type="Node3D" parent="."]
+position = Vector3(4, 0, 0)
+script = ExtResource("2_marker")
+local_id = "power_0"
+archetype = ExtResource("6_power")
+
+[node name="Drill" type="Node3D" parent="."]
+position = Vector3(5, 0, 0)
+script = ExtResource("2_marker")
+local_id = "drill_0"
+archetype = ExtResource("7_drill")
+
+[node name="Store" type="Node3D" parent="."]
+position = Vector3(6, 0, 0)
+script = ExtResource("2_marker")
+local_id = "store_0"
+archetype = ExtResource("8_store")
+
+[node name="Processor" type="Node3D" parent="."]
+position = Vector3(7, 0, 0)
+script = ExtResource("2_marker")
+local_id = "processor_0"
+archetype = ExtResource("9_processor")
+
+[node name="Fabricator" type="Node3D" parent="."]
+position = Vector3(8, 0, 0)
+script = ExtResource("2_marker")
+local_id = "fabricator_0"
+archetype = ExtResource("10_fabricator")

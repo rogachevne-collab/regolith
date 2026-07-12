@@ -1,0 +1,72 @@
+[gd_resource type="Resource" script_class="ElementArchetype" format=3]
+
+[ext_resource type="Script" path="res://scripts/simulation/resources/build_requirement.gd" id="1_etio4"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/collider_definition.gd" id="2_pjlip"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/port_definition.gd" id="3_4tj15"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/element_archetype.gd" id="4_nghp0"]
+
+[sub_resource type="Resource" id="Resource_ydh1i"]
+script = ExtResource("1_etio4")
+resource_id = "construction_component"
+
+[sub_resource type="Resource" id="Resource_18xak"]
+script = ExtResource("2_pjlip")
+
+[sub_resource type="Resource" id="Resource_658ob"]
+script = ExtResource("3_4tj15")
+port_id = "structural_0_0_0_px"
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_uitk2"]
+script = ExtResource("3_4tj15")
+port_id = "structural_0_0_0_nx"
+local_face = 1
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_hrxqq"]
+script = ExtResource("3_4tj15")
+port_id = "structural_0_0_0_py"
+local_face = 2
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_xjwsv"]
+script = ExtResource("3_4tj15")
+port_id = "structural_0_0_0_ny"
+local_face = 3
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_d7o7r"]
+script = ExtResource("3_4tj15")
+port_id = "structural_0_0_0_pz"
+local_face = 4
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_svr4w"]
+script = ExtResource("3_4tj15")
+port_id = "structural_0_0_0_nz"
+local_face = 5
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_ewvaf"]
+script = ExtResource("3_4tj15")
+port_id = "power_in"
+kind = 1
+local_face = 5
+compatibility_tags = PackedStringArray("electric")
+
+[sub_resource type="Resource" id="Resource_ccucd"]
+script = ExtResource("3_4tj15")
+port_id = "cargo_io"
+kind = 7
+local_face = 4
+compatibility_tags = PackedStringArray("cargo")
+
+[resource]
+script = ExtResource("4_nghp0")
+archetype_id = "processor"
+display_name = "Processor"
+roles = PackedStringArray("Processor")
+mass_kg = 140.0
+colliders = Array[ExtResource("2_pjlip")]([SubResource("Resource_18xak")])
+ports = Array[ExtResource("3_4tj15")]([SubResource("Resource_658ob"), SubResource("Resource_uitk2"), SubResource("Resource_hrxqq"), SubResource("Resource_xjwsv"), SubResource("Resource_d7o7r"), SubResource("Resource_svr4w"), SubResource("Resource_ewvaf"), SubResource("Resource_ccucd")])
+build_requirements = Array[ExtResource("1_etio4")]([SubResource("Resource_ydh1i")])

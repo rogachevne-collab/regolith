@@ -1,0 +1,65 @@
+[gd_resource type="Resource" script_class="ElementArchetype" format=3]
+
+[ext_resource type="Script" path="res://scripts/simulation/resources/build_requirement.gd" id="1_6gdnq"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/collider_definition.gd" id="2_4eu8i"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/port_definition.gd" id="3_goxuj"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/element_archetype.gd" id="4_7fdws"]
+
+[sub_resource type="Resource" id="Resource_oj805"]
+script = ExtResource("1_6gdnq")
+resource_id = "construction_component"
+
+[sub_resource type="Resource" id="Resource_dquup"]
+script = ExtResource("2_4eu8i")
+
+[sub_resource type="Resource" id="Resource_f8tj1"]
+script = ExtResource("3_goxuj")
+port_id = "structural_0_0_0_px"
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_jmwco"]
+script = ExtResource("3_goxuj")
+port_id = "structural_0_0_0_nx"
+local_face = 1
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_853ru"]
+script = ExtResource("3_goxuj")
+port_id = "structural_0_0_0_py"
+local_face = 2
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_m03ji"]
+script = ExtResource("3_goxuj")
+port_id = "structural_0_0_0_ny"
+local_face = 3
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_j707v"]
+script = ExtResource("3_goxuj")
+port_id = "structural_0_0_0_pz"
+local_face = 4
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_admxf"]
+script = ExtResource("3_goxuj")
+port_id = "structural_0_0_0_nz"
+local_face = 5
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_t788f"]
+script = ExtResource("3_goxuj")
+port_id = "power_out"
+kind = 1
+local_face = 4
+compatibility_tags = PackedStringArray("electric")
+
+[resource]
+script = ExtResource("4_7fdws")
+archetype_id = "power_source"
+display_name = "Power Source"
+roles = PackedStringArray("Source")
+mass_kg = 120.0
+colliders = Array[ExtResource("2_4eu8i")]([SubResource("Resource_dquup")])
+ports = Array[ExtResource("3_goxuj")]([SubResource("Resource_f8tj1"), SubResource("Resource_jmwco"), SubResource("Resource_853ru"), SubResource("Resource_m03ji"), SubResource("Resource_j707v"), SubResource("Resource_admxf"), SubResource("Resource_t788f")])
+build_requirements = Array[ExtResource("1_6gdnq")]([SubResource("Resource_oj805")])

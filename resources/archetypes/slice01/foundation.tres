@@ -1,0 +1,65 @@
+[gd_resource type="Resource" script_class="ElementArchetype" format=3]
+
+[ext_resource type="Script" path="res://scripts/simulation/resources/build_requirement.gd" id="1_1s8sh"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/collider_definition.gd" id="2_q8h6c"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/port_definition.gd" id="3_2vxhp"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/element_archetype.gd" id="4_h0tlh"]
+
+[sub_resource type="Resource" id="Resource_hwuru"]
+script = ExtResource("1_1s8sh")
+resource_id = "construction_component"
+
+[sub_resource type="Resource" id="Resource_vwuse"]
+script = ExtResource("2_q8h6c")
+
+[sub_resource type="Resource" id="Resource_etxjy"]
+script = ExtResource("3_2vxhp")
+port_id = "structural_0_0_0_px"
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_crdr1"]
+script = ExtResource("3_2vxhp")
+port_id = "structural_0_0_0_nx"
+local_face = 1
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_v1h32"]
+script = ExtResource("3_2vxhp")
+port_id = "structural_0_0_0_py"
+local_face = 2
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_qv03o"]
+script = ExtResource("3_2vxhp")
+port_id = "structural_0_0_0_ny"
+local_face = 3
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_lma0m"]
+script = ExtResource("3_2vxhp")
+port_id = "structural_0_0_0_pz"
+local_face = 4
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_y33sh"]
+script = ExtResource("3_2vxhp")
+port_id = "structural_0_0_0_nz"
+local_face = 5
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_ndvc1"]
+script = ExtResource("3_2vxhp")
+port_id = "anchor"
+local_face = 3
+face_slot = 1
+compatibility_tags = PackedStringArray("anchor")
+
+[resource]
+script = ExtResource("4_h0tlh")
+archetype_id = "foundation"
+display_name = "Foundation"
+roles = PackedStringArray("Frame")
+mass_kg = 500.0
+colliders = Array[ExtResource("2_q8h6c")]([SubResource("Resource_vwuse")])
+ports = Array[ExtResource("3_2vxhp")]([SubResource("Resource_etxjy"), SubResource("Resource_crdr1"), SubResource("Resource_v1h32"), SubResource("Resource_qv03o"), SubResource("Resource_lma0m"), SubResource("Resource_y33sh"), SubResource("Resource_ndvc1")])
+build_requirements = Array[ExtResource("1_1s8sh")]([SubResource("Resource_hwuru")])

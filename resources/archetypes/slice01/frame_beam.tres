@@ -1,0 +1,92 @@
+[gd_resource type="Resource" script_class="ElementArchetype" format=3]
+
+[ext_resource type="Script" path="res://scripts/simulation/resources/build_requirement.gd" id="1_bqi76"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/collider_definition.gd" id="2_qif3d"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/port_definition.gd" id="3_pd2qn"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/element_archetype.gd" id="4_jb1nm"]
+
+[sub_resource type="Resource" id="Resource_coyyg"]
+script = ExtResource("1_bqi76")
+resource_id = "construction_component"
+
+[sub_resource type="Resource" id="Resource_da4iy"]
+script = ExtResource("2_qif3d")
+
+[sub_resource type="Resource" id="Resource_kh08h"]
+script = ExtResource("2_qif3d")
+local_cell = Vector3i(1, 0, 0)
+
+[sub_resource type="Resource" id="Resource_wm0sm"]
+script = ExtResource("3_pd2qn")
+port_id = "structural_0_0_0_nx"
+local_face = 1
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_vmwmm"]
+script = ExtResource("3_pd2qn")
+port_id = "structural_0_0_0_py"
+local_face = 2
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_6tcep"]
+script = ExtResource("3_pd2qn")
+port_id = "structural_0_0_0_ny"
+local_face = 3
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_pijmb"]
+script = ExtResource("3_pd2qn")
+port_id = "structural_0_0_0_pz"
+local_face = 4
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_yqmeo"]
+script = ExtResource("3_pd2qn")
+port_id = "structural_0_0_0_nz"
+local_face = 5
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_i21hu"]
+script = ExtResource("3_pd2qn")
+port_id = "structural_1_0_0_px"
+local_cell = Vector3i(1, 0, 0)
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_fbaap"]
+script = ExtResource("3_pd2qn")
+port_id = "structural_1_0_0_py"
+local_cell = Vector3i(1, 0, 0)
+local_face = 2
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_7tg4c"]
+script = ExtResource("3_pd2qn")
+port_id = "structural_1_0_0_ny"
+local_cell = Vector3i(1, 0, 0)
+local_face = 3
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_w1i6j"]
+script = ExtResource("3_pd2qn")
+port_id = "structural_1_0_0_pz"
+local_cell = Vector3i(1, 0, 0)
+local_face = 4
+compatibility_tags = PackedStringArray("structural")
+
+[sub_resource type="Resource" id="Resource_pxdo5"]
+script = ExtResource("3_pd2qn")
+port_id = "structural_1_0_0_nz"
+local_cell = Vector3i(1, 0, 0)
+local_face = 5
+compatibility_tags = PackedStringArray("structural")
+
+[resource]
+script = ExtResource("4_jb1nm")
+archetype_id = "frame_beam"
+display_name = "Frame Beam"
+roles = PackedStringArray("Frame")
+mass_kg = 100.0
+footprint_cells = Array[Vector3i]([Vector3i(0, 0, 0), Vector3i(1, 0, 0)])
+colliders = Array[ExtResource("2_qif3d")]([SubResource("Resource_da4iy"), SubResource("Resource_kh08h")])
+ports = Array[ExtResource("3_pd2qn")]([SubResource("Resource_wm0sm"), SubResource("Resource_vmwmm"), SubResource("Resource_6tcep"), SubResource("Resource_pijmb"), SubResource("Resource_yqmeo"), SubResource("Resource_i21hu"), SubResource("Resource_fbaap"), SubResource("Resource_7tg4c"), SubResource("Resource_w1i6j"), SubResource("Resource_pxdo5")])
+build_requirements = Array[ExtResource("1_bqi76")]([SubResource("Resource_coyyg")])

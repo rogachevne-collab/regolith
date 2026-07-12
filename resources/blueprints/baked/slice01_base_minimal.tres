@@ -1,0 +1,64 @@
+[gd_resource type="Resource" script_class="Blueprint" format=3]
+
+[ext_resource type="Script" path="res://scripts/simulation/resources/blueprint_element_placement.gd" id="1_kxpac"]
+[ext_resource type="Resource" path="res://resources/archetypes/slice01/foundation.tres" id="2_htm1a"]
+[ext_resource type="Resource" path="res://resources/archetypes/slice01/frame.tres" id="3_xp3p4"]
+[ext_resource type="Resource" path="res://resources/archetypes/slice01/frame_beam.tres" id="4_4mx1p"]
+[ext_resource type="Resource" path="res://resources/archetypes/slice01/power_source.tres" id="5_ockin"]
+[ext_resource type="Resource" path="res://resources/archetypes/slice01/stationary_drill.tres" id="6_8b38f"]
+[ext_resource type="Resource" path="res://resources/archetypes/slice01/cargo_store.tres" id="7_c0y8g"]
+[ext_resource type="Resource" path="res://resources/archetypes/slice01/processor.tres" id="8_pwyfv"]
+[ext_resource type="Resource" path="res://resources/archetypes/slice01/fabricator.tres" id="9_dpjla"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/blueprint.gd" id="10_dtdjy"]
+
+[sub_resource type="Resource" id="Resource_85ddk"]
+script = ExtResource("1_kxpac")
+local_id = "foundation_0"
+archetype = ExtResource("2_htm1a")
+
+[sub_resource type="Resource" id="Resource_1nyeu"]
+script = ExtResource("1_kxpac")
+local_id = "frame_a"
+archetype = ExtResource("3_xp3p4")
+origin_cell = Vector3i(1, 0, 0)
+
+[sub_resource type="Resource" id="Resource_ewb6q"]
+script = ExtResource("1_kxpac")
+local_id = "beam_0"
+archetype = ExtResource("4_4mx1p")
+origin_cell = Vector3i(2, 0, 0)
+
+[sub_resource type="Resource" id="Resource_u0m0n"]
+script = ExtResource("1_kxpac")
+local_id = "power_0"
+archetype = ExtResource("5_ockin")
+origin_cell = Vector3i(4, 0, 0)
+
+[sub_resource type="Resource" id="Resource_wuvqc"]
+script = ExtResource("1_kxpac")
+local_id = "drill_0"
+archetype = ExtResource("6_8b38f")
+origin_cell = Vector3i(5, 0, 0)
+
+[sub_resource type="Resource" id="Resource_vslyh"]
+script = ExtResource("1_kxpac")
+local_id = "store_0"
+archetype = ExtResource("7_c0y8g")
+origin_cell = Vector3i(6, 0, 0)
+
+[sub_resource type="Resource" id="Resource_7pj7t"]
+script = ExtResource("1_kxpac")
+local_id = "processor_0"
+archetype = ExtResource("8_pwyfv")
+origin_cell = Vector3i(7, 0, 0)
+
+[sub_resource type="Resource" id="Resource_3sn82"]
+script = ExtResource("1_kxpac")
+local_id = "fabricator_0"
+archetype = ExtResource("9_dpjla")
+origin_cell = Vector3i(8, 0, 0)
+
+[resource]
+script = ExtResource("10_dtdjy")
+blueprint_id = "slice01_base_minimal"
+placements = Array[ExtResource("1_kxpac")]([SubResource("Resource_85ddk"), SubResource("Resource_1nyeu"), SubResource("Resource_ewb6q"), SubResource("Resource_u0m0n"), SubResource("Resource_wuvqc"), SubResource("Resource_vslyh"), SubResource("Resource_7pj7t"), SubResource("Resource_3sn82")])

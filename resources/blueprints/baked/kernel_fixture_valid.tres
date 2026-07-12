@@ -1,0 +1,29 @@
+[gd_resource type="Resource" script_class="Blueprint" format=3]
+
+[ext_resource type="Script" path="res://scripts/simulation/resources/blueprint_element_placement.gd" id="1_bej37"]
+[ext_resource type="Resource" path="res://resources/archetypes/slice01/foundation.tres" id="2_otr36"]
+[ext_resource type="Resource" path="res://resources/archetypes/slice01/frame.tres" id="3_k7ly5"]
+[ext_resource type="Resource" path="res://resources/archetypes/slice01/frame_beam.tres" id="4_8qory"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/blueprint.gd" id="5_7mk2u"]
+
+[sub_resource type="Resource" id="Resource_vkvs6"]
+script = ExtResource("1_bej37")
+local_id = "foundation_0"
+archetype = ExtResource("2_otr36")
+
+[sub_resource type="Resource" id="Resource_oym4t"]
+script = ExtResource("1_bej37")
+local_id = "frame_0"
+archetype = ExtResource("3_k7ly5")
+origin_cell = Vector3i(1, 0, 0)
+
+[sub_resource type="Resource" id="Resource_g84w2"]
+script = ExtResource("1_bej37")
+local_id = "beam_0"
+archetype = ExtResource("4_8qory")
+origin_cell = Vector3i(2, 0, 0)
+
+[resource]
+script = ExtResource("5_7mk2u")
+blueprint_id = "kernel_fixture_valid"
+placements = Array[ExtResource("1_bej37")]([SubResource("Resource_vkvs6"), SubResource("Resource_oym4t"), SubResource("Resource_g84w2")])
