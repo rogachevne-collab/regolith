@@ -9,8 +9,9 @@
 [ext_resource type="PackedScene" uid="uid://b20u64sdjhmkg" path="res://resources/models/industrial_drill.glb" id="7_y4r1p"]
 [ext_resource type="Script" uid="uid://diyma885jcjsr" path="res://scripts/interaction_query.gd" id="8"]
 [ext_resource type="Script" uid="uid://b3mkkfnkg88fv" path="res://scripts/tool_controller.gd" id="9"]
-[ext_resource type="Script" path="res://scripts/interaction_feedback.gd" id="10"]
+[ext_resource type="PackedScene" uid="uid://c8hudroot0ui01" path="res://scenes/ui/hud_root.tscn" id="10"]
 [ext_resource type="Script" path="res://scripts/construction_preview.gd" id="11"]
+[ext_resource type="Script" path="res://scripts/suit_state.gd" id="12"]
 
 [sub_resource type="CylinderShape3D" id="CylinderShape_player"]
 height = 1.8
@@ -41,6 +42,17 @@ particles_anim_loop = false
 material = SubResource("StandardMaterial3D_sparks")
 size = Vector2(0.08, 0.08)
 
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_welder"]
+albedo_color = Color(0.28, 0.3, 0.34, 1)
+metallic = 0.72
+roughness = 0.38
+
+[sub_resource type="BoxMesh" id="BoxMesh_welder_grip"]
+size = Vector3(0.05, 0.08, 0.14)
+
+[sub_resource type="BoxMesh" id="BoxMesh_welder_nozzle"]
+size = Vector3(0.04, 0.04, 0.22)
+
 [sub_resource type="CapsuleMesh" id="CapsuleMesh_body"]
 radius = 0.35
 height = 1.8
@@ -64,9 +76,11 @@ script = ExtResource("8")
 
 [node name="ToolController" type="Node" parent="." unique_id=416839685]
 script = ExtResource("9")
+preview_path = NodePath("../ConstructionPreview")
 
 [node name="ConstructionPreview" type="Node3D" parent="."]
 script = ExtResource("11")
+camera_path = NodePath("../Camera")
 
 [node name="Camera" type="Camera3D" parent="." unique_id=1923783900]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.75, 0)
@@ -96,102 +110,27 @@ transform = Transform3D(2.5, 0, 0, 0, 2.5, 0, 0, 0, 2.5, 0, 0, 0.08)
 [node name="Model" parent="Camera/DrillVisual/Mount" unique_id=2115948937 instance=ExtResource("7_y4r1p")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.13855156)
 
+[node name="WelderVisual" type="Node3D" parent="Camera"]
+visible = false
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.28, -0.22, -0.45)
+
+[node name="Grip" type="MeshInstance3D" parent="Camera/WelderVisual"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.02, -0.03, -0.08)
+mesh = SubResource("BoxMesh_welder_grip")
+surface_material_override/0 = SubResource("StandardMaterial3D_welder")
+
+[node name="Nozzle" type="MeshInstance3D" parent="Camera/WelderVisual"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.02, 0.01, -0.24)
+mesh = SubResource("BoxMesh_welder_nozzle")
+surface_material_override/0 = SubResource("StandardMaterial3D_welder")
+
 [node name="Drill" type="Node" parent="." unique_id=1360361658]
 script = ExtResource("3")
 
-[node name="InteractionFeedback" type="CanvasLayer" parent="." unique_id=1966636571]
-layer = 5
-script = ExtResource("10")
+[node name="SuitState" type="Node" parent="."]
+script = ExtResource("12")
 
-[node name="Reticle" type="Label" parent="InteractionFeedback" unique_id=946283435]
-anchors_preset = 8
-anchor_left = 0.5
-anchor_top = 0.5
-anchor_right = 0.5
-anchor_bottom = 0.5
-offset_left = -12.0
-offset_top = -17.0
-offset_right = 12.0
-offset_bottom = 17.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.8)
-theme_override_constants/shadow_offset_x = 1
-theme_override_constants/shadow_offset_y = 1
-theme_override_font_sizes/font_size = 22
-text = "+"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="Prompt" type="Label" parent="InteractionFeedback" unique_id=1852617193]
-anchors_preset = 8
-anchor_left = 0.5
-anchor_top = 0.5
-anchor_right = 0.5
-anchor_bottom = 0.5
-offset_left = -260.0
-offset_top = 34.0
-offset_right = 260.0
-offset_bottom = 68.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_colors/font_color = Color(0.82, 0.94, 1, 0.95)
-theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.9)
-theme_override_constants/shadow_offset_x = 1
-theme_override_constants/shadow_offset_y = 1
-theme_override_font_sizes/font_size = 18
-horizontal_alignment = 1
-
-[node name="Progress" type="ProgressBar" parent="InteractionFeedback" unique_id=556321824]
-anchors_preset = 8
-anchor_left = 0.5
-anchor_top = 0.5
-anchor_right = 0.5
-anchor_bottom = 0.5
-offset_left = -110.0
-offset_top = 72.0
-offset_right = 110.0
-offset_bottom = 82.0
-grow_horizontal = 2
-grow_vertical = 2
-show_percentage = false
-
-[node name="Result" type="Label" parent="InteractionFeedback" unique_id=1930008058]
-anchors_preset = 8
-anchor_left = 0.5
-anchor_top = 0.5
-anchor_right = 0.5
-anchor_bottom = 0.5
-offset_left = -200.0
-offset_top = 92.0
-offset_right = 200.0
-offset_bottom = 124.0
-grow_horizontal = 2
-grow_vertical = 2
-theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.9)
-theme_override_constants/shadow_offset_x = 1
-theme_override_constants/shadow_offset_y = 1
-theme_override_font_sizes/font_size = 17
-horizontal_alignment = 1
-
-[node name="Construction" type="Label" parent="InteractionFeedback"]
-anchors_preset = 7
-anchor_left = 0.5
-anchor_top = 1.0
-anchor_right = 0.5
-anchor_bottom = 1.0
-offset_left = -360.0
-offset_top = -58.0
-offset_right = 360.0
-offset_bottom = -22.0
-grow_horizontal = 2
-grow_vertical = 0
-theme_override_colors/font_color = Color(0.72, 0.9, 1, 0.92)
-theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.9)
-theme_override_constants/shadow_offset_x = 1
-theme_override_constants/shadow_offset_y = 1
-theme_override_font_sizes/font_size = 16
-horizontal_alignment = 1
+[node name="HUDRoot" parent="." instance=ExtResource("10")]
 
 [node name="SettingsOverlay" type="CanvasLayer" parent="." unique_id=70838383]
 layer = 10
