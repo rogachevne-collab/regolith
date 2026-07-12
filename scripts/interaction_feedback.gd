@@ -64,9 +64,9 @@ func _prompt_for(hit: InteractionHit) -> String:
 	):
 		if _tool_controller.selected_archetype_id == "foundation":
 			return (
-				"ЛКМ — бурить  ·  ПКМ — поставить foundation"
+				"ЛКМ — бурить  ·  ПКМ/F — поставить foundation"
 				if hit.distance <= 2.2
-				else "ПКМ — поставить foundation"
+				else "ПКМ/F — поставить foundation"
 			)
 		return (
 			"ЛКМ — бурить  ·  1 — foundation для новой базы"
@@ -81,10 +81,10 @@ func _prompt_for(hit: InteractionHit) -> String:
 			hit.metadata.get("status_reason", &"element_incomplete")
 		)
 		if status == &"element_broken" or status == &"damaged":
-			return "ПКМ — ремонт  ·  X — демонтаж"
+			return "ПКМ/F — ремонт  ·  X — демонтаж"
 		if status == &"element_incomplete":
-			return "Удерживать ПКМ — сварка  ·  X — демонтаж"
-		return "ПКМ — поставить %s  ·  X — демонтаж" % (
+			return "Удерживать ПКМ/F — сварка  ·  X — демонтаж"
+		return "ПКМ/F — поставить %s  ·  X — демонтаж" % (
 			_tool_controller.selected_archetype_id
 		)
 	if hit.distance <= 4.0:

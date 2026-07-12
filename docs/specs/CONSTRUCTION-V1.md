@@ -138,7 +138,7 @@ Input Map
 
 - `1..8` — foundation/frame/beam/power/drill/store/processor/fabricator;
 - `C` — поворот выбранного элемента вокруг локальной оси Y;
-- `ПКМ` — context action: foundation на terrain, placement рядом с готовым
+- `ПКМ` или клавиша `F` — context action: foundation на terrain, placement рядом с готовым
   элементом, weld незавершённого, repair повреждённого;
 - `X` — dismantle выбранного элемента;
 - `ЛКМ` сохраняет ручной voxel drill.
