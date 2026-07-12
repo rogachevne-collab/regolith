@@ -5,6 +5,7 @@ const SPAWN_CLEARANCE := 1.05
 const MIN_WARMUP_FRAMES := 30
 const STABLE_PHYSICS_FRAMES := 4
 const CART_HEIGHT_OFFSET := 1.22
+const STARTER_CONSTRUCTION_COMPONENTS := 120.0
 
 @onready var _terrain: VoxelTerrain = $VoxelTerrain
 @onready var _player: Node3D = $Player
@@ -22,6 +23,11 @@ var _player_spawn_pos := Vector3.ZERO
 
 
 func _ready() -> void:
+	_session.world.set_resource_amount(
+		"player",
+		"construction_component",
+		STARTER_CONSTRUCTION_COMPONENTS
+	)
 	_loading.visible = true
 	_cart.freeze = true
 	_player_spawn_xz = Vector2(_player.global_position.x, _player.global_position.z)

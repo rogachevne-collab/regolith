@@ -15,6 +15,14 @@ const REASON_INVALID_TRANSFORM := &"invalid_transform"
 const REASON_INVALID_BLUEPRINT := &"invalid_blueprint"
 const REASON_ARCHETYPE_CONFLICT := &"archetype_conflict"
 const REASON_INVALID_COMMAND_ID := &"invalid_command_id"
+const REASON_INSUFFICIENT_MATERIAL := &"insufficient_material"
+const REASON_ALREADY_COMPLETE := &"already_complete"
+const REASON_NOT_DAMAGED := &"not_damaged"
+const REASON_ELEMENT_INCOMPLETE := &"element_incomplete"
+const REASON_ELEMENT_BROKEN := &"element_broken"
+const REASON_ANCHOR_REQUIRED := &"anchor_required"
+const REASON_ANCHOR_NOT_ALLOWED := &"anchor_not_allowed"
+const REASON_NO_EFFECT := &"no_effect"
 
 var status: StringName = STATUS_FAILED
 var reason: StringName = REASON_INVALID_TARGET

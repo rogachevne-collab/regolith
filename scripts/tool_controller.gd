@@ -7,6 +7,10 @@ signal state_changed(
 	progress: float
 )
 signal command_requested(command: Dictionary)
+signal construction_selection_changed(
+	archetype_id: String,
+	orientation_index: int
+)
 
 enum ActionState {
 	IDLE,
@@ -27,9 +31,9 @@ const ACTIONS := {
 		"continuous": true,
 	},
 	&"tool_secondary": {
-		"command": &"place_block",
+		"command": &"construction_apply",
 		"max_range": 4.0,
-		"interval": 0.12,
+		"interval": 0.22,
 		"continuous": true,
 	},
 	&"interact": {
@@ -38,16 +42,38 @@ const ACTIONS := {
 		"interval": 0.0,
 		"continuous": false,
 	},
+	&"construction_dismantle": {
+		"command": &"dismantle_element",
+		"max_range": 4.0,
+		"interval": 0.0,
+		"continuous": false,
+	},
 }
+
+const CONSTRUCTION_ARCHETYPES: PackedStringArray = [
+	"foundation",
+	"frame",
+	"frame_beam",
+	"power_source",
+	"stationary_drill",
+	"cargo_store",
+	"processor",
+	"fabricator",
+]
 
 var state := ActionState.IDLE
 var active_action := StringName()
 var progress := 0.0
+var selected_archetype_id := "frame"
+var selected_orientation_index := 0
 
 var _query: InteractionQuery
 var _gateway: WorldCommandGateway
 var _cooldown := 0.0
 var _issued_for_press := false
+var _construction_yaw_step := 0
+var _locked_hit: InteractionHit
+var _construction_mode := &"context"
 
 
 func _ready() -> void:
@@ -65,6 +91,11 @@ func _physics_process(delta: float) -> void:
 	):
 		cancel()
 		return
+	if not (
+		player.has_method("is_in_vehicle")
+		and player.call("is_in_vehicle")
+	):
+		_update_construction_selection()
 	var requested_action := _pressed_action()
 	if requested_action.is_empty():
 		if state == ActionState.PRESSED or state == ActionState.HOLDING:
@@ -74,6 +105,8 @@ func _physics_process(delta: float) -> void:
 		active_action = StringName()
 		progress = 0.0
 		_issued_for_press = false
+		_locked_hit = null
+		_construction_mode = &"context"
 		return
 
 	if active_action != requested_action:
@@ -81,15 +114,42 @@ func _physics_process(delta: float) -> void:
 		progress = 0.0
 		_cooldown = 0.0
 		_issued_for_press = false
+		_locked_hit = (
+			_query.current_hit
+			if requested_action == &"tool_secondary"
+			or requested_action == &"construction_dismantle"
+			else null
+		)
+		_construction_mode = _resolve_construction_mode(
+			_locked_hit
+		)
 		_transition(ActionState.PRESSED)
 
 	var profile: Dictionary = ACTIONS[active_action]
-	var hit := _target_for_action(active_action)
+	var hit := (
+		_locked_hit
+		if _locked_hit != null
+		else _target_for_action(active_action)
+	)
+	if (
+		_locked_hit != null
+		and _issued_for_press
+		and not _live_target_matches_lock(profile)
+	):
+		_transition(ActionState.CANCELLED)
+		progress = 0.0
+		return
 	if not hit.valid or hit.distance > float(profile["max_range"]):
 		_transition(ActionState.CANCELLED)
 		progress = 0.0
 		return
-	if _issued_for_press and not bool(profile["continuous"]):
+	var continuous := bool(profile["continuous"])
+	if (
+		active_action == &"tool_secondary"
+		and _construction_mode == &"place"
+	):
+		continuous = false
+	if _issued_for_press and not continuous:
 		return
 
 	_transition(ActionState.HOLDING)
@@ -107,7 +167,11 @@ func _physics_process(delta: float) -> void:
 		"kind": profile["command"],
 		"source": get_parent(),
 		"target": hit.snapshot(),
-		"parameters": {},
+		"parameters": {
+			"archetype_id": selected_archetype_id,
+			"orientation_index": selected_orientation_index,
+			"construction_mode": _construction_mode,
+		},
 	})
 	_issued_for_press = true
 	_transition(ActionState.COMPLETED)
@@ -122,6 +186,8 @@ func cancel() -> void:
 	progress = 0.0
 	_cooldown = 0.0
 	_issued_for_press = false
+	_locked_hit = null
+	_construction_mode = &"context"
 
 
 func _pressed_action() -> StringName:
@@ -135,6 +201,57 @@ func _pressed_action() -> StringName:
 		if Input.is_action_pressed(action):
 			return action
 	return StringName()
+
+
+func _update_construction_selection() -> void:
+	for index: int in range(CONSTRUCTION_ARCHETYPES.size()):
+		var action := StringName("construction_slot_%d" % [index + 1])
+		if Input.is_action_just_pressed(action):
+			selected_archetype_id = CONSTRUCTION_ARCHETYPES[index]
+			construction_selection_changed.emit(
+				selected_archetype_id,
+				selected_orientation_index
+			)
+	if Input.is_action_just_pressed(&"construction_rotate"):
+		_construction_yaw_step = (_construction_yaw_step + 1) % 4
+		selected_orientation_index = _yaw_orientation_index(
+			_construction_yaw_step
+		)
+		construction_selection_changed.emit(
+			selected_archetype_id,
+			selected_orientation_index
+		)
+
+
+func _yaw_orientation_index(step: int) -> int:
+	var target := Basis(Vector3.UP, float(step) * PI * 0.5)
+	for index: int in range(OrientationUtil.ORIENTATION_COUNT):
+		if OrientationUtil.orientation_basis(index).is_equal_approx(target):
+			return index
+	return 0
+
+
+func _resolve_construction_mode(hit: InteractionHit) -> StringName:
+	if hit == null or hit.target_kind != InteractionHit.KIND_SIMULATION_ELEMENT:
+		return &"place"
+	var status := StringName(
+		hit.metadata.get("status_reason", &"element_incomplete")
+	)
+	if status == &"element_incomplete":
+		return &"weld"
+	if status == &"element_broken" or status == &"damaged":
+		return &"repair"
+	return &"place"
+
+
+func _live_target_matches_lock(profile: Dictionary) -> bool:
+	var live := _query.current_hit
+	return (
+		live.valid
+		and live.distance <= float(profile["max_range"])
+		and live.target_kind == _locked_hit.target_kind
+		and live.target_id == _locked_hit.target_id
+	)
 
 
 func _target_for_action(action: StringName) -> InteractionHit:

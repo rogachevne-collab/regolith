@@ -8,6 +8,7 @@
 [sub_resource type="Resource" id="Resource_ukuph"]
 script = ExtResource("1_20tgf")
 resource_id = "construction_component"
+amount = 10.0
 
 [sub_resource type="Resource" id="Resource_31e42"]
 script = ExtResource("2_hlghb")

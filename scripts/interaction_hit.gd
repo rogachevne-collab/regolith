@@ -6,6 +6,7 @@ const KIND_VOXEL := &"voxel"
 const KIND_BODY := &"body"
 const KIND_PLACED_BLOCK := &"placed_block"
 const KIND_CONTROL_SEAT := &"control_seat"
+const KIND_SIMULATION_ELEMENT := &"simulation_element"
 
 var valid := false
 var point := Vector3.ZERO

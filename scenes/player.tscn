@@ -10,6 +10,7 @@
 [ext_resource type="Script" uid="uid://diyma885jcjsr" path="res://scripts/interaction_query.gd" id="8"]
 [ext_resource type="Script" uid="uid://b3mkkfnkg88fv" path="res://scripts/tool_controller.gd" id="9"]
 [ext_resource type="Script" path="res://scripts/interaction_feedback.gd" id="10"]
+[ext_resource type="Script" path="res://scripts/construction_preview.gd" id="11"]
 
 [sub_resource type="CylinderShape3D" id="CylinderShape_player"]
 height = 1.8
@@ -63,6 +64,9 @@ script = ExtResource("8")
 
 [node name="ToolController" type="Node" parent="." unique_id=416839685]
 script = ExtResource("9")
+
+[node name="ConstructionPreview" type="Node3D" parent="."]
+script = ExtResource("11")
 
 [node name="Camera" type="Camera3D" parent="." unique_id=1923783900]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.75, 0)
@@ -168,6 +172,25 @@ theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.9)
 theme_override_constants/shadow_offset_x = 1
 theme_override_constants/shadow_offset_y = 1
 theme_override_font_sizes/font_size = 17
+horizontal_alignment = 1
+
+[node name="Construction" type="Label" parent="InteractionFeedback"]
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -360.0
+offset_top = -58.0
+offset_right = 360.0
+offset_bottom = -22.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.72, 0.9, 1, 0.92)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.9)
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 1
+theme_override_font_sizes/font_size = 16
 horizontal_alignment = 1
 
 [node name="SettingsOverlay" type="CanvasLayer" parent="." unique_id=70838383]

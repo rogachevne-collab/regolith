@@ -126,6 +126,8 @@ Element {
   build_progress
   integrity
   condition
+  state_revision
+  installed_materials{resource_id: amount}
 }
 
 ElementArchetype {
@@ -163,6 +165,12 @@ ElementArchetype {
 `resource_id` и положительного `amount`. Экземпляр хранит ссылку на archetype и
 runtime-состояние. Первый обязательный компонент bill of materials расходуется при
 placement; остальные переносятся в каркас командой `weld`.
+
+Construction v1 использует simulation-owned `ResourceStore`: `place`, `weld` и
+`repair` атомарно списывают материал, `dismantle` возвращает заданную долю.
+`installed_materials` является учётом фактически внесённого BOM, а
+`build_progress` — его нормализованной долей. Topology-команды меняют revision
+Assembly; `weld`, `damage` и `repair` меняют отдельный `state_revision` Element.
 
 Archetype `.tres` являются hand-authored source definitions и единственным
 источником их параметров; GDScript не дублирует их factory-значения. Bake-процесс

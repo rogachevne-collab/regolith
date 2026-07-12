@@ -1,7 +1,7 @@
 class_name SimulationSnapshot
 extends RefCounted
 
-const VERSION := 2
+const VERSION := 3
 
 
 static func capture(world) -> Dictionary:
@@ -13,6 +13,7 @@ static func capture(world) -> Dictionary:
 		"elements": _serialize_elements(world),
 		"joints": _serialize_joints(world),
 		"redirects": _serialize_redirects(world),
+		"resource_stores": _serialize_resource_stores(world),
 	}
 
 
@@ -39,6 +40,7 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 	var element_rows: Variant = snapshot.get("elements")
 	var joint_rows: Variant = snapshot.get("joints")
 	var redirect_rows: Variant = snapshot.get("redirects")
+	var store_rows: Variant = snapshot.get("resource_stores")
 	var allocator_data: Variant = snapshot.get("allocator")
 	if (
 		not archetype_rows is Array
@@ -46,6 +48,7 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 		or not element_rows is Array
 		or not joint_rows is Array
 		or not redirect_rows is Array
+		or not store_rows is Array
 		or not allocator_data is Dictionary
 	):
 		return false
@@ -71,6 +74,7 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 		if (
 			archetype == null
 			or archetype.archetype_id != archetype_id
+			or not BlueprintValidator.validate_archetype(archetype).ok
 			or ArchetypeRegistry.fingerprint_of(archetype) != expected_fingerprint
 			or not registry.register(archetype)
 		):
@@ -114,7 +118,10 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 	for row_variant: Variant in element_rows:
 		if not row_variant is Dictionary:
 			return false
-		var element := SimulationElement.from_dict(row_variant)
+		var element_row: Dictionary = row_variant
+		if not element_row.get("installed_materials", {}) is Dictionary:
+			return false
+		var element := SimulationElement.from_dict(element_row)
 		var archetype: ElementArchetype = registry.get_archetype(
 			element.archetype_id
 		)
@@ -133,11 +140,34 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 			or element.condition < 0.0
 			or element.condition > 1.0
 			or not is_finite(element.condition)
+			or element.state_revision < 0
 			or element.integrity < 0.0
 			or element.integrity > archetype.max_integrity
 			or not is_finite(element.integrity)
 			or not element.bind_archetype(archetype)
 		):
+			return false
+		for resource_id: Variant in element.installed_materials.keys():
+			var installed := float(element.installed_materials[resource_id])
+			if (
+				str(resource_id).is_empty()
+				or not is_finite(installed)
+				or installed < 0.0
+				or installed
+				> element.required_material_amount(str(resource_id)) + 0.000001
+			):
+				return false
+		var required_total := element.total_required_material_amount()
+		var expected_progress := (
+			1.0
+			if required_total <= 0.0
+			else clampf(
+				element.total_installed_material_amount() / required_total,
+				0.0,
+				1.0
+			)
+		)
+		if not is_equal_approx(expected_progress, element.build_progress):
 			return false
 		elements[element.element_id] = element
 		max_element_id = maxi(max_element_id, element.element_id)
@@ -266,6 +296,22 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 		if assembly.tombstoned and not redirects.has(assembly.assembly_id):
 			return false
 
+	var stores: Dictionary = {}
+	for row_variant: Variant in store_rows:
+		if not row_variant is Dictionary:
+			return false
+		var store_row: Dictionary = row_variant
+		if not store_row.get("amounts", {}) is Dictionary:
+			return false
+		var store := SimulationResourceStore.from_dict(store_row)
+		if (
+			store == null
+			or store.store_id.is_empty()
+			or stores.has(store.store_id)
+		):
+			return false
+		stores[store.store_id] = store
+
 	var next_element_id := int(allocator_data.get("next_element_id", 0))
 	var next_assembly_id := int(allocator_data.get("next_assembly_id", 0))
 	var next_joint_id := int(allocator_data.get("next_joint_id", 0))
@@ -287,6 +333,10 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 		world._register_joint(joints[joint_id])
 	for from_id: int in _sorted_int_keys(redirects):
 		world._register_redirect(from_id, redirects[from_id])
+	var store_ids: Array = stores.keys()
+	store_ids.sort()
+	for store_id: Variant in store_ids:
+		world._register_resource_store(stores[store_id])
 	return true
 
 
@@ -325,6 +375,13 @@ static func _serialize_redirects(world) -> Array[Dictionary]:
 			"from_assembly_id": from_id,
 			"to_assembly_id": world.get_redirect_target_raw(from_id),
 		})
+	return rows
+
+
+static func _serialize_resource_stores(world) -> Array[Dictionary]:
+	var rows: Array[Dictionary] = []
+	for store: SimulationResourceStore in world.list_resource_stores():
+		rows.append(store.to_dict())
 	return rows
 
 

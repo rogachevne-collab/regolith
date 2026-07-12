@@ -187,12 +187,27 @@ func _on_structural_event(event: Dictionary) -> void:
 			rebuild_all()
 		&"assembly_spawned":
 			_project_assembly(int(event["assembly_id"]), null)
+		&"assembly_changed":
+			_reproject_assembly(int(event["assembly_id"]))
+		&"assembly_removed":
+			_remove_body(int(event["assembly_id"]))
 		&"rigid_joint_broken":
 			pass
 		&"assembly_split":
 			_handle_split(event)
 		&"assembly_merged":
 			_handle_merge(event)
+
+
+func _reproject_assembly(assembly_id: int) -> void:
+	var body := get_physics_body(assembly_id)
+	var motion: AssemblyMotionState = (
+		_capture_body_motion(body)
+		if body != null
+		else null
+	)
+	_remove_body(assembly_id)
+	_project_assembly(assembly_id, motion)
 
 
 func _handle_split(event: Dictionary) -> void:
@@ -393,6 +408,11 @@ func _project_assembly(
 		collider.shape = record["shape"]
 		collider.transform = record["local_transform"]
 		collider.set_meta("element_id", element_id)
+		collider.set_meta("collider_index", int(record["collider_index"]))
+		collider.set_meta(
+			"collider_local_cell",
+			record["collider_local_cell"]
+		)
 		body.add_child(collider)
 		if not colliders_by_element.has(element_id):
 			colliders_by_element[element_id] = []

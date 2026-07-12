@@ -37,6 +37,17 @@ static func validate(blueprint: Blueprint) -> BlueprintValidationResult:
 	return result
 
 
+static func validate_archetype(
+	archetype: ElementArchetype
+) -> BlueprintValidationResult:
+	var result := BlueprintValidationResult.new()
+	if archetype == null:
+		result.add_error("archetype is null")
+		return result
+	_validate_archetype(archetype, result)
+	return result
+
+
 static func _validate_placement(
 	placement: BlueprintElementPlacement,
 	result: BlueprintValidationResult,
@@ -109,6 +120,19 @@ static func _validate_archetype(
 	archetype: ElementArchetype,
 	result: BlueprintValidationResult
 ) -> void:
+	if not is_finite(archetype.mass_kg) or archetype.mass_kg <= 0.0:
+		result.add_error(
+			"archetype '%s' mass_kg must be finite and positive"
+			% archetype.archetype_id
+		)
+	if (
+		not is_finite(archetype.max_integrity)
+		or archetype.max_integrity <= 0.0
+	):
+		result.add_error(
+			"archetype '%s' max_integrity must be finite and positive"
+			% archetype.archetype_id
+		)
 	var footprint: Dictionary = {}
 	for cell: Vector3i in archetype.footprint_cells:
 		var key: String = _cell_key(cell)
@@ -139,7 +163,9 @@ static func _validate_archetype(
 				% [archetype.archetype_id, collider_key]
 			)
 		if (
-			collider.size.x <= 0.0
+			not collider.size.is_finite()
+			or not collider.offset_in_cell.is_finite()
+			or collider.size.x <= 0.0
 			or collider.size.y <= 0.0
 			or collider.size.z <= 0.0
 		):
@@ -229,7 +255,7 @@ static func _validate_archetype(
 				% [archetype.archetype_id, requirement.resource_id]
 			)
 		requirement_ids[requirement.resource_id] = true
-		if requirement.amount <= 0.0:
+		if not is_finite(requirement.amount) or requirement.amount <= 0.0:
 			result.add_error(
 				"archetype '%s' requirement '%s' amount must be positive"
 				% [archetype.archetype_id, requirement.resource_id]

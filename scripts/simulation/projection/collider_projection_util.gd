@@ -82,7 +82,8 @@ static func build_collision_shapes(
 		var archetype: ElementArchetype = element.get_archetype()
 		if archetype == null:
 			continue
-		for collider: ColliderDefinition in archetype.colliders:
+		for collider_index: int in range(archetype.colliders.size()):
+			var collider: ColliderDefinition = archetype.colliders[collider_index]
 			if collider.shape_kind != ColliderDefinition.ShapeKind.BOX:
 				continue
 			var shape := BoxShape3D.new()
@@ -96,6 +97,8 @@ static func build_collision_shapes(
 			)
 			records.append({
 				"element_id": element_id,
+				"collider_index": collider_index,
+				"collider_local_cell": collider.local_cell,
 				"shape": shape,
 				"local_transform": local_transform,
 			})

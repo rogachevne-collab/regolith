@@ -6,6 +6,7 @@ signal hit_updated(hit: InteractionHit)
 @export var player_path: NodePath = NodePath("..")
 @export var camera_path: NodePath = NodePath("../Camera")
 @export var terrain_path: NodePath = NodePath("../../VoxelTerrain")
+@export var simulation_session_path: NodePath = NodePath("../../SimulationSession")
 @export var max_distance := 4.0
 @export_flags_3d_physics var collision_mask := 3
 
@@ -15,12 +16,14 @@ var _player: CollisionObject3D
 var _camera: Camera3D
 var _terrain: VoxelTerrain
 var _voxel_tool: VoxelTool
+var _session: SimulationSession
 
 
 func _ready() -> void:
 	_player = get_node(player_path)
 	_camera = get_node(camera_path)
 	_terrain = get_node(terrain_path)
+	_session = get_node_or_null(simulation_session_path) as SimulationSession
 	_voxel_tool = _terrain.get_voxel_tool()
 	_voxel_tool.channel = VoxelBuffer.CHANNEL_SDF
 
@@ -60,16 +63,21 @@ func _query_physics(
 		return InteractionHit.empty()
 
 	var collider: Object = raw["collider"]
-	var kind := _target_kind(collider)
-	var metadata := _target_metadata(collider)
+	var metadata := _target_metadata(collider, raw)
+	var kind := _target_kind(collider, metadata)
 	metadata["aim_direction"] = direction
+	var stable_target_id := (
+		StringName(str(metadata["element_id"]))
+		if kind == InteractionHit.KIND_SIMULATION_ELEMENT
+		else StringName(str(collider.get_instance_id()))
+	)
 	return InteractionHit.create(
 		raw["position"],
 		raw["normal"],
 		origin.distance_to(raw["position"]),
 		kind,
 		collider,
-		StringName(str(collider.get_instance_id())),
+		stable_target_id,
 		metadata
 	)
 
@@ -96,9 +104,14 @@ func _query_voxel(
 	)
 
 
-func _target_kind(collider: Object) -> StringName:
+func _target_kind(
+	collider: Object,
+	metadata: Dictionary = {}
+) -> StringName:
 	if collider.has_method("interaction_target_kind"):
 		return collider.call("interaction_target_kind")
+	if metadata.has("element_id"):
+		return InteractionHit.KIND_SIMULATION_ELEMENT
 	if collider is VoxelTerrain:
 		return InteractionHit.KIND_VOXEL
 	if collider is Node and collider.is_in_group("placed_blocks"):
@@ -106,14 +119,48 @@ func _target_kind(collider: Object) -> StringName:
 	return InteractionHit.KIND_BODY
 
 
-func _target_metadata(collider: Object) -> Dictionary:
+func _target_metadata(
+	collider: Object,
+	raw_hit: Dictionary = {}
+) -> Dictionary:
 	if collider.has_method("interaction_metadata"):
 		return collider.call("interaction_metadata")
 	if collider is Node and collider.has_meta("interaction_metadata"):
 		return Dictionary(
 			collider.get_meta("interaction_metadata")
 		).duplicate(true)
-	return {}
+	var metadata: Dictionary = {}
+	if collider is CollisionObject3D:
+		var collision_object := collider as CollisionObject3D
+		if collision_object.has_meta("assembly_id"):
+			metadata["assembly_id"] = int(
+				collision_object.get_meta("assembly_id")
+			)
+		var shape_index := int(raw_hit.get("shape", -1))
+		if shape_index >= 0:
+			var owner_id := collision_object.shape_find_owner(shape_index)
+			if owner_id >= 0:
+				var owner: Object = collision_object.shape_owner_get_owner(owner_id)
+				if owner is Node and owner.has_meta("element_id"):
+					metadata["element_id"] = int(owner.get_meta("element_id"))
+					metadata["shape_index"] = shape_index
+					metadata["collider_index"] = int(
+						owner.get_meta("collider_index", -1)
+					)
+					metadata["collider_local_cell"] = owner.get_meta(
+						"collider_local_cell",
+						Vector3i.ZERO
+					)
+	if metadata.has("element_id") and _session != null:
+		var element := _session.world.get_element(int(metadata["element_id"]))
+		if element != null:
+			metadata["assembly_id"] = element.assembly_id
+			metadata["archetype_id"] = element.archetype_id
+			metadata["build_progress"] = element.build_progress
+			metadata["integrity"] = element.integrity
+			metadata["state_revision"] = element.state_revision
+			metadata["status_reason"] = element.status_reason()
+	return metadata
 
 
 func _publish(hit: InteractionHit) -> void:

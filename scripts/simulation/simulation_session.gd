@@ -9,10 +9,12 @@ const SLICE01_BASE_MINIMAL := preload(
 @onready var projection: SimulationPhysicsProjection = (
 	$SimulationPhysicsProjection
 )
+@onready var visuals: ElementVisualProjection = $ElementVisualProjection
 
 
 func _ready() -> void:
 	projection.bind_world(world)
+	visuals.bind(world, projection)
 
 
 func spawn_blueprint(
@@ -40,6 +42,7 @@ func spawn_blueprint_at_transform(
 		anchored
 	)
 	projection.project_assembly_now(assembly_id, motion)
+	visuals.rebuild_all()
 	return result
 
 
