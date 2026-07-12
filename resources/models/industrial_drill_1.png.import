@@ -2,17 +2,20 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bs8i4tqs2voo7"
-path.s3tc="res://.godot/imported/lunar_regolith.png-23d8037c1df043316c840d299e76a45c.s3tc.ctex"
+uid="uid://cq8hqv5jxk4a7"
+path.s3tc="res://.godot/imported/industrial_drill_1.png-eac45a8c146b2bde8f48ca3bcd7d625d.s3tc.ctex"
 metadata={
 "imported_formats": ["s3tc_bptc"],
 "vram_texture": true
 }
+generator_parameters={
+"md5": "773147aaea44f3454d20172b62473e0f"
+}
 
 [deps]
 
-source_file="res://resources/lunar_regolith.png"
-dest_files=["res://.godot/imported/lunar_regolith.png-23d8037c1df043316c840d299e76a45c.s3tc.ctex"]
+source_file="res://resources/models/industrial_drill_1.png"
+dest_files=["res://.godot/imported/industrial_drill_1.png-eac45a8c146b2bde8f48ca3bcd7d625d.s3tc.ctex"]
 
 [params]
 
@@ -26,8 +29,8 @@ compress/normal_map=0
 compress/channel_pack=0
 mipmaps/generate=true
 mipmaps/limit=-1
-roughness/mode=0
-roughness/src_normal=""
+roughness/mode=8
+roughness/src_normal="res://resources/models/industrial_drill_2.png"
 process/channel_remap/red=0
 process/channel_remap/green=1
 process/channel_remap/blue=2

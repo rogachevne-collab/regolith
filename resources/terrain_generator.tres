@@ -1,4 +1,4 @@
-[gd_resource type="VoxelGeneratorNoise2D" load_steps=3 format=3]
+[gd_resource type="VoxelGeneratorNoise2D" format=3 uid="uid://cngp1p34afd2p"]
 
 [ext_resource type="Curve" path="res://resources/terrain_curve.tres" id="1"]
 
