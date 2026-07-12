@@ -62,9 +62,11 @@ func _rebuild_assembly(assembly_id: int) -> void:
 	if body == null or assembly == null or assembly.tombstoned:
 		_clear_known_body(assembly_id)
 		return
-	var previous := _known_bodies.get(assembly_id) as PhysicsBody3D
-	if previous != null and previous != body:
-		_clear_visuals(previous)
+	var previous_variant: Variant = _known_bodies.get(assembly_id)
+	if is_instance_valid(previous_variant):
+		var previous := previous_variant as PhysicsBody3D
+		if previous != body:
+			_clear_visuals(previous)
 	_clear_visuals(body)
 	_known_bodies[assembly_id] = body
 	for element_id: int in assembly.element_ids:
@@ -110,9 +112,9 @@ func _clear_visuals(body: PhysicsBody3D) -> void:
 
 
 func _clear_known_body(assembly_id: int) -> void:
-	var body := _known_bodies.get(assembly_id) as PhysicsBody3D
-	if body != null and is_instance_valid(body):
-		_clear_visuals(body)
+	var body_variant: Variant = _known_bodies.get(assembly_id)
+	if is_instance_valid(body_variant):
+		_clear_visuals(body_variant as PhysicsBody3D)
 	_known_bodies.erase(assembly_id)
 
 
