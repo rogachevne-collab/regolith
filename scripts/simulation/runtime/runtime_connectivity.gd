@@ -127,6 +127,13 @@ static func validate_merge_connection(
 	return _ports_form_rigid_edge(left, left_port, right, right_port)
 
 
+static func find_rigid_connection(
+	left: SimulationElement,
+	right: SimulationElement
+) -> Dictionary:
+	return _rigid_connection(left, right)
+
+
 static func _rigid_connection(
 	left: SimulationElement,
 	right: SimulationElement

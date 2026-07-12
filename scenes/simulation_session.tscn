@@ -1,0 +1,14 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/simulation/simulation_session.gd" id="1_session"]
+[ext_resource type="Script" path="res://scripts/simulation/simulation_world.gd" id="2_world"]
+[ext_resource type="Script" path="res://scripts/simulation/projection/simulation_physics_projection.gd" id="3_projection"]
+
+[node name="SimulationSession" type="Node"]
+script = ExtResource("1_session")
+
+[node name="SimulationWorld" type="Node" parent="."]
+script = ExtResource("2_world")
+
+[node name="SimulationPhysicsProjection" type="Node3D" parent="."]
+script = ExtResource("3_projection")

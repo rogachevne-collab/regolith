@@ -355,6 +355,11 @@ Wheel — составная роль: `Support` (контакт с поверх
 Suspension-joint нужен только когда колесо — отдельный физический блок; в v0 колесо
 принадлежит Body и вся подвеска живёт в raycast-модели.
 
+В Kernel v0 migration ровер также материализует колёса как typed элементы
+(`rover_wheel`, роль `Support`) в `cart_rover` Blueprint для split/merge topology;
+raycast locomotion (`CartLocomotion`) остаётся на mount `RigidBody3D`, а не в
+`SimulationWorld`.
+
 ### Cable / Tether
 
 Односторонняя связь, которая тянет, но не толкает:

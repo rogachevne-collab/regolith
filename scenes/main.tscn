@@ -1,4 +1,4 @@
-[gd_scene load_steps=12 format=3 uid="uid://main001"]
+[gd_scene load_steps=13 format=3 uid="uid://main001"]
 
 [ext_resource type="Script" path="res://scripts/bootstrap.gd" id="1"]
 [ext_resource type="PackedScene" uid="uid://player001" path="res://scenes/player.tscn" id="2"]
@@ -8,8 +8,8 @@
 [ext_resource type="Script" path="res://scripts/placed_blocks.gd" id="6"]
 [ext_resource type="PackedScene" path="res://scenes/launch_vehicle.tscn" id="7"]
 [ext_resource type="PackedScene" path="res://scenes/cart.tscn" id="8"]
-[ext_resource type="PackedScene" path="res://scenes/assembly.tscn" id="9"]
 [ext_resource type="Script" path="res://scripts/world_command_gateway.gd" id="10"]
+[ext_resource type="PackedScene" path="res://scenes/simulation_session.tscn" id="11"]
 
 [sub_resource type="PanoramaSkyMaterial" id="PanoramaSkyMaterial_stars"]
 panorama = ExtResource("5")
@@ -82,15 +82,17 @@ script = ExtResource("6")
 [node name="WorldCommandGateway" type="Node" parent="."]
 script = ExtResource("10")
 
+[node name="SimulationSession" parent="." instance=ExtResource("11")]
+
+[node name="BaseSpawn" type="Marker3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -30, 0, 8)
+
 [node name="LaunchVehicle" parent="." instance=ExtResource("7")]
 position = Vector3(4.5, 0, 16)
 
 [node name="Cart" parent="." instance=ExtResource("8")]
 position = Vector3(-34.5, -4.7, 4.7)
-
-[node name="Assembly" parent="." instance=ExtResource("9")]
-position = Vector3(-30, 0, 8)
-accept_debug_input = true
+simulation_session_path = NodePath("../SimulationSession")
 
 [node name="Player" parent="." instance=ExtResource("2")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 16)
@@ -131,7 +133,6 @@ text = "WASD — ходьба, Shift — бег, Space — прыжок, Esc —
 В кокпите: Space — тяга, WASD — баланс, E — выйти
 Тележка: ↑ — привод, ↓ — тормоз, ←/→ — руль, K — толкнуть
 Ровер: B — снять центр, N — вернуть, V — сломать мост, M — колесо
-Сборка: J — оторвать блок, H — приварить
 На ровер можно запрыгнуть и ехать стоя"
 
 [node name="Coordinates" type="Label" parent="CanvasLayer"]
