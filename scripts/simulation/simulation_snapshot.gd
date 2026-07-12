@@ -1,7 +1,7 @@
 class_name SimulationSnapshot
 extends RefCounted
 
-const VERSION := 1
+const VERSION := 2
 
 
 static func capture(world) -> Dictionary:
@@ -91,6 +91,8 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 			or assembly.topology_revision < 0
 			or assembly.grid_frame == null
 			or not assembly.grid_frame.is_valid()
+			or assembly.motion == null
+			or not assembly.motion.is_valid()
 		):
 			return false
 		if assembly.tombstoned:

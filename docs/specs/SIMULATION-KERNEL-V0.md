@@ -2,6 +2,7 @@
 
 Статус: Phase 1 — typed definitions, orientation, Blueprint bake/validation.
 Phase 2 — authoritative `SimulationWorld` runtime, structural commands, snapshot.
+Phase 3 — event-driven Godot/Jolt projection и momentum-safe rebuild.
 Родительские документы: `docs/PHYSICAL-LANGUAGE.md`, `docs/specs/VERTICAL-SLICE-01-INDUSTRIAL-BASE.md`.
 
 ## Цель
@@ -11,8 +12,7 @@ Phase 2 — authoritative `SimulationWorld` runtime, structural commands, snapsh
 - data-driven `ElementArchetype` и `Blueprint`;
 - стабильные доменные идентичности, не зависящие от Godot Node/RID;
 - детерминированная выпечка Blueprint из visual authoring;
-- подготовка к runtime `SimulationWorld`, structural commands и Jolt projection
-  (следующие фазы).
+- authoritative runtime `SimulationWorld` и transient Godot/Jolt projection.
 
 ## Граница Phase 1
 
@@ -53,6 +53,67 @@ Phase 2 — authoritative `SimulationWorld` runtime, structural commands, snapsh
 - rover migration, `main.tscn` / `bootstrap.gd` integration;
 - Construction v1 commands и Industry Flow behavior.
 
+## Граница Phase 3
+
+Входит:
+
+- scene-owned `SimulationPhysicsProjection`, который подписан на structural events;
+- transient mapping `AssemblyId → PhysicsBody3D` и
+  `ElementId → body/collider owner metadata`;
+- `StaticBody3D` для anchored Assembly и Jolt `RigidBody3D` для dynamic Assembly;
+- deterministic compound colliders из `ElementArchetype.colliders` и локальных
+  grid poses элементов;
+- непрерывный `AssemblyMotionState`: `Transform3D`, linear/angular velocity,
+  sleeping/frozen; snapshot version 2;
+- split velocity at child COM и merge с linear + spin + orbital angular momentum;
+- spawn/split/merge/restore cleanup без stale active body.
+
+Не входит:
+
+- rover migration и `main.tscn` integration;
+- Construction/Industry;
+- физические joints кроме already-compiled `Rigid`/`Anchor` topology.
+
+Topology остаётся pure typed state. `GridTransform` описывает только snapped
+integer transform между локальными topology frames. Он не обновляется из движения
+Jolt и не изображает произвольную мировую позу движущегося тела.
+
+Merge snap допустим только при Euclidean translation error не более **0.125 m**
+и orientation error не более **7.5°** до ближайшей из 24 ориентаций. Это достаточно
+узкое окно, чтобы docking/interaction должен был физически совместить детали, но
+оставляет запас для contact jitter. `GridAlignment` вычисляет nearest transform и
+обе ошибки; gateway фильтрует UX, а `SimulationWorld` независимо повторяет проверку
+перед mutation и отвечает `misaligned_connection`.
+
+### Две истины авторитетного состояния
+
+`SimulationWorld` держит **две** авторитетные, но раздельные истины; обе
+сохраняются в snapshot v2 и обе восстанавливаются при restore. Ни одна из них не
+является presentation.
+
+1. **Discrete topology truth** — integer grid cells + 24 ориентации (`origin_cell`,
+   `orientation_index`, `GridTransform`, membership элементов/joints). Мутируется
+   **только** structural commands (`spawn`, `break`, `merge`, …) и версионируется
+   `topology_revision`. Это единственный источник для connectivity, split/merge,
+   occupancy и validation.
+2. **Continuous kinematic truth** — `AssemblyMotionState` (rigid `Transform3D` pose +
+   linear/angular velocity + `sleeping`/`frozen`). Продвигается физикой/Jolt через
+   projection, а не structural commands. Это произвольная мировая поза движущейся
+   Assembly; она никогда не округляется обратно в grid.
+
+**Инвариант:** topology-логика НЕ читает `motion` нигде, кроме единственного
+validated merge alignment gate (`GridAlignment.validate_supplied` в `_merge_assemblies`),
+где continuous A/B poses сверяются со snapped `b_to_a_grid` в пределах допусков.
+Любое другое structural решение зависит исключительно от discrete topology truth.
+
+**Единая точка записи kinematic truth:** `SimulationWorld.sync_assembly_motion(assembly_id, motion_state)`.
+Она валидирует `motion_state.is_valid()` (finite orthonormal right-handed rigid
+transform, epsilon `1e-4`) и отклоняет/игнорирует невалидный или tombstoned вход
+без мутации. Projection — единственный live-body caller этого пути; внутренний
+spawn/split seeding получает pose из того же валидируемого источника. Projection не
+присваивает `assembly.motion` напрямую. Presentation/scene nodes остаются transient
+и полностью пересоздаются из этих двух истин.
+
 ### Structural commands (Phase 2 schema)
 
 Публичный command API не принимает dictionaries. Команды — typed `RefCounted`:
@@ -79,26 +140,30 @@ result.data: Dictionary
 | `SpawnBlueprintCommand` | `blueprint`, `grid_frame` |
 | `BreakRigidJointCommand` | `joint_id`, `expected_assembly_revision` |
 | `MergeAssembliesCommand` | `assembly_a_id`, `assembly_b_id`,
-  `expected_revision_a`, `expected_revision_b`, A-side и B-side element/port |
+  `expected_revision_a`, `expected_revision_b`, A-side и B-side element/port,
+  validated snapped `b_to_a_grid` |
 
 Merge endpoints всегда относятся к Assembly A и B соответственно и не зависят
-от будущего survivor. Relative transform не передаётся вызывающим кодом:
-`SimulationWorld` выводит его из authoritative `assembly_a.grid_frame` и
-`assembly_b.grid_frame`, затем после survivor selection применяет нужное
-направление/inverse.
+от будущего survivor. Projection/gateway вычисляет continuous `B relative to A`,
+snaps его в один `GridTransform` и явно передаёт как `b_to_a_grid`.
+`SimulationWorld` валидирует transform, occupancy и соединяемые ports. Если B
+становится survivor, применяется точный inverse того же A/B-stable transform;
+survivor selection не меняет snapped alignment и не телепортирует итог в frame
+проигравшей стороны.
 
 `get_assembly(id)` — canonical lookup с разрешением tombstone redirect.
 `get_assembly_raw(id)` — точная запись, включая retired/tombstoned Assembly.
 
-### Snapshot (version 1)
+### Snapshot (version 2)
 
 ```gdscript
 {
-  "version": 1,
+  "version": 2,
   "allocator": { next_element_id, next_assembly_id, next_joint_id, next_command_id },
   "archetypes": [ { archetype_id, resource_path, fingerprint } ],
-  "assemblies": [ { assembly_id, topology_revision, grid_frame, element_ids,
-    tombstoned, redirect_to } ],
+  "assemblies": [ { assembly_id, topology_revision, grid_frame,
+    motion: { transform, linear_velocity, angular_velocity, sleeping, frozen },
+    element_ids, tombstoned, redirect_to } ],
   "elements": [ { element_id, assembly_id, archetype_id, origin_cell,
     orientation_index, build_progress, integrity, condition } ],
   "joints": [ { joint_id, assembly_id, kind, element_a_id, port_a_id,
@@ -113,6 +178,12 @@ allocator bounds, transforms и runtime ranges во временном world; ma
 snapshot не мутирует текущий `SimulationWorld`. Дополнительно проверяются unique
 occupancy, геометрия/совместимость каждого Rigid, настоящий anchor-tag port,
 отсутствие duplicate joints и связность rigid graph каждой active Assembly.
+
+`motion` является physics-boundary state: при живой projection его публикует Jolt;
+при restore/spawn он служит seed для нового transient body. `grid_frame` остаётся
+snapped topology/spawn frame и не квантует continuous body pose.
+Basis motion transform обязан быть finite orthonormal right-handed: unit axes,
+pairwise dot products и determinant `+1` проверяются с epsilon **1e-4**.
 
 ## Identity
 
@@ -260,3 +331,43 @@ resources/blueprints/baked/*.tres   (deterministic output, committed)
 ```
 
 Критерий: stdout содержит `KERNEL-RUNTIME-V0: PASS`, exit 0.
+
+## Projection и momentum (Phase 3)
+
+`SimulationWorld` не знает scene paths, Nodes, RIDs или Jolt instance IDs.
+`SimulationPhysicsProjection` владеет всеми physical nodes и предоставляет только
+lookup по `AssemblyId` / `ElementId`. Повторная обработка уже projected revision
+идемпотентна. При replacement старое тело сразу получает нулевые collision
+layer/mask и disabled process до deferred free; новые тела создаются в том же
+structural event, поэтому активного one-frame gap нет.
+
+Split наследует angular velocity и скорость COM каждой компоненты:
+
+```text
+v_child = v_parent + omega_parent × (com_child_world - com_parent_world)
+```
+
+Dynamic merge сохраняет сумму linear momentum и angular momentum относительно
+merged COM, включая orbital term `r × m v`. Расчёт изолирован в pure
+`AssemblyPhysicsMath`.
+
+Ограничение Godot/Jolt v0: публичный high-level `RigidBody3D` API не выдаёт
+готовую full inertia tensor в удобной форме для атомарной compound replacement.
+Projection оценивает diagonal inertia из deterministic compound AABB и решает
+angular velocity в survivor basis. Поэтому linear momentum и orbital contribution
+сохраняются точно в пределах float, а spin angular momentum — приближённо для
+асимметричных compound shapes. Контакты/constraint impulses, происходящие
+одновременно с structural event, не переносятся.
+
+## Acceptance (Phase 3)
+
+1. Anchored Assembly projected как `StaticBody3D`, dynamic — `RigidBody3D`.
+2. Все collider definitions имеют deterministic ElementId owner mapping.
+3. Split наследует velocity at child COM; merge учитывает orbital momentum.
+4. Tombstoned body и collider mappings удаляются; dual-anchor survivor статичен.
+5. `scenes/test_simulation_projection.tscn` печатает
+   `KERNEL-PROJECTION-V0: PASS`.
+
+```bash
+./run.sh --headless res://scenes/test_simulation_projection.tscn
+```

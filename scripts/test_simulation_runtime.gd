@@ -613,6 +613,16 @@ func _merge(
 	command.port_a_id = port_a_id
 	command.element_b_id = element_b_id
 	command.port_b_id = port_b_id
+	var assembly_a: SimulationAssembly = world.get_assembly_raw(
+		int(a.data["assembly_id"])
+	)
+	var assembly_b: SimulationAssembly = world.get_assembly_raw(
+		int(b.data["assembly_id"])
+	)
+	command.b_to_a_grid = GridPoseUtil.b_to_a_from_grid_frames(
+		assembly_a.grid_frame,
+		assembly_b.grid_frame
+	)
 	return world.apply_structural_command_now(command)
 
 

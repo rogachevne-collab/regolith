@@ -110,6 +110,24 @@ func apply_structural_command_now(
 	return _execute_structural_command(command)
 
 
+func sync_assembly_motion(
+	assembly_id: int,
+	motion_state: AssemblyMotionState
+) -> bool:
+	# Single authoritative write path for continuous kinematic truth.
+	# Projection is the only live-body caller; internal seeding reuses it.
+	var assembly := get_assembly_raw(assembly_id)
+	if (
+		assembly == null
+		or assembly.tombstoned
+		or motion_state == null
+		or not motion_state.is_valid()
+	):
+		return false
+	assembly.motion = motion_state.duplicate_state()
+	return true
+
+
 func capture_snapshot() -> Dictionary:
 	return SimulationSnapshot.capture(self)
 
@@ -127,6 +145,7 @@ func restore_snapshot(snapshot: Dictionary) -> bool:
 	_command_queue.clear()
 	_flush_scheduled = false
 	restored.free()
+	_emit_structural_event({"kind": &"world_restored"})
 	return true
 
 
@@ -183,6 +202,7 @@ func _spawn_blueprint(
 	var assembly := SimulationAssembly.new()
 	assembly.assembly_id = assembly_id
 	assembly.grid_frame = command.grid_frame.duplicate_transform()
+	assembly.motion = AssemblyMotionState.from_grid_frame(assembly.grid_frame)
 	var local_to_element: Dictionary = {}
 	var spawned: Array[SimulationElement] = []
 	for placement: BlueprintElementPlacement in blueprint.placements:
@@ -307,6 +327,7 @@ func _break_rigid_joint(
 		var split_assembly := SimulationAssembly.new()
 		split_assembly.assembly_id = new_id
 		split_assembly.grid_frame = assembly.grid_frame.duplicate_transform()
+		split_assembly.motion = assembly.motion.duplicate_state()
 		split_assembly.element_ids.assign(component)
 		split_assembly.bump_revision()
 		_assemblies[new_id] = split_assembly
@@ -367,6 +388,33 @@ func _merge_assemblies(
 		return StructuralCommandResult.failed(
 			StructuralCommandResult.REASON_INVALID_TRANSFORM
 		)
+	if command.b_to_a_grid == null or not command.b_to_a_grid.is_valid():
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INVALID_TRANSFORM
+		)
+	if (
+		assembly_a.motion == null
+		or assembly_b.motion == null
+		or not assembly_a.motion.is_valid()
+		or not assembly_b.motion.is_valid()
+	):
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INVALID_TRANSFORM
+		)
+	var alignment: Dictionary = GridAlignment.validate_supplied(
+		assembly_a.motion.transform,
+		assembly_b.motion.transform,
+		command.b_to_a_grid
+	)
+	if not bool(alignment["valid"]):
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_MISALIGNED_CONNECTION,
+			{
+				"position_error_m": alignment["position_error_m"],
+				"angle_error_rad": alignment["angle_error_rad"],
+				"matches_supplied": alignment["matches_supplied"],
+			}
+		)
 	var element_a := get_element(command.element_a_id)
 	var element_b := get_element(command.element_b_id)
 	if element_a == null or element_b == null:
@@ -396,19 +444,16 @@ func _merge_assemblies(
 	var survivor_id := SurvivorPolicy.pick_survivor_assembly([score_a, score_b])
 	var survivor: SimulationAssembly
 	var loser: SimulationAssembly
+	var b_to_a: GridTransform = command.b_to_a_grid.duplicate_transform()
 	var loser_to_survivor: GridTransform
 	if survivor_id == assembly_a.assembly_id:
 		survivor = assembly_a
 		loser = assembly_b
-		loser_to_survivor = (
-			assembly_a.grid_frame.inverse().compose(assembly_b.grid_frame)
-		)
+		loser_to_survivor = b_to_a
 	else:
 		survivor = assembly_b
 		loser = assembly_a
-		loser_to_survivor = (
-			assembly_b.grid_frame.inverse().compose(assembly_a.grid_frame)
-		)
+		loser_to_survivor = b_to_a.inverse()
 
 	var planned_poses: Dictionary = {}
 	var preview_elements: Array[SimulationElement] = []
@@ -621,6 +666,10 @@ func _joint_belongs_to_component(
 		component.has(joint.element_a_id)
 		and component.has(joint.element_b_id)
 	)
+
+
+func assembly_has_anchor(assembly_id: int) -> bool:
+	return _assembly_has_anchor(assembly_id)
 
 
 func _assembly_has_anchor(assembly_id: int) -> bool:
