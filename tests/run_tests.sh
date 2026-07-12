@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Headless gate: run every res://scenes/test_*.tscn and aggregate PASS/FAIL.
+# Includes test_construction_preview.tscn (preview/projection parity + snap resolver).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -36,7 +37,7 @@ for path in "${SCENES[@]}"; do
 	set -e
 
 	if [[ $code -eq 0 ]] && echo "$output" | grep -qE \
-		'(POC[0-9A-Z-]*|PLAYER[0-9A-Z-]*|KERNEL[0-9A-Z-]*): PASS'; then
+		'(POC[0-9A-Z-]*|PLAYER[0-9A-Z-]*|KERNEL[0-9A-Z-]*|CONSTRUCTION[0-9A-Z-]*|SUITSTATE[0-9A-Z-]*): PASS'; then
 		echo "PASS"
 		pass=$((pass + 1))
 	else

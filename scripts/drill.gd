@@ -4,6 +4,7 @@ extends Node
 @export var query_path: NodePath = NodePath("../InteractionQuery")
 @export var tool_controller_path: NodePath = NodePath("../ToolController")
 @export var drill_visual_path: NodePath = NodePath("../Camera/DrillVisual")
+@export var welder_visual_path: NodePath = NodePath("../Camera/WelderVisual")
 @export var drill_bit_path: NodePath = NodePath(
 	"Mount/Model/Sketchfab_model/Drill_Low_fbx/RootNode/Body_Low/Cone"
 )
@@ -17,6 +18,7 @@ var _head: Camera3D
 var _query: InteractionQuery
 var _tool_controller: ToolController
 var _drill_visual: Node3D
+var _welder_visual: Node3D
 var _drill_bit: Node3D
 var _sparks: GPUParticles3D
 var _audio: AudioStreamPlayer3D
@@ -28,9 +30,12 @@ func _ready() -> void:
 	_query = get_node(query_path)
 	_tool_controller = get_node(tool_controller_path)
 	_drill_visual = get_node(drill_visual_path)
+	_welder_visual = get_node_or_null(welder_visual_path)
 	_drill_bit = _drill_visual.get_node(drill_bit_path)
 	_sparks = get_node(sparks_path)
 	_audio = get_node(drill_audio_path)
+	_tool_controller.active_tool_changed.connect(_on_active_tool_changed)
+	_on_active_tool_changed(_tool_controller.active_tool)
 	_sparks.emitting = false
 	var stream := _audio.stream as AudioStreamWAV
 	if stream:
@@ -38,13 +43,22 @@ func _ready() -> void:
 
 
 func _physics_process(_delta: float) -> void:
+	if _tool_controller.active_tool == &"weld":
+		_update_welder_pose()
+		return
+	if _tool_controller.active_tool != &"drill":
+		_set_drilling(false)
+		return
 	var aim: Transform3D = _head.call("aim_transform")
 	var direction := -aim.basis.z.normalized()
 	var hit: InteractionHit = _query.current_hit
 	var has_hit := (
 		hit.valid
-		and hit.target_kind == InteractionHit.KIND_VOXEL
 		and hit.distance <= reach
+		and (
+			hit.target_kind == InteractionHit.KIND_VOXEL
+			or hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
+		)
 	)
 	var contact := hit.point if has_hit else aim.origin + direction * reach
 	_update_drill_pose()
@@ -74,6 +88,25 @@ func _update_drill_pose() -> void:
 	)
 	_drill_visual.global_rotation = _head.global_rotation
 	_drill_visual.global_position = rest
+
+
+func _update_welder_pose() -> void:
+	if _welder_visual == null:
+		return
+	var rest: Vector3 = (
+		_head.global_position
+		+ _head.global_transform.basis * rest_offset
+	)
+	_welder_visual.global_rotation = _head.global_rotation
+	_welder_visual.global_position = rest
+
+
+func _on_active_tool_changed(active_tool: StringName) -> void:
+	_drill_visual.visible = active_tool == &"drill"
+	if _welder_visual != null:
+		_welder_visual.visible = active_tool == &"weld"
+	if active_tool != &"drill":
+		_set_drilling(false)
 
 
 func _set_drilling(active: bool) -> void:
