@@ -353,10 +353,17 @@ func _damage_element(
 	var element_id := int(metadata.get("element_id", 0))
 	var parameters: Dictionary = command.get("parameters", {})
 	var amount := float(parameters.get("damage", 0.0))
-	return apply_damage(element_id, amount)
+	var refund_fraction := float(parameters.get("refund_fraction_on_destroy", 0.0))
+	var store_id := str(parameters.get("store_id", ""))
+	return apply_damage(element_id, amount, refund_fraction, store_id)
 
 
-func apply_damage(element_id: int, amount: float) -> Dictionary:
+func apply_damage(
+	element_id: int,
+	amount: float,
+	refund_fraction_on_destroy: float = 0.0,
+	store_id: String = ""
+) -> Dictionary:
 	if _session == null:
 		return _result(&"not_ready")
 	var element := _session.world.get_element(element_id)
@@ -366,6 +373,8 @@ func apply_damage(element_id: int, amount: float) -> Dictionary:
 	command.element_id = element_id
 	command.expected_state_revision = element.state_revision
 	command.damage = amount
+	command.refund_fraction_on_destroy = refund_fraction_on_destroy
+	command.store_id = store_id
 	return _structural_result(
 		_session.world.apply_structural_command_now(command)
 	)

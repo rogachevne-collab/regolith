@@ -9,6 +9,7 @@ func _run_tests() -> void:
 	var tests: Array[Callable] = [
 		_test_partial_damage_remains,
 		_test_lethal_damage_removes_element_without_refund,
+		_test_lethal_damage_refunds_with_fraction,
 		_test_last_element_removes_assembly,
 		_test_bridge_destruction_splits,
 	]
@@ -43,9 +44,9 @@ func _test_partial_damage_remains() -> bool:
 	if element.state_revision <= before_revision:
 		world.free()
 		return _fail("partial damage did not bump state revision")
-	if element.status_reason() != &"damaged":
+	if element.status_reason() != &"element_incomplete":
 		world.free()
-		return _fail("partial damage did not report damaged status")
+		return _fail("partial damage did not report incomplete status")
 	world.free()
 	return true
 
@@ -79,6 +80,42 @@ func _test_lethal_damage_removes_element_without_refund() -> bool:
 	if not bool(result.data.get("assembly_removed", false)):
 		world.free()
 		return _fail("lethal damage did not remove assembly")
+	world.free()
+	return true
+
+
+func _test_lethal_damage_refunds_with_fraction() -> bool:
+	var world := SimulationWorld.new()
+	world.ensure_resource_store("player")
+	world.set_resource_amount("player", "construction_component", 0.0)
+	var spawn := _spawn_single(world)
+	if not spawn.is_ok():
+		world.free()
+		return _fail("single spawn failed")
+	var element_id := int(spawn.data["element_ids"][0])
+	var element := world.get_element(element_id)
+	var installed := float(element.installed_materials.get("construction_component", 0.0))
+	var result := _damage(
+		world,
+		element_id,
+		element.integrity + 1.0,
+		0.5,
+		"player"
+	)
+	if not result.is_ok():
+		world.free()
+		return _fail("refunding lethal damage rejected")
+	if world.get_element(element_id) != null:
+		world.free()
+		return _fail("refunding lethal damage left element in topology")
+	var refunded := world.get_resource_store("player").amount("construction_component")
+	var expected := installed * 0.5
+	if not is_equal_approx(refunded, expected):
+		world.free()
+		return _fail(
+			"refunding lethal damage expected %.3f, got %.3f"
+			% [expected, refunded]
+		)
 	world.free()
 	return true
 
@@ -166,13 +203,17 @@ func _spawn(
 func _damage(
 	world: SimulationWorld,
 	element_id: int,
-	amount: float
+	amount: float,
+	refund_fraction_on_destroy: float = 0.0,
+	store_id: String = ""
 ) -> StructuralCommandResult:
 	var element := world.get_element(element_id)
 	var command := DamageElementCommand.new()
 	command.element_id = element_id
 	command.expected_state_revision = element.state_revision
 	command.damage = amount
+	command.refund_fraction_on_destroy = refund_fraction_on_destroy
+	command.store_id = store_id
 	return world.apply_structural_command_now(command)
 
 

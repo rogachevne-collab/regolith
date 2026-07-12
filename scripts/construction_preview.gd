@@ -176,7 +176,6 @@ func _should_resolve(target: Dictionary) -> bool:
 	return (
 		status == &"ok"
 		or status == &"element_incomplete"
-		or status == &"damaged"
 	)
 
 

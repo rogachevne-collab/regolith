@@ -654,9 +654,43 @@ func _weld_element(
 		})
 		remaining -= amount
 	if transfers.is_empty():
-		return StructuralCommandResult.failed(
-			StructuralCommandResult.REASON_NO_EFFECT
+		var deficit := maxf(archetype.max_integrity - element.integrity, 0.0)
+		if deficit <= 0.000001:
+			return StructuralCommandResult.failed(
+				StructuralCommandResult.REASON_ALREADY_COMPLETE
+			)
+		var integrity_per_component := (
+			archetype.max_integrity
+			* SimulationElement.WELD_REPAIR_INTEGRITY_FRACTION
 		)
+		var material_amount := minf(
+			command.max_material_amount,
+			deficit / integrity_per_component
+		)
+		if not store.can_remove("construction_component", material_amount):
+			return StructuralCommandResult.failed(
+				StructuralCommandResult.REASON_INSUFFICIENT_MATERIAL,
+				{
+					"resource_id": "construction_component",
+					"required": material_amount,
+					"available": store.amount("construction_component"),
+				}
+			)
+		store.remove("construction_component", material_amount)
+		element.integrity = minf(
+			element.integrity + material_amount * integrity_per_component,
+			archetype.max_integrity
+		)
+		element.sync_build_progress_from_integrity()
+		element.bump_state_revision()
+		_emit_element_state_changed(element, command.command_id, &"weld")
+		return _element_state_result(element, {
+			"transfers": [{
+				"resource_id": "construction_component",
+				"amount": material_amount,
+			}],
+			"store_id": command.store_id,
+		})
 	var totals: Dictionary = {}
 	for transfer: Dictionary in transfers:
 		var resource_id := str(transfer["resource_id"])
@@ -708,12 +742,16 @@ func _damage_element(
 			StructuralCommandResult.REASON_NO_EFFECT
 		)
 	element.integrity = maxf(element.integrity - command.damage, 0.0)
+	element.sync_build_progress_from_integrity()
 	if element.integrity <= 0.000001:
+		var refund_store: SimulationResourceStore = null
+		if command.refund_fraction_on_destroy > 0.000001:
+			refund_store = get_resource_store(command.store_id)
 		return _remove_element_from_topology(
 			element,
 			command.command_id,
-			0.0,
-			null
+			command.refund_fraction_on_destroy,
+			refund_store
 		)
 	element.bump_state_revision()
 	_emit_element_state_changed(element, command.command_id, &"damage")

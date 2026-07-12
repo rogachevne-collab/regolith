@@ -13,6 +13,10 @@ var integrity: float = 0.0
 var condition: float = 1.0
 var state_revision: int = 0
 var installed_materials: Dictionary = {}
+## Structural integrity at placement (1% of max_integrity).
+const PLACEMENT_STRUCTURAL_FRACTION := 0.01
+## Integrity restored per construction_component when BOM is already complete.
+const WELD_REPAIR_INTEGRITY_FRACTION := 0.25
 # Persistent record of whether this block was found resting on / embedded in the
 # voxel terrain. Set at placement and re-verified on structural split/dismantle
 # (terrain is destructible). Drives ground anchoring so a construction keeps every
@@ -36,6 +40,7 @@ static func from_placement(
 	element._archetype = placement.archetype
 	element.install_all_required_materials()
 	element.integrity = placement.archetype.max_integrity
+	element.sync_build_progress_from_integrity()
 	element.condition = 1.0
 	return element
 
@@ -56,8 +61,7 @@ static func frame(
 	element.orientation_index = new_orientation_index
 	element._archetype = archetype
 	element.installed_materials = initial_materials.duplicate(true)
-	element.recalculate_build_progress()
-	element.integrity = archetype.max_integrity
+	element.apply_placement_integrity()
 	element.condition = 1.0
 	return element
 
@@ -127,7 +131,7 @@ func install_material(resource_id: String, amount: float) -> bool:
 	installed_materials[resource_id] = (
 		installed_material_amount(resource_id) + amount
 	)
-	recalculate_build_progress()
+	recalculate_integrity_from_materials()
 	return true
 
 
@@ -142,20 +146,51 @@ func install_all_required_materials() -> void:
 			installed_material_amount(requirement.resource_id)
 			+ requirement.amount
 		)
-	recalculate_build_progress()
+	recalculate_integrity_from_materials()
 
 
-func recalculate_build_progress() -> void:
+func structural_fraction() -> float:
+	var archetype := get_archetype()
+	if archetype == null or archetype.max_integrity <= 0.0:
+		return 0.0
+	return clampf(integrity / archetype.max_integrity, 0.0, 1.0)
+
+
+func sync_build_progress_from_integrity() -> void:
+	build_progress = structural_fraction()
+
+
+func apply_placement_integrity() -> void:
+	var archetype := get_archetype()
+	if archetype == null:
+		return
+	integrity = archetype.max_integrity * PLACEMENT_STRUCTURAL_FRACTION
+	sync_build_progress_from_integrity()
+
+
+func recalculate_integrity_from_materials() -> void:
+	var archetype := get_archetype()
+	if archetype == null:
+		return
 	var required := total_required_material_amount()
-	build_progress = (
+	var material_fraction := (
 		1.0
 		if required <= 0.0
 		else clampf(total_installed_material_amount() / required, 0.0, 1.0)
 	)
+	integrity = archetype.max_integrity * (
+		PLACEMENT_STRUCTURAL_FRACTION
+		+ (1.0 - PLACEMENT_STRUCTURAL_FRACTION) * material_fraction
+	)
+	sync_build_progress_from_integrity()
+
+
+func recalculate_build_progress() -> void:
+	sync_build_progress_from_integrity()
 
 
 func is_complete() -> bool:
-	return build_progress >= 1.0 - 0.000001
+	return structural_fraction() >= 1.0 - 0.000001
 
 
 func is_broken() -> bool:
@@ -171,8 +206,6 @@ func status_reason() -> StringName:
 		return &"element_broken"
 	if not is_complete():
 		return &"element_incomplete"
-	if get_archetype() != null and integrity < get_archetype().max_integrity:
-		return &"damaged"
 	return &"ok"
 
 

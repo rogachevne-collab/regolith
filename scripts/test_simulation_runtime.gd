@@ -454,8 +454,8 @@ func _test_custom_archetype_snapshot_restore() -> bool:
 		return _fail("custom archetype outside Slice-01 failed to spawn")
 	var element := world.get_element(int(spawn.data["element_ids"][0]))
 	element.installed_materials = {"custom_component": 0.25}
-	element.recalculate_build_progress()
 	element.integrity = 9.0
+	element.sync_build_progress_from_integrity()
 	element.condition = 0.75
 	var snapshot := world.capture_snapshot()
 	var restored: SimulationWorld = SimulationSnapshot.create_from_snapshot(
@@ -466,10 +466,11 @@ func _test_custom_archetype_snapshot_restore() -> bool:
 	var restored_element: SimulationElement = restored.get_element(
 		element.element_id
 	)
+	var expected_progress := 9.0 / CUSTOM.max_integrity
 	if (
 		restored_element.get_archetype() == null
 		or restored_element.archetype_id != "runtime_custom"
-		or restored_element.build_progress != 0.25
+		or not is_equal_approx(restored_element.build_progress, expected_progress)
 		or restored_element.integrity != 9.0
 		or restored_element.condition != 0.75
 	):

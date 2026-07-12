@@ -158,16 +158,13 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 			):
 				return false
 		var required_total := element.total_required_material_amount()
-		var expected_progress := (
-			1.0
-			if required_total <= 0.0
-			else clampf(
-				element.total_installed_material_amount() / required_total,
-				0.0,
-				1.0
-			)
-		)
-		if not is_equal_approx(expected_progress, element.build_progress):
+		var expected_fraction := element.structural_fraction()
+		if not is_equal_approx(expected_fraction, element.build_progress):
+			return false
+		if not is_equal_approx(
+			element.integrity,
+			archetype.max_integrity * expected_fraction
+		):
 			return false
 		elements[element.element_id] = element
 		max_element_id = maxi(max_element_id, element.element_id)
