@@ -306,10 +306,24 @@ func _merged_motion(
 		survivor_motion.sleeping = true
 		survivor_motion.frozen = true
 		return survivor_motion
+	if _mounted_bodies.has(survivor_id) and survivor_body != null:
+		survivor_motion = _capture_body_motion(survivor_body)
+		survivor_motion.frozen = false
+		return survivor_motion
 	if survivor_body == null or loser_body == null:
 		survivor_motion.frozen = false
 		return survivor_motion
 	var loser_motion: AssemblyMotionState = _capture_body_motion(loser_body)
+	if (
+		survivor_motion.linear_velocity.is_equal_approx(
+			loser_motion.linear_velocity
+		)
+		and survivor_motion.angular_velocity.is_equal_approx(
+			loser_motion.angular_velocity
+		)
+	):
+		survivor_motion.frozen = false
+		return survivor_motion
 	var mass_a: float = _body_mass(survivor_body)
 	var mass_b: float = _body_mass(loser_body)
 	var com_a: Vector3 = _body_center_of_mass_world(survivor_body)
@@ -385,7 +399,8 @@ func _project_assembly(
 	var body: PhysicsBody3D
 	if mounted != null:
 		mounted_motion = _capture_body_motion(mounted)
-		mounted.freeze = true
+		if motion_override == null:
+			mounted.freeze = true
 		_clear_body_colliders(mounted)
 		body = mounted
 	else:
@@ -431,7 +446,6 @@ func _project_assembly(
 			motion = mounted_motion
 		else:
 			motion.transform = mounted_motion.transform
-			motion.frozen = mounted_motion.frozen
 	_apply_collision_profile(assembly_id, body)
 	_apply_body_groups(assembly_id, body)
 	if body is RigidBody3D:
@@ -454,7 +468,7 @@ func _project_assembly(
 		rigid.angular_velocity = motion.angular_velocity
 		rigid.sleeping = motion.sleeping
 		if mounted != null:
-			rigid.freeze = motion.frozen
+			rigid.freeze = false if motion_override != null else motion.frozen
 	_bodies[assembly_id] = body
 	for element_id: int in colliders_by_element:
 		_element_records[element_id] = {

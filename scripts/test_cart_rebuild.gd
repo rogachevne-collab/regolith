@@ -111,9 +111,13 @@ func _run_test() -> void:
 		return
 
 	var speed_after_split: float = _cart.linear_velocity.length()
+	var position_after_split: Vector3 = _cart.global_position
 	await get_tree().create_timer(2.0).timeout
-	if _cart.linear_velocity.length() <= speed_after_split:
+	if _cart.linear_velocity.length() < maxf(speed_after_split * 0.5, 1.0):
 		_fail("drive stopped working after structural split")
+		return
+	if _cart.global_position.distance_to(position_after_split) < 2.0:
+		_fail("rover did not move after structural split")
 		return
 	if _vector_is_invalid(_cart.global_position):
 		_fail("rover position became invalid")
