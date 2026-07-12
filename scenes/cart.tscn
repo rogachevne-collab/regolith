@@ -18,6 +18,7 @@ collision_layer = 2
 collision_mask = 3
 mass = 400.0
 can_sleep = false
+continuous_cd = true
 freeze = true
 script = ExtResource("1_cart")
 

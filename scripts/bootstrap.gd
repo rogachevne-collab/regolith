@@ -107,7 +107,7 @@ func _place_when_ground_exists() -> void:
 			cart_z_minus_origin, Vector3.DOWN, 200.0)
 		var cart_z_plus_hit: VoxelRaycastResult = tool.raycast(
 			cart_z_plus_origin, Vector3.DOWN, 200.0)
-		if (
+		var surfaces_ready := (
 			player_hit != null
 			and vehicle_hit != null
 			and cart_hit != null
@@ -116,8 +116,8 @@ func _place_when_ground_exists() -> void:
 			and cart_x_plus_hit != null
 			and cart_z_minus_hit != null
 			and cart_z_plus_hit != null
-			and _probe_player_spawn_ready(player_hit.distance)
-		):
+		)
+		if surfaces_ready and _probe_player_spawn_ready(player_hit.distance):
 			var player_surface_y: float = _resolve_surface_y(
 				_player_spawn_xz,
 				player_origin.y - player_hit.distance
@@ -193,8 +193,10 @@ func _place_when_ground_exists() -> void:
 			_loading.visible = false
 			return
 
-		_stable_player = 0
-		_loading.text = "Ожидание коллизии..."
+		if not surfaces_ready:
+			_stable_player = 0
+		if _stable_player == 0:
+			_loading.text = "Ожидание коллизии..."
 		await get_tree().process_frame
 
 

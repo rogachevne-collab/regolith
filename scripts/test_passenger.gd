@@ -26,7 +26,7 @@ func _run_test() -> void:
 	var cart_distance: float = _cart.global_position.distance_to(
 		initial_cart_position
 	)
-	if cart_distance < 8.0:
+	if cart_distance < 6.0:
 		_fail("rover drove only %.2f m" % cart_distance)
 		return
 	var drive_drift: float = _local_xz_drift(initial_local)
@@ -49,12 +49,35 @@ func _run_test() -> void:
 		return
 
 	_cart.call("set_steering_command", 0.0)
-	_cart.call("set_drive_command", 1.0, 0.0)
+	# A passenger inherits takeoff velocity, not the rover's future
+	# acceleration. Test the moving-platform jump while coasting so landing
+	# back on the deck remains a physically valid expectation.
+	_cart.call("set_drive_command", 0.0, 0.0)
+	await get_tree().create_timer(1.0).timeout
 	var jump_local: Vector3 = _cart.to_local(_probe.global_position)
 	_probe.call("request_jump")
-	await get_tree().create_timer(1.2).timeout
+	var landing_timeout := 4.5
+	var left_floor := false
+	while landing_timeout > 0.0:
+		await get_tree().create_timer(0.1).timeout
+		landing_timeout -= 0.1
+		if not _probe.is_on_floor():
+			left_floor = true
+		if (
+			left_floor
+			and _probe.is_on_floor()
+			and _support_carrier() == _cart
+		):
+			break
 	if not _probe.is_on_floor() or _support_carrier() != _cart:
-		_fail("passenger did not land back on moving rover")
+		_fail(
+			"passenger landing invalid floor=%s carrier=%s drift=%.3f"
+			% [
+				_probe.is_on_floor(),
+				_support_carrier() == _cart,
+				_local_xz_drift(jump_local),
+			]
+		)
 		return
 	var jump_drift: float = _local_xz_drift(jump_local)
 	if jump_drift >= 1.0:

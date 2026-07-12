@@ -26,7 +26,7 @@ func _physics_process(delta: float) -> void:
 		_turn_start_x = _cart.global_position.x
 
 	if _elapsed < 11.0:
-		_cart.set_drive_command(0.65, 0.0)
+		_cart.set_drive_command(1.0, 0.0)
 		_cart.set_steering_command(1.0)
 		_saw_lateral_slip = (
 			_saw_lateral_slip or _cart.is_lateral_slipping()

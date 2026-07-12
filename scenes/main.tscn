@@ -1,4 +1,4 @@
-[gd_scene load_steps=11 format=3 uid="uid://main001"]
+[gd_scene load_steps=12 format=3 uid="uid://main001"]
 
 [ext_resource type="Script" path="res://scripts/bootstrap.gd" id="1"]
 [ext_resource type="PackedScene" uid="uid://player001" path="res://scenes/player.tscn" id="2"]
@@ -9,6 +9,7 @@
 [ext_resource type="PackedScene" path="res://scenes/launch_vehicle.tscn" id="7"]
 [ext_resource type="PackedScene" path="res://scenes/cart.tscn" id="8"]
 [ext_resource type="PackedScene" path="res://scenes/assembly.tscn" id="9"]
+[ext_resource type="Script" path="res://scripts/world_command_gateway.gd" id="10"]
 
 [sub_resource type="PanoramaSkyMaterial" id="PanoramaSkyMaterial_stars"]
 panorama = ExtResource("5")
@@ -78,6 +79,9 @@ run_stream_in_editor = true
 [node name="PlacedBlocks" type="Node3D" parent="."]
 script = ExtResource("6")
 
+[node name="WorldCommandGateway" type="Node" parent="."]
+script = ExtResource("10")
+
 [node name="LaunchVehicle" parent="." instance=ExtResource("7")]
 position = Vector3(4.5, 0, 16)
 
@@ -122,7 +126,7 @@ theme_override_colors/font_color = Color(1, 1, 1, 0.9)
 theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.8)
 theme_override_constants/shadow_offset_x = 1
 theme_override_constants/shadow_offset_y = 1
-text = "WASD — ходьба, Shift — бег, Space — прыжок
+text = "WASD — ходьба, Shift — бег, Space — прыжок, Esc — настройки
 ЛКМ — бур, ПКМ — блок, E у корабля — кокпит
 В кокпите: Space — тяга, WASD — баланс, E — выйти
 Тележка: ↑ — привод, ↓ — тормоз, ←/→ — руль, K — толкнуть
