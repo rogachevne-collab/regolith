@@ -7,6 +7,8 @@ var _spawn_locked := true
 var _spawn_settling := false
 var _settled_frames := 0
 var _world_parent: Node
+var _gameplay_input_enabled := true
+var _current_vehicle: Node3D
 
 const SETTLED_FRAMES_NEEDED := 12
 
@@ -51,6 +53,22 @@ func is_grounded() -> bool:
 	return is_on_floor()
 
 
+func set_gameplay_input_enabled(enabled: bool) -> void:
+	_gameplay_input_enabled = enabled
+
+
+func is_gameplay_input_enabled() -> bool:
+	return _gameplay_input_enabled
+
+
+func is_in_vehicle() -> bool:
+	return _current_vehicle != null
+
+
+func current_vehicle() -> Node3D:
+	return _current_vehicle
+
+
 func _ready() -> void:
 	super._ready()
 	_head = get_node(head_path)
@@ -59,6 +77,7 @@ func _ready() -> void:
 
 
 func enter_vehicle(vehicle: Node3D, seat_position: Vector3) -> void:
+	_current_vehicle = vehicle
 	set_physics_process(false)
 	velocity = Vector3.ZERO
 	clear_support_frame()
@@ -67,18 +86,17 @@ func enter_vehicle(vehicle: Node3D, seat_position: Vector3) -> void:
 	position = seat_position
 	rotation = Vector3.ZERO
 	$Drill.set_physics_process(false)
-	$BlockPlacer.set_physics_process(false)
 	$Camera/DrillVisual.visible = false
 
 
 func exit_vehicle(world_position: Vector3) -> void:
 	reparent(_world_parent, true)
 	global_position = world_position
+	_current_vehicle = null
 	rotation = Vector3.ZERO
 	velocity = Vector3.ZERO
 	$CollisionShape3D.set_deferred("disabled", false)
 	$Drill.set_physics_process(true)
-	$BlockPlacer.set_physics_process(true)
 	$Camera/DrillVisual.visible = true
 	set_physics_process(true)
 
@@ -98,26 +116,29 @@ func _physics_process(delta: float) -> void:
 	if _spawn_locked:
 		return
 
-	var forward := -_head.global_transform.basis.z
+	var yaw_delta: float = _head.call("consume_yaw_delta")
+	rotate_y(deg_to_rad(yaw_delta))
+	var movement_basis: Basis = _head.call("movement_basis")
+	var forward := -movement_basis.z
 	forward.y = 0.0
 	forward = forward.normalized()
-	var right := _head.global_transform.basis.x
+	var right := movement_basis.x
 	right.y = 0.0
 	right = right.normalized()
 
 	var move: Vector3 = Vector3.ZERO
-	if Input.is_action_pressed("move_forward"):
+	if _gameplay_input_enabled and Input.is_action_pressed("move_forward"):
 		move += forward
-	if Input.is_action_pressed("move_back"):
+	if _gameplay_input_enabled and Input.is_action_pressed("move_back"):
 		move -= forward
-	if Input.is_action_pressed("move_left"):
+	if _gameplay_input_enabled and Input.is_action_pressed("move_left"):
 		move -= right
-	if Input.is_action_pressed("move_right"):
+	if _gameplay_input_enabled and Input.is_action_pressed("move_right"):
 		move += right
 
 	move_character(
 		move,
-		Input.is_key_pressed(KEY_SHIFT),
-		Input.is_action_just_pressed("jump"),
+		_gameplay_input_enabled and Input.is_action_pressed("sprint"),
+		_gameplay_input_enabled and Input.is_action_just_pressed("jump"),
 		delta
 	)

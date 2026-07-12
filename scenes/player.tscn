@@ -1,45 +1,19 @@
-[gd_scene load_steps=17 format=3 uid="uid://player001"]
+[gd_scene format=3 uid="uid://player001"]
 
-[ext_resource type="Script" path="res://scripts/player_controller.gd" id="1"]
-[ext_resource type="Script" path="res://scripts/mouse_look.gd" id="2"]
-[ext_resource type="Script" path="res://scripts/drill.gd" id="3"]
-[ext_resource type="AudioStream" path="res://resources/drill_loop.wav" id="4"]
-[ext_resource type="Script" path="res://scripts/block_placer.gd" id="5"]
-[ext_resource type="Script" path="res://scripts/support_frame.gd" id="6"]
+[ext_resource type="Script" uid="uid://c1pprtdrrt2lb" path="res://scripts/player_controller.gd" id="1"]
+[ext_resource type="Script" uid="uid://c3lkuwf6b81hx" path="res://scripts/mouse_look.gd" id="2"]
+[ext_resource type="Script" uid="uid://bw1oxm4kkusl8" path="res://scripts/drill.gd" id="3"]
+[ext_resource type="AudioStream" uid="uid://dfp2npjb02210" path="res://resources/drill_loop.wav" id="4"]
+[ext_resource type="Script" uid="uid://dv8yni6em0fm1" path="res://scripts/support_frame.gd" id="6"]
+[ext_resource type="Script" uid="uid://jygcphnx675p" path="res://scripts/player_settings_overlay.gd" id="7"]
+[ext_resource type="PackedScene" uid="uid://b20u64sdjhmkg" path="res://resources/models/industrial_drill.glb" id="7_y4r1p"]
+[ext_resource type="Script" uid="uid://diyma885jcjsr" path="res://scripts/interaction_query.gd" id="8"]
+[ext_resource type="Script" uid="uid://b3mkkfnkg88fv" path="res://scripts/tool_controller.gd" id="9"]
+[ext_resource type="Script" path="res://scripts/interaction_feedback.gd" id="10"]
 
-[sub_resource type="CapsuleShape3D" id="CapsuleShape_player"]
-radius = 0.35
+[sub_resource type="CylinderShape3D" id="CylinderShape_player"]
 height = 1.8
-
-[sub_resource type="CapsuleMesh" id="CapsuleMesh_body"]
 radius = 0.35
-height = 1.8
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_body"]
-albedo_color = Color(0.72, 0.78, 0.86, 1)
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_drill_body"]
-albedo_color = Color(0.62, 0.66, 0.72, 1)
-metallic = 0.85
-roughness = 0.35
-
-[sub_resource type="CylinderMesh" id="CylinderMesh_drill_body"]
-top_radius = 0.05
-bottom_radius = 0.06
-height = 0.42
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_drill_bit"]
-albedo_color = Color(0.95, 0.78, 0.2, 1)
-metallic = 0.9
-roughness = 0.25
-emission_enabled = true
-emission = Color(1.0, 0.72, 0.15, 1)
-emission_energy_multiplier = 0.35
-
-[sub_resource type="CylinderMesh" id="CylinderMesh_drill_bit"]
-top_radius = 0.018
-bottom_radius = 0.034
-height = 0.16
 
 [sub_resource type="ParticleProcessMaterial" id="ParticleProcessMaterial_sparks"]
 emission_shape = 1
@@ -48,7 +22,7 @@ direction = Vector3(0, 1, 0)
 spread = 48.0
 initial_velocity_min = 1.5
 initial_velocity_max = 4.5
-gravity = Vector3(0, -3.0, 0)
+gravity = Vector3(0, -3, 0)
 scale_min = 0.04
 scale_max = 0.12
 color = Color(1, 0.78, 0.25, 1)
@@ -63,69 +37,234 @@ particles_anim_v_frames = 1
 particles_anim_loop = false
 
 [sub_resource type="QuadMesh" id="QuadMesh_sparks"]
-size = Vector2(0.08, 0.08)
 material = SubResource("StandardMaterial3D_sparks")
+size = Vector2(0.08, 0.08)
 
-[node name="Player" type="CharacterBody3D"]
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_body"]
+radius = 0.35
+height = 1.8
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_body"]
+albedo_color = Color(0.72, 0.78, 0.86, 1)
+
+[node name="Player" type="CharacterBody3D" unique_id=999750236]
 collision_layer = 4
 collision_mask = 3
 script = ExtResource("1")
-head_path = NodePath("Camera")
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
-shape = SubResource("CapsuleShape_player")
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=1012594469]
+shape = SubResource("CylinderShape_player")
 
-[node name="SupportFrame" type="Node" parent="."]
+[node name="SupportFrame" type="Node" parent="." unique_id=639267437]
 script = ExtResource("6")
 
-[node name="Camera" type="Camera3D" parent="."]
+[node name="InteractionQuery" type="Node3D" parent="." unique_id=1611737884]
+script = ExtResource("8")
+
+[node name="ToolController" type="Node" parent="." unique_id=416839685]
+script = ExtResource("9")
+
+[node name="Camera" type="Camera3D" parent="." unique_id=1923783900]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.75, 0)
 current = true
 fov = 80.0
 script = ExtResource("2")
 
-[node name="DrillAudio" type="AudioStreamPlayer3D" parent="Camera"]
+[node name="DrillAudio" type="AudioStreamPlayer3D" parent="Camera" unique_id=2129068512]
 stream = ExtResource("4")
 volume_db = -8.0
 unit_size = 2.0
 max_distance = 12.0
-autoplay = false
 
-[node name="DrillVisual" type="Node3D" parent="Camera"]
+[node name="DrillVisual" type="Node3D" parent="Camera" unique_id=352285946]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.28, -0.22, -0.45)
 
-[node name="Body" type="MeshInstance3D" parent="Camera/DrillVisual"]
-transform = Transform3D(1, 0, 0, 0, 6.12323e-17, 1, 0, -1, 6.12323e-17, 0, 0, -0.08)
-mesh = SubResource("CylinderMesh_drill_body")
-surface_material_override/0 = SubResource("StandardMaterial3D_drill_body")
-
-[node name="Bit" type="MeshInstance3D" parent="Camera/DrillVisual"]
-transform = Transform3D(1, 0, 0, 0, 6.12323e-17, 1, 0, -1, 6.12323e-17, 0, 0, -0.34)
-mesh = SubResource("CylinderMesh_drill_bit")
-surface_material_override/0 = SubResource("StandardMaterial3D_drill_bit")
-
-[node name="Sparks" type="GPUParticles3D" parent="Camera/DrillVisual"]
+[node name="Sparks" type="GPUParticles3D" parent="Camera/DrillVisual" unique_id=1911807031]
 amount = 24
 lifetime = 0.18
-one_shot = false
 explosiveness = 0.85
 process_material = SubResource("ParticleProcessMaterial_sparks")
 draw_pass_1 = SubResource("QuadMesh_sparks")
 
-[node name="Drill" type="Node" parent="."]
+[node name="Mount" type="Node3D" parent="Camera/DrillVisual" unique_id=1333315461]
+transform = Transform3D(2.5, 0, 0, 0, 2.5, 0, 0, 0, 2.5, 0, 0, 0.08)
+
+[node name="Model" parent="Camera/DrillVisual/Mount" unique_id=2115948937 instance=ExtResource("7_y4r1p")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.13855156)
+
+[node name="Drill" type="Node" parent="." unique_id=1360361658]
 script = ExtResource("3")
-terrain_path = NodePath("../../VoxelTerrain")
 
-[node name="BlockPlacer" type="Node" parent="."]
-script = ExtResource("5")
-placed_blocks_path = NodePath("../../PlacedBlocks")
-terrain_path = NodePath("../../VoxelTerrain")
+[node name="InteractionFeedback" type="CanvasLayer" parent="." unique_id=1966636571]
+layer = 5
+script = ExtResource("10")
 
-[node name="Body" type="MeshInstance3D" parent="."]
+[node name="Reticle" type="Label" parent="InteractionFeedback" unique_id=946283435]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -12.0
+offset_top = -17.0
+offset_right = 12.0
+offset_bottom = 17.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.8)
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 1
+theme_override_font_sizes/font_size = 22
+text = "+"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="Prompt" type="Label" parent="InteractionFeedback" unique_id=1852617193]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -260.0
+offset_top = 34.0
+offset_right = 260.0
+offset_bottom = 68.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(0.82, 0.94, 1, 0.95)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.9)
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 1
+theme_override_font_sizes/font_size = 18
+horizontal_alignment = 1
+
+[node name="Progress" type="ProgressBar" parent="InteractionFeedback" unique_id=556321824]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -110.0
+offset_top = 72.0
+offset_right = 110.0
+offset_bottom = 82.0
+grow_horizontal = 2
+grow_vertical = 2
+show_percentage = false
+
+[node name="Result" type="Label" parent="InteractionFeedback" unique_id=1930008058]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -200.0
+offset_top = 92.0
+offset_right = 200.0
+offset_bottom = 124.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.9)
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 1
+theme_override_font_sizes/font_size = 17
+horizontal_alignment = 1
+
+[node name="SettingsOverlay" type="CanvasLayer" parent="." unique_id=70838383]
+layer = 10
+script = ExtResource("7")
+
+[node name="Panel" type="PanelContainer" parent="SettingsOverlay" unique_id=419447690]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -260.0
+offset_top = -165.0
+offset_right = 260.0
+offset_bottom = 165.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Margin" type="MarginContainer" parent="SettingsOverlay/Panel" unique_id=1574835132]
+layout_mode = 2
+theme_override_constants/margin_left = 24
+theme_override_constants/margin_top = 20
+theme_override_constants/margin_right = 24
+theme_override_constants/margin_bottom = 20
+
+[node name="Content" type="VBoxContainer" parent="SettingsOverlay/Panel/Margin" unique_id=937051010]
+layout_mode = 2
+theme_override_constants/separation = 18
+
+[node name="Title" type="Label" parent="SettingsOverlay/Panel/Margin/Content" unique_id=143142229]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Управление"
+horizontal_alignment = 1
+
+[node name="Separator" type="HSeparator" parent="SettingsOverlay/Panel/Margin/Content" unique_id=1528383772]
+layout_mode = 2
+
+[node name="Sensitivity" type="HBoxContainer" parent="SettingsOverlay/Panel/Margin/Content" unique_id=1559378167]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="Label" type="Label" parent="SettingsOverlay/Panel/Margin/Content/Sensitivity" unique_id=985505211]
+custom_minimum_size = Vector2(145, 0)
+layout_mode = 2
+text = "Чувствительность"
+
+[node name="Slider" type="HSlider" parent="SettingsOverlay/Panel/Margin/Content/Sensitivity" unique_id=1184977853]
+custom_minimum_size = Vector2(250, 0)
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 0.02
+max_value = 1.5
+step = 0.01
+value = 0.02
+
+[node name="Value" type="Label" parent="SettingsOverlay/Panel/Margin/Content/Sensitivity" unique_id=1686990026]
+custom_minimum_size = Vector2(48, 0)
+layout_mode = 2
+horizontal_alignment = 2
+
+[node name="Fov" type="HBoxContainer" parent="SettingsOverlay/Panel/Margin/Content" unique_id=1844586002]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="Label" type="Label" parent="SettingsOverlay/Panel/Margin/Content/Fov" unique_id=1645099701]
+custom_minimum_size = Vector2(145, 0)
+layout_mode = 2
+text = "Поле зрения"
+
+[node name="Slider" type="HSlider" parent="SettingsOverlay/Panel/Margin/Content/Fov" unique_id=1399900385]
+custom_minimum_size = Vector2(250, 0)
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 60.0
+max_value = 110.0
+value = 60.0
+
+[node name="Value" type="Label" parent="SettingsOverlay/Panel/Margin/Content/Fov" unique_id=559855042]
+custom_minimum_size = Vector2(48, 0)
+layout_mode = 2
+horizontal_alignment = 2
+
+[node name="Hint" type="Label" parent="SettingsOverlay/Panel/Margin/Content" unique_id=226119135]
+layout_mode = 2
+text = "Escape — закрыть · R — захватить мышь"
+horizontal_alignment = 1
+
+[node name="Close" type="Button" parent="SettingsOverlay/Panel/Margin/Content" unique_id=2093401974]
+layout_mode = 2
+text = "Вернуться"
+
+[node name="Body" type="MeshInstance3D" parent="." unique_id=379131191]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.1, 0)
 visible = false
 mesh = SubResource("CapsuleMesh_body")
 surface_material_override/0 = SubResource("StandardMaterial3D_body")
 
-[node name="VoxelViewer" type="VoxelViewer" parent="."]
-view_distance = 128
+[node name="VoxelViewer" type="VoxelViewer" parent="." unique_id=1175640371]

@@ -44,12 +44,24 @@ func _ready() -> void:
 	_status.text = "ИСПЫТАТЕЛЬНЫЙ КОРАБЛЬ\nE — сесть в кокпит"
 
 
-func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_E:
-		if _occupied:
-			_exit_cockpit()
-		elif global_position.distance_to(_player.global_position) <= launch_distance:
-			_enter_cockpit()
+func interaction_target_kind() -> StringName:
+	return InteractionHit.KIND_CONTROL_SEAT
+
+
+func interaction_metadata() -> Dictionary:
+	return {"occupied": _occupied}
+
+
+func handle_interact(source: Node3D) -> bool:
+	if source != _player:
+		return false
+	if _occupied:
+		_exit_cockpit()
+		return true
+	if global_position.distance_to(_player.global_position) > launch_distance:
+		return false
+	_enter_cockpit()
+	return true
 
 
 func _physics_process(delta: float) -> void:

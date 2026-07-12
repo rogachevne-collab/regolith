@@ -56,6 +56,8 @@ func try_place(cell: Vector3i, player: Node3D) -> bool:
 	var body := StaticBody3D.new()
 	body.name = "Block_%d_%d_%d" % [cell.x, cell.y, cell.z]
 	body.position = cell_to_world(cell)
+	body.add_to_group("placed_blocks")
+	body.set_meta("interaction_metadata", {"cell": cell})
 
 	var mesh_instance := MeshInstance3D.new()
 	mesh_instance.mesh = _block_mesh

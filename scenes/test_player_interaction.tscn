@@ -1,0 +1,35 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://scripts/test_player_interaction.gd" id="1_test"]
+[ext_resource type="Script" path="res://scripts/placed_blocks.gd" id="2_blocks"]
+[ext_resource type="Script" path="res://scripts/world_command_gateway.gd" id="3_gateway"]
+[ext_resource type="Script" path="res://scripts/interaction_query.gd" id="4_query"]
+[ext_resource type="Script" path="res://scripts/tool_controller.gd" id="5_tools"]
+
+[node name="PlayerInteractionTest" type="CharacterBody3D"]
+script = ExtResource("1_test")
+
+[node name="VoxelTerrain" type="VoxelTerrain" parent="."]
+
+[node name="PlacedBlocks" type="Node3D" parent="."]
+script = ExtResource("2_blocks")
+
+[node name="WorldCommandGateway" type="Node" parent="."]
+script = ExtResource("3_gateway")
+terrain_path = NodePath("../VoxelTerrain")
+placed_blocks_path = NodePath("../PlacedBlocks")
+
+[node name="Camera" type="Camera3D" parent="."]
+
+[node name="InteractionQuery" type="Node3D" parent="."]
+process_mode = 4
+script = ExtResource("4_query")
+player_path = NodePath("..")
+camera_path = NodePath("../Camera")
+terrain_path = NodePath("../VoxelTerrain")
+
+[node name="ToolController" type="Node" parent="."]
+process_mode = 4
+script = ExtResource("5_tools")
+query_path = NodePath("../InteractionQuery")
+gateway_path = NodePath("../WorldCommandGateway")

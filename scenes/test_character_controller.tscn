@@ -1,0 +1,23 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/test_character_controller.gd" id="1_test"]
+[ext_resource type="Script" path="res://scripts/locomotion_probe.gd" id="2_probe"]
+[ext_resource type="Script" path="res://scripts/support_frame.gd" id="3_support"]
+
+[sub_resource type="CylinderShape3D" id="CylinderShape_probe"]
+height = 1.8
+radius = 0.35
+
+[node name="CharacterControllerTest" type="Node3D"]
+script = ExtResource("1_test")
+
+[node name="LocomotionProbe" type="CharacterBody3D" parent="."]
+collision_layer = 4
+collision_mask = 3
+script = ExtResource("2_probe")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="LocomotionProbe"]
+shape = SubResource("CylinderShape_probe")
+
+[node name="SupportFrame" type="Node" parent="LocomotionProbe"]
+script = ExtResource("3_support")
