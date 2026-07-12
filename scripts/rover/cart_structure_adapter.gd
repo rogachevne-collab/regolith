@@ -173,7 +173,11 @@ func _spawn_rover() -> bool:
 		true
 	)
 	_projection.set_collision_profile(_rover_assembly_id, 2, 3)
-	_projection.register_mounted_body(_rover_assembly_id, _mount_body)
+	if not _projection.mount_assembly_body_now(
+		_rover_assembly_id,
+		_mount_body
+	):
+		return false
 	_mount_body.can_sleep = false
 	_mount_body.continuous_cd = true
 	_emit_structure_event(&"initialize")
@@ -309,7 +313,8 @@ func _handle_merge(event: Dictionary) -> void:
 	var loser_id: int = int(event["loser_assembly_id"])
 	_fragment_assembly_ids.erase(loser_id)
 	_fragment_assembly_ids.erase(survivor_id)
-	_retarget_rover_mount(survivor_id)
+	if survivor_id != _rover_assembly_id:
+		_retarget_rover_mount(survivor_id)
 	_emit_structure_event(&"attach")
 
 
@@ -318,8 +323,8 @@ func _retarget_rover_mount(assembly_id: int) -> void:
 	if previous_id != assembly_id:
 		_projection.unregister_mounted_body(previous_id)
 	_rover_assembly_id = assembly_id
-	_projection.register_mounted_body(assembly_id, _mount_body)
 	_projection.set_collision_profile(assembly_id, 2, 3)
+	_projection.mount_assembly_body_now(assembly_id, _mount_body)
 
 
 func _register_fragment(assembly_id: int) -> void:

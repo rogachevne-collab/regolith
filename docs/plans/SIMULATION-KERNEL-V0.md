@@ -15,14 +15,14 @@ deterministic split/merge, momentum-safe Jolt projection и snapshot roundtrip.
 | Typed definitions + visual Blueprint baker | ✓ |
 | Authoritative runtime (`SimulationWorld`) | ✓ |
 | Snapshot v2 + momentum-safe Jolt projection | ✓ |
-| Rover migration через locomotion adapter | pending |
-| Anchored base + обе Assembly в `main` | pending |
-| Focused regressions + smoke `main` | partial |
+| Rover migration через locomotion adapter | ✓ |
+| Anchored base + обе Assembly в `main` | ✓ (код) |
+| Focused regressions + smoke `main` | partial — не прогонялось |
 
 **Закрыто headless:** `KERNEL-V0`, `KERNEL-RUNTIME-V0`, `KERNEL-PROJECTION-V0`; полный
-`./tests/run_tests.sh` — 12/12.
+`./tests/run_tests.sh` — 12/12 (до §6; повторный прогон после интеграции — pending).
 
-**Следующий шаг:** rover migration (§5) без переноса PoC-костылей в Kernel.
+**Следующий шаг:** ручной smoke `main` + полный `./tests/run_tests.sh` после §6.
 
 ---
 
@@ -80,29 +80,39 @@ deterministic split/merge, momentum-safe Jolt projection и snapshot roundtrip.
 - Alignment gate: `GridAlignment` + `REASON_MISALIGNED_CONNECTION`.
 - Focused test: [`scenes/test_simulation_projection.tscn`](../../scenes/test_simulation_projection.tscn).
 
-## 5. Мигрировать rover без переноса PoC-костылей — pending
+## 5. Мигрировать rover без переноса PoC-костылей ✓
 
-- Испечь `cart_rover` Blueprint со стабильными element/port bindings.
-- Разделить [`scripts/cart.gd`](../../scripts/cart.gd): Kernel — topology/mass/split/merge;
-  `CartLocomotion` — suspension, steering, tire forces, wheel visuals; adapter сохраняет
-  API тестов.
-- Заменить ad-hoc fragment consumption на kernel merge; detached wheel/bridge — generic
-  assembly projection.
-- После parity удалить authority из legacy `structure_model` / `assembly` (если ещё
-  используются), оставив временные adapters.
+- [`resources/blueprints/baked/cart_rover.tres`](../../resources/blueprints/baked/cart_rover.tres)
+  со стабильными element/port bindings.
+- [`scripts/cart.gd`](../../scripts/cart.gd): Kernel — topology/mass/split/merge через
+  [`scripts/rover/cart_structure_adapter.gd`](../../scripts/rover/cart_structure_adapter.gd);
+  [`scripts/rover/cart_locomotion.gd`](../../scripts/rover/cart_locomotion.gd) — suspension,
+  steering, tire forces, wheel visuals; adapter сохраняет API тестов.
+- Fragment consumption → kernel merge; detached wheel/bridge — generic assembly projection.
+- Legacy `structure_model` удалён из authority path ровера; isolated PoC-сцены используют
+  внутренний fallback `SimulationWorld` в `cart.gd`.
 
-## 6. Anchored base и интеграция main — pending
+## 6. Anchored base и интеграция main ✓ (код)
 
-- Visual authoring: prebuilt industrial base (foundation/Anchor, frame, Slice-01 stubs).
-- `SimulationWorld` + rover + base Blueprint в [`scenes/main.tscn`](../../scenes/main.tscn);
-  [`scripts/bootstrap.gd`](../../scripts/bootstrap.gd) — R5 settle перед Anchor/projection.
+- Visual authoring: [`scenes/blueprint_authoring/slice01_base_minimal.tscn`](../../scenes/blueprint_authoring/slice01_base_minimal.tscn)
+  → [`resources/blueprints/baked/slice01_base_minimal.tres`](../../resources/blueprints/baked/slice01_base_minimal.tres).
+- Shared scene-owned kernel: [`scenes/simulation_session.tscn`](../../scenes/simulation_session.tscn)
+  + [`scripts/simulation/simulation_session.gd`](../../scripts/simulation/simulation_session.gd)
+  в [`scenes/main.tscn`](../../scenes/main.tscn); `cart_rover` и `slice01_base_minimal`
+  в одном `SimulationWorld`.
+- [`scripts/bootstrap.gd`](../../scripts/bootstrap.gd): R5 settle перед spawn anchored base;
+  rover motion sync через `SimulationPhysicsProjection.sync_body_motion_now` после
+  terrain placement; [`scripts/simulation/grid_spawn_util.gd`](../../scripts/simulation/grid_spawn_util.gd).
+- `Cart` в `main` получает внешний session через `simulation_session_path`; PoC-тесты без
+  session — internal fallback.
+- Legacy `Assembly` удалён из `main.tscn` (double physics).
 - `launch_vehicle` и compatibility `PlacedBlocks` вне Kernel v0.
 
 ## 7. Проверить границы milestone — partial
 
 **Сделано:** blueprint bake/validation, orientation+multi-cell, split/merge policy,
 dual-anchor merge, snapshot roundtrip, projection colliders/momentum/anchor/cleanup,
-malformed snapshot rejection, queued command immutability.
+malformed snapshot rejection, queued command immutability, main kernel wiring (§6).
 
-**Осталось:** rover parity regressions на kernel topology, anchored base в main,
-ручной smoke (base неподвижна, rover feel, split/merge без телепорта, diagnostics).
+**Осталось:** повторный полный `./tests/run_tests.sh` после §6, ручной smoke
+(base неподвижна, rover feel, split/merge без телепорта, diagnostics).

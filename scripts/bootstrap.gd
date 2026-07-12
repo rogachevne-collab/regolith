@@ -4,12 +4,14 @@ const SKY_PROBE_Y := 120.0
 const SPAWN_CLEARANCE := 1.05
 const MIN_WARMUP_FRAMES := 30
 const STABLE_PHYSICS_FRAMES := 4
+const CART_HEIGHT_OFFSET := 1.22
 
 @onready var _terrain: VoxelTerrain = $VoxelTerrain
 @onready var _player: Node3D = $Player
 @onready var _launch_vehicle: RigidBody3D = $LaunchVehicle
 @onready var _cart: RigidBody3D = $Cart
-@onready var _assembly: RigidBody3D = $Assembly
+@onready var _session: SimulationSession = $SimulationSession
+@onready var _base_spawn: Node3D = $BaseSpawn
 @onready var _loading: Label = $CanvasLayer/Loading
 @onready var _coordinates: Label = $CanvasLayer/Coordinates
 
@@ -22,20 +24,6 @@ var _player_spawn_pos := Vector3.ZERO
 func _ready() -> void:
 	_loading.visible = true
 	_cart.freeze = true
-	_assembly.freeze = true
-	var assembly_cells: Array[Vector3i] = [
-		Vector3i(0, 0, 0),
-		Vector3i(1, 0, 0),
-		Vector3i(0, 1, 0),
-		Vector3i(1, 1, 0),
-		Vector3i(0, 0, 1),
-		Vector3i(1, 0, 1),
-		Vector3i(0, 1, 1),
-		Vector3i(1, 1, 1),
-		Vector3i(2, 0, 0),
-		Vector3i(3, 0, 0),
-	]
-	_assembly.call("build_from", assembly_cells)
 	_player_spawn_xz = Vector2(_player.global_position.x, _player.global_position.z)
 	if _player.has_method("set_spawn_locked"):
 		_player.set_spawn_locked(true)
@@ -72,14 +60,18 @@ func _place_when_ground_exists() -> void:
 		_cart.global_position.x,
 		SKY_PROBE_Y,
 		_cart.global_position.z)
-	var assembly_origin := Vector3(
-		_assembly.global_position.x,
+	var base_origin := Vector3(
+		_base_spawn.global_position.x,
 		SKY_PROBE_Y,
-		_assembly.global_position.z)
+		_base_spawn.global_position.z)
 	var cart_x_minus_origin := cart_origin + Vector3.LEFT
 	var cart_x_plus_origin := cart_origin + Vector3.RIGHT
 	var cart_z_minus_origin := cart_origin + Vector3.FORWARD
 	var cart_z_plus_origin := cart_origin + Vector3.BACK
+	var base_x_minus_origin := base_origin + Vector3.LEFT
+	var base_x_plus_origin := base_origin + Vector3.RIGHT
+	var base_z_minus_origin := base_origin + Vector3.FORWARD
+	var base_z_plus_origin := base_origin + Vector3.BACK
 
 	while true:
 		if _warmup_frames < MIN_WARMUP_FRAMES:
@@ -97,8 +89,8 @@ func _place_when_ground_exists() -> void:
 			vehicle_origin, Vector3.DOWN, 200.0)
 		var cart_hit: VoxelRaycastResult = tool.raycast(
 			cart_origin, Vector3.DOWN, 200.0)
-		var assembly_hit: VoxelRaycastResult = tool.raycast(
-			assembly_origin, Vector3.DOWN, 200.0)
+		var base_hit: VoxelRaycastResult = tool.raycast(
+			base_origin, Vector3.DOWN, 200.0)
 		var cart_x_minus_hit: VoxelRaycastResult = tool.raycast(
 			cart_x_minus_origin, Vector3.DOWN, 200.0)
 		var cart_x_plus_hit: VoxelRaycastResult = tool.raycast(
@@ -107,15 +99,27 @@ func _place_when_ground_exists() -> void:
 			cart_z_minus_origin, Vector3.DOWN, 200.0)
 		var cart_z_plus_hit: VoxelRaycastResult = tool.raycast(
 			cart_z_plus_origin, Vector3.DOWN, 200.0)
+		var base_x_minus_hit: VoxelRaycastResult = tool.raycast(
+			base_x_minus_origin, Vector3.DOWN, 200.0)
+		var base_x_plus_hit: VoxelRaycastResult = tool.raycast(
+			base_x_plus_origin, Vector3.DOWN, 200.0)
+		var base_z_minus_hit: VoxelRaycastResult = tool.raycast(
+			base_z_minus_origin, Vector3.DOWN, 200.0)
+		var base_z_plus_hit: VoxelRaycastResult = tool.raycast(
+			base_z_plus_origin, Vector3.DOWN, 200.0)
 		var surfaces_ready := (
 			player_hit != null
 			and vehicle_hit != null
 			and cart_hit != null
-			and assembly_hit != null
+			and base_hit != null
 			and cart_x_minus_hit != null
 			and cart_x_plus_hit != null
 			and cart_z_minus_hit != null
 			and cart_z_plus_hit != null
+			and base_x_minus_hit != null
+			and base_x_plus_hit != null
+			and base_z_minus_hit != null
+			and base_z_plus_hit != null
 		)
 		if surfaces_ready and _probe_player_spawn_ready(player_hit.distance):
 			var player_surface_y: float = _resolve_surface_y(
@@ -150,42 +154,57 @@ func _place_when_ground_exists() -> void:
 				cart_z_plus_origin
 				+ Vector3.DOWN * cart_z_plus_hit.distance
 			)
-			var terrain_tangent_x: Vector3 = (
-				cart_x_plus_ground - cart_x_minus_ground
-			)
-			var terrain_tangent_z: Vector3 = (
+			var cart_basis := GridSpawnUtil.terrain_basis(
+				cart_x_plus_ground - cart_x_minus_ground,
 				cart_z_plus_ground - cart_z_minus_ground
 			)
-			var terrain_up: Vector3 = (
-				terrain_tangent_z.cross(terrain_tangent_x).normalized()
-			)
-			var cart_forward: Vector3 = (
-				Vector3.FORWARD
-				- terrain_up * Vector3.FORWARD.dot(terrain_up)
-			).normalized()
-			var cart_right: Vector3 = (
-				cart_forward.cross(terrain_up).normalized()
-			)
-			var cart_basis := Basis(
-				cart_right,
-				terrain_up,
-				-cart_forward
-			).orthonormalized()
-			_cart.global_transform = Transform3D(
+			_cart.global_transform = GridSpawnUtil.transform_on_terrain(
+				cart_ground,
 				cart_basis,
-				cart_ground + terrain_up * 1.22
+				CART_HEIGHT_OFFSET
 			)
 			_cart.linear_velocity = Vector3.ZERO
 			_cart.angular_velocity = Vector3.ZERO
+			_cart.call("sync_kernel_motion_from_mount")
 			_cart.freeze = false
-			_assembly.global_position = (
-				assembly_origin
-				+ Vector3.DOWN * assembly_hit.distance
-				+ Vector3.UP * 1.5
+
+			var base_ground: Vector3 = (
+				base_origin + Vector3.DOWN * base_hit.distance
 			)
-			_assembly.linear_velocity = Vector3.ZERO
-			_assembly.angular_velocity = Vector3.ZERO
-			_assembly.freeze = false
+			var base_x_minus_ground: Vector3 = (
+				base_x_minus_origin
+				+ Vector3.DOWN * base_x_minus_hit.distance
+			)
+			var base_x_plus_ground: Vector3 = (
+				base_x_plus_origin
+				+ Vector3.DOWN * base_x_plus_hit.distance
+			)
+			var base_z_minus_ground: Vector3 = (
+				base_z_minus_origin
+				+ Vector3.DOWN * base_z_minus_hit.distance
+			)
+			var base_z_plus_ground: Vector3 = (
+				base_z_plus_origin
+				+ Vector3.DOWN * base_z_plus_hit.distance
+			)
+			var base_basis := GridSpawnUtil.terrain_basis(
+				base_x_plus_ground - base_x_minus_ground,
+				base_z_plus_ground - base_z_minus_ground
+			)
+			var base_transform := GridSpawnUtil.transform_on_terrain(
+				base_ground,
+				base_basis,
+				0.0
+			)
+			var base_result: StructuralCommandResult = (
+				_session.spawn_slice01_base_at(base_transform)
+			)
+			if not base_result.is_ok():
+				push_error(
+					"Anchored base spawn failed: %s"
+					% String(base_result.reason)
+				)
+
 			_player.call("begin_spawn_settle", player_position)
 			_loading.text = "Посадка..."
 			while not _player.call("is_spawn_settled"):

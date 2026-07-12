@@ -82,8 +82,22 @@ func register_mounted_body(
 ) -> void:
 	if body == null:
 		return
+	var projected := get_physics_body(assembly_id)
+	if projected != null and projected != body:
+		_remove_body(assembly_id)
 	_mounted_bodies[assembly_id] = body
 	body.set_meta("assembly_id", assembly_id)
+
+
+func mount_assembly_body_now(
+	assembly_id: int,
+	body: RigidBody3D
+) -> bool:
+	register_mounted_body(assembly_id, body)
+	if _world == null or _world.get_assembly_raw(assembly_id) == null:
+		return false
+	_project_assembly(assembly_id, _capture_body_motion(body))
+	return get_physics_body(assembly_id) == body
 
 
 func unregister_mounted_body(assembly_id: int) -> void:
@@ -99,6 +113,9 @@ func set_collision_profile(
 		"layer": layer,
 		"mask": mask,
 	}
+	var body := get_physics_body(assembly_id)
+	if body != null:
+		_apply_collision_profile(assembly_id, body)
 
 
 func add_body_group(assembly_id: int, group_name: String) -> void:
@@ -117,6 +134,8 @@ func project_assembly_now(
 	assembly_id: int,
 	motion_override: AssemblyMotionState = null
 ) -> void:
+	if get_physics_body(assembly_id) != null:
+		_remove_body(assembly_id)
 	_project_assembly(assembly_id, motion_override)
 
 
@@ -388,7 +407,11 @@ func _project_assembly(
 		add_child(body)
 		body.global_transform = motion.transform
 	else:
-		motion = mounted_motion
+		if motion_override == null:
+			motion = mounted_motion
+		else:
+			motion.transform = mounted_motion.transform
+			motion.frozen = mounted_motion.frozen
 	_apply_collision_profile(assembly_id, body)
 	_apply_body_groups(assembly_id, body)
 	if body is RigidBody3D:

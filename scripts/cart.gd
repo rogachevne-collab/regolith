@@ -7,6 +7,7 @@ const CartStructureAdapterScript = preload(
 	"res://scripts/rover/cart_structure_adapter.gd"
 )
 
+@export var simulation_session_path: NodePath
 @export var wheel_radius := 0.4
 @export var rest_length := 0.6
 @export var spring_stiffness := 1600.0
@@ -36,38 +37,24 @@ func _ready() -> void:
 		$WheelRearLeft,
 		$WheelRearRight,
 	]
-	_world = SimulationWorld.new()
-	_world.name = "SimulationWorld"
-	add_child(_world)
-	_projection = SimulationPhysicsProjection.new()
-	_projection.name = "SimulationPhysicsProjection"
-	add_child(_projection)
+	if simulation_session_path.is_empty():
+		_create_internal_kernel()
+	elif not _try_bind_external_kernel():
+		push_error(
+			"Cart failed to bind SimulationSession at %s"
+			% simulation_session_path
+		)
+		set_physics_process(false)
+		return
+	_setup_structure_and_locomotion()
 
-	_structure = CartStructureAdapterScript.new()
-	_structure.structure_changed.connect(_on_structure_changed)
-	if not _structure.setup(_world, _projection, self):
-		push_error("Cart rover kernel setup failed")
-	_projection.bind_world(_world)
 
-	_locomotion = CartLocomotionScript.new()
-	_locomotion.wheel_radius = wheel_radius
-	_locomotion.rest_length = rest_length
-	_locomotion.spring_stiffness = spring_stiffness
-	_locomotion.spring_damping = spring_damping
-	_locomotion.drive_torque = drive_torque
-	_locomotion.brake_torque = brake_torque
-	_locomotion.longitudinal_grip = longitudinal_grip
-	_locomotion.lateral_grip = lateral_grip
-	_locomotion.slip_stiffness = slip_stiffness
-	_locomotion.lateral_stiffness = lateral_stiffness
-	_locomotion.wheel_inertia = wheel_inertia
-	_locomotion.max_steering_angle = max_steering_angle
-	_locomotion.steering_response = steering_response
-	_locomotion.bind(
-		self,
-		_anchors,
-		Callable(_structure, "is_wheel_active")
-	)
+func sync_kernel_motion_from_mount() -> void:
+	if _projection == null or _structure == null:
+		return
+	var rover_id: int = _structure.rover_assembly_id()
+	if rover_id != 0:
+		_projection.sync_body_motion_now(rover_id)
 
 
 func set_drive_command(throttle: float, brake: float) -> void:
@@ -120,6 +107,54 @@ func spawned_fragments() -> Array[RigidBody3D]:
 
 func active_wheel_count() -> int:
 	return _structure.active_wheel_count()
+
+
+func _try_bind_external_kernel() -> bool:
+	if simulation_session_path.is_empty():
+		return false
+	var session := get_node_or_null(simulation_session_path) as SimulationSession
+	if session == null:
+		return false
+	_world = session.world
+	_projection = session.projection
+	return true
+
+
+func _create_internal_kernel() -> void:
+	_world = SimulationWorld.new()
+	_world.name = "SimulationWorld"
+	add_child(_world)
+	_projection = SimulationPhysicsProjection.new()
+	_projection.name = "SimulationPhysicsProjection"
+	add_child(_projection)
+	_projection.bind_world(_world)
+
+
+func _setup_structure_and_locomotion() -> void:
+	_structure = CartStructureAdapterScript.new()
+	_structure.structure_changed.connect(_on_structure_changed)
+	if not _structure.setup(_world, _projection, self):
+		push_error("Cart rover kernel setup failed")
+
+	_locomotion = CartLocomotionScript.new()
+	_locomotion.wheel_radius = wheel_radius
+	_locomotion.rest_length = rest_length
+	_locomotion.spring_stiffness = spring_stiffness
+	_locomotion.spring_damping = spring_damping
+	_locomotion.drive_torque = drive_torque
+	_locomotion.brake_torque = brake_torque
+	_locomotion.longitudinal_grip = longitudinal_grip
+	_locomotion.lateral_grip = lateral_grip
+	_locomotion.slip_stiffness = slip_stiffness
+	_locomotion.lateral_stiffness = lateral_stiffness
+	_locomotion.wheel_inertia = wheel_inertia
+	_locomotion.max_steering_angle = max_steering_angle
+	_locomotion.steering_response = steering_response
+	_locomotion.bind(
+		self,
+		_anchors,
+		Callable(_structure, "is_wheel_active")
+	)
 
 
 func _unhandled_input(event: InputEvent) -> void:
