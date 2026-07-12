@@ -182,22 +182,77 @@ compatibility handlers за `CommandGateway`. Это не закрывает Con
 - `jump`, `sprint`;
 - `interact`;
 - `tool_primary`, `tool_secondary`;
+- `toolbar_slot_1` … `toolbar_slot_9` — слот текущей страницы;
+- `toolbar_page_prev`, `toolbar_page_next` — переключение страниц (`[` / `]` на macOS);
+- `construction_rotate_yaw`, `construction_rotate_pitch`, `construction_rotate_roll`
+  — ортогональный поворот preview (`C` / `V` / `B`);
+- `construction_dismantle`;
 - `release_mouse`.
 
 Gameplay-код не читает физические keycode или mouse button напрямую.
+
+### Paged toolbar
+
+- Toolbar — 9 слотов на страницу; `1`–`9` выбирают слот **текущей** страницы.
+- Стартовая страница 1: слот 1 — бур, 2 — сварка, 3 — болгарка, 4–9 — Slice 01
+  construction archetypes (`frame` … `fabricator`).
+- Слот **блока** включает placement (`active_tool = build`, preview виден).
+- Слоты **бура**, **сварки** и **болгарки** выходят из placement; preview скрыт.
+- `tool_primary` (ЛКМ): бур/болгарка — воздействие по цели; блок — установка.
+- `tool_secondary` (ПКМ/F): сварка; при выбранном блоке — ремонт повреждённого
+  элемента (не установка).
+- Удержание ПКМ/F при сварке — continuous weld.
+
+### Orientation
+
+- Поворот preview выполняет `ToolController` шагами ±90° вокруг локальных осей
+  yaw/pitch/roll.
+- Итоговый `orientation_index` всегда один из 24 `OrientationUtil` ориентаций;
+  topology-контракт не меняется.
+
+### Drill command routing
+
+При удержании ЛКМ с выбранным буром:
+
+- цель `voxel` → `voxel_remove` через `CommandGateway`;
+- цель `simulation_element` → `DamageElementCommand` (меньший DPS, чем у болгарки);
+- cadence continuous action сохраняется (`interval = 0.05`, `max_range = 2.2`);
+- урон по блоку за tick: `DRILL_DPS * interval` (настраиваемая константа, v0: 5 integrity/s).
+
+### Grinder command routing
+
+При удержании ЛКМ с выбранной болгаркой (слот 3):
+
+- цель `simulation_element` → `DamageElementCommand` через `CommandGateway`
+  (без прямой мутации projection);
+- cadence continuous action (`interval = 0.05`, `max_range = 2.2`);
+- урон за tick: `GRINDER_DPS * interval` (настраиваемая константа, v0: 20 integrity/s);
+- voxel и прочие цели отменяют action.
+
+### Build placement routing
+
+При нажатии ЛКМ с выбранным слотом блока:
+
+- `construction_apply` в режиме `place` через `CommandGateway`;
+- single press на валидный preview (`interval = 0.22`, `max_range = 4.0`);
+- ПКМ/F при выбранном блоке не ставит блоки (только ремонт повреждённой цели).
 
 ## Feedback
 
 Игрок всегда может определить:
 
-- текущую цель;
-- доступное действие;
-- допустимо ли оно;
-- progress удерживаемого действия;
+- текущую страницу и слот toolbar;
+- выбранный инструмент или блок (display name archetype);
+- запас `construction_component` («компонентов»);
+- доступное действие (prompt), кроме режима бура;
 - успех, отмену или причину отказа.
 
-Reticle, prompt и progress читают interaction/action state. Drill pose, spin, sparks
-и audio читают execution state и не запускаются от одного наличия hit.
+Reticle и prompt читают interaction/action state. Continuous drill/weld не
+показывают progress bar и не спамят «Готово» на каждый tick; meaningful failure
+feedback сохраняется.
+
+Drill pose, spin, sparks и audio читают execution state и не запускаются от одного
+наличия hit.
 
 ## Benchmark
 
@@ -228,7 +283,10 @@ Headless-тесты обязаны проверить:
 8. query для physics, voxel и empty target;
 9. cancel/complete hold action;
 10. ровно одну command на completion;
-11. запрет прямой world mutation из tool/presentation scripts.
+11. запрет прямой world mutation из tool/presentation scripts;
+12. paged toolbar: drill/grinder gate demolition primary, block slot gates placement
+    on primary;
+13. yaw/pitch/roll rotation остаётся в `OrientationUtil` диапазоне.
 
 Новый production test печатает `PLAYER1: PASS`; test runner принимает этот token
 наряду с существующими `POC*: PASS`.

@@ -54,3 +54,18 @@ func snapshot() -> Dictionary:
 		"target_id": target_id,
 		"metadata": metadata.duplicate(true),
 	}
+
+
+static func from_snapshot(data: Dictionary) -> InteractionHit:
+	if not bool(data.get("valid", false)):
+		return empty()
+	var result := InteractionHit.new()
+	result.valid = true
+	result.point = data.get("point", Vector3.ZERO)
+	result.normal = Vector3(data.get("normal", Vector3.UP)).normalized()
+	result.distance = float(data.get("distance", 0.0))
+	result.target_kind = StringName(data.get("target_kind", KIND_NONE))
+	result.collider = data.get("collider")
+	result.target_id = StringName(data.get("target_id", &""))
+	result.metadata = data.get("metadata", {}).duplicate(true)
+	return result

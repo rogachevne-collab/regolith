@@ -1,10 +1,11 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene load_steps=7 format=3]
 
 [ext_resource type="Script" path="res://scripts/test_player_interaction.gd" id="1_test"]
 [ext_resource type="Script" path="res://scripts/placed_blocks.gd" id="2_blocks"]
 [ext_resource type="Script" path="res://scripts/world_command_gateway.gd" id="3_gateway"]
 [ext_resource type="Script" path="res://scripts/interaction_query.gd" id="4_query"]
 [ext_resource type="Script" path="res://scripts/tool_controller.gd" id="5_tools"]
+[ext_resource type="Script" path="res://scripts/construction_preview.gd" id="6_preview"]
 
 [node name="PlayerInteractionTest" type="CharacterBody3D"]
 script = ExtResource("1_test")
@@ -33,3 +34,12 @@ process_mode = 4
 script = ExtResource("5_tools")
 query_path = NodePath("../InteractionQuery")
 gateway_path = NodePath("../WorldCommandGateway")
+preview_path = NodePath("../ConstructionPreview")
+
+[node name="ConstructionPreview" type="Node3D" parent="."]
+process_mode = 4
+script = ExtResource("6_preview")
+query_path = NodePath("../InteractionQuery")
+tool_controller_path = NodePath("../ToolController")
+gateway_path = NodePath("../WorldCommandGateway")
+camera_path = NodePath("../Camera")
