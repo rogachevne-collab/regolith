@@ -20,6 +20,8 @@ func _run() -> void:
 		return
 	if not _test_port_marker_world_basis_parity():
 		return
+	if not await _test_port_marker_local_pose_after_motion():
+		return
 	print("INDUSTRY-PORTS-V1: PASS")
 	get_tree().quit(0)
 
@@ -320,6 +322,50 @@ func _test_port_marker_world_basis_parity() -> bool:
 		world.free()
 		return _fail("port marker world basis mismatch on rotated element")
 	world.free()
+	return true
+
+
+func _test_port_marker_local_pose_after_motion() -> bool:
+	var fixture := _new_projection_fixture()
+	var world: SimulationWorld = fixture["world"]
+	var physics: SimulationPhysicsProjection = fixture["physics"]
+	var projection: IndustryPortProjection = fixture["projection"]
+	var element_id := int(fixture["element_id"])
+	projection.set_presentation_state(true, [element_id])
+	await get_tree().process_frame
+	var element := world.get_element(element_id)
+	var port := IndustryPortUtil.find_port(element, "power_out")
+	if port == null:
+		_free_fixture(fixture)
+		return _fail("power_out port missing for motion fixture")
+	var body := physics.get_physics_body(element.assembly_id)
+	var marker: Node3D = null
+	for child: Node in body.get_children():
+		if str(child.name).begins_with(IndustryPortProjection.MARKER_PREFIX):
+			marker = child as Node3D
+			break
+	if marker == null:
+		_free_fixture(fixture)
+		return _fail("port marker missing on assembly body")
+	var local_before := marker.transform
+	var assembly := world.get_assembly_raw(element.assembly_id)
+	var moved := assembly.motion.duplicate_state()
+	moved.transform.origin += Vector3(4.0, 1.0, -2.0)
+	moved.transform = moved.transform.rotated(Vector3.UP, 0.35)
+	if not world.sync_assembly_motion(element.assembly_id, moved):
+		_free_fixture(fixture)
+		return _fail("motion sync failed for port marker fixture")
+	body.global_transform = moved.transform
+	projection.rebuild_all()
+	await get_tree().process_frame
+	if not marker.transform.is_equal_approx(local_before):
+		_free_fixture(fixture)
+		return _fail("port marker local pose changed after assembly motion")
+	var expected_world := moved.transform * local_before
+	if marker.global_transform.origin.distance_to(expected_world.origin) > 0.02:
+		_free_fixture(fixture)
+		return _fail("port marker world pose did not follow assembly body")
+	_free_fixture(fixture)
 	return true
 
 

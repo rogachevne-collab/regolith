@@ -136,13 +136,16 @@ func _update_or_create_marker(
 	element: SimulationElement,
 	port: PortDefinition
 ) -> void:
+	var body := _physics_projection.get_physics_body(element.assembly_id)
+	if body == null:
+		return
 	var marker := _marker_nodes.get(key) as Node3D
 	if marker == null or not is_instance_valid(marker):
 		marker = _make_port_marker(element, port)
 		if marker == null:
 			return
 		_marker_nodes[key] = marker
-		_markers_root.add_child(marker)
+		body.add_child(marker)
 	_update_marker(marker, element, port)
 
 

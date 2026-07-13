@@ -38,6 +38,12 @@ func _run() -> void:
 		return
 	if not _test_power_source_attach_rotation_cycle():
 		return
+	if not _test_attach_face_snap_table():
+		return
+	if not _test_gateway_attach_orientation_replay():
+		return
+	if not _test_snap_face_cache_motion_invalidation():
+		return
 	if not _test_snap_resolver_performance():
 		return
 	print("CONSTRUCTION-V1: PASS")
@@ -850,6 +856,230 @@ func _test_preview_port_collider_attach_orient23() -> bool:
 	return true
 
 
+func _test_attach_face_snap_table() -> bool:
+	var fixture := _new_fixture()
+	var world: SimulationWorld = fixture["world"]
+	var anchor := _spawn_anchored_frame(world)
+	if not anchor.is_ok():
+		return _fail("attach face table anchor spawn failed")
+	var assembly_id := int(anchor.data["assembly_id"])
+	var assembly := world.get_assembly_raw(assembly_id)
+	var anchor_element := world.get_element(int(anchor.data["element_id"]))
+	var assembly_transform := assembly.motion.transform
+	var frame: ElementArchetype = Slice01Archetypes.frame()
+	var faces: Array[Dictionary] = [
+		{
+			"label": "+X",
+			"point": Vector3(1.5, 0.5, 0.5),
+			"normal": Vector3.RIGHT,
+		},
+		{
+			"label": "-X",
+			"point": Vector3(-0.5, 0.5, 0.5),
+			"normal": Vector3.LEFT,
+		},
+		{
+			"label": "+Y",
+			"point": Vector3(0.5, 1.5, 0.5),
+			"normal": Vector3.UP,
+		},
+		{
+			"label": "-Y",
+			"point": Vector3(0.5, -0.5, 0.5),
+			"normal": Vector3.DOWN,
+		},
+		{
+			"label": "+Z",
+			"point": Vector3(0.5, 0.5, 1.5),
+			"normal": Vector3.BACK,
+		},
+		{
+			"label": "-Z",
+			"point": Vector3(0.5, 0.5, -0.5),
+			"normal": Vector3.FORWARD,
+		},
+	]
+	for face: Dictionary in faces:
+		var local_point: Vector3 = face["point"]
+		var local_normal: Vector3 = face["normal"]
+		var target := InteractionHit.create(
+			assembly_transform * local_point,
+			assembly_transform.basis * local_normal,
+			1.0,
+			InteractionHit.KIND_SIMULATION_ELEMENT,
+			null,
+			StringName(str(anchor_element.element_id)),
+			{
+				"element_id": anchor_element.element_id,
+				"assembly_id": assembly_id,
+				"collider_local_cell": Vector3i.ZERO,
+				"aim_direction": Vector3.FORWARD,
+			}
+		).snapshot()
+		var plan := ConstructionPlacement.plan(world, target, frame, 0)
+		if not bool(plan.get("valid", false)):
+			return _fail("attach face %s plan invalid" % face["label"])
+		var snap_context: Dictionary = plan["attach_snap_context"]
+		var expected_origin := GridPoseUtil.snap_origin_without_pivot(
+			frame,
+			snap_context["target_port_cell"],
+			snap_context["snap_dir"],
+			0
+		)
+		if plan["origin_cell"] != expected_origin:
+			return _fail(
+				"attach face %s origin %s != snap %s"
+				% [face["label"], plan["origin_cell"], expected_origin]
+			)
+		var preview := SimulationElement.frame(
+			-1,
+			assembly_id,
+			frame,
+			plan["origin_cell"],
+			0,
+			{}
+		)
+		if not RuntimeConnectivity.elements_have_rigid_connection(
+			anchor_element,
+			preview
+		):
+			return _fail("attach face %s lost rigid connection" % face["label"])
+	_free_fixture(fixture)
+	return true
+
+
+func _test_gateway_attach_orientation_replay() -> bool:
+	var fixture := _new_gateway_fixture()
+	var world: SimulationWorld = fixture["world"]
+	var gateway: WorldCommandGateway = fixture["gateway"]
+	var anchor := _spawn_anchored_frame(world)
+	if not anchor.is_ok():
+		return _fail("gateway attach replay anchor spawn failed")
+	var assembly_id := int(anchor.data["assembly_id"])
+	var assembly := world.get_assembly_raw(assembly_id)
+	var anchor_element := world.get_element(int(anchor.data["element_id"]))
+	var assembly_transform := assembly.motion.transform
+	var direct_hit := InteractionHit.create(
+		assembly_transform * Vector3(1.5, 0.5, 0.5),
+		assembly_transform.basis.x,
+		1.0,
+		InteractionHit.KIND_SIMULATION_ELEMENT,
+		null,
+		StringName(str(anchor_element.element_id)),
+		{
+			"element_id": anchor_element.element_id,
+			"assembly_id": assembly_id,
+			"collider_local_cell": Vector3i.ZERO,
+			"aim_direction": Vector3.FORWARD,
+		}
+	).snapshot()
+	var ray_origin := assembly_transform * Vector3(2.5, 0.5, 0.5)
+	var ray_direction := (-assembly_transform.basis.x).normalized()
+	var baseline := gateway.resolve_construction_placement({
+		"direct_hit": direct_hit,
+		"ray_origin": ray_origin,
+		"ray_direction": ray_direction,
+		"archetype_id": "power_source",
+		"orientation_index": 0,
+	})
+	var baseline_plan: Dictionary = baseline.get("selected_plan", {})
+	if not bool(baseline_plan.get("valid", false)):
+		return _fail("gateway attach replay baseline invalid")
+	var baseline_origin: Vector3i = baseline_plan["origin_cell"]
+	var snap_context: Dictionary = baseline_plan.get("attach_snap_context", {})
+	var locked_metadata: Dictionary = direct_hit.get("metadata", {}).duplicate(true)
+	locked_metadata["locked_target_port_cell"] = snap_context.get(
+		"target_port_cell",
+		Vector3i.ZERO
+	)
+	locked_metadata["locked_snap_dir"] = snap_context.get("snap_dir", Vector3i.UP)
+	direct_hit["metadata"] = locked_metadata
+	var held_pivot := GridPoseUtil.world_footprint_pivot(
+		baseline_plan["preview_root_transform"],
+		baseline_plan["archetype"],
+		baseline_origin,
+		0
+	)
+	var orientation_one := _rotate_orientation_index(0, Vector3.UP)
+	gateway.reset_construction_snap()
+	var rotated := gateway.resolve_construction_placement({
+		"direct_hit": direct_hit,
+		"ray_origin": ray_origin,
+		"ray_direction": ray_direction,
+		"archetype_id": "power_source",
+		"orientation_index": orientation_one,
+		"held_attach_pivot": held_pivot,
+	})
+	if not bool(rotated.get("selected_plan", {}).get("valid", false)):
+		return _fail("gateway attach replay rotated plan invalid")
+	gateway.reset_construction_snap()
+	var replay := gateway.resolve_construction_placement({
+		"direct_hit": direct_hit,
+		"ray_origin": ray_origin,
+		"ray_direction": ray_direction,
+		"archetype_id": "power_source",
+		"orientation_index": 0,
+		"held_attach_pivot": held_pivot,
+	})
+	var replay_plan: Dictionary = replay.get("selected_plan", {})
+	if not bool(replay_plan.get("valid", false)):
+		return _fail("gateway attach replay return-to-O0 invalid")
+	if replay_plan["origin_cell"] != baseline_origin:
+		return _fail(
+			"gateway attach replay origin drift %s -> %s"
+			% [baseline_origin, replay_plan["origin_cell"]]
+		)
+	_free_fixture(fixture)
+	return true
+
+
+func _test_snap_face_cache_motion_invalidation() -> bool:
+	var fixture := _new_fixture()
+	var world: SimulationWorld = fixture["world"]
+	var anchor := _spawn_anchored_frame(world)
+	if not anchor.is_ok():
+		return _fail("snap cache motion anchor spawn failed")
+	var assembly_id := int(anchor.data["assembly_id"])
+	var assembly := world.get_assembly_raw(assembly_id)
+	var cache := ConstructionSnapFaceCache.new()
+	cache.bind_world(world)
+	cache.ensure_current()
+	var generation_before := cache.generation
+	var face_before: Dictionary = {}
+	for face: Dictionary in cache.faces():
+		if int(face.get("assembly_id", 0)) == assembly_id:
+			face_before = face.duplicate(true)
+			break
+	if face_before.is_empty():
+		return _fail("snap cache motion fixture missing assembly face")
+	var moved := assembly.motion.duplicate_state()
+	moved.transform.origin += Vector3(3.0, 0.0, 0.0)
+	if not world.sync_assembly_motion(assembly_id, moved):
+		return _fail("snap cache motion sync failed")
+	cache.ensure_current()
+	if cache.generation <= generation_before:
+		return _fail("snap cache did not rebuild after motion-only update")
+	var face_after: Dictionary = {}
+	for face: Dictionary in cache.faces():
+		if (
+			int(face.get("assembly_id", 0)) == assembly_id
+			and str(face.get("port_id", "")) == str(face_before.get("port_id", ""))
+		):
+			face_after = face
+			break
+	if face_after.is_empty():
+		return _fail("snap cache lost assembly face after motion rebuild")
+	var point_before: Vector3 = face_before["world_point"]
+	var point_after: Vector3 = face_after["world_point"]
+	if point_after.distance_to(point_before + Vector3(3.0, 0.0, 0.0)) > 0.05:
+		return _fail(
+			"snap cache face point did not follow motion delta %.4f"
+			% point_after.distance_to(point_before)
+		)
+	_free_fixture(fixture)
+	return true
+
+
 func _test_power_source_attach_rotation_cycle() -> bool:
 	var fixture := _new_fixture()
 	var world: SimulationWorld = fixture["world"]
@@ -1107,6 +1337,18 @@ func _new_gateway_fixture() -> Dictionary:
 	var visuals := ElementVisualProjection.new()
 	visuals.name = "ElementVisualProjection"
 	session.add_child(visuals)
+	var impact := ImpactResolverService.new()
+	impact.name = "ImpactResolverService"
+	session.add_child(impact)
+	var industry_network := IndustryNetworkProjection.new()
+	industry_network.name = "IndustryNetworkProjection"
+	session.add_child(industry_network)
+	var industry_ports := IndustryPortProjection.new()
+	industry_ports.name = "IndustryPortProjection"
+	session.add_child(industry_ports)
+	var world_loot := WorldLootProjection.new()
+	world_loot.name = "WorldLootProjection"
+	session.add_child(world_loot)
 	root.add_child(session)
 	session._ready()
 	var gateway := WorldCommandGateway.new()
