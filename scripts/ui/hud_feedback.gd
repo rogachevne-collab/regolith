@@ -91,6 +91,11 @@ func _prompt_for(hit: InteractionHit) -> String:
 		return "ЛКМ — электрический провод между соседними блоками"
 	if _tools.active_tool == &"grinder":
 		if (
+			hit.target_kind == InteractionHit.KIND_ELECTRIC_CABLE
+			and hit.distance <= 2.2
+		):
+			return "ЛКМ — срезать кабель"
+		if (
 			hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
 			and hit.distance <= 2.2
 		):

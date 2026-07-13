@@ -5,6 +5,10 @@ extends Node3D
 
 const WIRE_MESH_PREFIX := "IndustryWire_"
 const WIRE_RADIUS := 0.045
+## Aim-collider radius: fatter than the visual so the grinder can target a wire.
+const WIRE_AIM_RADIUS := 0.09
+## Physics layer 4 — interaction-ray only; nothing moves or collides on it.
+const WIRE_COLLISION_LAYER := 8
 const WIRE_COLOR := Color(0.92, 0.74, 0.18, 1.0)
 const WIRE_EMISSION := Color(0.55, 0.42, 0.08, 1.0)
 ## Dormant wire (endpoint damaged/incomplete or cable overstretched): the link
@@ -48,9 +52,9 @@ func rebuild_all() -> void:
 	for child: Node in _links_root.get_children():
 		child.queue_free()
 	for link: IndustryElectricLink in _world.get_industry_network().list_links():
-		var mesh_instance := _make_wire_mesh(link)
-		if mesh_instance != null:
-			_links_root.add_child(mesh_instance)
+		var wire := _make_wire_body(link)
+		if wire != null:
+			_links_root.add_child(wire)
 	_cached_network_revision = _world.get_industry_network_revision()
 
 
@@ -62,13 +66,13 @@ func _process(_delta: float) -> void:
 		rebuild_all()
 		return
 	for child: Node in _links_root.get_children():
-		var mesh_instance := child as MeshInstance3D
-		if mesh_instance == null:
+		var body := child as StaticBody3D
+		if body == null:
 			continue
-		var link_id := int(mesh_instance.get_meta("electric_link_id", 0))
+		var link_id := int(body.get_meta("electric_link_id", 0))
 		var link := _world.get_industry_network().get_link(link_id)
 		if link != null:
-			_update_wire_mesh(mesh_instance, link)
+			_update_wire_body(body, link)
 
 
 func _on_structural_event(event: Dictionary) -> void:
@@ -81,27 +85,24 @@ func _on_structural_event(event: Dictionary) -> void:
 			rebuild_all()
 
 
-func _make_wire_mesh(link: IndustryElectricLink) -> MeshInstance3D:
+## Wires are StaticBody3D on an interaction-only layer so the aim ray can
+## target them (grinder → disconnect_network). They collide with nothing.
+func _make_wire_body(link: IndustryElectricLink) -> StaticBody3D:
 	var element_a := _world.get_element(link.element_a)
 	var element_b := _world.get_element(link.element_b)
 	if element_a == null or element_b == null:
 		return null
-	var start := IndustryElectricPortUtil.port_anchor_world_position(
-		_world,
-		element_a,
-		link.port_a
+	var body := StaticBody3D.new()
+	body.name = "%s%d" % [WIRE_MESH_PREFIX, link.link_id]
+	body.collision_layer = WIRE_COLLISION_LAYER
+	body.collision_mask = 0
+	body.set_meta("electric_link_id", link.link_id)
+	body.set_meta(
+		"interaction_metadata",
+		{"electric_link_id": link.link_id}
 	)
-	var end := IndustryElectricPortUtil.port_anchor_world_position(
-		_world,
-		element_b,
-		link.port_b
-	)
-	var delta := end - start
-	var length := delta.length()
-	if length <= 0.05:
-		return null
 	var mesh_instance := MeshInstance3D.new()
-	mesh_instance.name = "%s%d" % [WIRE_MESH_PREFIX, link.link_id]
+	mesh_instance.name = "Mesh"
 	var cylinder := CylinderMesh.new()
 	cylinder.top_radius = WIRE_RADIUS
 	cylinder.bottom_radius = WIRE_RADIUS
@@ -109,19 +110,28 @@ func _make_wire_mesh(link: IndustryElectricLink) -> MeshInstance3D:
 	cylinder.rings = 1
 	mesh_instance.mesh = cylinder
 	mesh_instance.material_override = _wire_material
-	mesh_instance.set_meta("electric_link_id", link.link_id)
-	_update_wire_mesh(mesh_instance, link)
-	return mesh_instance
+	body.add_child(mesh_instance)
+	var collision := CollisionShape3D.new()
+	collision.name = "Collision"
+	var capsule := CapsuleShape3D.new()
+	capsule.radius = WIRE_AIM_RADIUS
+	collision.shape = capsule
+	body.add_child(collision)
+	_update_wire_body(body, link)
+	return body
 
 
-func _update_wire_mesh(
-	mesh_instance: MeshInstance3D,
+func _update_wire_body(
+	body: StaticBody3D,
 	link: IndustryElectricLink
 ) -> void:
 	var element_a := _world.get_element(link.element_a)
 	var element_b := _world.get_element(link.element_b)
+	var collision := body.get_node_or_null("Collision") as CollisionShape3D
 	if element_a == null or element_b == null:
-		mesh_instance.visible = false
+		body.visible = false
+		if collision != null:
+			collision.disabled = true
 		return
 	var start := IndustryElectricPortUtil.port_anchor_world_position(
 		_world,
@@ -136,21 +146,30 @@ func _update_wire_mesh(
 	var delta := end - start
 	var length := delta.length()
 	if length <= 0.05:
-		mesh_instance.visible = false
+		body.visible = false
+		if collision != null:
+			collision.disabled = true
 		return
-	mesh_instance.visible = true
-	mesh_instance.material_override = (
-		_wire_material
-		if IndustryElectricPortUtil.link_still_valid(_world, link)
-		else _wire_dormant_material
-	)
-	var cylinder := mesh_instance.mesh as CylinderMesh
-	if cylinder != null:
-		cylinder.height = length
+	body.visible = true
+	var mesh_instance := body.get_node_or_null("Mesh") as MeshInstance3D
+	if mesh_instance != null:
+		mesh_instance.material_override = (
+			_wire_material
+			if IndustryElectricPortUtil.link_still_valid(_world, link)
+			else _wire_dormant_material
+		)
+		var cylinder := mesh_instance.mesh as CylinderMesh
+		if cylinder != null:
+			cylinder.height = length
+	if collision != null:
+		collision.disabled = false
+		var capsule := collision.shape as CapsuleShape3D
+		if capsule != null:
+			capsule.height = maxf(length, WIRE_AIM_RADIUS * 2.1)
 	var midpoint := (start + end) * 0.5
 	var direction := delta / length
 	var basis := _wire_basis(direction)
-	mesh_instance.global_transform = Transform3D(basis, midpoint)
+	body.global_transform = Transform3D(basis, midpoint)
 
 
 func _wire_basis(direction: Vector3) -> Basis:

@@ -262,6 +262,9 @@ ElectricLink {
 6. duplicate pair rejected.
 
 `disconnect_network` удаляет wire по `link_id` или паре портов.
+Player UX: wire рендерится с interaction-only коллайдером
+(`KIND_ELECTRIC_CABLE`); **grinder** по кабелю → `disconnect_network`
+(«срезать кабель»).
 
 ### Link dormancy (electric)
 

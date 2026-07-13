@@ -121,6 +121,8 @@ func _execute(command: Dictionary) -> Dictionary:
 			return _transfer_resource(command, target)
 		&"connect_network":
 			return _connect_network(command, target)
+		&"disconnect_network":
+			return _disconnect_network(command, target)
 		&"set_machine_enabled":
 			return _set_machine_enabled(command, target)
 		&"enqueue_recipe":
@@ -851,6 +853,26 @@ func _connect_failure_reason(reason: StringName) -> StringName:
 			return &"element_broken"
 		_:
 			return _map_structural_reason(reason)
+
+
+func _disconnect_network(
+	command: Dictionary,
+	target: Dictionary
+) -> Dictionary:
+	if _session == null:
+		return _result(&"not_ready")
+	var parameters: Dictionary = command.get("parameters", {})
+	var link_id := int(
+		parameters.get(
+			"link_id",
+			target.get("metadata", {}).get("electric_link_id", 0)
+		)
+	)
+	if link_id <= 0:
+		return _result(&"invalid_target")
+	return _structural_result(
+		_session.world.disconnect_network(0, "", 0, "", link_id)
+	)
 
 
 func _transfer_resource(

@@ -310,12 +310,18 @@ func _emit_command_for_action(
 			command_kind = &"weld_element"
 			parameters = {}
 		elif active_tool == &"grinder":
-			command_kind = &"damage_element"
-			parameters = {
-				"damage": _grinder_damage_per_tick(),
-				"refund_fraction_on_destroy": GRINDER_REFUND_FRACTION,
-				"store_id": "player",
-			}
+			if hit.target_kind == InteractionHit.KIND_ELECTRIC_CABLE:
+				command_kind = &"disconnect_network"
+				parameters = {
+					"link_id": int(hit.metadata.get("electric_link_id", 0)),
+				}
+			else:
+				command_kind = &"damage_element"
+				parameters = {
+					"damage": _grinder_damage_per_tick(),
+					"refund_fraction_on_destroy": GRINDER_REFUND_FRACTION,
+					"store_id": "player",
+				}
 		elif hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT:
 			command_kind = &"damage_element"
 			parameters = {"damage": _drill_damage_per_tick()}
@@ -603,7 +609,10 @@ func _hit_accepts_action(
 			and _construction_mode != &"none"
 		)
 	if action == &"tool_primary" and active_tool == &"grinder":
-		return hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
+		return (
+			hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
+			or hit.target_kind == InteractionHit.KIND_ELECTRIC_CABLE
+		)
 	if action == &"tool_primary" and active_tool == &"drill":
 		return (
 			hit.target_kind == InteractionHit.KIND_VOXEL

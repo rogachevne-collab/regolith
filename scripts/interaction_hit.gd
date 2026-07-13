@@ -8,6 +8,7 @@ const KIND_PLACED_BLOCK := &"placed_block"
 const KIND_CONTROL_SEAT := &"control_seat"
 const KIND_SIMULATION_ELEMENT := &"simulation_element"
 const KIND_WORLD_LOOT := &"world_loot"
+const KIND_ELECTRIC_CABLE := &"electric_cable"
 
 var valid := false
 var point := Vector3.ZERO
