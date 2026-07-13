@@ -134,32 +134,24 @@ preview → frame → operational
 
 ### Industry v1
 
-Минимальная производственная цепочка:
+Детальный контракт: [`INDUSTRY-V1.md`](INDUSTRY-V1.md).
 
-```text
-raw_regolith
-  → processor
-  → processed_regolith
-  → fabricator
-  → construction_component
-```
+Кратко — dual-path ISRU, cargo/electric Flow, distributor + wire mesh, добыча и
+Recipe. Экономика slice расширена до промежуточных ресурсов (`regolith_fines`,
+`sintered_basalt`, `calcined_oxide`, `metal_ingot`) при сохранении
+`construction_component` как финальной precision-детали.
 
-Обязательно:
+Обязательно (см. INDUSTRY-V1):
 
-- electric Flow от `power_source` к активным элементам;
-- cargo Flow либо явная ручная транспортировка между совместимыми Store;
-- ограниченная вместимость Store;
-- стационарный бур работает только при питании, доступном выходе и контакте с
-  доступным voxel-ресурсом;
-- processor и fabricator работают по data-driven `Recipe`;
-- recipe резервирует входы атомарно и не создаёт ресурс при отмене;
-- производство имеет длительность, потребление мощности и ограничение выхода;
-- остановка цепочки сообщает причину: как минимум `no_power`, `no_input`,
-  `storage_full`, `port_disconnected`, `element_incomplete` или `element_broken`.
-
-Экономика Slice 01 использует один добываемый ресурс, один промежуточный материал и
-один строительный компонент. Баланс должен замкнуть цикл, но не является моделью
-финальной экономики.
+- electric Flow: `power_source` → wire mesh → `power_distributor` (+ `power_battery`) → consumers в радиусе;
+- cargo Flow по cargo-портам + ручной pickup/deposit;
+- ограниченная вместимость Store (mass);
+- `stationary_drill`: contact-gated carve перед ориентированной рабочей головкой +
+  `raw_regolith` только из фактически удалённого voxel volume;
+- hand drill: loot pile в мире;
+- processor/fabricator: data-driven `Recipe`, atomic reserve, queue;
+- остановка с reason: `no_power`, `no_input`, `storage_full`, `port_disconnected`,
+  `element_incomplete`, `outside_power_radius`, `disabled`.
 
 ## Последовательность реализации
 

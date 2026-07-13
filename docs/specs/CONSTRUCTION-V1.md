@@ -64,8 +64,8 @@ Functional ports/roles активны только при `integrity = max_integ
   `25% max_integrity`.
 
 Construction v1 вводит simulation-owned keyed `SimulationResourceStore`.
-Стартовый store `player` заменяется cargo/inventory adapter в Industry v1 без
-изменения формата construction-команд.
+Industry v1 расширяет stores/cargo без смены формата construction-комmand;
+контракт — `docs/specs/INDUSTRY-V1.md`.
 
 ## Команды
 
@@ -215,8 +215,37 @@ Preview ghost повторяет projection path:
 
 - root pose = `assembly_world_transform` / `preview_root_transform` (motion Assembly
   или ground spawn transform);
+- для нового Assembly этот exact continuous root pose передаётся в
+  `PlaceElementCommand.initial_motion` и становится `assembly.motion` до создания
+  physics body; gateway не выполняет отдельный post-place transform repair;
 - collider children = `GridPoseUtil.collider_local_transform(origin_cell,
-  orientation_index, collider)` — orientation **не** дублируется в root.
+  orientation_index, collider)` — orientation **не** дублируется в root;
+- поворот collider и port visual выполняется вокруг центра его grid cell:
+  `origin_cell + rotate_cell(local_cell) + (0.5, 0.5, 0.5)`. `origin_cell`
+  остаётся целочисленной topology-координатой и не является pivot mesh;
+- port decals = `IndustryPortUtil.port_marker_local_transform` как children
+  assembly physics body (тот же element basis, что у collider ghost);
+- attach snap face = hit `point` + `normal` в assembly space (`floor − snap_dir`),
+  не `collider_local_cell`;
+- attach rotate (C/V/B) остаётся face-locked: `snap_origin_without_pivot` строится
+  только от текущей наведённой грани. Нельзя искать valid origin в соседних cells
+  assembly, потому что такая клетка может соединиться с другим element длинной
+  конструкции и визуально увести блок от aim;
+- первый valid attach-resolve фиксирует `target_port_cell` и `snap_dir` на время
+  rotate/re-aim того же contact. Следующие ориентации используют этот grid contact,
+  а не повторно вычисленный floating ray point, который может перескочить через
+  cell boundary;
+- ground rotate держит baseline footprint center (`ConstructionPlacement.baseline_ground_pivot`)
+  через `held_ground_pivot` в preview/gateway.
+
+После rotate и повторного aim к неизменному target resolver обязан детерминированно
+дать тот же candidate для выбранного `orientation_index`: orientation применяется
+ровно один раз в element-local transform. Поворот не может оставить cache с
+предыдущей world geometry, перенести snap на далёкую грань, внутрь occupied cells
+или под terrain. Если допустимого соседнего placement нет, plan invalid.
+Ключ cache включает quantized held ground/attach pivot; захват attach pivot
+обязательно вызывает повторный resolve, поэтому plan без pivot hold не может
+пережить rotate/re-aim и быть повторно использован.
 
 `ConstructionPlacement.plan()` возвращает явные поля `preview_root_transform`,
 `origin_cell`, `orientation_index` наряду с legacy `world_transform`
@@ -298,7 +327,7 @@ Presentation не является источником collision, mass, occupan
 
 ## Не входит
 
-- Industry Flow, cargo ports и производство ресурсов;
+- Industry Flow и производство — см. `docs/specs/INDUSTRY-V1.md`;
 - inventory/hotbar UI сверх выбора archetype и счётчика;
 - fatigue/load graph и автоматический физический `break`;
 - симуляция `condition`;

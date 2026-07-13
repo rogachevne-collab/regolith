@@ -3,6 +3,32 @@
 Статус: контракт standalone Godot-проекта **Regolith**. Это не схема Erebus и не
 ADR. Интеграция в Erebus — через Erebus Lite addon, когда контент станет data-driven.
 
+## Индекс (для агентов: не читай файл целиком — найди термин и читай его раздел)
+
+| Термин / вопрос | Раздел |
+|---|---|
+| кто чем владеет: симуляция vs Jolt, поток данных | «Граница владения» |
+| единицы измерения | «Единицы» |
+| Assembly, Element | «Примитивы» → «Assembly», «Element» |
+| Port (типы портов, совместимость) | «Примитивы» → «Port» |
+| Joint (соединения, прочность связи) | «Примитивы» → «Joint» |
+| Body, Field, Surface | «Примитивы» → одноимённые разделы |
+| Actuator, Wheel | «Примитивы» → «Actuator», «Wheel» |
+| Cable / Tether, Sensor | «Примитивы» → одноимённые разделы |
+| ControlSeat, Binding (управление) | «Примитивы» → «ControlSeat и Binding» |
+| Network, Flow, Store (сети и потоки) | «Примитивы» → «Network, Flow и Store» |
+| Resource, Recipe, производство | «Примитивы» → «Resource, Recipe и производство» |
+| Volume, Atmosphere (герметичность) | «Примитивы» → «Volume и Atmosphere» |
+| Blueprint (чертежи, baked) | «Примитивы» → «Blueprint» |
+| id элементов, топология, structural commands | «Identity и topology (Kernel v0)» |
+| строительство, прочность, ремонт | «Строительство, прочность и ремонт» |
+| кинетический удар, разрушение | «Кинетический удар (Impact Destruction v0)» |
+| логи, инспекция, отладка симуляции | «Диагностируемость» |
+| скафандр (кислород, энергия) | «Состояние скафандра (SuitState)» |
+| бюджеты производительности | «Производительность» |
+| мультиплеер (задел) | «Сетевой контракт на будущее» |
+| порядок PoC, что вне скоупа v0 | «Лестница PoC», «Не входит в v0» |
+
 ## Цель
 
 Один язык должен описывать ровер, карьерный бур, лифт, кран, корабль, стационарную
@@ -29,7 +55,11 @@ ADR. Интеграция в Erebus — через Erebus Lite addon, когда
 
 - *Структурные* (редкие, обязаны быть надёжными и упорядоченными): `place`,
   `attach`, `detach`, `weld`, `damage`, `break`, `repair`, `dismantle`,
-  `connect_network`, `disconnect_network`.
+  `connect_network`, `disconnect_network`. Industry v1: `connect_network` создаёт
+  **electric** cable edge между compatible output/input ports на расстоянии до
+  **12 m**; cable может связывать разные Assembly и не создаёт mechanical merge.
+  **Cargo** — placeable `cargo_pipe` modules + auto-link on topology, без
+  `connect_network`; см. `docs/specs/INDUSTRY-V1.md`.
 - *Управляющие* (частые, допускают перезапись последним значением):
   `set_actuator_target`, `set_binding_state`.
 - *Мировые* (voxel-edit, идут журналом операций): `terrain_carve`, `voxel_remove`.
@@ -160,6 +190,13 @@ ElementArchetype {
 
 Роль является возможностью, а не закрытой иерархией: один элемент может совмещать
 несколько ролей.
+
+Industry v1 stationary drill materializes `Tool` orientation as a visible working
+head. Its local working face is part of the machine contract: terrain probe and
+`terrain_carve` use the same oriented head transform. Mining requires voxel-terrain
+contact/proximity within finite head reach. No contact means no world mutation, no
+resource credit, and reason `no_terrain_contact`. A fixed-grid head can exhaust only
+its reachable local volume; continued advance requires a mechanical feed/actuator.
 
 `ElementArchetype` — data-driven определение неизменяемых параметров типа элемента.
 `colliders[]` является typed compound collider: каждый multi-cell footprint cell
@@ -447,9 +484,13 @@ Binding {
 ResourceType {
   id
   unit
+  mass_per_unit_kg
   cargo_compatibility
 }
 ```
+
+`mass_per_unit_kg` обязателен для Industry v1 capacity и mass coupling; fixture catalog —
+`docs/specs/INDUSTRY-V1.md` § Ресурсы slice.
 
 `Recipe` декларативно описывает преобразование ресурсов:
 
@@ -469,11 +510,14 @@ Recipe {
 сценовой логики.
 
 Входы одной операции резервируются атомарно. Остановка или отмена не должна
-дублировать либо молча уничтожать ресурс: политика возврата/частичного результата
+дублировать либо **молча уничтожать** ресурс: политика возврата/частичного результата
 задаётся Recipe. Выход помещается только в совместимый Store; заполненный выход
-останавливает операцию с диагностируемой причиной.
+останавливает операцию с диагностируемой причиной. **Industry v1:** при
+`storage_full` producer **останавливается** (drill, cargo push) — без silent discard;
+см. `docs/specs/INDUSTRY-V1.md`.
 
-Минимальная production-цепочка и границы первой реализации заданы в
+Минимальная production-цепочка, dual-path ISRU, electric/cargo Flow и границы первой
+реализации — `docs/specs/INDUSTRY-V1.md`. Vertical slice summary —
 `docs/specs/VERTICAL-SLICE-01-INDUSTRIAL-BASE.md`.
 
 ### Volume и Atmosphere
@@ -605,21 +649,33 @@ Jolt авторитетен за импульс контакта; правила
 - anchored `StaticBody3D` не источник удара; placement и расширение базы carve не
   вызывают.
 
-Вырезанный в v0 regolith исчезает (как бур); начисление `raw_regolith` — Industry
-v1. PoC-спека: `docs/specs/IMPACT-DESTRUCTION-V0.md`.
+Вырезанный regolith:
+
+- **Hand drill:** создаёт **world loot pile** у точки carve (mass ∝ volume); игрок
+  собирает в Store командой transfer/collect — не прямой credit в `player` store.
+- **Stationary drill / impact loot (later):** credit в internal buffer или store по
+  `docs/specs/INDUSTRY-V1.md`. Stationary drill yield derives only from measured
+  voxel volume removed by the authoritative terrain operation; a default production
+  volume is forbidden. Capacity/backpressure is checked before terrain mutation.
+
+PoC-спека impact: `docs/specs/IMPACT-DESTRUCTION-V0.md`.
 
 ## Диагностируемость
 
 Каждая функциональная система публикует `status` и `reason`:
 
 - `no_power`;
+- `outside_power_radius`;
 - `port_disconnected`;
 - `overloaded`;
 - `joint_limit`;
 - `no_contact`;
+- `no_terrain_contact`;
 - `no_grip`;
 - `no_input`;
 - `storage_full`;
+- `disabled`;
+- `queue_full`;
 - `element_incomplete`;
 - `element_broken`;
 - `volume_leaking`;
@@ -689,7 +745,8 @@ slice по `docs/specs/VERTICAL-SLICE-01-INDUSTRIAL-BASE.md`:
 2. Simulation Kernel v0.
 3. Construction v1.
 4. Impact Destruction v0: кинетический удар → terrain carve и assembly damage.
-5. Industry v1: electric и cargo Flow, стационарная добыча, Recipe.
+5. Industry v1: electric/cargo Flow, distributor, wire mesh, ISRU Recipe —
+   `docs/specs/INDUSTRY-V1.md`.
 6. Интеграция и production-полировка законченного core loop.
 
 После первого slice лестница доменных возможностей продолжается:

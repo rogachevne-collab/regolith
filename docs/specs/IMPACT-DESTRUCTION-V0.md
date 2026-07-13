@@ -50,7 +50,8 @@ SimulationWorld + VoxelTerrain
 mounted bodies). На каждый physics frame:
 
 1. `contact_monitor = true`, `max_contacts_reported >= 8`.
-2. В `_integrate_forces(state)` или `body_state_changed` собрать контакты.
+2. В `_integrate_forces(state)` (assembly ↔ assembly) и `body_shape_entered`
+   (terrain / static world) собрать контакты.
 3. Отфильтровать пары с `impulse_length >= I_min` (порог отсекает трение/мелкие
    касания).
 4. Аккумулировать импульс по `(body, partner, element_id, collider_index)` за
