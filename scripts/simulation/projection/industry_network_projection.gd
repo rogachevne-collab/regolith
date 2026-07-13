@@ -7,11 +7,15 @@ const WIRE_MESH_PREFIX := "IndustryWire_"
 const WIRE_RADIUS := 0.045
 const WIRE_COLOR := Color(0.92, 0.74, 0.18, 1.0)
 const WIRE_EMISSION := Color(0.55, 0.42, 0.08, 1.0)
+## Dormant wire (endpoint damaged/incomplete or cable overstretched): the link
+## persists in state and keeps rendering, dimmed, until the condition clears.
+const WIRE_DORMANT_COLOR := Color(0.38, 0.34, 0.24, 1.0)
 
 var _world: SimulationWorld
 var _physics_projection: SimulationPhysicsProjection
 var _links_root: Node3D
 var _wire_material: StandardMaterial3D
+var _wire_dormant_material: StandardMaterial3D
 var _cached_network_revision := -1
 var _event_bound := false
 
@@ -30,6 +34,8 @@ func bind(
 		add_child(_links_root)
 	if _wire_material == null:
 		_wire_material = _create_wire_material()
+	if _wire_dormant_material == null:
+		_wire_dormant_material = _create_dormant_material()
 	if _world != null and not _event_bound:
 		_world.structural_event.connect(_on_structural_event)
 		_event_bound = true
@@ -133,6 +139,11 @@ func _update_wire_mesh(
 		mesh_instance.visible = false
 		return
 	mesh_instance.visible = true
+	mesh_instance.material_override = (
+		_wire_material
+		if IndustryElectricPortUtil.link_still_valid(_world, link)
+		else _wire_dormant_material
+	)
 	var cylinder := mesh_instance.mesh as CylinderMesh
 	if cylinder != null:
 		cylinder.height = length
@@ -159,4 +170,12 @@ func _create_wire_material() -> StandardMaterial3D:
 	material.emission_energy_multiplier = 0.35
 	material.metallic = 0.85
 	material.roughness = 0.35
+	return material
+
+
+func _create_dormant_material() -> StandardMaterial3D:
+	var material := StandardMaterial3D.new()
+	material.albedo_color = WIRE_DORMANT_COLOR
+	material.metallic = 0.6
+	material.roughness = 0.6
 	return material

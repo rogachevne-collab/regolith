@@ -10,7 +10,7 @@ var _links: Array[IndustryElectricLink] = []
 var _link_by_id: Dictionary = {}
 var _pair_keys: Dictionary = {}
 var _graph := IndustryElectricGraph.new()
-var _cached_topology_revision: int = -1
+var _cached_active_signature: String = "\n"
 var _cached_network_revision: int = -1
 
 
@@ -89,11 +89,15 @@ func remove_link_by_endpoints(
 	return null
 
 
+## Deletes only links whose endpoint element no longer exists in the world.
+## Temporary conditions (damaged endpoint, overstretched cable) do NOT delete a
+## link — it goes dormant via active_links() and revives when the condition
+## clears, so a repaired machine keeps its wiring.
 func prune_dangling_links(world: SimulationWorld) -> bool:
 	var removed := false
 	var survivors: Array[IndustryElectricLink] = []
 	for link: IndustryElectricLink in _links:
-		if IndustryElectricPortUtil.link_still_valid(world, link):
+		if IndustryElectricPortUtil.link_endpoints_exist(world, link):
 			survivors.append(link)
 			continue
 		_link_by_id.erase(link.link_id)
@@ -105,18 +109,33 @@ func prune_dangling_links(world: SimulationWorld) -> bool:
 	return removed
 
 
+## Links currently conducting: stored links minus dormant ones.
+func active_links(world: SimulationWorld) -> Array[IndustryElectricLink]:
+	var result: Array[IndustryElectricLink] = []
+	for link: IndustryElectricLink in _links:
+		if IndustryElectricPortUtil.link_still_valid(world, link):
+			result.append(link)
+	return result
+
+
+func is_link_active(world: SimulationWorld, link_id: int) -> bool:
+	return IndustryElectricPortUtil.link_still_valid(world, get_link(link_id))
+
+
 func ensure_graph_current(world: SimulationWorld) -> IndustryElectricGraph:
-	# Cross-assembly endpoints can move without changing topology. Revalidate the
-	# world-space cable span before exposing the graph to budget/presentation.
 	prune_dangling_links(world)
-	var topology_revision := _max_topology_revision(world)
+	# Cross-assembly endpoints can move and endpoint elements can change state
+	# without touching topology or network revisions, so the cache key is the
+	# active-link set itself: any link going dormant or reviving rebuilds.
+	var active := active_links(world)
+	var signature := _active_signature(active)
 	if (
-		_cached_topology_revision == topology_revision
+		signature == _cached_active_signature
 		and _cached_network_revision == industry_network_revision
 	):
 		return _graph
-	_graph.rebuild(_links)
-	_cached_topology_revision = topology_revision
+	_graph.rebuild(active)
+	_cached_active_signature = signature
 	_cached_network_revision = industry_network_revision
 	return _graph
 
@@ -147,7 +166,7 @@ func load_from_dict(data: Dictionary) -> void:
 			_links.append(link)
 			_link_by_id[link.link_id] = link
 			_pair_keys[link.canonical_pair_key()] = link.link_id
-	_cached_topology_revision = -1
+	_cached_active_signature = "\n"
 	_cached_network_revision = -1
 
 
@@ -155,10 +174,8 @@ static func create_default() -> IndustryNetworkState:
 	return _SCRIPT.new()
 
 
-static func _max_topology_revision(world: SimulationWorld) -> int:
-	var max_revision := 0
-	for assembly: SimulationAssembly in world.list_assemblies():
-		if assembly.tombstoned:
-			continue
-		max_revision = maxi(max_revision, assembly.topology_revision)
-	return max_revision
+static func _active_signature(links: Array[IndustryElectricLink]) -> String:
+	var ids := PackedStringArray()
+	for link: IndustryElectricLink in links:
+		ids.append(str(link.link_id))
+	return ",".join(ids)

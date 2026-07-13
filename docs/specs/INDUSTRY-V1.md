@@ -263,6 +263,20 @@ ElectricLink {
 
 `disconnect_network` удаляет wire по `link_id` или паре портов.
 
+### Link dormancy (electric)
+
+Временные условия НЕ удаляют link из `electric_links[]`:
+
+- endpoint не operational (повреждён, недостроен) → link **dormant**;
+- world-space длина кабеля превысила `max_cable_length_m`
+  (endpoint на другой Assembly уехал) → link **dormant**;
+- dormant link выпадает из electric graph (не проводит) и **оживает
+  автоматически**, когда условие снято (ремонт endpoint, возврат в радиус
+  длины) — повторный `connect_network` не требуется;
+- presentation: dormant wire рендерится приглушённым (без emission);
+- удаление из state — только `disconnect_network` или исчезновение endpoint
+  element из мира (destroy/dismantle).
+
 ### Anti-garland (electric)
 
 Generator cluster состоит только из direction-compatible supply links: generator

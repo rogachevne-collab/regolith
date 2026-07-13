@@ -73,6 +73,7 @@ func _run_tests() -> void:
 		_test_cargo_graph_spawned_topology,
 		_test_cargo_connect_network_absent_or_rejects_cargo,
 		_test_electric_connect_network_runtime,
+		_test_electric_link_dormancy_survives_damage_repair,
 		_test_industry_simulation_tick_runtime,
 		_test_drill_mining_storage_full_runtime,
 		_test_integration_isru_scenario,
@@ -249,6 +250,10 @@ func _test_electric_connect_network_runtime() -> bool:
 	return await _run_electric_wire_scenario()
 
 
+func _test_electric_link_dormancy_survives_damage_repair() -> bool:
+	return await _run_electric_link_dormancy_scenario()
+
+
 func _test_industry_simulation_tick_runtime() -> bool:
 	return await _run_recipe_tick_scenario()
 
@@ -332,6 +337,95 @@ func _run_electric_wire_scenario() -> bool:
 	):
 		world.free()
 		return _fail("missing supplied distributor network must report port_disconnected")
+	world.free()
+	return true
+
+
+## Wiring must survive an endpoint damage → repair cycle: the link goes dormant
+## (out of the electric graph) while the endpoint is not operational and revives
+## after repair, without ever being deleted from `electric_links[]`.
+func _run_electric_link_dormancy_scenario() -> bool:
+	var world := SimulationWorld.new()
+	var spawn := _spawn(
+		world,
+		_electric_cable_blueprint(),
+		GridTransform.identity()
+	)
+	if not spawn.is_ok():
+		world.free()
+		return _fail("dormancy scenario spawn failed: %s" % spawn.reason)
+	var mapping: Dictionary = spawn.data["local_to_element_id"]
+	var source_id := int(mapping["source_0"])
+	var distributor_id := int(mapping["distributor_0"])
+	var consumer_id := int(mapping["processor_0"])
+	var source_link := world.connect_network(
+		source_id,
+		"power_out",
+		distributor_id,
+		"power_in"
+	)
+	if not source_link.is_ok():
+		world.free()
+		return _fail("dormancy source link failed: %s" % source_link.reason)
+	var link_id := int(source_link.data["link_id"])
+	IndustryElectricBudget.apply_tick(world, 1.0)
+	var consumer_runtime := world.get_industry_element_runtime(consumer_id)
+	if consumer_runtime == null or not consumer_runtime.powered:
+		world.free()
+		return _fail("dormancy baseline consumer was not powered")
+
+	var source := world.get_element(source_id)
+	var max_integrity := source.get_archetype().max_integrity
+	var damage := DamageElementCommand.new()
+	damage.element_id = source_id
+	damage.expected_state_revision = source.state_revision
+	damage.damage = max_integrity * 0.2
+	var damage_result := world.apply_structural_command_now(damage)
+	if not damage_result.is_ok():
+		world.free()
+		return _fail("dormancy damage failed: %s" % damage_result.reason)
+	if source.is_operational():
+		world.free()
+		return _fail("damaged source must not stay operational")
+	IndustryElectricBudget.apply_tick(world, 1.0)
+	if world.list_electric_links().size() != 1:
+		world.free()
+		return _fail("dormant link must stay stored, not be deleted")
+	if world.get_industry_network().is_link_active(world, link_id):
+		world.free()
+		return _fail("link with damaged endpoint must be dormant")
+	if consumer_runtime.powered:
+		world.free()
+		return _fail("consumer must lose power while supply link is dormant")
+
+	world.set_resource_amount("player", "construction_component", 10.0)
+	var repair := RepairElementCommand.new()
+	repair.element_id = source_id
+	repair.expected_state_revision = source.state_revision
+	repair.store_id = "player"
+	repair.max_material_amount = 10.0
+	var repair_result := world.apply_structural_command_now(repair)
+	if not repair_result.is_ok():
+		world.free()
+		return _fail("dormancy repair failed: %s" % repair_result.reason)
+	if not source.is_operational():
+		world.free()
+		return _fail("repaired source must be operational again")
+	IndustryElectricBudget.apply_tick(world, 1.0)
+	if not consumer_runtime.powered:
+		world.free()
+		return _fail("repaired endpoint must revive dormant link without rewiring")
+	if world.list_electric_links().size() != 1:
+		world.free()
+		return _fail("revived link must be the original, not a new connection")
+
+	var disconnect := world.disconnect_network(0, "", 0, "", link_id)
+	if not disconnect.is_ok():
+		world.free()
+		return _fail("disconnect by link_id failed: %s" % disconnect.reason)
+	if not world.list_electric_links().is_empty():
+		world.free()
+		return _fail("disconnect must remove the stored link")
 	world.free()
 	return true
 

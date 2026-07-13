@@ -316,6 +316,24 @@ static func validate_connect_endpoints(
 	})
 
 
+## Deletion criterion: a link may only be removed from the network state when an
+## endpoint element no longer exists in the world. Temporary conditions (damaged
+## endpoint, overstretched cable) make the link dormant, never delete it.
+static func link_endpoints_exist(
+	world: SimulationWorld,
+	link: IndustryElectricLink
+) -> bool:
+	if link == null:
+		return false
+	return (
+		world.get_element(link.element_a) != null
+		and world.get_element(link.element_b) != null
+	)
+
+
+## Activity criterion: dormant links (endpoint not operational, cable stretched
+## beyond max length) stay stored but drop out of the electric graph until the
+## condition clears.
 static func link_still_valid(
 	world: SimulationWorld,
 	link: IndustryElectricLink
