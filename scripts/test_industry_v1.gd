@@ -75,6 +75,7 @@ func _run_tests() -> void:
 		_test_electric_connect_network_runtime,
 		_test_electric_link_dormancy_survives_damage_repair,
 		_test_electric_direct_consumer_cable,
+		_test_electric_cable_waypoints_polyline,
 		_test_industry_simulation_tick_runtime,
 		_test_drill_mining_storage_full_runtime,
 		_test_integration_isru_scenario,
@@ -259,6 +260,10 @@ func _test_electric_direct_consumer_cable() -> bool:
 	return await _run_electric_direct_consumer_scenario()
 
 
+func _test_electric_cable_waypoints_polyline() -> bool:
+	return await _run_electric_waypoints_scenario()
+
+
 func _test_industry_simulation_tick_runtime() -> bool:
 	return await _run_recipe_tick_scenario()
 
@@ -342,6 +347,73 @@ func _run_electric_wire_scenario() -> bool:
 	):
 		world.free()
 		return _fail("missing supplied distributor network must report port_disconnected")
+	world.free()
+	return true
+
+
+## Freeform routing: cable length limit applies to the routed polyline
+## (anchor → скобы → anchor), waypoints persist on the stored link, and a
+## detour that exceeds max length is rejected at connect time.
+func _run_electric_waypoints_scenario() -> bool:
+	var world := SimulationWorld.new()
+	var spawn := _spawn(
+		world,
+		_electric_cable_blueprint(),
+		GridTransform.identity()
+	)
+	if not spawn.is_ok():
+		world.free()
+		return _fail("waypoints scenario spawn failed: %s" % spawn.reason)
+	var mapping: Dictionary = spawn.data["local_to_element_id"]
+	var source_id := int(mapping["source_0"])
+	var distributor_id := int(mapping["distributor_0"])
+	var long_detour := PackedVector3Array([Vector3(1.5, 30.0, 0.0)])
+	var rejected := world.connect_network(
+		source_id,
+		"power_out",
+		distributor_id,
+		"power_in",
+		-1,
+		long_detour
+	)
+	if (
+		rejected.is_ok()
+		or rejected.reason != StructuralCommandResult.REASON_CABLE_TOO_LONG
+	):
+		world.free()
+		return _fail("overlength routed polyline must be rejected")
+	var detour := PackedVector3Array([
+		Vector3(1.2, 1.4, 0.8),
+		Vector3(2.1, 1.4, -0.6),
+	])
+	var routed := world.connect_network(
+		source_id,
+		"power_out",
+		distributor_id,
+		"power_in",
+		-1,
+		detour
+	)
+	if not routed.is_ok():
+		world.free()
+		return _fail("routed cable within limit failed: %s" % routed.reason)
+	var rows := world.list_electric_links()
+	if rows.size() != 1:
+		world.free()
+		return _fail("routed connect expected exactly one stored link")
+	var stored_waypoints := PackedVector3Array(
+		rows[0].get("waypoints", PackedVector3Array())
+	)
+	if stored_waypoints != detour:
+		world.free()
+		return _fail("stored link must keep routed waypoints in order")
+	IndustryElectricBudget.apply_tick(world, 1.0)
+	var consumer_runtime := world.get_industry_element_runtime(
+		int(mapping["processor_0"])
+	)
+	if consumer_runtime == null or not consumer_runtime.powered:
+		world.free()
+		return _fail("routed supply network must power in-radius consumer")
 	world.free()
 	return true
 

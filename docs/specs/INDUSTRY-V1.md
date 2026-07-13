@@ -254,8 +254,9 @@ ElectricLink {
 1. оба parent elements **operational**;
 2. оба порта `Kind.ELECTRIC`, direction-compatible output → input
    (bidirectional допускается явно);
-3. world-space distance между port anchors ≤ **12 m** (`max_cable_length_m`,
-   placeholder v1);
+3. длина кабеля ≤ **12 m** (`max_cable_length_m`, placeholder v1); длина =
+   world-space **polyline** port anchor → `waypoints[]` → port anchor
+   (скобы свободной протяжки); без waypoints — прямая между anchors;
 4. face adjacency и взаимная ориентация портов **не требуются**;
 5. endpoints могут принадлежать разным Assembly; electric link не создаёт Joint,
    не объединяет topology и не вызывает mechanical merge;
@@ -302,10 +303,20 @@ cable-chain индивидуальным wire — но не является pas
 
 ### Player UX (connect tool — electric only)
 
-1. Mode **connect**; click compatible electric output/input ports в пределах 12 m
-   → wire.
-2. **Cargo:** connect tool **не используется** — только placement `cargo_pipe` blocks.
-3. Overlength: HUD toast «Кабель длиннее 12 м». Preview ghost wire optional.
+1. Mode **connect**; первый клик — блок с электропортом; финальный клик —
+   второй блок с электропортом → wire.
+2. **Свободная протяжка (скобы):** между первым и финальным кликом клики по
+   поверхностям (terrain, блоки без электропортов) добавляют world-space
+   **waypoints** — кабель идёт по полу/стенам/потолку как проложил игрок.
+   ПКМ — убрать последнюю скобу; ПКМ без скоб — отменить протяжку.
+   Waypoints прибиты к миру и не следуют за движущимися Assembly
+   (межгридовый кабель — прямая «пуповина» без скоб).
+3. Ghost polyline (`CableRoutingPreview`) рисует протяжку от pending блока
+   через скобы до прицела.
+4. **Cargo:** connect tool **не используется** — только placement `cargo_pipe` blocks.
+5. Overlength (по полилинии): HUD toast «Кабель длиннее 12 м».
+6. Wire presentation: полилиния со скобами и лёгким провисанием на span;
+   grinder по любому сегменту срезает кабель.
 
 ## Electric Flow
 

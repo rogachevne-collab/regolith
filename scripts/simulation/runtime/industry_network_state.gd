@@ -47,14 +47,16 @@ func add_link(
 	element_a_id: int,
 	port_a_id: String,
 	element_b_id: int,
-	port_b_id: String
+	port_b_id: String,
+	waypoints: PackedVector3Array = PackedVector3Array()
 ) -> IndustryElectricLink:
 	var link := IndustryElectricLink.new_link(
 		link_id,
 		element_a_id,
 		port_a_id,
 		element_b_id,
-		port_b_id
+		port_b_id,
+		waypoints
 	)
 	_links.append(link)
 	_link_by_id[link_id] = link

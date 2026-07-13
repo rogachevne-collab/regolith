@@ -9,6 +9,10 @@ const WIRE_RADIUS := 0.045
 const WIRE_AIM_RADIUS := 0.09
 ## Physics layer 4 — interaction-ray only; nothing moves or collides on it.
 const WIRE_COLLISION_LAYER := 8
+## Decorative sag per polyline span (fraction of span length, capped).
+const WIRE_SAG_FRACTION := 0.06
+const WIRE_SAG_MAX_M := 0.4
+const WIRE_SAG_SUBDIVISIONS := 4
 const WIRE_COLOR := Color(0.92, 0.74, 0.18, 1.0)
 const WIRE_EMISSION := Color(0.55, 0.42, 0.08, 1.0)
 ## Dormant wire (endpoint damaged/incomplete or cable overstretched): the link
@@ -87,6 +91,8 @@ func _on_structural_event(event: Dictionary) -> void:
 
 ## Wires are StaticBody3D on an interaction-only layer so the aim ray can
 ## target them (grinder → disconnect_network). They collide with nothing.
+## A wire renders as a polyline: port anchor → routed скобы → port anchor,
+## each span subdivided with a light catenary-style sag.
 func _make_wire_body(link: IndustryElectricLink) -> StaticBody3D:
 	var element_a := _world.get_element(link.element_a)
 	var element_b := _world.get_element(link.element_b)
@@ -101,22 +107,6 @@ func _make_wire_body(link: IndustryElectricLink) -> StaticBody3D:
 		"interaction_metadata",
 		{"electric_link_id": link.link_id}
 	)
-	var mesh_instance := MeshInstance3D.new()
-	mesh_instance.name = "Mesh"
-	var cylinder := CylinderMesh.new()
-	cylinder.top_radius = WIRE_RADIUS
-	cylinder.bottom_radius = WIRE_RADIUS
-	cylinder.radial_segments = 8
-	cylinder.rings = 1
-	mesh_instance.mesh = cylinder
-	mesh_instance.material_override = _wire_material
-	body.add_child(mesh_instance)
-	var collision := CollisionShape3D.new()
-	collision.name = "Collision"
-	var capsule := CapsuleShape3D.new()
-	capsule.radius = WIRE_AIM_RADIUS
-	collision.shape = capsule
-	body.add_child(collision)
 	_update_wire_body(body, link)
 	return body
 
@@ -125,51 +115,138 @@ func _update_wire_body(
 	body: StaticBody3D,
 	link: IndustryElectricLink
 ) -> void:
-	var element_a := _world.get_element(link.element_a)
-	var element_b := _world.get_element(link.element_b)
-	var collision := body.get_node_or_null("Collision") as CollisionShape3D
-	if element_a == null or element_b == null:
+	var points := _wire_points(link)
+	if points.size() < 2:
 		body.visible = false
-		if collision != null:
-			collision.disabled = true
-		return
-	var start := IndustryElectricPortUtil.port_anchor_world_position(
-		_world,
-		element_a,
-		link.port_a
-	)
-	var end := IndustryElectricPortUtil.port_anchor_world_position(
-		_world,
-		element_b,
-		link.port_b
-	)
-	var delta := end - start
-	var length := delta.length()
-	if length <= 0.05:
-		body.visible = false
-		if collision != null:
-			collision.disabled = true
+		_set_segments_disabled(body, true)
 		return
 	body.visible = true
-	var mesh_instance := body.get_node_or_null("Mesh") as MeshInstance3D
-	if mesh_instance != null:
-		mesh_instance.material_override = (
-			_wire_material
-			if IndustryElectricPortUtil.link_still_valid(_world, link)
-			else _wire_dormant_material
-		)
+	var display := _display_points(points)
+	var segment_count := display.size() - 1
+	_ensure_wire_segments(body, segment_count)
+	_set_segments_disabled(body, false)
+	var material := (
+		_wire_material
+		if IndustryElectricPortUtil.link_still_valid(_world, link)
+		else _wire_dormant_material
+	)
+	for index: int in range(segment_count):
+		var start := display[index]
+		var end := display[index + 1]
+		var delta := end - start
+		var length := delta.length()
+		var mesh_instance := body.get_node("Mesh%d" % index) as MeshInstance3D
+		var collision := body.get_node("Col%d" % index) as CollisionShape3D
+		if length <= 0.01:
+			mesh_instance.visible = false
+			collision.disabled = true
+			continue
+		mesh_instance.visible = true
+		collision.disabled = false
+		mesh_instance.material_override = material
 		var cylinder := mesh_instance.mesh as CylinderMesh
 		if cylinder != null:
 			cylinder.height = length
-	if collision != null:
-		collision.disabled = false
 		var capsule := collision.shape as CapsuleShape3D
 		if capsule != null:
 			capsule.height = maxf(length, WIRE_AIM_RADIUS * 2.1)
-	var midpoint := (start + end) * 0.5
-	var direction := delta / length
-	var basis := _wire_basis(direction)
-	body.global_transform = Transform3D(basis, midpoint)
+		var transform := Transform3D(
+			_wire_basis(delta / length),
+			(start + end) * 0.5
+		)
+		mesh_instance.global_transform = transform
+		collision.global_transform = transform
+
+
+## Authoritative polyline: anchor_a → link.waypoints → anchor_b.
+func _wire_points(link: IndustryElectricLink) -> PackedVector3Array:
+	var element_a := _world.get_element(link.element_a)
+	var element_b := _world.get_element(link.element_b)
+	if element_a == null or element_b == null:
+		return PackedVector3Array()
+	var points := PackedVector3Array()
+	points.append(
+		IndustryElectricPortUtil.port_anchor_world_position(
+			_world,
+			element_a,
+			link.port_a
+		)
+	)
+	points.append_array(link.waypoints)
+	points.append(
+		IndustryElectricPortUtil.port_anchor_world_position(
+			_world,
+			element_b,
+			link.port_b
+		)
+	)
+	return points
+
+
+## Decorative sag: each span is subdivided and dipped parabolically. The dip
+## scales with the horizontal share of the span so vertical runs stay straight.
+func _display_points(points: PackedVector3Array) -> PackedVector3Array:
+	var result := PackedVector3Array()
+	result.append(points[0])
+	for span_index: int in range(points.size() - 1):
+		var start := points[span_index]
+		var end := points[span_index + 1]
+		var span := end - start
+		var length := span.length()
+		var sag := 0.0
+		if length > 0.001:
+			var horizontal := Vector2(span.x, span.z).length()
+			sag = (
+				minf(WIRE_SAG_FRACTION * length, WIRE_SAG_MAX_M)
+				* horizontal / length
+			)
+		if sag <= 0.005:
+			result.append(end)
+			continue
+		for step: int in range(1, WIRE_SAG_SUBDIVISIONS):
+			var t := float(step) / float(WIRE_SAG_SUBDIVISIONS)
+			result.append(
+				start
+				+ span * t
+				+ Vector3.DOWN * (sag * 4.0 * t * (1.0 - t))
+			)
+		result.append(end)
+	return result
+
+
+func _ensure_wire_segments(body: StaticBody3D, count: int) -> void:
+	var current := 0
+	while body.get_node_or_null("Mesh%d" % current) != null:
+		current += 1
+	if current == count:
+		return
+	for index: int in range(count, current):
+		body.get_node("Mesh%d" % index).queue_free()
+		body.get_node("Col%d" % index).queue_free()
+	for index: int in range(current, count):
+		var mesh_instance := MeshInstance3D.new()
+		mesh_instance.name = "Mesh%d" % index
+		var cylinder := CylinderMesh.new()
+		cylinder.top_radius = WIRE_RADIUS
+		cylinder.bottom_radius = WIRE_RADIUS
+		cylinder.radial_segments = 8
+		cylinder.rings = 1
+		mesh_instance.mesh = cylinder
+		mesh_instance.material_override = _wire_material
+		body.add_child(mesh_instance)
+		var collision := CollisionShape3D.new()
+		collision.name = "Col%d" % index
+		var capsule := CapsuleShape3D.new()
+		capsule.radius = WIRE_AIM_RADIUS
+		collision.shape = capsule
+		body.add_child(collision)
+
+
+func _set_segments_disabled(body: StaticBody3D, disabled: bool) -> void:
+	for child: Node in body.get_children():
+		var collision := child as CollisionShape3D
+		if collision != null:
+			collision.disabled = disabled
 
 
 func _wire_basis(direction: Vector3) -> Basis:

@@ -10,6 +10,11 @@ var element_a: int = 0
 var port_a: String = ""
 var element_b: int = 0
 var port_b: String = ""
+## Player-routed cable path (скобы): world-space points between the two port
+## anchors, in order from element_a to element_b. Empty = straight cable.
+## Waypoints are pinned to the world (terrain / anchored structures) and do
+## not follow moving assemblies.
+var waypoints: PackedVector3Array = PackedVector3Array()
 
 
 static func new_link(
@@ -17,7 +22,8 @@ static func new_link(
 	element_a_id: int,
 	port_a_id: String,
 	element_b_id: int,
-	port_b_id: String
+	port_b_id: String,
+	link_waypoints: PackedVector3Array = PackedVector3Array()
 ) -> IndustryElectricLink:
 	var link: IndustryElectricLink = _SCRIPT.new()
 	link.link_id = link_id
@@ -25,6 +31,7 @@ static func new_link(
 	link.port_a = port_a_id
 	link.element_b = element_b_id
 	link.port_b = port_b_id
+	link.waypoints = link_waypoints.duplicate()
 	return link
 
 
@@ -79,6 +86,7 @@ func to_dict() -> Dictionary:
 		"port_a": port_a,
 		"element_b": element_b,
 		"port_b": port_b,
+		"waypoints": waypoints.duplicate(),
 	}
 
 
@@ -89,4 +97,7 @@ static func from_dict(data: Dictionary) -> IndustryElectricLink:
 	link.port_a = str(data.get("port_a", ""))
 	link.element_b = int(data.get("element_b", 0))
 	link.port_b = str(data.get("port_b", ""))
+	link.waypoints = PackedVector3Array(
+		data.get("waypoints", PackedVector3Array())
+	)
 	return link

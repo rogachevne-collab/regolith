@@ -82,13 +82,19 @@ func _prompt_for(hit: InteractionHit) -> String:
 		return ""
 	if _tools.active_tool == &"connect":
 		if _tools.connect_pending_element_id() > 0:
-			return "ЛКМ — второй блок с соседним электропортом"
+			var waypoint_count := _tools.connect_waypoint_count()
+			if waypoint_count > 0:
+				return (
+					"ЛКМ — скоба / блок с электропортом · ПКМ — убрать скобу (%d)"
+					% waypoint_count
+				)
+			return "ЛКМ — скоба по поверхности или блок с электропортом · ПКМ — отмена"
 		if (
 			hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
 			and hit.distance <= 4.0
 		):
-			return "ЛКМ — первый блок для провода"
-		return "ЛКМ — электрический провод между соседними блоками"
+			return "ЛКМ — начать провод от блока с электропортом"
+		return "ЛКМ — электрический провод: блок → скобы → блок"
 	if _tools.active_tool == &"grinder":
 		if (
 			hit.target_kind == InteractionHit.KIND_ELECTRIC_CABLE

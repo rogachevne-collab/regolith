@@ -778,7 +778,8 @@ func apply_connect_network(
 	element_a_id: int,
 	element_b_id: int,
 	port_a_id: String = "",
-	port_b_id: String = ""
+	port_b_id: String = "",
+	waypoints: PackedVector3Array = PackedVector3Array()
 ) -> Dictionary:
 	if _session == null:
 		return _result(&"not_ready")
@@ -787,7 +788,8 @@ func apply_connect_network(
 		element_a_id,
 		element_b_id,
 		port_a_id,
-		port_b_id
+		port_b_id,
+		waypoints
 	)
 	var pair: Dictionary = diagnosis.get("pair", {})
 	if pair.is_empty():
@@ -814,6 +816,7 @@ func apply_connect_network(
 	command.port_a_id = resolved_port_a
 	command.element_b_id = resolved_b
 	command.port_b_id = resolved_port_b
+	command.waypoints = waypoints
 	if assembly_a != null:
 		command.expected_revision_a = assembly_a.topology_revision
 	if assembly_b != null:
@@ -835,7 +838,8 @@ func _connect_network(
 		int(parameters.get("element_a_id", 0)),
 		int(parameters.get("element_b_id", 0)),
 		str(parameters.get("port_a_id", "")),
-		str(parameters.get("port_b_id", ""))
+		str(parameters.get("port_b_id", "")),
+		PackedVector3Array(parameters.get("waypoints", PackedVector3Array()))
 	)
 
 
