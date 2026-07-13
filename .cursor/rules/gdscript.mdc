@@ -2,7 +2,7 @@
 description: Правила для GDScript геймплея
 globs: ["scripts/**/*.gd"]
 ---
-Домен: docs/PHYSICAL-LANGUAGE.md. Spawn: SDF + physics raycast + settle (bootstrap.gd).
-Drill contact: physics raycast before voxel SDF (drill.gd). Lunar gravity 1.62 — не gravity_scale.
-Новое поведение PoC — test_*.tscn + ./tests/run_tests.sh. Минимальный diff, без over-engineering.
-VFX spawn: docs/cheatsheets/vfx-authoring.md — композиции без скриптов в scenes/vfx/.
+Домен: индекс терминов в начале docs/PHYSICAL-LANGUAGE.md — целиком не читать.
+Spawn: SDF + physics raycast + settle (bootstrap.gd). Lunar gravity 1.62 — не gravity_scale.
+Верификация: логика ядра — ./tests/run_one.sh test_*; геймплей/HUD — в запущенной игре (AGENTS.md).
+Минимальный diff, без over-engineering. VFX: docs/cheatsheets/vfx-authoring.md, без скриптов в scenes/vfx/.

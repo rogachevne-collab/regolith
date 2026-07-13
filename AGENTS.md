@@ -1,124 +1,86 @@
 # Regolith — AI-first lunar sandbox (Godot)
 
-Standalone Godot-проект: voxel terrain, Jolt physics, modular machines.
-Концепт: `docs/CONCEPT.md`. Доменный контракт: `docs/PHYSICAL-LANGUAGE.md`.
+Standalone Godot 4.5+ проект: voxel terrain (Voxel Tools 1.6x), Jolt physics
+(гравитация 1.62 m/s²), GDScript. Код в `scripts/`, сцены в `scenes/`,
+ресурсы в `resources/`. Концепт: `docs/CONCEPT.md`.
 Этот файл — единственный источник процессных правил для агентов.
 
-## Стек
+## Доменный контракт
 
-- **Godot 4.5+** — stock editor/runtime, без форка.
-- **Jolt Physics** — гравитация 1.62 m/s² (`project.godot`).
-- **Voxel Tools 1.6x** (zylann GDExtension) — SDF terrain, Transvoxel.
-- **GDScript** — геймплей в `scripts/`, сцены в `scenes/`, ресурсы в `resources/`.
+`docs/PHYSICAL-LANGUAGE.md` — большой. НЕ читай его целиком: в начале файла
+есть индекс терминов — найди нужный раздел и читай только его.
 
 ## Инварианты (нарушать НЕЛЬЗЯ)
 
-- **R1** — `docs/PHYSICAL-LANGUAGE.md` описывает домен; новые типы машин/элементов
-  сначала в контракте или PoC-спеке, потом код.
-- **R2** — PoC закрывается headless-тестом в `scenes/test_*.tscn` + строка в
-  `tests/run_tests.sh` (если новый тест).
-- **R3** — шейдеры только текстом (`.gdshader`); VisualShader-графы не создавать.
+- **R1** — новые типы машин/элементов сначала в `PHYSICAL-LANGUAGE.md` или
+  PoC-спеке (`docs/specs/`), потом код.
+- **R2** — headless-тесты (`scenes/test_*.tscn`) — ТОЛЬКО для чистой логики
+  симуляции: kernel, топология, графы, ресурсы, проекция. НЕ создавать
+  тест-сцены для геймплея, интеракций, HUD, презентации — этот слой
+  верифицируется в запущенной игре (см. «Верификация»).
+- **R3** — шейдеры только текстом (`.gdshader`), VisualShader-графы не создавать.
   Шпаргалка: `docs/cheatsheets/godot-shaders.md`.
 - **R4** — VFX-композиции декларативные (`.tscn` без логики в `scenes/vfx/`).
   Шпаргалки: `docs/cheatsheets/vfx-design.md`, `vfx-authoring.md`.
-- **R5** — spawn на voxel terrain: SDF + physics collider + settle (см. `bootstrap.gd`);
-  не телепортировать игрока на y=0 до готовности коллизии.
+- **R5** — spawn на voxel terrain: SDF + physics collider + settle (см.
+  `bootstrap.gd`); не телепортировать игрока на y=0 до готовности коллизии.
 - **R6** — внешние зависимости: только Voxel Tools (MIT); macOS binaries в git,
   остальные платформы — bootstrap из README.
 
 Если задача «удобнее» решается нарушением инварианта — остановись и спроси человека.
 
-## Definition of Done
+## Верификация
 
-**Дисциплина тестов:** во время итераций гоняй только релевантный `test_*.tscn`
-(`./run.sh --headless res://scenes/test_*.tscn`). Полный `./tests/run_tests.sh` —
-один раз перед «готово»/коммитом, а не после каждой мелкой правки.
+Главный верификатор — запущенная игра, не зелёный тест.
+
+- **Логика ядра** — `./tests/run_one.sh test_<name>` (вывод уже отфильтрован
+  от движкового шума). Итерируйся на одном релевантном тесте.
+- **Геймплей / HUD / презентация / VFX** — запусти игру (Beckett MCP:
+  `play_scene` → `screenshot`, `get_remote_tree`, `game_logs`), убедись что
+  видно и в логах чисто. Финальное подтверждение — человек в игре;
+  «тест зелёный» не считается доказательством, что фича работает.
+- **Полный гейт** — `./tests/run_tests.sh` (ядровый набор) ОДИН раз перед
+  «готово»/коммитом, не на каждую правку.
+
+## Definition of Done
 
 | Тип изменения | Обязательные действия |
 |---|---|
-| новый PoC / изменение поведения | обновить `docs/specs/POC-*.md` или `PHYSICAL-LANGUAGE.md` |
-| новый/изменённый `test_*.tscn` | релевантный тест зелёный в процессе; полный `./tests/run_tests.sh` один раз перед готово |
+| логика симуляционного ядра | релевантный `run_one.sh` зелёный; новый инвариант ядра → новый тест + строка в `run_tests.sh` |
+| геймплей / интеракции / HUD / презентация | проверка в запущенной игре (скриншот/логи), человек подтверждает |
+| изменение поведения / новый PoC | обновить спеку в `docs/specs/` или `PHYSICAL-LANGUAGE.md` |
 | правка `.gdshader` | `./run.sh --headless res://scenes/main.tscn` без ошибок компиляции |
 | правка VFX `.tscn` | проверка в игре + соответствие `docs/cheatsheets/vfx-*.md` |
 | новая GDExtension-зависимость | строка в README (bootstrap) + лицензия |
-| правка spawn/drill/cart/assembly | релевантный `test_*` в процессе; полный `./tests/run_tests.sh` + smoke `main.tscn` один раз перед готово |
+| перед «готово»/коммитом | полный `./tests/run_tests.sh` один раз |
 
 ## Дисциплина коммитов
 
-- Один коммит = одно проверяемое изменение.
-- PoC-спека и код — в одном PR/коммите, если меняют контракт.
+- Один коммит = одно проверяемое изменение. Не копи гигантские diff'ы:
+  большой незакоммиченный контекст — главный убийца качества агентских сессий.
+- Спека и код — в одном коммите, если меняют контракт.
 - Коммиты только по запросу человека.
-
-## Делегирование субагентам
-
-Дешёвому субагенту: шейдеры по спеке, headless-тесты, доки по шаблону, мелкие правки
-параметров (бур, cart) с готовым критерием PASS.
-
-Дорогому агенту: Physical Language, structural commands, новые PoC, spawn/physics,
-архитектурные решения, финальная проверка субагентов.
-
-Результат субагента перечитывается; во время работы — фокусный `test_*`, полный
-`./tests/run_tests.sh` один раз перед «готово». Не гоняй полный набор на каждую итерацию.
 
 ## Соглашения
 
-- **Терминология:** element, assembly, structural command, platform velocity — см.
+- Терминология (element, assembly, structural command, …) — индекс в
   `PHYSICAL-LANGUAGE.md`.
-- **Шейдеры:** `docs/cheatsheets/godot-shaders.md`.
-- **VFX:** anticipation → burst → dissipate; бюджеты в `vfx-design.md`.
-- **Input actions:** `move_forward`, `jump` и т.д. — в `project.godot`, не хардкод
-  без причины.
+- Input actions (`move_forward`, `jump`, …) — в `project.godot`, не хардкод.
+- Минимальный diff, без over-engineering.
 
 ## Команды
 
 ```bash
-./run.sh res://scenes/main.tscn          # игра
-./run.sh --editor                        # редактор
-./run.sh --headless --import             # первый запуск / reimport
-./tests/run_tests.sh                     # все PoC-тесты headless
+./run.sh res://scenes/main.tscn      # игра
+./run.sh --editor                    # редактор
+./run.sh --headless --import         # первый запуск / reimport
+./tests/run_one.sh test_<name>       # один тест, шум отфильтрован
+./tests/run_tests.sh                 # ядровый гейт (перед готово/коммитом)
+./tests/run_tests.sh --all           # + legacy геймплей-сцены (медленно)
 ```
 
-## Раскладка
+## Cursor Cloud / headless VM
 
-```
-scenes/           main.tscn, test_*.tscn, vfx/ (будущее)
-scripts/          gameplay, bootstrap, motor, drill, cart, assembly
-resources/        terrain, textures, shaders, audio
-addons/zylann.voxel/   GDExtension (macOS in git)
-docs/             CONCEPT, PHYSICAL-LANGUAGE, specs/, cheatsheets/
-tests/            run_tests.sh
-```
-
-## Текущее состояние
-
-**PoC 1–3 ✓** — cart 1a–1c, structural rebuild, passenger. Все 7 headless-тестов зелёные.
-**PoC 4+** — actuators, electric network, cargo, atmospheres (см. CONCEPT roadmap).
-
-Erebus-порт R0/R1 заморожен в репозитории Erebus; целевая интеграция — Erebus Lite addon.
-
-## Cursor Cloud specific instructions
-
-Среда (движок + Voxel-бинарники) ставится update-скриптом на старте VM. `godot`
-уже в `PATH` (`/usr/local/bin/godot`, stock 4.6), поэтому `run.sh` находит его сам.
-Команды запуска/тестов — как в разделе «Команды» и `README.md`.
-
-Нюансы этого окружения (headless VM без GPU/звука):
-
-- **Первый запуск в сессии:** `.godot/` (кэш импорта) и `addons/zylann.voxel/bin/`
-  в `.gitignore`. Update-скрипт восстанавливает Voxel-бинарники, но кэш импорта —
-  нет. Если `.godot/` отсутствует, один раз выполни `./run.sh --headless --import`
-  перед прогоном тестов/игры (см. README).
-- **Рендер/звук:** нет Vulkan-драйвера — Godot падает на OpenGL 3 (llvmpipe,
-  софт-рендер) и dummy-audio. Соответствующие `ERROR/WARNING` (VK_KHR_surface,
-  ALSA, SDFGI) при старте безвредны, игра рендерит корректно.
-- **GUI-запуск:** дисплей `:1`. Запускай окно как `DISPLAY=:1 ./run.sh res://scenes/main.tscn`.
-- **Smoke `main.tscn`:** это игровая сцена и работает бесконечно; для headless-проверки
-  компиляции шейдеров/скриптов ограничивай кадры: `./run.sh --headless res://scenes/main.tscn --quit-after 300`
-  (предупреждения «ObjectDB instances leaked at exit» при таком выходе — норма).
-- **Бур:** карвит voxel-terrain только под прицелом в пределах `reach = 2.2 м`
-  (`scripts/drill.gd`); чтобы прорыть грунт под ногами, смотри почти строго вниз.
-- **Автоматическое GUI-тестирование (computer-use):** при захваченной мыши
-  относительное движение (`InteractionEventMouseMotion.relative`) в `mouse_look.gd`
-  срабатывает нестабильно, поэтому точное прицеливание для бурения через
-  computer-use ненадёжно; проще подойти WASD вплотную к склону в пределах reach.
-  Код игры при этом НЕ править.
+Нюансы облачного окружения (нет GPU/звука, дисплей :1, quit-after для smoke,
+ограничения computer-use) — `docs/AGENTS-CLOUD.md`. Читай только при работе
+в облачной VM.

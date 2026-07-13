@@ -31,10 +31,14 @@ chmod +x run.sh tests/run_tests.sh
 ## Тесты
 
 ```bash
-./tests/run_tests.sh
+./tests/run_tests.sh                 # ядровый гейт (чистая логика симуляции)
+./tests/run_one.sh test_<name>       # один тест, движковый шум отфильтрован
+./tests/run_tests.sh --all           # + legacy геймплей/физика-сцены (медленно)
 ```
 
-Прогоняет все `scenes/test_*.tscn` headless (PoC 1a–1c, 2, 3). Exit 0 только если все PASS.
+Гейт покрывает только симуляционное ядро; геймплей/HUD/презентация
+верифицируются в запущенной игре (см. `AGENTS.md`, раздел «Верификация»).
+Exit 0 только если все PASS.
 
 ## Bootstrap GDExtension (не-macOS)
 

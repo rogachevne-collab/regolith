@@ -1,50 +1,64 @@
 #!/usr/bin/env bash
-# Headless gate: run every res://scenes/test_*.tscn and aggregate PASS/FAIL.
-# Includes test_construction_preview.tscn (preview/projection parity + snap resolver).
+# Headless gate: pure simulation-logic tests (kernel, graphs, resources, topology).
+# Gameplay/UI/presentation are verified in the running game, not here (AGENTS.md).
+# Usage: tests/run_tests.sh [--all]
+#   --all  also run legacy gameplay/physics integration scenes (slow, optional)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-RUN="$ROOT/run.sh"
+RUN_ONE="$ROOT/tests/run_one.sh"
 
-if [[ ! -x "$RUN" ]]; then
-	chmod +x "$RUN"
+KERNEL=(
+	test_simulation_kernel
+	test_simulation_runtime
+	test_simulation_projection
+	test_cart_kernel_topology
+	test_construction_preview
+	test_construction_damage
+	test_industry_ports
+	test_industry_v1
+	test_suit_state
+)
+
+# Physics/gameplay/UI integration scenes. Not part of the gate: the running
+# game is the verifier for that layer. Runnable via --all or run_one.sh.
+EXTRA=(
+	test_assembly
+	test_cart_drive
+	test_cart_flat
+	test_cart_rebuild
+	test_cart_steering
+	test_character_controller
+	test_construction_toolbar_remap
+	test_hud_palette_layout
+	test_impact_destruction
+	test_passenger
+	test_player_interaction
+	test_wheel_detach
+)
+
+SCENES=("${KERNEL[@]}")
+if [[ "${1:-}" == "--all" ]]; then
+	SCENES+=("${EXTRA[@]}")
 fi
 
-SCENES=()
-while IFS= read -r path; do
-	SCENES+=("$path")
-done < <(find "$ROOT/scenes" -maxdepth 1 -name 'test_*.tscn' -print | sort)
-
-if [[ ${#SCENES[@]} -eq 0 ]]; then
-	echo "No test scenes found in scenes/test_*.tscn" >&2
-	exit 1
+if [[ ! -x "$RUN_ONE" ]]; then
+	chmod +x "$RUN_ONE"
 fi
 
 pass=0
 fail=0
 failed=()
 
-echo "Regolith headless tests (${#SCENES[@]} scenes)"
+echo "Regolith kernel gate (${#SCENES[@]} scenes)"
 echo
 
-for path in "${SCENES[@]}"; do
-	name="$(basename "$path" .tscn)"
-	printf '== %s ' "$name"
-
-	set +e
-	output="$("$RUN" --headless "res://scenes/$name.tscn" 2>&1)"
-	code=$?
-	set -e
-
-	if [[ $code -eq 0 ]] && echo "$output" | grep -qE \
-		'(POC[0-9A-Z-]*|PLAYER[0-9A-Z-]*|KERNEL[0-9A-Z-]*|CONSTRUCTION[0-9A-Z-]*|SUITSTATE[0-9A-Z-]*): PASS'; then
-		echo "PASS"
+for name in "${SCENES[@]}"; do
+	if "$RUN_ONE" "$name"; then
 		pass=$((pass + 1))
 	else
-		echo "FAIL (exit $code)"
 		fail=$((fail + 1))
 		failed+=("$name")
-		echo "$output" | tail -20
 		echo
 	fi
 done
