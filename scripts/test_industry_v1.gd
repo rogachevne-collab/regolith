@@ -74,6 +74,7 @@ func _run_tests() -> void:
 		_test_cargo_connect_network_absent_or_rejects_cargo,
 		_test_electric_connect_network_runtime,
 		_test_electric_link_dormancy_survives_damage_repair,
+		_test_electric_direct_consumer_cable,
 		_test_industry_simulation_tick_runtime,
 		_test_drill_mining_storage_full_runtime,
 		_test_integration_isru_scenario,
@@ -254,6 +255,10 @@ func _test_electric_link_dormancy_survives_damage_repair() -> bool:
 	return await _run_electric_link_dormancy_scenario()
 
 
+func _test_electric_direct_consumer_cable() -> bool:
+	return await _run_electric_direct_consumer_scenario()
+
+
 func _test_industry_simulation_tick_runtime() -> bool:
 	return await _run_recipe_tick_scenario()
 
@@ -337,6 +342,61 @@ func _run_electric_wire_scenario() -> bool:
 	):
 		world.free()
 		return _fail("missing supplied distributor network must report port_disconnected")
+	world.free()
+	return true
+
+
+## A cable wired straight from a source into a consumer's power_in must supply
+## power without any distributor. The distributor radius stays an unwired-only
+## convenience; a wire is an explicit connection and always wins.
+func _run_electric_direct_consumer_scenario() -> bool:
+	var world := SimulationWorld.new()
+	var spawn := _spawn(
+		world,
+		_electric_cable_blueprint(),
+		GridTransform.identity()
+	)
+	if not spawn.is_ok():
+		world.free()
+		return _fail("direct cable scenario spawn failed: %s" % spawn.reason)
+	var mapping: Dictionary = spawn.data["local_to_element_id"]
+	var source_id := int(mapping["source_0"])
+	var consumer_id := int(mapping["processor_0"])
+	var outside_id := int(mapping["fabricator_outside"])
+	var direct_link := world.connect_network(
+		source_id,
+		"power_out",
+		consumer_id,
+		"power_in"
+	)
+	if not direct_link.is_ok():
+		world.free()
+		return _fail(
+			"direct source-to-consumer cable rejected: %s" % direct_link.reason
+		)
+	IndustryElectricBudget.apply_tick(world, 1.0)
+	var consumer_runtime := world.get_industry_element_runtime(consumer_id)
+	var outside_runtime := world.get_industry_element_runtime(outside_id)
+	if consumer_runtime == null or not consumer_runtime.powered:
+		world.free()
+		return _fail("wired consumer must be powered without a distributor")
+	if outside_runtime == null or outside_runtime.powered:
+		world.free()
+		return _fail("unwired consumer without distributor must stay unpowered")
+	if outside_runtime.power_reason != &"outside_power_radius":
+		world.free()
+		return _fail(
+			"unwired consumer expected outside_power_radius, got %s"
+			% str(outside_runtime.power_reason)
+		)
+	world.ensure_industry_element_runtime(source_id).machine_enabled = false
+	IndustryElectricBudget.apply_tick(world, 1.0)
+	if consumer_runtime.powered or consumer_runtime.power_reason != &"no_power":
+		world.free()
+		return _fail(
+			"wired consumer on dead component expected no_power, got %s"
+			% str(consumer_runtime.power_reason)
+		)
 	world.free()
 	return true
 

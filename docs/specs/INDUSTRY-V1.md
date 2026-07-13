@@ -279,9 +279,11 @@ ElectricLink {
 
 ### Anti-garland (electric)
 
-Generator cluster состоит только из direction-compatible supply links: generator
+Generator cluster состоит из direction-compatible supply links: generator
 outputs могут сходиться на distributor/battery input, а battery/distributor output
-может продолжать supply graph. Consumers в эту cable-chain не включаются.
+может продолжать supply graph. Consumer (`power_in`) может быть подключён в
+cable-chain индивидуальным wire — но не является pass-through (нет `power_out`),
+поэтому гирлянда consumer→consumer невозможна по направлениям портов.
 
 ### Anti-garland (cargo)
 
@@ -318,27 +320,29 @@ outputs могут сходиться на distributor/battery input, а battery
 - `power_source.output_w`: fixture placeholder **2000 W**;
 - `power_distributor.supply_radius_m`: fixture placeholder **12 m**;
 - `max_cable_length_m`: fixture/runtime placeholder **12 m**;
-- manual electric wires соединяют только source/generator cluster,
-  `power_distributor` и optional `power_battery`;
-- stationary drill / processor / fabricator не являются wire pass-through:
-  supplied distributor питает их **пространственно в радиусе**, без individual
-  wire и без включения consumer в `electric_links[]`.
+- manual electric wires соединяют source/generator cluster,
+  `power_distributor`, optional `power_battery` **и consumers** (`power_in`):
+  явный wire до машины — валидное питание без distributor;
+- stationary drill / processor / fabricator не являются wire pass-through
+  (нет `power_out`); unwired consumers питает supplied distributor
+  **пространственно в радиусе**.
 
 ### Electric graph
 
-Electric subgraph = `electric_links[]` (manual wires между supply nodes). Consumers
-не обязаны входить в graph: supplied distributor создаёт wireless/radius
-distribution внутри `supply_radius_m`. См. § Network links.
+Electric subgraph = `electric_links[]` (manual wires). Component **supplied**,
+если содержит enabled operational source или battery; distributor для supply
+не обязателен. Wired consumer в supplied component питается по кабелю.
+Unwired consumers питает supplied distributor wireless/radius distribution
+внутри `supply_radius_m`. См. § Network links.
 
 ### Power budget (SE on/off)
 
-Каждый tick для electric component с enabled operational distributor и подключённым
-source/battery:
+Каждый tick для каждого supplied electric component (enabled source или battery):
 
 1. `supply_w` = Σ `power_source.output_w` (enabled, operational) + battery discharge
    (если подключена);
 2. `demand_w` = Σ `idle_w` + active recipe `power_w` для enabled operational consumers
-   **в радиусе distributor**;
+   компонента: **wired в component** + unwired **в радиусе distributor** компонента;
 3. если `supply_w >= demand_w` → consumers ON; иначе OFF → `no_power`;
 4. consumer **вне `supply_radius_m`** distributor → `outside_power_radius` (не
    `no_power`);
@@ -349,12 +353,15 @@ source/battery:
 ### Distributor radius
 
 - `power_distributor` задаёт `supply_radius_m` (fixture placeholder **12 m**);
-- consumer внутри радиуса supplied distributor получает питание spatially, даже
-  если сам consumer не имеет electric link;
-- consumer вне радиуса от **любого supplied** operational enabled distributor →
-  `outside_power_radius` (HUD → «ВНЕ ЗОНЫ»);
-- если supplied distributor network отсутствует → `port_disconnected`;
-- consumer в радиусе, но `supply_w < demand_w` → `no_power`.
+- **wired consumer** (индивидуальный wire в supplied component) питается по
+  кабелю, радиус не участвует; wired в **не**-supplied component → radius
+  fallback, иначе `no_power`;
+- unwired consumer внутри радиуса supplied distributor получает питание
+  spatially;
+- unwired consumer вне радиуса от **любого supplied** operational enabled
+  distributor → `outside_power_radius` (HUD → «ВНЕ ЗОНЫ»);
+- если supplied networks отсутствуют вовсе → `port_disconnected`;
+- consumer запитан, но `supply_w < demand_w` → `no_power`.
 
 ### Machine enable
 
