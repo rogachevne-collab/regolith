@@ -9,6 +9,9 @@ var element_a_id: int = 0
 var port_a_id: String = ""
 var element_b_id: int = 0
 var port_b_id: String = ""
+## Optional player-routed cable path (world-space, a→b order). The cable
+## length limit applies to the whole polyline.
+var waypoints: PackedVector3Array = PackedVector3Array()
 
 
 func kind() -> StringName:
@@ -25,4 +28,5 @@ func execution_copy() -> StructuralCommand:
 	copy.port_a_id = port_a_id
 	copy.element_b_id = element_b_id
 	copy.port_b_id = port_b_id
+	copy.waypoints = waypoints.duplicate()
 	return copy

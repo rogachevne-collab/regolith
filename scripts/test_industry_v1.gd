@@ -73,6 +73,9 @@ func _run_tests() -> void:
 		_test_cargo_graph_spawned_topology,
 		_test_cargo_connect_network_absent_or_rejects_cargo,
 		_test_electric_connect_network_runtime,
+		_test_electric_link_dormancy_survives_damage_repair,
+		_test_electric_direct_consumer_cable,
+		_test_electric_cable_waypoints_polyline,
 		_test_industry_simulation_tick_runtime,
 		_test_drill_mining_storage_full_runtime,
 		_test_integration_isru_scenario,
@@ -249,6 +252,18 @@ func _test_electric_connect_network_runtime() -> bool:
 	return await _run_electric_wire_scenario()
 
 
+func _test_electric_link_dormancy_survives_damage_repair() -> bool:
+	return await _run_electric_link_dormancy_scenario()
+
+
+func _test_electric_direct_consumer_cable() -> bool:
+	return await _run_electric_direct_consumer_scenario()
+
+
+func _test_electric_cable_waypoints_polyline() -> bool:
+	return await _run_electric_waypoints_scenario()
+
+
 func _test_industry_simulation_tick_runtime() -> bool:
 	return await _run_recipe_tick_scenario()
 
@@ -332,6 +347,217 @@ func _run_electric_wire_scenario() -> bool:
 	):
 		world.free()
 		return _fail("missing supplied distributor network must report port_disconnected")
+	world.free()
+	return true
+
+
+## Freeform routing: cable length limit applies to the routed polyline
+## (anchor → скобы → anchor), waypoints persist on the stored link, and a
+## detour that exceeds max length is rejected at connect time.
+func _run_electric_waypoints_scenario() -> bool:
+	var world := SimulationWorld.new()
+	var spawn := _spawn(
+		world,
+		_electric_cable_blueprint(),
+		GridTransform.identity()
+	)
+	if not spawn.is_ok():
+		world.free()
+		return _fail("waypoints scenario spawn failed: %s" % spawn.reason)
+	var mapping: Dictionary = spawn.data["local_to_element_id"]
+	var source_id := int(mapping["source_0"])
+	var distributor_id := int(mapping["distributor_0"])
+	var long_detour := PackedVector3Array([Vector3(1.5, 30.0, 0.0)])
+	var rejected := world.connect_network(
+		source_id,
+		"power_out",
+		distributor_id,
+		"power_in",
+		-1,
+		long_detour
+	)
+	if (
+		rejected.is_ok()
+		or rejected.reason != StructuralCommandResult.REASON_CABLE_TOO_LONG
+	):
+		world.free()
+		return _fail("overlength routed polyline must be rejected")
+	var detour := PackedVector3Array([
+		Vector3(1.2, 1.4, 0.8),
+		Vector3(2.1, 1.4, -0.6),
+	])
+	var routed := world.connect_network(
+		source_id,
+		"power_out",
+		distributor_id,
+		"power_in",
+		-1,
+		detour
+	)
+	if not routed.is_ok():
+		world.free()
+		return _fail("routed cable within limit failed: %s" % routed.reason)
+	var rows := world.list_electric_links()
+	if rows.size() != 1:
+		world.free()
+		return _fail("routed connect expected exactly one stored link")
+	var stored_waypoints := PackedVector3Array(
+		rows[0].get("waypoints", PackedVector3Array())
+	)
+	if stored_waypoints != detour:
+		world.free()
+		return _fail("stored link must keep routed waypoints in order")
+	IndustryElectricBudget.apply_tick(world, 1.0)
+	var consumer_runtime := world.get_industry_element_runtime(
+		int(mapping["processor_0"])
+	)
+	if consumer_runtime == null or not consumer_runtime.powered:
+		world.free()
+		return _fail("routed supply network must power in-radius consumer")
+	world.free()
+	return true
+
+
+## A cable wired straight from a source into a consumer's power_in must supply
+## power without any distributor. The distributor radius stays an unwired-only
+## convenience; a wire is an explicit connection and always wins.
+func _run_electric_direct_consumer_scenario() -> bool:
+	var world := SimulationWorld.new()
+	var spawn := _spawn(
+		world,
+		_electric_cable_blueprint(),
+		GridTransform.identity()
+	)
+	if not spawn.is_ok():
+		world.free()
+		return _fail("direct cable scenario spawn failed: %s" % spawn.reason)
+	var mapping: Dictionary = spawn.data["local_to_element_id"]
+	var source_id := int(mapping["source_0"])
+	var consumer_id := int(mapping["processor_0"])
+	var outside_id := int(mapping["fabricator_outside"])
+	var direct_link := world.connect_network(
+		source_id,
+		"power_out",
+		consumer_id,
+		"power_in"
+	)
+	if not direct_link.is_ok():
+		world.free()
+		return _fail(
+			"direct source-to-consumer cable rejected: %s" % direct_link.reason
+		)
+	IndustryElectricBudget.apply_tick(world, 1.0)
+	var consumer_runtime := world.get_industry_element_runtime(consumer_id)
+	var outside_runtime := world.get_industry_element_runtime(outside_id)
+	if consumer_runtime == null or not consumer_runtime.powered:
+		world.free()
+		return _fail("wired consumer must be powered without a distributor")
+	if outside_runtime == null or outside_runtime.powered:
+		world.free()
+		return _fail("unwired consumer without distributor must stay unpowered")
+	if outside_runtime.power_reason != &"outside_power_radius":
+		world.free()
+		return _fail(
+			"unwired consumer expected outside_power_radius, got %s"
+			% str(outside_runtime.power_reason)
+		)
+	world.ensure_industry_element_runtime(source_id).machine_enabled = false
+	IndustryElectricBudget.apply_tick(world, 1.0)
+	if consumer_runtime.powered or consumer_runtime.power_reason != &"no_power":
+		world.free()
+		return _fail(
+			"wired consumer on dead component expected no_power, got %s"
+			% str(consumer_runtime.power_reason)
+		)
+	world.free()
+	return true
+
+
+## Wiring must survive an endpoint damage → repair cycle: the link goes dormant
+## (out of the electric graph) while the endpoint is not operational and revives
+## after repair, without ever being deleted from `electric_links[]`.
+func _run_electric_link_dormancy_scenario() -> bool:
+	var world := SimulationWorld.new()
+	var spawn := _spawn(
+		world,
+		_electric_cable_blueprint(),
+		GridTransform.identity()
+	)
+	if not spawn.is_ok():
+		world.free()
+		return _fail("dormancy scenario spawn failed: %s" % spawn.reason)
+	var mapping: Dictionary = spawn.data["local_to_element_id"]
+	var source_id := int(mapping["source_0"])
+	var distributor_id := int(mapping["distributor_0"])
+	var consumer_id := int(mapping["processor_0"])
+	var source_link := world.connect_network(
+		source_id,
+		"power_out",
+		distributor_id,
+		"power_in"
+	)
+	if not source_link.is_ok():
+		world.free()
+		return _fail("dormancy source link failed: %s" % source_link.reason)
+	var link_id := int(source_link.data["link_id"])
+	IndustryElectricBudget.apply_tick(world, 1.0)
+	var consumer_runtime := world.get_industry_element_runtime(consumer_id)
+	if consumer_runtime == null or not consumer_runtime.powered:
+		world.free()
+		return _fail("dormancy baseline consumer was not powered")
+
+	var source := world.get_element(source_id)
+	var max_integrity := source.get_archetype().max_integrity
+	var damage := DamageElementCommand.new()
+	damage.element_id = source_id
+	damage.expected_state_revision = source.state_revision
+	damage.damage = max_integrity * 0.2
+	var damage_result := world.apply_structural_command_now(damage)
+	if not damage_result.is_ok():
+		world.free()
+		return _fail("dormancy damage failed: %s" % damage_result.reason)
+	if source.is_operational():
+		world.free()
+		return _fail("damaged source must not stay operational")
+	IndustryElectricBudget.apply_tick(world, 1.0)
+	if world.list_electric_links().size() != 1:
+		world.free()
+		return _fail("dormant link must stay stored, not be deleted")
+	if world.get_industry_network().is_link_active(world, link_id):
+		world.free()
+		return _fail("link with damaged endpoint must be dormant")
+	if consumer_runtime.powered:
+		world.free()
+		return _fail("consumer must lose power while supply link is dormant")
+
+	world.set_resource_amount("player", "construction_component", 10.0)
+	var repair := RepairElementCommand.new()
+	repair.element_id = source_id
+	repair.expected_state_revision = source.state_revision
+	repair.store_id = "player"
+	repair.max_material_amount = 10.0
+	var repair_result := world.apply_structural_command_now(repair)
+	if not repair_result.is_ok():
+		world.free()
+		return _fail("dormancy repair failed: %s" % repair_result.reason)
+	if not source.is_operational():
+		world.free()
+		return _fail("repaired source must be operational again")
+	IndustryElectricBudget.apply_tick(world, 1.0)
+	if not consumer_runtime.powered:
+		world.free()
+		return _fail("repaired endpoint must revive dormant link without rewiring")
+	if world.list_electric_links().size() != 1:
+		world.free()
+		return _fail("revived link must be the original, not a new connection")
+
+	var disconnect := world.disconnect_network(0, "", 0, "", link_id)
+	if not disconnect.is_ok():
+		world.free()
+		return _fail("disconnect by link_id failed: %s" % disconnect.reason)
+	if not world.list_electric_links().is_empty():
+		world.free()
+		return _fail("disconnect must remove the stored link")
 	world.free()
 	return true
 

@@ -133,7 +133,8 @@ func connect_network(
 	port_a_id: String,
 	element_b_id: int,
 	port_b_id: String,
-	expected_assembly_revision: int = -1
+	expected_assembly_revision: int = -1,
+	waypoints: PackedVector3Array = PackedVector3Array()
 ) -> StructuralCommandResult:
 	var command := ConnectNetworkCommand.new()
 	command.element_a_id = element_a_id
@@ -141,6 +142,7 @@ func connect_network(
 	command.element_b_id = element_b_id
 	command.port_b_id = port_b_id
 	command.expected_assembly_revision = expected_assembly_revision
+	command.waypoints = waypoints
 	return apply_structural_command_now(command)
 
 
@@ -1911,7 +1913,8 @@ func _connect_network(
 		command.element_a_id,
 		command.port_a_id,
 		command.element_b_id,
-		command.port_b_id
+		command.port_b_id,
+		command.waypoints
 	)
 	if not validation.is_ok():
 		return validation
@@ -1974,7 +1977,8 @@ func _connect_network(
 		command.element_a_id,
 		command.port_a_id,
 		command.element_b_id,
-		command.port_b_id
+		command.port_b_id,
+		command.waypoints
 	)
 	_industry_network.bump_revision()
 	_emit_structural_event({

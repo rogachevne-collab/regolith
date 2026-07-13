@@ -65,7 +65,8 @@ static func diagnose_electric_pair(
 	element_a_id: int,
 	element_b_id: int,
 	requested_port_a_id: String = "",
-	requested_port_b_id: String = ""
+	requested_port_b_id: String = "",
+	waypoints: PackedVector3Array = PackedVector3Array()
 ) -> Dictionary:
 	if world == null or element_a_id <= 0 or element_b_id <= 0:
 		return {"pair": {}, "reason": &"invalid_target"}
@@ -101,7 +102,8 @@ static func diagnose_electric_pair(
 				element_a,
 				port_a,
 				element_b,
-				port_b
+				port_b,
+				waypoints
 			)
 			shortest_distance = minf(shortest_distance, distance_m)
 			if distance_m > MAX_CABLE_LENGTH_M + 0.000001:
@@ -201,11 +203,19 @@ static func cable_distance_m(
 	element_a: SimulationElement,
 	port_a: PortDefinition,
 	element_b: SimulationElement,
-	port_b: PortDefinition
+	port_b: PortDefinition,
+	waypoints: PackedVector3Array = PackedVector3Array()
 ) -> float:
 	var anchor_a := port_anchor_world_position(world, element_a, port_a.port_id)
 	var anchor_b := port_anchor_world_position(world, element_b, port_b.port_id)
-	return anchor_a.distance_to(anchor_b)
+	if waypoints.is_empty():
+		return anchor_a.distance_to(anchor_b)
+	var length := 0.0
+	var previous := anchor_a
+	for waypoint: Vector3 in waypoints:
+		length += previous.distance_to(waypoint)
+		previous = waypoint
+	return length + previous.distance_to(anchor_b)
 
 
 static func ports_are_face_adjacent(
@@ -250,7 +260,8 @@ static func validate_connect_endpoints(
 	element_a_id: int,
 	port_a_id: String,
 	element_b_id: int,
-	port_b_id: String
+	port_b_id: String,
+	waypoints: PackedVector3Array = PackedVector3Array()
 ) -> StructuralCommandResult:
 	if element_a_id <= 0 or element_b_id <= 0 or element_a_id == element_b_id:
 		return StructuralCommandResult.failed(
@@ -294,7 +305,8 @@ static func validate_connect_endpoints(
 		element_a,
 		port_a,
 		element_b,
-		port_b
+		port_b,
+		waypoints
 	)
 	if distance_m > MAX_CABLE_LENGTH_M + 0.000001:
 		return StructuralCommandResult.failed(
@@ -316,6 +328,24 @@ static func validate_connect_endpoints(
 	})
 
 
+## Deletion criterion: a link may only be removed from the network state when an
+## endpoint element no longer exists in the world. Temporary conditions (damaged
+## endpoint, overstretched cable) make the link dormant, never delete it.
+static func link_endpoints_exist(
+	world: SimulationWorld,
+	link: IndustryElectricLink
+) -> bool:
+	if link == null:
+		return false
+	return (
+		world.get_element(link.element_a) != null
+		and world.get_element(link.element_b) != null
+	)
+
+
+## Activity criterion: dormant links (endpoint not operational, cable stretched
+## beyond max length) stay stored but drop out of the electric graph until the
+## condition clears.
 static func link_still_valid(
 	world: SimulationWorld,
 	link: IndustryElectricLink
@@ -337,7 +367,14 @@ static func link_still_valid(
 	):
 		return false
 	return (
-		cable_distance_m(world, element_a, port_a, element_b, port_b)
+		cable_distance_m(
+			world,
+			element_a,
+			port_a,
+			element_b,
+			port_b,
+			link.waypoints
+		)
 		<= MAX_CABLE_LENGTH_M + 0.000001
 	)
 

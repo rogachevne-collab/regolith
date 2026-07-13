@@ -131,7 +131,15 @@ var _toolbar_slot_by_page: Array[int] = []
 ## (e.g. in headless logic tests).
 var _toolbar_layout: Array = []
 var _connect_pending_element_id := 0
+## Freeform cable routing: world-space скобы clicked between the first port
+## element and the final one. Sent with connect_network as `waypoints`.
+var _connect_waypoints: PackedVector3Array = PackedVector3Array()
 var _recipe_cursor_by_element: Dictionary = {}
+
+const CONNECT_RANGE := 4.0
+const CONNECT_MAX_WAYPOINTS := 16
+## Lift the скоба slightly off the clicked surface so the wire does not z-fight.
+const CONNECT_WAYPOINT_SURFACE_OFFSET := 0.06
 
 
 func _ready() -> void:
@@ -160,6 +168,8 @@ func _physics_process(delta: float) -> void:
 	if active_tool == &"connect":
 		if Input.is_action_just_pressed(&"tool_primary"):
 			_handle_connect_click(_query.current_hit)
+		if Input.is_action_just_pressed(&"tool_secondary"):
+			_undo_connect_waypoint()
 		if Input.is_action_just_pressed(&"interact"):
 			_try_emit_context_interaction(_query.current_hit)
 		return
@@ -310,12 +320,18 @@ func _emit_command_for_action(
 			command_kind = &"weld_element"
 			parameters = {}
 		elif active_tool == &"grinder":
-			command_kind = &"damage_element"
-			parameters = {
-				"damage": _grinder_damage_per_tick(),
-				"refund_fraction_on_destroy": GRINDER_REFUND_FRACTION,
-				"store_id": "player",
-			}
+			if hit.target_kind == InteractionHit.KIND_ELECTRIC_CABLE:
+				command_kind = &"disconnect_network"
+				parameters = {
+					"link_id": int(hit.metadata.get("electric_link_id", 0)),
+				}
+			else:
+				command_kind = &"damage_element"
+				parameters = {
+					"damage": _grinder_damage_per_tick(),
+					"refund_fraction_on_destroy": GRINDER_REFUND_FRACTION,
+					"store_id": "player",
+				}
 		elif hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT:
 			command_kind = &"damage_element"
 			parameters = {"damage": _drill_damage_per_tick()}
@@ -435,6 +451,7 @@ func _apply_toolbar_slot(
 		&"connect":
 			active_tool = &"connect"
 			_connect_pending_element_id = 0
+			_connect_waypoints = PackedVector3Array()
 		&"block":
 			active_tool = &"build"
 			selected_archetype_id = str(entry.get("archetype_id", "frame"))
@@ -603,7 +620,10 @@ func _hit_accepts_action(
 			and _construction_mode != &"none"
 		)
 	if action == &"tool_primary" and active_tool == &"grinder":
-		return hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
+		return (
+			hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
+			or hit.target_kind == InteractionHit.KIND_ELECTRIC_CABLE
+		)
 	if action == &"tool_primary" and active_tool == &"drill":
 		return (
 			hit.target_kind == InteractionHit.KIND_VOXEL
@@ -661,37 +681,94 @@ func _grinder_damage_per_tick() -> float:
 	return GRINDER_DPS * GRINDER_INTERVAL
 
 
+## Connect tool click: first click on an element with electric ports starts a
+## cable; further clicks on surfaces (terrain, blocks without electric ports)
+## drop routing скобы; a click on another electric-port element completes the
+## link with the routed polyline. RMB undoes the last скоба / cancels.
 func _handle_connect_click(hit: InteractionHit) -> void:
+	if hit == null or not hit.valid or hit.distance > CONNECT_RANGE:
+		return
+	if hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT:
+		var element_id := int(hit.metadata.get("element_id", 0))
+		if element_id <= 0:
+			return
+		if _connect_pending_element_id <= 0:
+			if _target_has_electric_port(hit):
+				_connect_pending_element_id = element_id
+				_connect_waypoints = PackedVector3Array()
+			return
+		if element_id == _connect_pending_element_id:
+			return
+		if not _target_has_electric_port(hit):
+			_append_connect_waypoint(hit)
+			return
+		command_requested.emit({
+			"kind": &"connect_network",
+			"source": get_parent(),
+			"target": hit.snapshot(),
+			"parameters": {
+				"element_a_id": _connect_pending_element_id,
+				"element_b_id": element_id,
+				"waypoints": _connect_waypoints.duplicate(),
+			},
+		})
+		_connect_pending_element_id = 0
+		_connect_waypoints = PackedVector3Array()
+		return
 	if (
-		not hit.valid
-		or hit.target_kind != InteractionHit.KIND_SIMULATION_ELEMENT
-		or hit.distance > 4.0
+		_connect_pending_element_id > 0
+		and hit.target_kind == InteractionHit.KIND_VOXEL
 	):
-		_connect_pending_element_id = 0
+		_append_connect_waypoint(hit)
+
+
+func _append_connect_waypoint(hit: InteractionHit) -> void:
+	if _connect_waypoints.size() >= CONNECT_MAX_WAYPOINTS:
 		return
-	var element_id := int(hit.metadata.get("element_id", 0))
-	if element_id <= 0:
-		_connect_pending_element_id = 0
+	_connect_waypoints.append(
+		hit.point + hit.normal * CONNECT_WAYPOINT_SURFACE_OFFSET
+	)
+
+
+func _undo_connect_waypoint() -> void:
+	if not _connect_waypoints.is_empty():
+		_connect_waypoints.remove_at(_connect_waypoints.size() - 1)
 		return
-	if _connect_pending_element_id <= 0:
-		_connect_pending_element_id = element_id
-		return
-	if _connect_pending_element_id == element_id:
-		return
-	command_requested.emit({
-		"kind": &"connect_network",
-		"source": get_parent(),
-		"target": hit.snapshot(),
-		"parameters": {
-			"element_a_id": _connect_pending_element_id,
-			"element_b_id": element_id,
-		},
-	})
 	_connect_pending_element_id = 0
+
+
+func _target_has_electric_port(hit: InteractionHit) -> bool:
+	if _gateway == null:
+		return false
+	var session := _gateway.get_node_or_null(
+		_gateway.simulation_session_path
+	) as SimulationSession
+	if session == null:
+		return false
+	var element := session.world.get_element(
+		int(hit.metadata.get("element_id", 0))
+	)
+	if element == null:
+		return false
+	var archetype := element.get_archetype()
+	if archetype == null:
+		return false
+	for port: PortDefinition in archetype.ports:
+		if port.kind == PortDefinition.Kind.ELECTRIC:
+			return true
+	return false
 
 
 func connect_pending_element_id() -> int:
 	return _connect_pending_element_id
+
+
+func connect_waypoints() -> PackedVector3Array:
+	return _connect_waypoints.duplicate()
+
+
+func connect_waypoint_count() -> int:
+	return _connect_waypoints.size()
 
 
 func next_recipe_for_target(hit: InteractionHit) -> String:

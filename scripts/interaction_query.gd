@@ -8,7 +8,8 @@ signal hit_updated(hit: InteractionHit)
 @export var terrain_path: NodePath = NodePath("../../VoxelTerrain")
 @export var simulation_session_path: NodePath = NodePath("../../SimulationSession")
 @export var max_distance := 4.0
-@export_flags_3d_physics var collision_mask := 3
+## Layers 1 (terrain), 2 (bodies/loot) and 4 (interaction-only wire colliders).
+@export_flags_3d_physics var collision_mask := 11
 
 var current_hit := InteractionHit.empty()
 
@@ -114,6 +115,8 @@ func _target_kind(
 		return InteractionHit.KIND_SIMULATION_ELEMENT
 	if metadata.has("loot_pile_id"):
 		return InteractionHit.KIND_WORLD_LOOT
+	if metadata.has("electric_link_id"):
+		return InteractionHit.KIND_ELECTRIC_CABLE
 	if collider is VoxelTerrain:
 		return InteractionHit.KIND_VOXEL
 	if collider is Node and collider.is_in_group("placed_blocks"):
