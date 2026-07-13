@@ -1,7 +1,7 @@
 class_name IndustrySimulation
 extends Node
 
-const TICK_HZ := 1.0
+const TICK_HZ := 4.0
 
 var _world: SimulationWorld
 var _cargo_graph := CargoGraph.new()
@@ -76,13 +76,37 @@ func apply_transfer_command(
 func apply_set_machine_enabled(command: SetMachineEnabledCommand) -> Dictionary:
 	if _world == null:
 		return {"status": &"failed", "reason": &"not_ready"}
-	return _recipe_runner.apply_set_machine_enabled(_world, command)
+	_cargo_graph = _world.ensure_cargo_graph_current()
+	return _recipe_runner.apply_set_machine_enabled(
+		_world,
+		command,
+		_cargo_graph,
+		_transfer_service
+	)
 
 
 func apply_enqueue_recipe(command: EnqueueRecipeCommand) -> Dictionary:
 	if _world == null:
 		return {"status": &"failed", "reason": &"not_ready"}
-	return _recipe_runner.apply_enqueue_recipe(_world, command)
+	_cargo_graph = _world.ensure_cargo_graph_current()
+	return _recipe_runner.apply_enqueue_recipe(
+		_world,
+		command,
+		_cargo_graph,
+		_transfer_service
+	)
+
+
+func apply_dequeue_recipe(command: DequeueRecipeCommand) -> Dictionary:
+	if _world == null:
+		return {"status": &"failed", "reason": &"not_ready"}
+	_cargo_graph = _world.ensure_cargo_graph_current()
+	return _recipe_runner.apply_dequeue_recipe(
+		_world,
+		command,
+		_cargo_graph,
+		_transfer_service
+	)
 
 
 func _tick_once(world: SimulationWorld, tick_interval: float) -> void:
@@ -119,28 +143,29 @@ func _sync_machine_power_draw(world: SimulationWorld) -> void:
 
 
 func _on_structural_event(event: Dictionary) -> void:
-	match StringName(event.get("kind", &"")):
-		&"world_restored", &"assembly_spawned", &"assembly_changed", &"assembly_removed", &"assembly_split", &"assembly_merged", &"element_state_changed", &"electric_link_added", &"electric_link_removed":
+	var kind := StringName(event.get("kind", &""))
+	if kind == &"element_state_changed":
+		_on_element_state_changed(event)
+		return
+	match kind:
+		&"world_restored", &"assembly_spawned", &"assembly_changed", &"assembly_removed", &"assembly_split", &"assembly_merged", &"electric_link_added", &"electric_link_removed":
 			_on_topology_or_state_changed(event)
+
+
+func _on_element_state_changed(event: Dictionary) -> void:
+	if _world == null:
+		return
+	if StringName(event.get("change_kind", &"")) == &"damage":
+		return
+	if bool(event.get("operational_changed", false)):
+		_rebuild_from_world()
 
 
 func _on_topology_or_state_changed(event: Dictionary) -> void:
 	if _world == null:
 		return
-	var assembly_id := int(event.get("assembly_id", 0))
-	if assembly_id > 0:
-		var assembly := _world.get_assembly_raw(assembly_id)
-		if assembly != null:
-			for element_id: int in assembly.element_ids:
-				var element := _world.get_element(element_id)
-				IndustryStoreService.sync_element_storage(_world, element)
-	var element_id := int(event.get("element_id", 0))
-	if element_id > 0:
-		IndustryStoreService.sync_element_storage(
-			_world,
-			_world.get_element(element_id)
-		)
-	if _needs_cargo_graph_rebuild():
+	var kind := StringName(event.get("kind", &""))
+	if kind == &"world_restored" or _needs_cargo_graph_rebuild():
 		_rebuild_from_world()
 
 

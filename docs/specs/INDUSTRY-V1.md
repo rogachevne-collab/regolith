@@ -150,8 +150,11 @@ stub durations до playtest.
 
 | Владелец | Назначение |
 |---|---|
-| `store_id = "player"` | Карман скафандра: construction + ручной pickup; **лимит по mass_kg** |
-| `store_id = "element:{id}"` | `cargo_store` — основной склад базы |
+| `store_id = "player"` | Карман скафандра: **два независимых лимита по mass_kg** — компоненты
+  (`construction_component`, 60 kg) и материалы (руда/промежуточные, 40 kg);
+  как inventory volume в SE, но упрощённо по категориям |
+| `store_id = "element:{id}"` | `cargo_store` — основной склад базы; **без лимита
+  на число типов ресурсов**, только `keyed_store_capacity_kg` (2000 kg) |
 | Internal buffer | `stationary_drill`, `processor`, `fabricator` — малые in/out буферы на `SimulationElement` |
 
 Internal buffer сериализуется в snapshot element state; keyed store — в
@@ -178,7 +181,9 @@ auto-adjacency (§ Cargo Flow); distant — цепочка **`cargo_pipe`** бл
 - каждый archetype с Store/buffer задаёт `storage_capacity_kg` (fixture);
 - смешанные resource_id в одном store **разрешены**;
 - `storage_full` когда Σ mass contents ≥ capacity;
-- player store: `player_carry_capacity_kg` (bootstrap fixture, placeholder **80 kg**).
+- player store: `player_construction_capacity_kg` (**60 kg**) +
+  `player_material_capacity_kg` (**40 kg**) — независимые карманы, как
+  «строительные блоки vs руда» в SE inventory volume.
 
 ### Mass coupling (v1)
 
@@ -202,7 +207,8 @@ buffer (+ keyed store для `cargo_store` role). Важно для mobile Assem
 
 Cargo graph **не** использует `connect_network`. При изменении `topology_revision`
 runtime строит undirected edges между **face-adjacent** cargo-портами любых
-operational элементов одной Assembly:
+operational элементов (включая соседние блоки из **разных** Assembly, если
+порты стыкуются):
 
 - machine ↔ machine (drill вплотную к store);
 - machine ↔ `cargo_pipe`;
@@ -412,16 +418,13 @@ those hooks do not define production yield semantics.
 
 ## Hand drill loot
 
-Hand drill (`ToolController` → `voxel_remove`) **не** credits player store напрямую.
+Hand drill (`ToolController` → `voxel_remove`) **не** credits player store напрямую
+целиком: сначала заполняет **material pocket** игрока (как SE hand drill →
+inventory), overflow → **world loot pile**.
 
-- carve uses the same measured SDF occupancy delta as the stationary drill
-  (`_remove_sphere_measured`), not a default sphere volume;
-- fixture carve radius `hand_drill_carve_radius_m` (0.12 m), volume budget
-  `0.006 m³` and max **9 kg** loot per stroke; stroke interval `0.14 s`;
-- carved volume spawns **world loot pile** (`WorldLootPile` authoritative, presentation
-  mesh/decal) at carve site with `raw_regolith` mass ∝ measured removed volume;
-- nearby piles of the same resource within `hand_drill_loot_merge_radius_m` (0.55 m)
-  merge into one pile up to `24 kg`; presentation scales mesh modestly with mass;
+- carve uses the same measured SDF occupancy delta as the stationary drill;
+- fixture carve radius `0.16 m`, interval `0.08 s`, max **6 kg** per stroke;
+- nearby piles merge up to **32 kg** within **0.7 m**;
 - while drilling, loot colliders do not steal the terrain raycast;
 - pickup через `TransferResourceCommand` или dedicated collect action в радиусе;
 - pile без pickup — persists в snapshot до collect или despawn timer (fixture);

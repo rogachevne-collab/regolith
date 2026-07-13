@@ -80,6 +80,8 @@ func _run_tests() -> void:
 		_test_industry_simulation_tick_runtime,
 		_test_drill_mining_storage_full_runtime,
 		_test_hand_drill_loot_merge_runtime,
+		_test_processor_pulls_from_connected_store,
+		_test_processor_pulls_from_stocked_far_store,
 		_test_integration_isru_scenario,
 	]
 	for test: Callable in tests:
@@ -136,11 +138,27 @@ func _test_capacity_store_no_loss_on_reject() -> bool:
 
 
 func _test_player_carry_capacity_fixture() -> bool:
-	var player := _capacity_store(PLAYER_CARRY_CAPACITY_KG)
-	if not player.try_add("construction_component", 30.0):
-		return _fail("player store should accept 30 components (75 kg)")
-	if player.try_add("construction_component", 3.0):
-		return _fail("player store must reject exceeding 80 kg carry limit")
+	var world := SimulationWorld.new()
+	IndustryStoreService.ensure_player_store(world)
+	var store := world.get_resource_store("player")
+	if store == null:
+		world.free()
+		return _fail("player store missing")
+	if not store.add("construction_component", 24.0):
+		world.free()
+		return _fail("24 components should fit the construction pocket (60 kg)")
+	if store.add("construction_component", 1.0):
+		world.free()
+		return _fail("construction pocket must reject overflow")
+	if not store.add("raw_regolith", 20.0):
+		world.free()
+		return _fail(
+			"20 raw_regolith should fit the material pocket alongside components"
+		)
+	if store.add("raw_regolith", 1.0):
+		world.free()
+		return _fail("material pocket must reject overflow")
+	world.free()
 	return true
 
 
@@ -360,7 +378,7 @@ func _test_hand_drill_loot_merge_runtime() -> bool:
 			% piles.size()
 		)
 	world.add_world_loot_pile(Vector3(2.0, 0.0, 0.0), "raw_regolith", 20.0)
-	world.add_world_loot_pile(Vector3(2.1, 0.0, 0.0), "raw_regolith", 8.0)
+	world.add_world_loot_pile(Vector3(2.1, 0.0, 0.0), "raw_regolith", 14.0)
 	piles = world.list_world_loot_piles()
 	if piles.size() != 5:
 		world.free()
@@ -368,6 +386,103 @@ func _test_hand_drill_loot_merge_runtime() -> bool:
 			"loot pile must split when merge would exceed cap, got %d"
 			% piles.size()
 		)
+	world.free()
+	return true
+
+
+func _test_processor_pulls_from_connected_store() -> bool:
+	var world := SimulationWorld.new()
+	var spawn := _spawn(world, _integration_blueprint(), GridTransform.identity())
+	if not spawn.is_ok():
+		world.free()
+		return _fail("processor pull scenario spawn failed: %s" % spawn.reason)
+	var mapping: Dictionary = spawn.data["local_to_element_id"]
+	var processor_id := int(mapping["processor_0"])
+	var store_id := int(mapping["store_0"])
+	var graph := world.get_cargo_graph()
+	if graph.shortest_hop_distance(processor_id, store_id) < 0:
+		world.free()
+		return _fail("processor and cargo_store must share a cargo graph path")
+	var keyed_store := IndustryStoreService.ensure_element_keyed_store(
+		world,
+		world.get_element(store_id)
+	)
+	if keyed_store == null:
+		world.free()
+		return _fail("cargo_store keyed store missing")
+	keyed_store.set_amount("raw_regolith", 4.0)
+	var processor := world.get_element(processor_id)
+	processor.set_industry_buffer({})
+	var sim: IndustrySimulation = INDUSTRY_SIMULATION_SCRIPT.new()
+	add_child(sim)
+	sim.bind_world(world)
+	_wire_integration_power(world)
+	var runtime := world.ensure_industry_element_runtime(processor_id)
+	runtime.machine_enabled = true
+	_run_industry_ticks(sim, 3.0)
+	if processor.industry_buffer_amount("raw_regolith") + EPSILON < 1.0:
+		sim.queue_free()
+		world.free()
+		return _fail(
+			"processor expected to pull raw_regolith from connected store, buffer=%s"
+			% str(processor.industry_buffer.to_dict())
+		)
+	sim.queue_free()
+	world.free()
+	return true
+
+
+func _test_processor_pulls_from_stocked_far_store() -> bool:
+	var world := SimulationWorld.new()
+	var spawn := _spawn(world, _dual_store_blueprint(), GridTransform.identity())
+	if not spawn.is_ok():
+		world.free()
+		return _fail(
+			"dual-store processor pull scenario spawn failed: %s"
+			% spawn.reason
+		)
+	var mapping: Dictionary = spawn.data["local_to_element_id"]
+	var processor_id := int(mapping["processor_0"])
+	var near_store_id := int(mapping["store_near"])
+	var far_store_id := int(mapping["store_0"])
+	var graph := world.get_cargo_graph()
+	if graph.shortest_hop_distance(processor_id, near_store_id) < 0:
+		world.free()
+		return _fail("processor must reach near cargo_store")
+	if graph.shortest_hop_distance(processor_id, far_store_id) < 0:
+		world.free()
+		return _fail("processor must reach far cargo_store")
+	if (
+		graph.shortest_hop_distance(processor_id, near_store_id)
+		>= graph.shortest_hop_distance(processor_id, far_store_id)
+	):
+		world.free()
+		return _fail("near store must be closer than far store for this scenario")
+	var far_store := IndustryStoreService.ensure_element_keyed_store(
+		world,
+		world.get_element(far_store_id)
+	)
+	if far_store == null:
+		world.free()
+		return _fail("far cargo_store keyed store missing")
+	far_store.set_amount("raw_regolith", 4.0)
+	var processor := world.get_element(processor_id)
+	processor.set_industry_buffer({})
+	var sim: IndustrySimulation = INDUSTRY_SIMULATION_SCRIPT.new()
+	add_child(sim)
+	sim.bind_world(world)
+	_wire_integration_power(world)
+	var runtime := world.ensure_industry_element_runtime(processor_id)
+	runtime.machine_enabled = true
+	_run_industry_ticks(sim, 3.0)
+	if processor.industry_buffer_amount("raw_regolith") + EPSILON < 1.0:
+		sim.queue_free()
+		world.free()
+		return _fail(
+			"processor must pull from stocked far store when near store is empty, buffer=%s"
+			% str(processor.industry_buffer.to_dict())
+		)
+	sim.queue_free()
 	world.free()
 	return true
 
@@ -1138,6 +1253,69 @@ func _integration_blueprint() -> Blueprint:
 				"pipe_after_processor",
 				Slice01Archetypes.load_required("cargo_pipe"),
 				Vector3i(1, 0, 6)
+			),
+			_placement(
+				"fabricator_0",
+				Slice01Archetypes.fabricator(),
+				Vector3i(0, 0, 7)
+			),
+			_placement(
+				"pipe_after_fabricator",
+				Slice01Archetypes.load_required("cargo_pipe"),
+				Vector3i(1, 0, 10)
+			),
+			_placement(
+				"store_0",
+				Slice01Archetypes.cargo_store(),
+				Vector3i(0, 0, 11)
+			),
+		]
+	)
+
+
+func _dual_store_blueprint() -> Blueprint:
+	return BlueprintBaker.bake_from_placements(
+		"industry_v1_dual_store",
+		[
+			_placement(
+				"power_0",
+				Slice01Archetypes.power_source(),
+				Vector3i(4, 0, 0)
+			),
+			_placement(
+				"distributor_0",
+				Slice01Archetypes.load_required("power_distributor"),
+				Vector3i(2, 0, 1)
+			),
+			_placement(
+				"drill_0",
+				Slice01Archetypes.stationary_drill(),
+				Vector3i.ZERO
+			),
+			_placement(
+				"pipe_corner",
+				Slice01Archetypes.load_required("cargo_pipe"),
+				Vector3i(0, 0, 2)
+			),
+			_placement(
+				"pipe_east",
+				Slice01Archetypes.load_required("cargo_pipe"),
+				Vector3i(1, 0, 2)
+			),
+			_placement(
+				"processor_0",
+				Slice01Archetypes.processor(),
+				Vector3i(0, 0, 3)
+			),
+			_placement(
+				"pipe_after_processor",
+				Slice01Archetypes.load_required("cargo_pipe"),
+				Vector3i(1, 0, 6)
+			),
+			_placement(
+				"store_near",
+				Slice01Archetypes.cargo_store(),
+				Vector3i(0, 0, 6)
 			),
 			_placement(
 				"fabricator_0",

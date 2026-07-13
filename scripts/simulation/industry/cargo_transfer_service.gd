@@ -168,6 +168,12 @@ func _resolve_store(
 		):
 			return null
 		return element
+	if store_id.begins_with(IndustryStoreService.ELEMENT_STORE_PREFIX):
+		var element_id := IndustryStoreService.parse_element_id_from_store(store_id)
+		var element := world.get_element(element_id)
+		if element == null:
+			return null
+		return IndustryStoreService.ensure_element_keyed_store(world, element)
 	return world.get_resource_store(store_id)
 
 

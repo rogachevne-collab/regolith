@@ -85,8 +85,6 @@ func _on_structural_event(event: Dictionary) -> void:
 			rebuild_all()
 		&"assembly_spawned", &"assembly_changed", &"assembly_removed", &"assembly_split", &"assembly_merged":
 			rebuild_all()
-		&"element_state_changed":
-			rebuild_all()
 
 
 ## Wires are StaticBody3D on an interaction-only layer so the aim ray can

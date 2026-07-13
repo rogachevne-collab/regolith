@@ -1,7 +1,7 @@
 class_name CargoConnectivity
 extends RefCounted
 
-## Face-adjacent cargo port pairing within one assembly (undirected).
+## Face-adjacent cargo port pairing across operational elements (undirected).
 
 
 static func find_adjacent_cargo_edges(

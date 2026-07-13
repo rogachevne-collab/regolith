@@ -127,6 +127,8 @@ func _execute(command: Dictionary) -> Dictionary:
 			return _set_machine_enabled(command, target)
 		&"enqueue_recipe":
 			return _enqueue_recipe(command, target)
+		&"dequeue_recipe":
+			return _dequeue_recipe(command, target)
 		&"collect_world_loot":
 			return _collect_world_loot(command)
 		_:
@@ -161,11 +163,11 @@ func _remove_voxel(
 		IndustryArchetypeProfile.hand_drill_carve_volume_budget_m3()
 	)
 	if removed_m3 > 0.000001:
-		_spawn_hand_drill_loot(center, removed_m3)
+		_credit_hand_drill_yield(center, removed_m3)
 	return _result(&"ok", {"point": target["point"]})
 
 
-func _spawn_hand_drill_loot(center: Vector3, removed_volume_m3: float) -> void:
+func _credit_hand_drill_yield(center: Vector3, removed_volume_m3: float) -> void:
 	if _session == null or _session.world == null:
 		return
 	if removed_volume_m3 <= 0.000001:
@@ -177,6 +179,23 @@ func _spawn_hand_drill_loot(center: Vector3, removed_volume_m3: float) -> void:
 		mass_kg,
 		IndustryArchetypeProfile.hand_drill_max_loot_mass_kg_per_tick()
 	)
+	if mass_kg <= 0.000001:
+		return
+	var unit_mass := ResourceCatalog.mass_per_unit_kg("raw_regolith")
+	if unit_mass <= 0.000001:
+		return
+	var store := _session.world.get_resource_store(
+		IndustryStoreService.PLAYER_STORE_ID
+	)
+	if store != null:
+		var max_units := ResourceCatalog.max_addable_amount_player(
+			store,
+			"raw_regolith"
+		)
+		var credited_units := minf(mass_kg / unit_mass, max_units)
+		if credited_units > 0.000001:
+			store.add("raw_regolith", credited_units)
+			mass_kg = maxf(mass_kg - credited_units * unit_mass, 0.0)
 	if mass_kg <= 0.000001:
 		return
 	_session.world.add_world_loot_pile(center, "raw_regolith", mass_kg)
@@ -959,6 +978,27 @@ func _enqueue_recipe(
 	return _result(
 		StringName(result.get("reason", &"invalid_target")),
 		{"element_id": recipe.element_id, "recipe_id": recipe.recipe_id}
+	)
+
+
+func _dequeue_recipe(
+	command: Dictionary,
+	target: Dictionary
+) -> Dictionary:
+	if _session == null:
+		return _result(&"not_ready")
+	var parameters: Dictionary = command.get("parameters", {})
+	var dequeue := DequeueRecipeCommand.new()
+	dequeue.element_id = int(
+		parameters.get(
+			"element_id",
+			target.get("metadata", {}).get("element_id", 0)
+		)
+	)
+	var result := _session.apply_dequeue_recipe(dequeue)
+	return _result(
+		StringName(result.get("reason", &"invalid_target")),
+		{"element_id": dequeue.element_id}
 	)
 
 

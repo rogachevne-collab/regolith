@@ -22,26 +22,27 @@ func list_edges() -> Array[Dictionary]:
 
 func rebuild(world: SimulationWorld) -> void:
 	clear()
+	if world == null:
+		return
 	for assembly: SimulationAssembly in world.list_assemblies():
 		if assembly.tombstoned:
 			continue
 		_topology_revision_by_assembly[assembly.assembly_id] = (
 			assembly.topology_revision
 		)
-		var operational: Array[SimulationElement] = []
-		for element_id: int in assembly.element_ids:
-			var element := world.get_element(element_id)
-			if element != null and element.is_operational():
-				operational.append(element)
-		for edge: Dictionary in CargoConnectivity.find_adjacent_cargo_edges(
-			operational
-		):
-			_register_edge(
-				int(edge["element_a"]),
-				int(edge["element_b"]),
-				str(edge["port_a"]),
-				str(edge["port_b"])
-			)
+	var operational: Array[SimulationElement] = []
+	for element: SimulationElement in world.list_elements():
+		if element != null and element.is_operational():
+			operational.append(element)
+	for edge: Dictionary in CargoConnectivity.find_adjacent_cargo_edges(
+		operational
+	):
+		_register_edge(
+			int(edge["element_a"]),
+			int(edge["element_b"]),
+			str(edge["port_a"]),
+			str(edge["port_b"])
+		)
 
 
 func needs_rebuild_for_assembly(
@@ -128,6 +129,102 @@ func nearest_cargo_store_element_id(
 			best_distance = distance
 			best_id = element.element_id
 	return best_id
+
+
+func nearest_cargo_store_element_id_with_resource(
+	world: SimulationWorld,
+	from_element_id: int,
+	resource_id: String,
+	min_amount: float = 0.000001
+) -> int:
+	if world == null or from_element_id <= 0 or resource_id.is_empty():
+		return 0
+	var best_id := 0
+	var best_distance := 2147483647
+	for element: SimulationElement in world.list_elements():
+		if (
+			not element.is_operational()
+			or not IndustryArchetypeProfile.has_keyed_store(
+				element.archetype_id
+			)
+		):
+			continue
+		var store := IndustryStoreService.ensure_element_keyed_store(
+			world,
+			element
+		)
+		if store == null or store.amount(resource_id) + 0.000001 < min_amount:
+			continue
+		var distance := shortest_hop_distance(
+			from_element_id,
+			element.element_id
+		)
+		if distance < 0:
+			continue
+		if (
+			distance < best_distance
+			or (
+				distance == best_distance
+				and (
+					best_id == 0
+					or element.element_id < best_id
+				)
+			)
+		):
+			best_distance = distance
+			best_id = element.element_id
+	return best_id
+
+
+func connected_store_element_ids_with_resource(
+	world: SimulationWorld,
+	from_element_id: int,
+	resource_id: String,
+	min_amount: float = 0.000001
+) -> Array[int]:
+	var matches: Array[Dictionary] = []
+	if world == null or from_element_id <= 0 or resource_id.is_empty():
+		return []
+	for element: SimulationElement in world.list_elements():
+		if (
+			not element.is_operational()
+			or not IndustryArchetypeProfile.has_keyed_store(
+				element.archetype_id
+			)
+		):
+			continue
+		var store := IndustryStoreService.ensure_element_keyed_store(
+			world,
+			element
+		)
+		if store == null or store.amount(resource_id) + 0.000001 < min_amount:
+			continue
+		var distance := shortest_hop_distance(
+			from_element_id,
+			element.element_id
+		)
+		if distance < 0:
+			continue
+		matches.append({
+			"element_id": element.element_id,
+			"distance": distance,
+		})
+	matches.sort_custom(
+		func(left: Dictionary, right: Dictionary) -> bool:
+			var left_distance := int(left["distance"])
+			var right_distance := int(right["distance"])
+			if left_distance != right_distance:
+				return left_distance < right_distance
+			return int(left["element_id"]) < int(right["element_id"])
+	)
+	var result: Array[int] = []
+	for match: Dictionary in matches:
+		result.append(int(match["element_id"]))
+	return result
+
+
+func has_connected_cargo_store(world: SimulationWorld, from_element_id: int) -> bool:
+	return nearest_cargo_store_element_id(world, from_element_id) > 0
 
 
 func connected_component(element_ids: Array[int]) -> Array[int]:

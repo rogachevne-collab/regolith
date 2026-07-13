@@ -652,9 +652,9 @@ Jolt авторитетен за импульс контакта; правила
 
 Вырезанный regolith:
 
-- **Hand drill:** создаёт **world loot pile** у точки carve (mass ∝ measured
-  removed volume); nearby piles merge в радиусе fixture; игрок
-  собирает в Store командой transfer/collect — не прямой credit в `player` store.
+- **Hand drill:** measured carve volume → **material pocket** игрока; overflow
+  → world loot pile у точки carve; компоненты и руда в **разных карманах**
+  (как inventory volume categories в SE).
 - **Stationary drill / impact loot (later):** credit в internal buffer или store по
   `docs/specs/INDUSTRY-V1.md`. Stationary drill yield derives only from measured
   voxel volume removed by the authoritative terrain operation; a default production

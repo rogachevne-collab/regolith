@@ -187,6 +187,13 @@ func apply_enqueue_recipe(command: EnqueueRecipeCommand) -> Dictionary:
 	return (_industry_runner as IndustrySimulation).apply_enqueue_recipe(command)
 
 
+func apply_dequeue_recipe(command: DequeueRecipeCommand) -> Dictionary:
+	if _industry_runner == null:
+		_industry_runner = IndustrySimulation.new()
+		(_industry_runner as IndustrySimulation).bind_world(self)
+	return (_industry_runner as IndustrySimulation).apply_dequeue_recipe(command)
+
+
 func get_simulation_time_s() -> float:
 	return _simulation_time_s
 
@@ -299,7 +306,12 @@ func collect_world_loot_pile(
 		)
 	)
 	if amount <= 0.000001:
-		return {"status": &"failed", "reason": &"storage_full", "amount": 0.0}
+		return {
+			"status": &"failed",
+			"reason": &"storage_full",
+			"amount": 0.0,
+			"resource_id": pile.resource_id,
+		}
 	if not store.add(pile.resource_id, amount, capacity):
 		return {"status": &"failed", "reason": &"storage_full", "amount": 0.0}
 	pile.amount_kg = maxf(pile.amount_kg - amount * unit_mass, 0.0)
@@ -930,6 +942,7 @@ func _weld_element(
 		return StructuralCommandResult.failed(
 			StructuralCommandResult.REASON_ALREADY_COMPLETE
 		)
+	var was_operational := element.is_operational()
 	var store := get_resource_store(command.store_id)
 	if store == null:
 		return StructuralCommandResult.failed(
@@ -984,7 +997,12 @@ func _weld_element(
 		)
 		element.sync_build_progress_from_integrity()
 		element.bump_state_revision()
-		_emit_element_state_changed(element, command.command_id, &"weld")
+		_emit_element_state_changed(
+			element,
+			command.command_id,
+			&"weld",
+			was_operational != element.is_operational()
+		)
 		return _element_state_result(element, {
 			"transfers": [{
 				"resource_id": "construction_component",
@@ -1017,7 +1035,12 @@ func _weld_element(
 			float(transfer["amount"])
 		)
 	element.bump_state_revision()
-	_emit_element_state_changed(element, command.command_id, &"weld")
+	_emit_element_state_changed(
+		element,
+		command.command_id,
+		&"weld",
+		was_operational != element.is_operational()
+	)
 	return _element_state_result(element, {
 		"transfers": transfers,
 		"store_id": command.store_id,
@@ -1082,6 +1105,7 @@ func _repair_element(
 		return StructuralCommandResult.failed(
 			StructuralCommandResult.REASON_NOT_DAMAGED
 		)
+	var was_operational := element.is_operational()
 	var integrity_per_component := archetype.max_integrity * 0.25
 	var material_amount := minf(
 		command.max_material_amount,
@@ -1109,7 +1133,12 @@ func _repair_element(
 		archetype.max_integrity
 	)
 	element.bump_state_revision()
-	_emit_element_state_changed(element, command.command_id, &"repair")
+	_emit_element_state_changed(
+		element,
+		command.command_id,
+		&"repair",
+		was_operational != element.is_operational()
+	)
 	return _element_state_result(element, {
 		"resource_id": "construction_component",
 		"material_used": material_amount,
@@ -1652,7 +1681,8 @@ func _validate_state_command(
 func _emit_element_state_changed(
 	element: SimulationElement,
 	command_id: int,
-	change_kind: StringName
+	change_kind: StringName,
+	operational_changed: bool = false
 ) -> void:
 	_emit_structural_event({
 		"kind": &"element_state_changed",
@@ -1664,11 +1694,11 @@ func _emit_element_state_changed(
 		"build_progress": element.build_progress,
 		"integrity": element.integrity,
 		"status_reason": element.status_reason(),
+		"operational_changed": operational_changed,
 	})
-	# Cargo adjacency depends on operational membership, not only topology.
-	# Welding a pipe into service must refresh the graph even when no new joint
-	# was added (topology_revision unchanged).
-	if change_kind in [&"weld", &"repair", &"damage"]:
+	# Cargo adjacency tracks operational membership only. Partial weld/repair
+	# ticks do not change it; the final tick that brings the element online does.
+	if operational_changed:
 		_cargo_graph.rebuild(self)
 
 

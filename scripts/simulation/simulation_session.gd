@@ -51,6 +51,10 @@ func apply_enqueue_recipe(command: EnqueueRecipeCommand) -> Dictionary:
 	return world.apply_enqueue_recipe(command)
 
 
+func apply_dequeue_recipe(command: DequeueRecipeCommand) -> Dictionary:
+	return world.apply_dequeue_recipe(command)
+
+
 func _bind_impact_service() -> void:
 	var gateway: WorldCommandGateway = null
 	if not gateway_path.is_empty():

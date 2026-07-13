@@ -160,6 +160,8 @@ static func color_for_status(status: StringName) -> Color:
 			return COL_WARNING
 		&"no_input", &"no_terrain_contact", &"storage_full", &"queue_full":
 			return COL_WARNING
+		&"standby":
+			return COL_DIM
 		&"disabled":
 			return COL_DIM
 		_:
@@ -196,6 +198,8 @@ static func status_label(status: StringName) -> String:
 			return "ВЫКЛ"
 		&"queue_full":
 			return "ОЧЕРЕДЬ ПОЛНА"
+		&"standby":
+			return "ПРОСТОЙ"
 		_:
 			return "—"
 
@@ -309,3 +313,48 @@ static func make_divider() -> Panel:
 	div.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	div.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return div
+
+
+## Segmented progress bar matching the suit vitals chrome. Returns
+## `{"row": HBoxContainer, "mat": ShaderMaterial, "value": Label}`.
+static func make_progress_bar(
+	width: float = 196.0,
+	label_text: String = "ЦИКЛ"
+) -> Dictionary:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var name_label := Label.new()
+	name_label.text = label_text
+	name_label.theme_type_variation = &"HudSmall"
+	name_label.custom_minimum_size = Vector2(36, 0)
+	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	row.add_child(name_label)
+
+	var bar_size := Vector2(width, BAR_SIZE.y)
+	var bar := ColorRect.new()
+	bar.color = Color(1, 1, 1, 1)
+	bar.custom_minimum_size = bar_size
+	bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var mat := ShaderMaterial.new()
+	mat.shader = load(SH_BAR)
+	mat.set_shader_parameter("rect_size", bar_size)
+	mat.set_shader_parameter("fill", 0.0)
+	mat.set_shader_parameter("fill_color", COL_VALID)
+	mat.set_shader_parameter("segments", 28.0)
+	mat.set_shader_parameter("gap_ratio", 0.14)
+	mat.set_shader_parameter("glow_strength", 0.34)
+	mat.set_shader_parameter("lead_strength", 0.55)
+	bar.material = mat
+	row.add_child(bar)
+
+	var value_label := Label.new()
+	value_label.theme_type_variation = &"HudValue"
+	value_label.custom_minimum_size = Vector2(36, 0)
+	value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	value_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	row.add_child(value_label)
+
+	return {"row": row, "mat": mat, "value": value_label}

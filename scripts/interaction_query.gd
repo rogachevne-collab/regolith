@@ -181,6 +181,79 @@ func _target_metadata(
 				var machine := runtime.ensure_machine_state()
 				metadata["active_recipe_id"] = machine.active_recipe_id
 				metadata["recipe_queue"] = machine.queue.duplicate()
+				var pending_recipe := ""
+				if machine.queue.is_empty():
+					if _tools != null:
+						pending_recipe = _tools.selected_recipe_for_element(
+							element.element_id,
+							element.archetype_id
+						)
+					else:
+						pending_recipe = (
+							RecipeCatalog.default_recipe_for_machine(
+								element.archetype_id
+							)
+						)
+				else:
+					pending_recipe = str(machine.queue[0])
+				metadata["pending_recipe_id"] = pending_recipe
+				metadata["missing_input_resource_id"] = (
+					RecipeRunnerService.missing_input_for_recipe(
+						_session.world,
+						element,
+						pending_recipe
+					)
+				)
+				if machine.active_recipe_id.is_empty() and element.is_operational():
+					var display_status := StringName(
+						metadata.get("status_reason", &"ok")
+					)
+					if (
+						runtime.machine_enabled
+						and runtime.powered
+						and display_status in [
+							&"ok",
+							&"standby",
+							&"no_input",
+							&"storage_full",
+							&"port_disconnected",
+							&"cargo_disconnected",
+						]
+					):
+						metadata["status_reason"] = (
+							RecipeRunnerService.preview_idle_reason_for_recipe(
+								_session.world,
+								element,
+								pending_recipe
+							)
+						)
+				metadata["cargo_network_connected"] = (
+					RecipeRunnerService.connected_cargo_has_path(
+						_session.world,
+						element.element_id
+					)
+				)
+				metadata["cargo_network_raw_regolith"] = (
+					RecipeRunnerService.connected_supply_amount(
+						_session.world,
+						element.element_id,
+						"raw_regolith"
+					)
+				)
+				metadata["cargo_network_regolith_fines"] = (
+					RecipeRunnerService.connected_supply_amount(
+						_session.world,
+						element.element_id,
+						"regolith_fines"
+					)
+				)
+				metadata["recipe_progress_s"] = machine.progress_s
+				var duration_s := (
+					RecipeCatalog.duration_s(machine.active_recipe_id)
+					if not machine.active_recipe_id.is_empty()
+					else 0.0
+				)
+				metadata["recipe_duration_s"] = duration_s
 	return metadata
 
 

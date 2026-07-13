@@ -407,13 +407,17 @@ func _update_toolbar_input() -> void:
 		var action := StringName("toolbar_slot_%d" % [slot_index + 1])
 		if Input.is_action_just_pressed(action):
 			_apply_toolbar_slot(toolbar_page, slot_index)
+	if Input.is_action_just_pressed(&"capture_mouse"):
+		_try_enqueue_target_recipe(_query.current_hit)
 	if Input.is_action_just_pressed(&"construction_rotate_yaw"):
-		if active_tool == &"build":
+		if _cycle_target_recipe(_query.current_hit, 1):
+			pass
+		elif active_tool == &"build":
 			_rotate_orientation(Vector3.UP)
-		else:
-			_try_enqueue_target_recipe(_query.current_hit)
 	if Input.is_action_just_pressed(&"construction_rotate_pitch"):
-		if active_tool == &"build":
+		if _cycle_target_recipe(_query.current_hit, -1):
+			pass
+		elif active_tool == &"build":
 			_rotate_orientation(Vector3.RIGHT)
 	if Input.is_action_just_pressed(&"construction_rotate_roll"):
 		if active_tool == &"build":
@@ -775,20 +779,78 @@ func connect_waypoint_count() -> int:
 	return _connect_waypoints.size()
 
 
+func selected_recipe_for_element(element_id: int, archetype_id: String) -> String:
+	if element_id <= 0 or archetype_id.is_empty():
+		return ""
+	var recipe_ids := RecipeCatalog.recipe_ids_for_machine(archetype_id)
+	if recipe_ids.is_empty():
+		return ""
+	_ensure_recipe_cursor(element_id, archetype_id)
+	var cursor := int(_recipe_cursor_by_element.get(element_id, 0))
+	return recipe_ids[wrapi(cursor, 0, recipe_ids.size())]
+
+
 func next_recipe_for_target(hit: InteractionHit) -> String:
+	if not _is_recipe_machine_hit(hit):
+		return ""
+	var archetype_id := str(hit.metadata.get("archetype_id", ""))
+	var element_id := int(hit.metadata.get("element_id", 0))
+	var recipe_ids := RecipeCatalog.recipe_ids_for_machine(archetype_id)
+	if recipe_ids.is_empty():
+		return ""
+	_ensure_recipe_cursor(element_id, archetype_id)
+	var cursor := int(_recipe_cursor_by_element.get(element_id, 0))
+	return recipe_ids[wrapi(cursor, 0, recipe_ids.size())]
+
+
+func recipe_ids_for_target(hit: InteractionHit) -> PackedStringArray:
+	if not _is_recipe_machine_hit(hit):
+		return PackedStringArray()
+	return RecipeCatalog.recipe_ids_for_machine(
+		str(hit.metadata.get("archetype_id", ""))
+	)
+
+
+func _ensure_recipe_cursor(element_id: int, archetype_id: String) -> void:
+	if _recipe_cursor_by_element.has(element_id):
+		return
+	var recipe_ids := RecipeCatalog.recipe_ids_for_machine(archetype_id)
+	if recipe_ids.is_empty():
+		return
+	var default_id := RecipeCatalog.default_recipe_for_machine(archetype_id)
+	var default_index := recipe_ids.find(default_id)
+	_recipe_cursor_by_element[element_id] = (
+		default_index if default_index >= 0 else 0
+	)
+
+
+func _cycle_target_recipe(hit: InteractionHit, delta: int) -> bool:
+	if not _is_recipe_machine_hit(hit) or delta == 0:
+		return false
+	var archetype_id := str(hit.metadata.get("archetype_id", ""))
+	var element_id := int(hit.metadata.get("element_id", 0))
+	var recipe_ids := RecipeCatalog.recipe_ids_for_machine(archetype_id)
+	if recipe_ids.is_empty():
+		return false
+	_ensure_recipe_cursor(element_id, archetype_id)
+	var cursor := int(_recipe_cursor_by_element.get(element_id, 0))
+	_recipe_cursor_by_element[element_id] = wrapi(
+		cursor + delta,
+		0,
+		recipe_ids.size()
+	)
+	return true
+
+
+func _is_recipe_machine_hit(hit: InteractionHit) -> bool:
 	if (
 		hit == null
 		or not hit.valid
 		or hit.target_kind != InteractionHit.KIND_SIMULATION_ELEMENT
+		or hit.distance > 4.0
 	):
-		return ""
-	var archetype_id := str(hit.metadata.get("archetype_id", ""))
-	var recipe_ids := RecipeCatalog.recipe_ids_for_machine(archetype_id)
-	if recipe_ids.is_empty():
-		return ""
-	var element_id := int(hit.metadata.get("element_id", 0))
-	var cursor := int(_recipe_cursor_by_element.get(element_id, 0))
-	return recipe_ids[wrapi(cursor, 0, recipe_ids.size())]
+		return false
+	return str(hit.metadata.get("archetype_id", "")) in ["processor", "fabricator"]
 
 
 func _try_emit_context_interaction(hit: InteractionHit) -> bool:
@@ -846,8 +908,12 @@ func _try_toggle_target_machine(hit: InteractionHit) -> bool:
 
 
 func _try_enqueue_target_recipe(hit: InteractionHit) -> bool:
+	if not _is_recipe_machine_hit(hit):
+		return false
+	if Input.is_key_pressed(KEY_SHIFT):
+		return _try_dequeue_target_recipe(hit)
 	var recipe_id := next_recipe_for_target(hit)
-	if recipe_id.is_empty() or hit.distance > 4.0:
+	if recipe_id.is_empty():
 		return false
 	var element_id := int(hit.metadata.get("element_id", 0))
 	command_requested.emit({
@@ -859,14 +925,21 @@ func _try_enqueue_target_recipe(hit: InteractionHit) -> bool:
 			"recipe_id": recipe_id,
 		},
 	})
-	var count := RecipeCatalog.recipe_ids_for_machine(
-		str(hit.metadata.get("archetype_id", ""))
-	).size()
-	_recipe_cursor_by_element[element_id] = wrapi(
-		int(_recipe_cursor_by_element.get(element_id, 0)) + 1,
-		0,
-		count
-	)
+	return true
+
+
+func _try_dequeue_target_recipe(hit: InteractionHit) -> bool:
+	if not _is_recipe_machine_hit(hit):
+		return false
+	var element_id := int(hit.metadata.get("element_id", 0))
+	command_requested.emit({
+		"kind": &"dequeue_recipe",
+		"source": get_parent(),
+		"target": hit.snapshot(),
+		"parameters": {
+			"element_id": element_id,
+		},
+	})
 	return true
 
 

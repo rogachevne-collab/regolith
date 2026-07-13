@@ -77,10 +77,7 @@ static func deposit_parameters(
 		return {}
 	var chosen := resource_id
 	if chosen.is_empty():
-		for candidate: String in player_store.resource_ids():
-			if player_store.amount(candidate) > 0.000001:
-				chosen = candidate
-				break
+		chosen = _best_player_deposit_resource(player_store, element)
 	if chosen.is_empty():
 		return {}
 	return {
@@ -89,3 +86,26 @@ static func deposit_parameters(
 		"resource_id": chosen,
 		"amount": 0.0,
 	}
+
+
+static func _best_player_deposit_resource(
+	player_store: SimulationResourceStore,
+	element: SimulationElement
+) -> String:
+	if player_store == null or element == null:
+		return ""
+	var prefer_materials := (
+		IndustryArchetypeProfile.has_keyed_store(element.archetype_id)
+		or IndustryArchetypeProfile.has_internal_buffer(element.archetype_id)
+	)
+	if prefer_materials:
+		for candidate: String in player_store.resource_ids():
+			if (
+				candidate != "construction_component"
+				and player_store.amount(candidate) > 0.000001
+			):
+				return candidate
+	for candidate: String in player_store.resource_ids():
+		if player_store.amount(candidate) > 0.000001:
+			return candidate
+	return ""

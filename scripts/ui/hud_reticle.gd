@@ -71,8 +71,25 @@ func _target_summary(hit: InteractionHit) -> String:
 	if hit.target_kind != InteractionHit.KIND_SIMULATION_ELEMENT:
 		return ""
 	var archetype_id := str(hit.metadata.get("archetype_id", ""))
+	if archetype_id in ["processor", "fabricator", "stationary_drill", "cargo_store"]:
+		return ""
 	if archetype_id.is_empty():
 		return ""
 	var display := _gateway.archetype_display_name(archetype_id).to_upper()
 	var status := StringName(hit.metadata.get("status_reason", &"element_incomplete"))
-	return "%s  \u00b7  %s" % [display, HudTokens.status_label(status)]
+	return "%s  \u00b7  %s" % [display, _status_summary(hit.metadata, status)]
+
+
+func _status_summary(meta: Dictionary, status: StringName) -> String:
+	if status == &"port_disconnected" or status == &"cargo_disconnected":
+		return HudTokens.status_label(status)
+	if status == &"no_input":
+		var missing := str(meta.get("missing_input_resource_id", ""))
+		if not missing.is_empty():
+			return "НЕТ %s" % HudTokens.resource_label(missing)
+		if not bool(meta.get("cargo_network_connected", false)):
+			return "НЕТ КАРГО-СВЯЗИ"
+		return "НЕТ СЫРЬЯ"
+	if status == &"standby":
+		return "ПРОСТОЙ"
+	return HudTokens.status_label(status)

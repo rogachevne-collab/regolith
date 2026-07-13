@@ -30,6 +30,12 @@ func can_add(resource_id: String, added: float, capacity_limit_kg: float = INF) 
 		return false
 	if added <= EPSILON:
 		return true
+	if store_id == IndustryStoreService.PLAYER_STORE_ID:
+		return (
+			added
+			<= ResourceCatalog.max_addable_amount_player(self, resource_id)
+			+ EPSILON
+		)
 	if not is_finite(capacity_limit_kg) or capacity_limit_kg <= EPSILON:
 		return true
 	var max_addable := ResourceCatalog.max_addable_amount(

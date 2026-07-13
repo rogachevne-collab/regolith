@@ -4,10 +4,12 @@ extends Control
 ## its name / status / integrity with the frozen state palette. Hidden unless a
 ## simulation element is targeted. Never mutates state.
 
-const PANEL_SIZE := Vector2(320, 126)
-const PANEL_SIZE_WITH_STORE := Vector2(320, 248)
-const PANEL_SIZE_WITH_MACHINE := Vector2(320, 184)
-const KEY_COL := 72.0
+const MACHINE_PROGRESS_BAR_WIDTH := 112.0
+const PANEL_MARGIN_V := 18
+const INFO_ROW_HEIGHT := 18
+const HINT_LINES_HEIGHT := 30
+const MAX_RECIPE_LINES := 8
+const KEY_COL := HudTokens.INFO_KEY_COL
 const INDEX_LETTERS: PackedStringArray = [
 	"А", "Б", "В", "Г", "Д", "Е", "Ж", "З", "И", "К",
 	"Л", "М", "Н", "П", "Р", "С", "Т", "У", "Ф", "Ц",
@@ -17,7 +19,7 @@ var _query: InteractionQuery
 var _gateway: WorldCommandGateway
 var _tools: ToolController
 
-var _panel: Panel
+var _panel: PanelContainer
 var _emblem_mat: ShaderMaterial
 var _callsign: Label
 var _distance: Label
@@ -26,9 +28,22 @@ var _status_val: Label
 var _metric_key: Label
 var _metric_val: Label
 var _store_view: HudStoreView
-var _machine_info: Label
+var _machine_block: VBoxContainer
+var _machine_power_val: Label
+var _machine_queue_box: VBoxContainer
+var _machine_active_val: Label
+var _machine_cargo_val: Label
+var _machine_recipe_box: VBoxContainer
+var _machine_hints: Label
+var _machine_drill_info: Label
+var _machine_progress_row: HBoxContainer
+var _machine_progress_name: Label
+var _machine_progress_mat: ShaderMaterial
+var _machine_progress_value: Label
 var _max_integrity_cache: Dictionary = {}
 var _last_store_element_id := -1
+var _panel_overlay: ColorRect
+var _panel_overlay_mat: ShaderMaterial
 
 
 func setup(ctx: Dictionary) -> void:
@@ -45,23 +60,28 @@ func _ready() -> void:
 
 
 func _build() -> void:
-	_panel = Panel.new()
+	_panel = PanelContainer.new()
 	_panel.position = Vector2(HudTokens.PANEL_MARGIN, HudTokens.PANEL_MARGIN)
-	_panel.size = PANEL_SIZE
 	_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_panel.resized.connect(_on_panel_resized)
 	add_child(_panel)
 
+	_panel_overlay = HudTokens.make_panel_overlay(Vector2(320.0, 128.0))
+	_panel_overlay_mat = _panel_overlay.material as ShaderMaterial
+	_panel_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_panel_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_panel.add_child(_panel_overlay)
+
 	var margin := MarginContainer.new()
-	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	margin.add_theme_constant_override("margin_left", 12)
-	margin.add_theme_constant_override("margin_right", 12)
-	margin.add_theme_constant_override("margin_top", 10)
-	margin.add_theme_constant_override("margin_bottom", 10)
+	margin.add_theme_constant_override("margin_left", 16)
+	margin.add_theme_constant_override("margin_right", 16)
+	margin.add_theme_constant_override("margin_top", PANEL_MARGIN_V)
+	margin.add_theme_constant_override("margin_bottom", PANEL_MARGIN_V)
 	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_panel.add_child(margin)
 
 	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 4)
+	vb.add_theme_constant_override("separation", HudTokens.SECTION_GAP)
 	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	margin.add_child(vb)
 
@@ -113,14 +133,99 @@ func _build() -> void:
 	_store_view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	vb.add_child(_store_view)
 
-	_machine_info = Label.new()
-	_machine_info.theme_type_variation = &"HudSmall"
-	_machine_info.add_theme_color_override("font_color", HudTokens.COL_TEXT)
-	_machine_info.visible = false
-	vb.add_child(_machine_info)
+	_machine_block = VBoxContainer.new()
+	_machine_block.add_theme_constant_override("separation", 8)
+	_machine_block.visible = false
+	_machine_block.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vb.add_child(_machine_block)
 
-	# Glow / border / scanline overlay on top of the fill.
-	_panel.add_child(HudTokens.make_panel_overlay(PANEL_SIZE))
+	_machine_power_val = _add_info_row(_machine_block, "ПИТАНИЕ", HudTokens.COL_TEXT)
+	_machine_queue_box = _make_subsection(_machine_block, "ОЧЕРЕДЬ")
+	_prefill_subsection_labels(
+		_machine_queue_box,
+		IndustryArchetypeProfile.queue_max_depth()
+	)
+	_machine_active_val = _add_info_row(_machine_block, "СЕЙЧАС", HudTokens.COL_OK)
+	_machine_cargo_val = _add_info_row(_machine_block, "КАРГО", HudTokens.COL_TEXT)
+	_machine_block.add_child(HudTokens.make_divider())
+	_machine_recipe_box = _make_subsection(_machine_block, "РЕЦЕПТЫ")
+	_prefill_subsection_labels(_machine_recipe_box, MAX_RECIPE_LINES)
+	_machine_hints = Label.new()
+	_machine_hints.theme_type_variation = &"HudSmall"
+	_machine_hints.add_theme_color_override("font_color", HudTokens.COL_DIM)
+	_machine_hints.autowrap_mode = TextServer.AUTOWRAP_OFF
+	_machine_hints.custom_minimum_size.y = HINT_LINES_HEIGHT
+	_machine_hints.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_machine_block.add_child(_machine_hints)
+
+	_machine_drill_info = Label.new()
+	_machine_drill_info.theme_type_variation = &"HudSmall"
+	_machine_drill_info.add_theme_color_override("font_color", HudTokens.COL_TEXT)
+	_machine_drill_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_machine_drill_info.visible = false
+	_machine_drill_info.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vb.add_child(_machine_drill_info)
+
+	var progress := HudTokens.make_progress_bar(MACHINE_PROGRESS_BAR_WIDTH, "")
+	_machine_progress_row = progress["row"] as HBoxContainer
+	_machine_progress_name = _machine_progress_row.get_child(0) as Label
+	_machine_progress_name.custom_minimum_size = Vector2(0, INFO_ROW_HEIGHT)
+	_machine_progress_name.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	_machine_progress_name.size_flags_stretch_ratio = 1.0
+	_machine_progress_name.autowrap_mode = TextServer.AUTOWRAP_OFF
+	_machine_progress_name.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	var progress_bar := _machine_progress_row.get_child(1) as ColorRect
+	progress_bar.custom_minimum_size.x = MACHINE_PROGRESS_BAR_WIDTH
+	progress_bar.size_flags_horizontal = Control.SIZE_SHRINK_END
+	_machine_progress_mat = progress["mat"] as ShaderMaterial
+	_machine_progress_value = progress["value"] as Label
+	_machine_progress_value.size_flags_horizontal = Control.SIZE_SHRINK_END
+	_machine_progress_row.visible = false
+	vb.add_child(_machine_progress_row)
+	_on_panel_resized()
+
+
+func _on_panel_resized() -> void:
+	if _panel_overlay_mat != null and _panel != null:
+		_panel_overlay_mat.set_shader_parameter("rect_size", _panel.size)
+
+
+func _make_subsection(parent: Node, title: String) -> VBoxContainer:
+	var section := VBoxContainer.new()
+	section.add_theme_constant_override("separation", 4)
+	section.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(section)
+	var header := Label.new()
+	header.text = title
+	header.theme_type_variation = &"HudSmall"
+	header.add_theme_color_override("font_color", HudTokens.COL_DIM)
+	header.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	section.add_child(header)
+	return section
+
+
+func _make_list_label() -> Label:
+	var item := Label.new()
+	item.theme_type_variation = &"HudSmall"
+	item.custom_minimum_size.y = 14
+	item.autowrap_mode = TextServer.AUTOWRAP_OFF
+	item.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	item.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	item.visible = false
+	return item
+
+
+func _prefill_subsection_labels(section: VBoxContainer, count: int) -> void:
+	for _i: int in range(count):
+		section.add_child(_make_list_label())
+
+
+func _subsection_line_labels(section: VBoxContainer) -> Array[Label]:
+	var labels: Array[Label] = []
+	for child: Node in section.get_children():
+		if child is Label and child.get_index() > 0:
+			labels.append(child as Label)
+	return labels
 
 
 func _add_info_row(parent: Node, key: String, value_color: Color) -> Label:
@@ -129,17 +234,22 @@ func _add_info_row(parent: Node, key: String, value_color: Color) -> Label:
 
 func _add_info_row_keyed(parent: Node, key: String, value_color: Color) -> Array:
 	var row := HBoxContainer.new()
+	row.custom_minimum_size.y = INFO_ROW_HEIGHT
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	parent.add_child(row)
 	var k := Label.new()
 	k.text = key
 	k.theme_type_variation = &"HudSmall"
-	k.custom_minimum_size = Vector2(KEY_COL, 0)
+	k.custom_minimum_size = Vector2(KEY_COL, INFO_ROW_HEIGHT)
+	k.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	row.add_child(k)
 	var v := Label.new()
 	v.theme_type_variation = &"HudValue"
 	v.add_theme_color_override("font_color", value_color)
 	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.custom_minimum_size.y = INFO_ROW_HEIGHT
+	v.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	v.autowrap_mode = TextServer.AUTOWRAP_OFF
 	v.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	row.add_child(v)
 	return [k, v]
@@ -167,7 +277,7 @@ func _process(_delta: float) -> void:
 	_distance.text = "%.1f М" % hit.distance
 	_name_val.text = _gateway.archetype_display_name(archetype_id).to_upper()
 
-	_status_val.text = HudTokens.status_label(status)
+	_status_val.text = _status_summary(meta, status)
 	_status_val.add_theme_color_override("font_color", status_color)
 
 	_metric_key.text = "ЦЕЛОСТНОСТЬ"
@@ -177,26 +287,37 @@ func _process(_delta: float) -> void:
 	_refresh_machine_info(archetype_id, meta, hit)
 
 
+func _status_summary(meta: Dictionary, status: StringName) -> String:
+	if status == &"port_disconnected" or status == &"cargo_disconnected":
+		return HudTokens.status_label(status)
+	if status == &"no_input":
+		var missing := str(meta.get("missing_input_resource_id", ""))
+		if not missing.is_empty():
+			return "НЕТ %s" % HudTokens.resource_label(missing)
+		if not bool(meta.get("cargo_network_connected", false)):
+			return "НЕТ КАРГО-СВЯЗИ"
+		return "НЕТ СЫРЬЯ"
+	if status == &"standby":
+		return "ПРОСТОЙ"
+	return HudTokens.status_label(status)
+
+
 func _refresh_store_view(archetype_id: String, meta: Dictionary) -> void:
 	if _store_view == null or _gateway == null:
 		return
 	if archetype_id != "cargo_store":
 		_store_view.visible = false
-		_panel.size = PANEL_SIZE
 		_last_store_element_id = -1
 		return
 	var element_id := int(meta.get("element_id", 0))
 	if element_id <= 0:
 		_store_view.visible = false
-		_panel.size = PANEL_SIZE
 		return
 	var store_id := IndustryStoreService.element_store_id(element_id)
 	var store := _gateway.resource_store(store_id)
 	if store == null:
 		_store_view.visible = false
-		_panel.size = PANEL_SIZE
 		return
-	_panel.size = PANEL_SIZE_WITH_STORE
 	_store_view.visible = true
 	if element_id != _last_store_element_id:
 		_store_view.bind(store, "СКЛАД")
@@ -210,34 +331,187 @@ func _refresh_machine_info(
 	meta: Dictionary,
 	hit: InteractionHit
 ) -> void:
-	if _machine_info == null:
+	if _machine_block == null:
 		return
 	if archetype_id not in ["stationary_drill", "processor", "fabricator"]:
-		_machine_info.visible = false
+		_machine_block.visible = false
+		_machine_drill_info.visible = false
+		_set_machine_progress_visible(false)
 		return
 	_store_view.visible = false
-	_panel.size = PANEL_SIZE_WITH_MACHINE
-	_machine_info.visible = true
+	var active := str(meta.get("active_recipe_id", ""))
+	var is_working := not active.is_empty()
 	var enabled := bool(meta.get("machine_enabled", true))
 	if archetype_id == "stationary_drill":
-		_machine_info.text = (
-			"ГОЛОВКА: РАБОЧАЯ ГРАНЬ +ИКС\n"
+		_machine_block.visible = false
+		_machine_drill_info.visible = true
+		_set_machine_progress_visible(false)
+		_machine_drill_info.text = (
+			"Головка: рабочая грань +X\n"
 			+ "E — %s"
 		) % ("ВЫКЛЮЧИТЬ" if enabled else "ВКЛЮЧИТЬ")
 		return
-	var active := str(meta.get("active_recipe_id", ""))
+	_machine_block.visible = true
+	_machine_drill_info.visible = false
 	var queue: Array = meta.get("recipe_queue", [])
+	var missing := str(meta.get("missing_input_resource_id", ""))
+	var status := StringName(meta.get("status_reason", &"ok"))
 	var next_recipe := (
 		_tools.next_recipe_for_target(hit)
 		if _tools != null
 		else ""
 	)
-	_machine_info.text = "ПИТАНИЕ: %s · ОЧЕРЕДЬ: %d\nАКТИВНО: %s\nE — ВКЛ/ВЫКЛ · R — +%s" % [
-		"ВКЛ" if enabled else "ВЫКЛ",
-		queue.size(),
-		HudTokens.recipe_label(active),
-		HudTokens.recipe_label(next_recipe),
-	]
+	if is_working:
+		_machine_power_val.get_parent().visible = false
+		_machine_queue_box.visible = false
+		_machine_active_val.get_parent().visible = false
+		_machine_recipe_box.visible = false
+		_machine_hints.visible = false
+		var cargo_note := _format_cargo_network(meta)
+		if not missing.is_empty():
+			cargo_note = "НЕТ %s" % HudTokens.resource_label(missing)
+		elif status in [&"storage_full", &"no_input", &"port_disconnected"]:
+			cargo_note = HudTokens.status_label(status)
+		var show_cargo := (
+			not missing.is_empty()
+			or status in [&"storage_full", &"no_input", &"port_disconnected"]
+		)
+		_machine_block.visible = show_cargo
+		_machine_cargo_val.get_parent().visible = show_cargo
+		_machine_cargo_val.text = cargo_note
+	else:
+		_machine_block.visible = true
+		_machine_power_val.get_parent().visible = true
+		_machine_power_val.text = "ВКЛЮЧЕНО" if enabled else "ВЫКЛЮЧЕНО"
+		_machine_power_val.add_theme_color_override(
+			"font_color",
+			HudTokens.COL_OK if enabled else HudTokens.COL_DIM
+		)
+		_machine_queue_box.visible = not queue.is_empty()
+		if not queue.is_empty():
+			_refresh_queue_list(queue)
+		else:
+			_refresh_queue_list([])
+		_machine_active_val.get_parent().visible = false
+		_machine_cargo_val.get_parent().visible = true
+		_machine_cargo_val.text = _format_cargo_network(meta)
+		_machine_recipe_box.visible = true
+		_refresh_recipe_picker(archetype_id, next_recipe)
+		_machine_hints.text = (
+			"C — рецепт    R — очередь    E — питание\n"
+			+ (
+				"Shift+R — убрать из очереди"
+				if not queue.is_empty()
+				else " "
+			)
+		)
+	_refresh_machine_progress(meta, enabled, active)
+
+
+func _refresh_queue_list(queue: Array) -> void:
+	if _machine_queue_box == null:
+		return
+	var labels := _subsection_line_labels(_machine_queue_box)
+	for index: int in range(labels.size()):
+		var item := labels[index]
+		if index < queue.size():
+			item.text = "%d. %s" % [
+				index + 1,
+				HudTokens.recipe_label(str(queue[index])),
+			]
+			item.add_theme_color_override("font_color", HudTokens.COL_TEXT)
+			item.visible = true
+		else:
+			item.visible = false
+
+
+func _refresh_recipe_picker(archetype_id: String, selected_recipe_id: String) -> void:
+	if _machine_recipe_box == null:
+		return
+	var recipe_ids := RecipeCatalog.recipe_ids_for_machine(archetype_id)
+	var labels := _subsection_line_labels(_machine_recipe_box)
+	for index: int in range(labels.size()):
+		var item := labels[index]
+		if index < recipe_ids.size():
+			var recipe_id: String = recipe_ids[index]
+			var marker := "▸ " if recipe_id == selected_recipe_id else "   "
+			item.text = "%s%s" % [marker, HudTokens.recipe_label(recipe_id)]
+			item.add_theme_color_override(
+				"font_color",
+				HudTokens.COL_VALID if recipe_id == selected_recipe_id else HudTokens.COL_TEXT
+			)
+			item.visible = true
+		else:
+			item.visible = false
+
+
+func _format_cargo_network(meta: Dictionary) -> String:
+	if not bool(meta.get("cargo_network_connected", false)):
+		return "НЕТ СВЯЗИ"
+	var parts: PackedStringArray = []
+	var raw_amount := float(meta.get("cargo_network_raw_regolith", 0.0))
+	var fines_amount := float(meta.get("cargo_network_regolith_fines", 0.0))
+	if raw_amount > 0.000001:
+		parts.append(
+			"%s %s" % [
+				HudTokens.resource_label("raw_regolith"),
+				HudTokens.format_amount(raw_amount),
+			]
+		)
+	if fines_amount > 0.000001:
+		parts.append(
+			"%s %s" % [
+				HudTokens.resource_label("regolith_fines"),
+				HudTokens.format_amount(fines_amount),
+			]
+		)
+	if parts.is_empty():
+		return "СКЛАД ПУСТ"
+	return "%s" % " · ".join(parts)
+
+
+func _refresh_machine_progress(
+	meta: Dictionary,
+	enabled: bool,
+	active: String = ""
+) -> void:
+	if _machine_progress_mat == null or _machine_progress_value == null:
+		return
+	if active.is_empty():
+		active = str(meta.get("active_recipe_id", ""))
+	var show_bar := not active.is_empty()
+	_set_machine_progress_visible(show_bar)
+	if not show_bar:
+		return
+	if _machine_progress_name != null:
+		_machine_progress_name.text = HudTokens.recipe_label(active)
+	var duration_s := maxf(float(meta.get("recipe_duration_s", 0.0)), 0.000001)
+	var fraction := clampf(
+		float(meta.get("recipe_progress_s", 0.0)) / duration_s,
+		0.0,
+		1.0
+	)
+	var status := StringName(meta.get("status_reason", &"ok"))
+	var bar_color := HudTokens.COL_VALID
+	if not enabled:
+		bar_color = HudTokens.COL_DIM
+	elif status == &"no_power":
+		bar_color = HudTokens.COL_WARNING
+	elif status != &"ok":
+		bar_color = HudTokens.color_for_status(status)
+	_machine_progress_mat.set_shader_parameter("fill", fraction)
+	_machine_progress_mat.set_shader_parameter("fill_color", bar_color)
+	_machine_progress_mat.set_shader_parameter(
+		"lead_strength",
+		0.75 if fraction > 0.02 and enabled and status == &"ok" else 0.2
+	)
+	_machine_progress_value.text = "%d%%" % int(round(fraction * 100.0))
+	_machine_progress_value.add_theme_color_override("font_color", bar_color)
+
+
+func _set_machine_progress_visible(visible: bool) -> void:
+	if _machine_progress_row != null:
+		_machine_progress_row.visible = visible
 
 
 func _integrity_fraction(archetype_id: String, meta: Dictionary) -> float:

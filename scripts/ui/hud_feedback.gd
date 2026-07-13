@@ -72,7 +72,7 @@ func _prompt_for(hit: InteractionHit) -> String:
 				str(hit.metadata.get("resource_id", ""))
 			)
 		if _is_recipe_machine(hit):
-			return "E — вкл/выкл · R — добавить рецепт"
+			return ""
 		if (
 			hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
 			and _is_industry_transfer_target(hit)
@@ -229,8 +229,19 @@ func _reason_text(reason: StringName, data: Dictionary = {}) -> String:
 		&"cable_too_long":
 			return "Кабель длиннее 12 м"
 		&"storage_full":
+			var resource_id := str(data.get("resource_id", ""))
+			if resource_id == "raw_regolith":
+				return "Карман материалов полон"
+			if resource_id == "construction_component":
+				return "Карман компонентов полон"
 			return "Склад полон"
 		&"no_input":
 			return "Нечего переносить"
+		&"queue_full":
+			return "Очередь полна"
+		&"no_effect":
+			return "Очередь пуста"
+		&"not_ready":
+			return "Симуляция не готова"
 		_:
 			return "Действие недоступно"

@@ -22,7 +22,9 @@ func tick(
 
 func apply_set_machine_enabled(
 	world: SimulationWorld,
-	command: SetMachineEnabledCommand
+	command: SetMachineEnabledCommand,
+	cargo_graph: CargoGraph = null,
+	transfer_service: CargoTransferService = null
 ) -> Dictionary:
 	if command == null or command.element_id <= 0:
 		return _failed(&"invalid_target")
@@ -33,6 +35,13 @@ func apply_set_machine_enabled(
 	runtime.machine_enabled = command.enabled
 	if not command.enabled:
 		_cancel_active_job(world, element, runtime)
+	else:
+		_kick_idle_machine(
+			world,
+			element.element_id,
+			cargo_graph,
+			transfer_service
+		)
 	element.industry_functional_reason = &"disabled" if not command.enabled else &"ok"
 	element.bump_state_revision()
 	return _ok()
@@ -40,7 +49,9 @@ func apply_set_machine_enabled(
 
 func apply_enqueue_recipe(
 	world: SimulationWorld,
-	command: EnqueueRecipeCommand
+	command: EnqueueRecipeCommand,
+	cargo_graph: CargoGraph = null,
+	transfer_service: CargoTransferService = null
 ) -> Dictionary:
 	if command == null or command.element_id <= 0 or command.recipe_id.is_empty():
 		return _failed(&"invalid_target")
@@ -57,7 +68,67 @@ func apply_enqueue_recipe(
 		return _failed(&"queue_full")
 	machine.queue.append(command.recipe_id)
 	element.bump_state_revision()
+	_kick_idle_machine(
+		world,
+		element.element_id,
+		cargo_graph,
+		transfer_service
+	)
 	return _ok()
+
+
+func apply_dequeue_recipe(
+	world: SimulationWorld,
+	command: DequeueRecipeCommand,
+	cargo_graph: CargoGraph = null,
+	transfer_service: CargoTransferService = null
+) -> Dictionary:
+	if command == null or command.element_id <= 0:
+		return _failed(&"invalid_target")
+	var element := world.get_element(command.element_id)
+	if element == null or not _is_recipe_machine(element):
+		return _failed(&"invalid_target")
+	var runtime := world.ensure_industry_element_runtime(element.element_id)
+	var machine := runtime.ensure_machine_state()
+	if machine.queue.is_empty():
+		return _failed(&"no_effect")
+	machine.queue.remove_at(0)
+	element.bump_state_revision()
+	_kick_idle_machine(
+		world,
+		element.element_id,
+		cargo_graph,
+		transfer_service
+	)
+	return _ok()
+
+
+func kick_idle_machine(
+	world: SimulationWorld,
+	element_id: int,
+	cargo_graph: CargoGraph = null,
+	transfer_service: CargoTransferService = null
+) -> void:
+	_kick_idle_machine(world, element_id, cargo_graph, transfer_service)
+
+
+func _kick_idle_machine(
+	world: SimulationWorld,
+	element_id: int,
+	cargo_graph: CargoGraph = null,
+	transfer_service: CargoTransferService = null
+) -> void:
+	if world == null or element_id <= 0:
+		return
+	var element := world.get_element(element_id)
+	if element == null or not _is_recipe_machine(element):
+		return
+	var graph := cargo_graph if cargo_graph != null else world.ensure_cargo_graph_current()
+	var transfer := (
+		transfer_service if transfer_service != null else CargoTransferService.new()
+	)
+	IndustryElectricBudget.apply_tick(world, 0.001)
+	_tick_machine(world, graph, transfer, element, 0.0)
 
 
 func cancel_active_job(world: SimulationWorld, element_id: int) -> bool:
@@ -97,10 +168,24 @@ func _tick_machine(
 		return
 
 	if machine.active_recipe_id.is_empty():
+		_prefetch_recipe_inputs(
+			world,
+			cargo_graph,
+			transfer_service,
+			element,
+			machine
+		)
 		_try_start_job(world, cargo_graph, transfer_service, element, runtime, machine)
 
 	if machine.active_recipe_id.is_empty():
 		runtime.active_recipe_power_w = 0.0
+		_prefetch_recipe_inputs(
+			world,
+			cargo_graph,
+			transfer_service,
+			element,
+			machine
+		)
 		element.industry_functional_reason = _idle_reason(
 			world,
 			cargo_graph,
@@ -152,14 +237,51 @@ func _try_start_job(
 	runtime: IndustryElementRuntime,
 	machine: IndustryMachineState
 ) -> void:
-	var recipe_id := ""
-	if not machine.queue.is_empty():
-		recipe_id = machine.queue[0]
-		machine.queue.remove_at(0)
-	else:
-		recipe_id = _pick_default_recipe(element)
-	if recipe_id.is_empty():
+	if machine.queue.is_empty():
+		var default_id := RecipeCatalog.default_recipe_for_machine(
+			element.archetype_id
+		)
+		if default_id.is_empty():
+			return
+		if _try_start_recipe(
+			world,
+			cargo_graph,
+			transfer_service,
+			element,
+			runtime,
+			machine,
+			default_id
+		):
+			return
 		return
+	var attempts := machine.queue.size()
+	for _attempt: int in range(attempts):
+		var recipe_id := machine.queue[0]
+		machine.queue.remove_at(0)
+		if _try_start_recipe(
+			world,
+			cargo_graph,
+			transfer_service,
+			element,
+			runtime,
+			machine,
+			recipe_id
+		):
+			return
+		machine.queue.append(recipe_id)
+
+
+func _try_start_recipe(
+	world: SimulationWorld,
+	cargo_graph: CargoGraph,
+	transfer_service: CargoTransferService,
+	element: SimulationElement,
+	runtime: IndustryElementRuntime,
+	machine: IndustryMachineState,
+	recipe_id: String
+) -> bool:
+	if recipe_id.is_empty():
+		return false
 	if not _try_reserve_inputs(
 		world,
 		cargo_graph,
@@ -168,27 +290,24 @@ func _try_start_job(
 		recipe_id,
 		machine
 	):
-		if not machine.queue.is_empty():
-			machine.queue.insert(0, recipe_id)
-		return
+		return false
+	var outputs := RecipeCatalog.outputs(recipe_id)
+	if not _outputs_have_capacity(
+		world,
+		cargo_graph,
+		element,
+		outputs
+	):
+		var buffer_capacity := IndustryArchetypeProfile.internal_buffer_capacity_kg(
+			element.archetype_id
+		)
+		_refund_reserved(element, machine.reserved_inputs, buffer_capacity)
+		machine.reserved_inputs.clear()
+		return false
 	machine.active_recipe_id = recipe_id
 	machine.progress_s = 0.0
 	runtime.active_recipe_power_w = RecipeCatalog.power_w(recipe_id)
-
-
-func _pick_default_recipe(element: SimulationElement) -> String:
-	var default_id := RecipeCatalog.default_recipe_for_machine(element.archetype_id)
-	if (
-		not default_id.is_empty()
-		and _buffer_has_inputs(element, RecipeCatalog.inputs(default_id))
-	):
-		return default_id
-	for recipe_id: String in RecipeCatalog.recipe_ids_for_machine(
-		element.archetype_id
-	):
-		if _buffer_has_inputs(element, RecipeCatalog.inputs(recipe_id)):
-			return recipe_id
-	return ""
+	return true
 
 
 func _buffer_has_inputs(element: SimulationElement, inputs: Dictionary) -> bool:
@@ -210,6 +329,13 @@ func _try_reserve_inputs(
 	machine: IndustryMachineState
 ) -> bool:
 	var inputs := RecipeCatalog.inputs(recipe_id)
+	_evict_buffer_for_inputs(
+		world,
+		cargo_graph,
+		transfer_service,
+		element,
+		inputs
+	)
 	_machine_cargo.pull_inputs_for_recipe(
 		world,
 		cargo_graph,
@@ -307,23 +433,138 @@ func _cancel_active_job(
 	return true
 
 
+func _prefetch_recipe_inputs(
+	world: SimulationWorld,
+	cargo_graph: CargoGraph,
+	transfer_service: CargoTransferService,
+	element: SimulationElement,
+	machine: IndustryMachineState
+) -> void:
+	var recipe_id := _pending_recipe_id(element, machine)
+	if recipe_id.is_empty():
+		return
+	var inputs := RecipeCatalog.inputs(recipe_id)
+	_evict_buffer_for_inputs(
+		world,
+		cargo_graph,
+		transfer_service,
+		element,
+		inputs
+	)
+	_machine_cargo.pull_inputs_for_recipe(
+		world,
+		cargo_graph,
+		transfer_service,
+		element,
+		inputs
+	)
+
+
+func _evict_buffer_for_inputs(
+	world: SimulationWorld,
+	cargo_graph: CargoGraph,
+	transfer_service: CargoTransferService,
+	element: SimulationElement,
+	inputs: Dictionary
+) -> void:
+	if element == null or inputs.is_empty():
+		return
+	var buffer_capacity := IndustryArchetypeProfile.internal_buffer_capacity_kg(
+		element.archetype_id
+	)
+	for _attempt: int in range(128):
+		if _buffer_has_inputs(element, inputs):
+			return
+		if not _buffer_needs_room_for_inputs(element, inputs, buffer_capacity):
+			return
+		var progressed := false
+		for resource_id: String in element.industry_buffer.resource_ids():
+			if inputs.has(resource_id):
+				continue
+			var before := element.industry_buffer.amount(resource_id)
+			if before <= EPSILON:
+				continue
+			_machine_cargo.push_outputs_from_buffer(
+				world,
+				cargo_graph,
+				transfer_service,
+				element,
+				PackedStringArray([resource_id])
+			)
+			if element.industry_buffer.amount(resource_id) + EPSILON < before:
+				progressed = true
+		if not progressed:
+			return
+
+
+func _buffer_needs_room_for_inputs(
+	element: SimulationElement,
+	inputs: Dictionary,
+	buffer_capacity: float
+) -> bool:
+	for resource_id: Variant in inputs.keys():
+		var needed := float(inputs[resource_id])
+		if needed <= EPSILON:
+			continue
+		var resource := str(resource_id)
+		var have := element.industry_buffer.amount(resource)
+		var remaining := maxf(needed - have, 0.0)
+		if remaining <= EPSILON:
+			continue
+		if (
+			element.industry_buffer.max_addable_amount(resource, buffer_capacity)
+			+ EPSILON
+			< remaining
+		):
+			return true
+	return false
+
+
+func _pending_recipe_id(
+	element: SimulationElement,
+	machine: IndustryMachineState
+) -> String:
+	if not machine.queue.is_empty():
+		return str(machine.queue[0])
+	return RecipeCatalog.default_recipe_for_machine(element.archetype_id)
+
+
 func _idle_reason(
 	world: SimulationWorld,
 	cargo_graph: CargoGraph,
 	element: SimulationElement,
 	machine: IndustryMachineState
 ) -> StringName:
-	if machine.queue_depth() >= IndustryArchetypeProfile.queue_max_depth():
-		return &"queue_full"
-	var recipe_id := _pick_default_recipe(element)
+	return _idle_reason_for_recipe(
+		world,
+		cargo_graph,
+		element,
+		machine,
+		_pending_recipe_id(element, machine)
+	)
+
+
+func _idle_reason_for_recipe(
+	world: SimulationWorld,
+	cargo_graph: CargoGraph,
+	element: SimulationElement,
+	machine: IndustryMachineState,
+	recipe_id: String
+) -> StringName:
 	if recipe_id.is_empty():
-		recipe_id = RecipeCatalog.default_recipe_for_machine(element.archetype_id)
-	if recipe_id.is_empty():
-		return &"ok"
-	if not _buffer_has_inputs(element, RecipeCatalog.inputs(recipe_id)):
-		if cargo_graph.nearest_cargo_store_element_id(world, element.element_id) <= 0:
+		return &"standby"
+	var inputs := RecipeCatalog.inputs(recipe_id)
+	if not _buffer_has_inputs(element, inputs):
+		if not cargo_graph.has_connected_cargo_store(world, element.element_id):
 			return &"port_disconnected"
-		return &"no_input"
+		if not _connected_inputs_available(world, cargo_graph, element, inputs):
+			return &"no_input"
+		var buffer_capacity := IndustryArchetypeProfile.internal_buffer_capacity_kg(
+			element.archetype_id
+		)
+		if _buffer_needs_room_for_inputs(element, inputs, buffer_capacity):
+			return &"storage_full"
+		return &"standby"
 	if not _outputs_have_capacity(
 		world,
 		cargo_graph,
@@ -331,7 +572,143 @@ func _idle_reason(
 		RecipeCatalog.outputs(recipe_id)
 	):
 		return &"storage_full"
-	return &"ok"
+	if machine.queue.is_empty():
+		return &"standby"
+	return &"standby"
+
+
+static func preview_idle_reason_for_recipe(
+	world: SimulationWorld,
+	element: SimulationElement,
+	recipe_id: String
+) -> StringName:
+	if world == null or element == null or recipe_id.is_empty():
+		return &"standby"
+	var service := RecipeRunnerService.new()
+	var runtime := world.ensure_industry_element_runtime(element.element_id)
+	return service._idle_reason_for_recipe(
+		world,
+		world.ensure_cargo_graph_current(),
+		element,
+		runtime.ensure_machine_state(),
+		recipe_id
+	)
+
+
+static func connected_supply_amount(
+	world: SimulationWorld,
+	from_element_id: int,
+	resource_id: String
+) -> float:
+	if (
+		world == null
+		or from_element_id <= 0
+		or resource_id.is_empty()
+	):
+		return 0.0
+	var graph := world.ensure_cargo_graph_current()
+	var total := 0.0
+	for element: SimulationElement in world.list_elements():
+		if (
+			not element.is_operational()
+			or not IndustryArchetypeProfile.has_keyed_store(
+				element.archetype_id
+			)
+		):
+			continue
+		if graph.shortest_hop_distance(from_element_id, element.element_id) < 0:
+			continue
+		var store := IndustryStoreService.ensure_element_keyed_store(
+			world,
+			element
+		)
+		if store != null:
+			total += store.amount(resource_id)
+	return total
+
+
+static func connected_cargo_has_path(
+	world: SimulationWorld,
+	from_element_id: int
+) -> bool:
+	if world == null or from_element_id <= 0:
+		return false
+	return (
+		world.ensure_cargo_graph_current().has_connected_cargo_store(
+			world,
+			from_element_id
+		)
+	)
+
+
+static func missing_input_resource_id(
+	world: SimulationWorld,
+	element: SimulationElement,
+	recipe_id: String = ""
+) -> String:
+	if world == null or element == null:
+		return ""
+	if element.archetype_id not in ["processor", "fabricator"]:
+		return ""
+	var runtime := world.ensure_industry_element_runtime(element.element_id)
+	var machine := runtime.ensure_machine_state()
+	if not machine.active_recipe_id.is_empty():
+		return ""
+	var pending_recipe := recipe_id
+	if pending_recipe.is_empty():
+		pending_recipe = (
+			str(machine.queue[0])
+			if not machine.queue.is_empty()
+			else RecipeCatalog.default_recipe_for_machine(element.archetype_id)
+		)
+	return missing_input_for_recipe(world, element, pending_recipe)
+
+
+static func missing_input_for_recipe(
+	world: SimulationWorld,
+	element: SimulationElement,
+	recipe_id: String
+) -> String:
+	if world == null or element == null or recipe_id.is_empty():
+		return ""
+	var graph := world.ensure_cargo_graph_current()
+	if not graph.has_connected_cargo_store(world, element.element_id):
+		return ""
+	var inputs := RecipeCatalog.inputs(recipe_id)
+	for resource_id: Variant in inputs.keys():
+		var needed := float(inputs[resource_id])
+		if needed <= EPSILON:
+			continue
+		var resource := str(resource_id)
+		if element.industry_buffer.amount(resource) + EPSILON >= needed:
+			continue
+		if connected_supply_amount(world, element.element_id, resource) + EPSILON >= needed:
+			continue
+		return resource
+	return ""
+
+
+func _connected_inputs_available(
+	world: SimulationWorld,
+	cargo_graph: CargoGraph,
+	element: SimulationElement,
+	inputs: Dictionary
+) -> bool:
+	for resource_id: Variant in inputs.keys():
+		var needed := float(inputs[resource_id])
+		if needed <= EPSILON:
+			continue
+		if (
+			cargo_graph.nearest_cargo_store_element_id_with_resource(
+				world,
+				element.element_id,
+				str(resource_id),
+				needed
+			)
+			<= 0
+		):
+			return false
+	return true
 
 
 func _outputs_have_capacity(

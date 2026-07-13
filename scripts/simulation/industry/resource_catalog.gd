@@ -42,17 +42,63 @@ static func store_mass_kg(store: SimulationResourceStore) -> float:
 	return total
 
 
+static func store_mass_kg_for_player_category(
+	store: SimulationResourceStore,
+	resource_id: String
+) -> float:
+	if store == null or resource_id.is_empty():
+		return 0.0
+	var construction := IndustryArchetypeProfile.is_player_construction_resource(
+		resource_id
+	)
+	var total := 0.0
+	for stored_id: String in store.resource_ids():
+		var same_category := (
+			IndustryArchetypeProfile.is_player_construction_resource(stored_id)
+			== construction
+		)
+		if same_category:
+			total += resource_mass_kg(stored_id, store.amount(stored_id))
+	return total
+
+
 static func max_addable_amount(
 	store: SimulationResourceStore,
 	resource_id: String,
 	capacity_kg: float
 ) -> float:
+	if (
+		store != null
+		and store.store_id == IndustryStoreService.PLAYER_STORE_ID
+	):
+		return max_addable_amount_player(store, resource_id)
 	if store == null or resource_id.is_empty() or capacity_kg <= EPSILON:
 		return 0.0
 	var unit_mass := mass_per_unit_kg(resource_id)
 	if unit_mass <= EPSILON:
 		return 0.0
 	var remaining_kg := capacity_kg - store_mass_kg(store)
+	if remaining_kg <= EPSILON:
+		return 0.0
+	return remaining_kg / unit_mass
+
+
+static func max_addable_amount_player(
+	store: SimulationResourceStore,
+	resource_id: String
+) -> float:
+	if store == null or resource_id.is_empty():
+		return 0.0
+	var unit_mass := mass_per_unit_kg(resource_id)
+	if unit_mass <= EPSILON:
+		return 0.0
+	var capacity := IndustryArchetypeProfile.player_capacity_kg_for_resource(
+		resource_id
+	)
+	var remaining_kg := (
+		capacity
+		- store_mass_kg_for_player_category(store, resource_id)
+	)
 	if remaining_kg <= EPSILON:
 		return 0.0
 	return remaining_kg / unit_mass

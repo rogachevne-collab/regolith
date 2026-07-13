@@ -84,7 +84,27 @@ func _on_structural_event(event: Dictionary) -> void:
 			_clear_known_body(int(event["loser_assembly_id"]))
 			_rebuild_assembly(int(event["survivor_assembly_id"]))
 		&"element_state_changed":
-			_rebuild_assembly(int(event["assembly_id"]))
+			var change_kind := StringName(event.get("change_kind", &""))
+			if change_kind in [&"damage", &"repair", &"weld"]:
+				_update_element_visual(int(event.get("element_id", 0)))
+			else:
+				_rebuild_assembly(int(event["assembly_id"]))
+
+
+func _update_element_visual(element_id: int) -> void:
+	if _world == null or _physics_projection == null or element_id <= 0:
+		return
+	var element := _world.get_element(element_id)
+	if element == null:
+		return
+	var body := _physics_projection.get_physics_body(element.assembly_id)
+	if body == null:
+		return
+	var prefix := "%s%d_" % [VISUAL_PREFIX, element_id]
+	var material := _material_for(element)
+	for child: Node in body.get_children():
+		if child is MeshInstance3D and child.name.begins_with(prefix):
+			(child as MeshInstance3D).material_override = material
 
 
 func _rebuild_assembly(assembly_id: int) -> void:

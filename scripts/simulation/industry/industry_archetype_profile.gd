@@ -3,7 +3,9 @@ extends RefCounted
 
 ## Runtime storage capacities until archetype fixtures expose storage_capacity_kg.
 
-const PLAYER_CARRY_CAPACITY_KG := 80.0
+const PLAYER_CARRY_CAPACITY_KG := 100.0
+const PLAYER_CONSTRUCTION_CAPACITY_KG := 60.0
+const PLAYER_MATERIAL_CAPACITY_KG := 40.0
 
 const KEYED_STORE_CAPACITY_KG: Dictionary = {
 	"cargo_store": 2000.0,
@@ -43,12 +45,12 @@ const DRILL_HEAD_OFFSET_M := 0.92
 const DRILL_CONTACT_REACH_M := 0.72
 const DRILL_REQUIRES_POWER := true
 
-const HAND_DRILL_CARVE_RADIUS_M := 0.12
-const HAND_DRILL_CARVE_VOLUME_BUDGET_M3 := 0.006
-const HAND_DRILL_MAX_LOOT_MASS_KG_PER_TICK := 9.0
-const HAND_DRILL_LOOT_PILE_MAX_MASS_KG := 24.0
-const HAND_DRILL_LOOT_MERGE_RADIUS_M := 0.55
-const HAND_DRILL_INTERVAL_S := 0.14
+const HAND_DRILL_CARVE_RADIUS_M := 0.16
+const HAND_DRILL_CARVE_VOLUME_BUDGET_M3 := 0.012
+const HAND_DRILL_MAX_LOOT_MASS_KG_PER_TICK := 6.0
+const HAND_DRILL_LOOT_PILE_MAX_MASS_KG := 32.0
+const HAND_DRILL_LOOT_MERGE_RADIUS_M := 0.7
+const HAND_DRILL_INTERVAL_S := 0.08
 const HAND_DRILL_LOOT_DESPAWN_S := 600.0
 const HAND_DRILL_LOOT_KG_PER_M3 := 1500.0
 
@@ -71,6 +73,24 @@ static func internal_buffer_capacity_kg(archetype_id: String) -> float:
 
 static func player_carry_capacity_kg() -> float:
 	return PLAYER_CARRY_CAPACITY_KG
+
+
+static func player_construction_capacity_kg() -> float:
+	return PLAYER_CONSTRUCTION_CAPACITY_KG
+
+
+static func player_material_capacity_kg() -> float:
+	return PLAYER_MATERIAL_CAPACITY_KG
+
+
+static func player_capacity_kg_for_resource(resource_id: String) -> float:
+	if resource_id == "construction_component":
+		return PLAYER_CONSTRUCTION_CAPACITY_KG
+	return PLAYER_MATERIAL_CAPACITY_KG
+
+
+static func is_player_construction_resource(resource_id: String) -> bool:
+	return resource_id == "construction_component"
 
 
 static func is_recipe_machine(archetype_id: String) -> bool:
