@@ -1,20 +1,7 @@
-[gd_resource type="Theme" load_steps=5 format=3 uid="uid://b8hudthemeui01"]
+[gd_resource type="Theme" format=3 uid="uid://brwksircsfm41"]
 
-[sub_resource type="StyleBoxFlat" id="SB_Panel"]
-content_margin_left = 18.0
-content_margin_top = 16.0
-content_margin_right = 18.0
-content_margin_bottom = 16.0
-bg_color = Color(0.027, 0.043, 0.059, 0.8)
-border_width_left = 1
-border_width_top = 1
-border_width_right = 1
-border_width_bottom = 1
-border_color = Color(0.129, 0.18, 0.235, 1)
-corner_radius_top_left = 3
-corner_radius_top_right = 3
-corner_radius_bottom_right = 3
-corner_radius_bottom_left = 3
+[sub_resource type="StyleBoxFlat" id="SB_Divider"]
+bg_color = Color(0.129, 0.18, 0.235, 0.5)
 
 [sub_resource type="StyleBoxFlat" id="SB_Slot"]
 content_margin_left = 6.0
@@ -48,26 +35,39 @@ corner_radius_top_right = 3
 corner_radius_bottom_right = 3
 corner_radius_bottom_left = 3
 
-[sub_resource type="StyleBoxFlat" id="SB_Divider"]
-bg_color = Color(0.129, 0.18, 0.235, 0.5)
+[sub_resource type="StyleBoxFlat" id="SB_Panel"]
+content_margin_left = 18.0
+content_margin_top = 16.0
+content_margin_right = 18.0
+content_margin_bottom = 16.0
+bg_color = Color(0.027, 0.043, 0.059, 0.8)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.129, 0.18, 0.235, 1)
+corner_radius_top_left = 3
+corner_radius_top_right = 3
+corner_radius_bottom_right = 3
+corner_radius_bottom_left = 3
 
 [resource]
 default_font_size = 14
-Label/colors/font_color = Color(0.78, 0.871, 0.925, 1)
-Label/font_sizes/font_size = 14
-Panel/styles/panel = SubResource("SB_Panel")
+HudDivider/base_type = &"Panel"
+HudDivider/styles/panel = SubResource("SB_Divider")
 HudSlot/base_type = &"Panel"
 HudSlot/styles/panel = SubResource("SB_Slot")
 HudSlotSelected/base_type = &"Panel"
 HudSlotSelected/styles/panel = SubResource("SB_SlotSelected")
-HudDivider/base_type = &"Panel"
-HudDivider/styles/panel = SubResource("SB_Divider")
-HudTitle/base_type = &"Label"
-HudTitle/colors/font_color = Color(0.70, 0.847, 0.914, 1)
-HudTitle/font_sizes/font_size = 16
 HudSmall/base_type = &"Label"
 HudSmall/colors/font_color = Color(0.431, 0.518, 0.58, 1)
 HudSmall/font_sizes/font_size = 11
+HudTitle/base_type = &"Label"
+HudTitle/colors/font_color = Color(0.7, 0.847, 0.914, 1)
+HudTitle/font_sizes/font_size = 16
 HudValue/base_type = &"Label"
 HudValue/colors/font_color = Color(0.298, 0.608, 0.91, 1)
 HudValue/font_sizes/font_size = 14
+Label/colors/font_color = Color(0.78, 0.871, 0.925, 1)
+Label/font_sizes/font_size = 14
+Panel/styles/panel = SubResource("SB_Panel")

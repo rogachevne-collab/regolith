@@ -45,12 +45,34 @@ const TOOL_CODES := {
 	"grinder": "GRD",
 	"frame": "FRM",
 	"frame_beam": "BEM",
+	"frame_basalt": "BAS",
 	"power_source": "PWR",
+	"power_distributor": "DST",
+	"power_battery": "BAT",
 	"stationary_drill": "SDR",
 	"cargo_store": "CRG",
+	"cargo_pipe": "PIP",
 	"processor": "PRC",
 	"fabricator": "FAB",
 	"foundation": "FND",
+	"connect": "CON",
+}
+
+## Short Cyrillic chrome labels for construction archetypes shown in the Block
+## Palette name row. Keeps cards readable without mid-word wrapping of raw ids.
+const ARCHETYPE_LABELS := {
+	"frame": "КАРКАС",
+	"frame_beam": "БАЛКА",
+	"frame_basalt": "БАЗАЛЬТ",
+	"power_source": "ПИТАНИЕ",
+	"power_distributor": "РАСПРЕД",
+	"power_battery": "БАТАРЕЯ",
+	"stationary_drill": "БУР",
+	"cargo_store": "СКЛАД",
+	"cargo_pipe": "ТРУБА",
+	"processor": "ПРОЦЕССОР",
+	"fabricator": "ФАБРИКАТОР",
+	"foundation": "ФУНДАМЕНТ",
 }
 
 
@@ -59,6 +81,19 @@ const TOOL_CODES := {
 ## presentation never fabricates a name it does not have.
 const RESOURCE_LABELS := {
 	"construction_component": "КОМПОНЕНТ",
+	"raw_regolith": "РЕГОЛИТ",
+	"regolith_fines": "ФРАКЦИЯ",
+	"sintered_basalt": "БАЗАЛЬТ",
+	"calcined_oxide": "ОКСИД",
+	"metal_ingot": "СЛИТОК",
+}
+
+const RECIPE_LABELS := {
+	"crush_regolith": "ДРОБЛЕНИЕ РЕГОЛИТА",
+	"sinter_basalt": "СПЕКАНИЕ БАЗАЛЬТА",
+	"calcine_fines": "ОБЖИГ ФРАКЦИИ",
+	"reduce_oxide": "ВОССТАНОВЛЕНИЕ ОКСИДА",
+	"sinter_component": "СПЕКАНИЕ КОМПОНЕНТА",
 }
 
 
@@ -72,6 +107,14 @@ static func resource_label(resource_id: String) -> String:
 	if resource_id.is_empty():
 		return "—"
 	return resource_id.to_upper()
+
+
+static func recipe_label(recipe_id: String) -> String:
+	if RECIPE_LABELS.has(recipe_id):
+		return RECIPE_LABELS[recipe_id]
+	if recipe_id.is_empty():
+		return "—"
+	return recipe_id.to_upper()
 
 
 ## Compact numeric formatting for store amounts: whole numbers show without a
@@ -93,6 +136,12 @@ static func color_for_status(status: StringName) -> Color:
 			return COL_WARNING
 		&"element_broken":
 			return COL_CRITICAL
+		&"no_power", &"outside_power_radius", &"port_disconnected":
+			return COL_WARNING
+		&"no_input", &"no_terrain_contact", &"storage_full", &"queue_full":
+			return COL_WARNING
+		&"disabled":
+			return COL_DIM
 		_:
 			return COL_TEXT
 
@@ -107,6 +156,22 @@ static func status_label(status: StringName) -> String:
 			return "ПОВРЕЖДЕНИЕ"
 		&"element_broken":
 			return "СЛОМАН"
+		&"no_power":
+			return "НЕТ ПИТАНИЯ"
+		&"outside_power_radius":
+			return "ВНЕ ЗОНЫ"
+		&"port_disconnected":
+			return "НЕТ СВЯЗИ"
+		&"no_input":
+			return "НЕТ СЫРЬЯ"
+		&"no_terrain_contact":
+			return "НЕТ ГРУНТА"
+		&"storage_full":
+			return "СКЛАД ПОЛОН"
+		&"disabled":
+			return "ВЫКЛ"
+		&"queue_full":
+			return "ОЧЕРЕДЬ ПОЛНА"
 		_:
 			return "—"
 
@@ -117,6 +182,16 @@ static func tool_code(id: String) -> String:
 	if id.is_empty():
 		return ""
 	return id.substr(0, 3).to_upper()
+
+
+static func archetype_label(archetype_id: String, gateway_name: String = "") -> String:
+	if ARCHETYPE_LABELS.has(archetype_id):
+		return ARCHETYPE_LABELS[archetype_id]
+	if not gateway_name.is_empty() and gateway_name != archetype_id:
+		return gateway_name.to_upper()
+	if archetype_id.is_empty():
+		return "—"
+	return archetype_id.replace("_", " ").to_upper()
 
 
 # Additive framed-panel overlay (hairline border + faint edge glow + quiet

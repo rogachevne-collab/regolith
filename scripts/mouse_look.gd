@@ -6,7 +6,6 @@ extends Camera3D
 @export var head_height := 0.75
 
 var _pitch := 0.0
-var _pending_yaw := 0.0
 var _target: Node3D
 var _last_target_position := Vector3.ZERO
 
@@ -26,7 +25,8 @@ func _ready() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
 		var motion: Vector2 = event.relative
-		_pending_yaw -= motion.x * sensitivity
+		if _target != null:
+			_target.rotate_y(deg_to_rad(-motion.x * sensitivity))
 		_pitch = clampf(_pitch - motion.y * sensitivity, min_pitch, max_pitch)
 
 
@@ -44,34 +44,28 @@ func _process(_delta: float) -> void:
 	global_transform = _camera_transform(
 		target_transform.origin,
 		_target.global_transform.basis.orthonormalized()
-		* Basis(Vector3.UP, deg_to_rad(_pending_yaw))
 	)
 
 
 func movement_basis() -> Basis:
 	if _target == null:
 		return Basis.IDENTITY
-	return (
-		_target.global_transform.basis.orthonormalized()
-		* Basis(Vector3.UP, deg_to_rad(_pending_yaw))
-	)
+	return _target.global_transform.basis.orthonormalized()
 
 
 func aim_transform() -> Transform3D:
 	if _target == null:
 		return global_transform
 	var target_transform := _target.global_transform
-	var target_basis := (
+	return _camera_transform(
+		target_transform.origin,
 		target_transform.basis.orthonormalized()
-		* Basis(Vector3.UP, deg_to_rad(_pending_yaw))
 	)
-	return _camera_transform(target_transform.origin, target_basis)
 
 
 func consume_yaw_delta() -> float:
-	var result := _pending_yaw
-	_pending_yaw = 0.0
-	return result
+	# Yaw is applied immediately in _unhandled_input; kept for callers.
+	return 0.0
 
 
 func set_look_sensitivity(value: float) -> void:

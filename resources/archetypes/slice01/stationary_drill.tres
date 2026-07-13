@@ -1,9 +1,9 @@
-[gd_resource type="Resource" script_class="ElementArchetype" format=3]
+[gd_resource type="Resource" script_class="ElementArchetype" format=3 uid="uid://rjijwqeg8ea"]
 
-[ext_resource type="Script" path="res://scripts/simulation/resources/build_requirement.gd" id="1_20tgf"]
-[ext_resource type="Script" path="res://scripts/simulation/resources/collider_definition.gd" id="2_hlghb"]
-[ext_resource type="Script" path="res://scripts/simulation/resources/port_definition.gd" id="3_in4ho"]
-[ext_resource type="Script" path="res://scripts/simulation/resources/element_archetype.gd" id="4_rwnby"]
+[ext_resource type="Script" uid="uid://c2p36g85wqkru" path="res://scripts/simulation/resources/build_requirement.gd" id="1_20tgf"]
+[ext_resource type="Script" uid="uid://b6d2jhfw581hb" path="res://scripts/simulation/resources/collider_definition.gd" id="2_hlghb"]
+[ext_resource type="Script" uid="uid://c4hgnuqnf2up8" path="res://scripts/simulation/resources/port_definition.gd" id="3_in4ho"]
+[ext_resource type="Script" uid="uid://bxidpb3tep3ih" path="res://scripts/simulation/resources/element_archetype.gd" id="4_rwnby"]
 
 [sub_resource type="Resource" id="Resource_ukuph"]
 script = ExtResource("1_20tgf")
@@ -55,6 +55,13 @@ kind = 1
 local_face = 5
 compatibility_tags = PackedStringArray("electric")
 
+[sub_resource type="Resource" id="Resource_cargo_out"]
+script = ExtResource("3_in4ho")
+port_id = "cargo_out"
+kind = 7
+local_face = 4
+compatibility_tags = PackedStringArray("cargo")
+
 [resource]
 script = ExtResource("4_rwnby")
 archetype_id = "stationary_drill"
@@ -62,5 +69,5 @@ display_name = "Stationary Drill"
 roles = PackedStringArray("Tool")
 mass_kg = 180.0
 colliders = Array[ExtResource("2_hlghb")]([SubResource("Resource_31e42")])
-ports = Array[ExtResource("3_in4ho")]([SubResource("Resource_c0h8t"), SubResource("Resource_j4mgc"), SubResource("Resource_3whpu"), SubResource("Resource_fb0qv"), SubResource("Resource_5stua"), SubResource("Resource_x5q06"), SubResource("Resource_xvmdi")])
+ports = Array[ExtResource("3_in4ho")]([SubResource("Resource_c0h8t"), SubResource("Resource_j4mgc"), SubResource("Resource_3whpu"), SubResource("Resource_fb0qv"), SubResource("Resource_5stua"), SubResource("Resource_x5q06"), SubResource("Resource_xvmdi"), SubResource("Resource_cargo_out")])
 build_requirements = Array[ExtResource("1_20tgf")]([SubResource("Resource_ukuph")])

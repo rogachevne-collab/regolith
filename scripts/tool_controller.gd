@@ -59,9 +59,13 @@ const ACTIONS := {
 const CONSTRUCTION_ARCHETYPES: PackedStringArray = [
 	"frame",
 	"frame_beam",
+	"frame_basalt",
 	"power_source",
+	"power_distributor",
+	"power_battery",
 	"stationary_drill",
 	"cargo_store",
+	"cargo_pipe",
 	"processor",
 	"fabricator",
 ]
@@ -86,19 +90,19 @@ const TOOLBAR_PAGES: Array = [
 		{"type": &"block", "archetype_id": "power_source"},
 		{"type": &"block", "archetype_id": "stationary_drill"},
 		{"type": &"block", "archetype_id": "cargo_store"},
-		{},
+		{"type": &"connect"},
 		{},
 	],
 	[
 		{"type": &"block", "archetype_id": "processor"},
 		{"type": &"block", "archetype_id": "fabricator"},
+		{"type": &"block", "archetype_id": "cargo_pipe"},
+		{"type": &"block", "archetype_id": "power_distributor"},
+		{"type": &"block", "archetype_id": "power_battery"},
+		{"type": &"block", "archetype_id": "frame_basalt"},
 		{"type": &"block", "archetype_id": "frame"},
 		{"type": &"block", "archetype_id": "frame_beam"},
 		{"type": &"block", "archetype_id": "power_source"},
-		{"type": &"block", "archetype_id": "stationary_drill"},
-		{"type": &"block", "archetype_id": "cargo_store"},
-		{},
-		{},
 	],
 ]
 
@@ -126,6 +130,8 @@ var _toolbar_slot_by_page: Array[int] = []
 ## const layout. Lazily built so the remap API is usable without a full scene
 ## (e.g. in headless logic tests).
 var _toolbar_layout: Array = []
+var _connect_pending_element_id := 0
+var _recipe_cursor_by_element: Dictionary = {}
 
 
 func _ready() -> void:
@@ -151,6 +157,12 @@ func _physics_process(delta: float) -> void:
 		and player.call("is_in_vehicle")
 	):
 		_update_toolbar_input()
+	if active_tool == &"connect":
+		if Input.is_action_just_pressed(&"tool_primary"):
+			_handle_connect_click(_query.current_hit)
+		if Input.is_action_just_pressed(&"interact"):
+			_try_emit_context_interaction(_query.current_hit)
+		return
 	var requested_action := _pressed_action()
 	if requested_action.is_empty():
 		if state == ActionState.PRESSED or state == ActionState.HOLDING:
@@ -259,6 +271,8 @@ func toolbar_slot_label(page: int, slot: int) -> String:
 			return "сварка"
 		&"grinder":
 			return "болгарка"
+		&"connect":
+			return "соединение"
 		&"block":
 			return str(entry.get("archetype_id", ""))
 		_:
@@ -276,6 +290,8 @@ func _emit_command_for_action(
 		"orientation_index": selected_orientation_index,
 		"construction_mode": _construction_mode,
 	}
+	if action == &"interact" and _try_emit_context_interaction(hit):
+		return
 	if (
 		_construction_mode == &"place"
 		and _preview != null
@@ -349,6 +365,7 @@ func _pressed_action() -> StringName:
 				and active_tool != &"grinder"
 				and active_tool != &"build"
 				and active_tool != &"weld"
+				and active_tool != &"connect"
 			):
 				continue
 		if (
@@ -373,6 +390,8 @@ func _update_toolbar_input() -> void:
 	if Input.is_action_just_pressed(&"construction_rotate_yaw"):
 		if active_tool == &"build":
 			_rotate_orientation(Vector3.UP)
+		else:
+			_try_enqueue_target_recipe(_query.current_hit)
 	if Input.is_action_just_pressed(&"construction_rotate_pitch"):
 		if active_tool == &"build":
 			_rotate_orientation(Vector3.RIGHT)
@@ -413,6 +432,9 @@ func _apply_toolbar_slot(
 			active_tool = &"weld"
 		&"grinder":
 			active_tool = &"grinder"
+		&"connect":
+			active_tool = &"connect"
+			_connect_pending_element_id = 0
 		&"block":
 			active_tool = &"build"
 			selected_archetype_id = str(entry.get("archetype_id", "frame"))
@@ -482,6 +504,8 @@ func toolbar_slot_archetype_id(page: int, slot: int) -> String:
 			return "weld"
 		&"grinder":
 			return "grinder"
+		&"connect":
+			return "connect"
 		&"block":
 			return str(entry.get("archetype_id", ""))
 		_:
@@ -635,6 +659,165 @@ func _drill_damage_per_tick() -> float:
 
 func _grinder_damage_per_tick() -> float:
 	return GRINDER_DPS * GRINDER_INTERVAL
+
+
+func _handle_connect_click(hit: InteractionHit) -> void:
+	if (
+		not hit.valid
+		or hit.target_kind != InteractionHit.KIND_SIMULATION_ELEMENT
+		or hit.distance > 4.0
+	):
+		_connect_pending_element_id = 0
+		return
+	var element_id := int(hit.metadata.get("element_id", 0))
+	if element_id <= 0:
+		_connect_pending_element_id = 0
+		return
+	if _connect_pending_element_id <= 0:
+		_connect_pending_element_id = element_id
+		return
+	if _connect_pending_element_id == element_id:
+		return
+	command_requested.emit({
+		"kind": &"connect_network",
+		"source": get_parent(),
+		"target": hit.snapshot(),
+		"parameters": {
+			"element_a_id": _connect_pending_element_id,
+			"element_b_id": element_id,
+		},
+	})
+	_connect_pending_element_id = 0
+
+
+func connect_pending_element_id() -> int:
+	return _connect_pending_element_id
+
+
+func next_recipe_for_target(hit: InteractionHit) -> String:
+	if (
+		hit == null
+		or not hit.valid
+		or hit.target_kind != InteractionHit.KIND_SIMULATION_ELEMENT
+	):
+		return ""
+	var archetype_id := str(hit.metadata.get("archetype_id", ""))
+	var recipe_ids := RecipeCatalog.recipe_ids_for_machine(archetype_id)
+	if recipe_ids.is_empty():
+		return ""
+	var element_id := int(hit.metadata.get("element_id", 0))
+	var cursor := int(_recipe_cursor_by_element.get(element_id, 0))
+	return recipe_ids[wrapi(cursor, 0, recipe_ids.size())]
+
+
+func _try_emit_context_interaction(hit: InteractionHit) -> bool:
+	if _try_collect_world_loot(hit):
+		return true
+	if _try_toggle_target_machine(hit):
+		return true
+	return _try_emit_industry_transfer(hit)
+
+
+func _try_collect_world_loot(hit: InteractionHit) -> bool:
+	if (
+		hit == null
+		or not hit.valid
+		or hit.target_kind != InteractionHit.KIND_WORLD_LOOT
+		or hit.distance > 4.0
+	):
+		return false
+	var pile_id := int(hit.metadata.get("loot_pile_id", 0))
+	if pile_id <= 0:
+		return false
+	command_requested.emit({
+		"kind": &"collect_world_loot",
+		"source": get_parent(),
+		"target": hit.snapshot(),
+		"parameters": {
+			"pile_id": pile_id,
+			"to_store_id": IndustryStoreService.PLAYER_STORE_ID,
+		},
+	})
+	return true
+
+
+func _try_toggle_target_machine(hit: InteractionHit) -> bool:
+	if (
+		hit == null
+		or not hit.valid
+		or hit.target_kind != InteractionHit.KIND_SIMULATION_ELEMENT
+		or hit.distance > 4.0
+	):
+		return false
+	var archetype_id := str(hit.metadata.get("archetype_id", ""))
+	if archetype_id not in ["stationary_drill", "processor", "fabricator"]:
+		return false
+	command_requested.emit({
+		"kind": &"set_machine_enabled",
+		"source": get_parent(),
+		"target": hit.snapshot(),
+		"parameters": {
+			"element_id": int(hit.metadata.get("element_id", 0)),
+			"enabled": not bool(hit.metadata.get("machine_enabled", true)),
+		},
+	})
+	return true
+
+
+func _try_enqueue_target_recipe(hit: InteractionHit) -> bool:
+	var recipe_id := next_recipe_for_target(hit)
+	if recipe_id.is_empty() or hit.distance > 4.0:
+		return false
+	var element_id := int(hit.metadata.get("element_id", 0))
+	command_requested.emit({
+		"kind": &"enqueue_recipe",
+		"source": get_parent(),
+		"target": hit.snapshot(),
+		"parameters": {
+			"element_id": element_id,
+			"recipe_id": recipe_id,
+		},
+	})
+	var count := RecipeCatalog.recipe_ids_for_machine(
+		str(hit.metadata.get("archetype_id", ""))
+	).size()
+	_recipe_cursor_by_element[element_id] = wrapi(
+		int(_recipe_cursor_by_element.get(element_id, 0)) + 1,
+		0,
+		count
+	)
+	return true
+
+
+func _try_emit_industry_transfer(hit: InteractionHit) -> bool:
+	if _gateway == null:
+		return false
+	if (
+		not hit.valid
+		or hit.target_kind != InteractionHit.KIND_SIMULATION_ELEMENT
+		or hit.distance > 4.0
+	):
+		return false
+	var session := _gateway.get_node_or_null(
+		_gateway.simulation_session_path
+	) as SimulationSession
+	if session == null:
+		return false
+	var element := session.world.get_element(int(hit.metadata.get("element_id", 0)))
+	if not IndustryTransferUtil.is_transfer_target(element):
+		return false
+	var parameters := IndustryTransferUtil.pickup_parameters(session.world, element)
+	if parameters.is_empty():
+		parameters = IndustryTransferUtil.deposit_parameters(session.world, element)
+	if parameters.is_empty():
+		return false
+	command_requested.emit({
+		"kind": &"transfer_resource",
+		"source": get_parent(),
+		"target": hit.snapshot(),
+		"parameters": parameters,
+	})
+	return true
 
 
 func _target_for_action(action: StringName) -> InteractionHit:

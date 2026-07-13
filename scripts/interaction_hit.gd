@@ -7,6 +7,7 @@ const KIND_BODY := &"body"
 const KIND_PLACED_BLOCK := &"placed_block"
 const KIND_CONTROL_SEAT := &"control_seat"
 const KIND_SIMULATION_ELEMENT := &"simulation_element"
+const KIND_WORLD_LOOT := &"world_loot"
 
 var valid := false
 var point := Vector3.ZERO

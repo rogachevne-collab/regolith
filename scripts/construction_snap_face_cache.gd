@@ -45,6 +45,20 @@ func ensure_current() -> bool:
 		_initialized = true
 		last_faces_in_cache = _faces.size()
 		return true
+	var live_assembly_ids := _sorted_live_assembly_ids()
+	if live_assembly_ids != _assembly_ids:
+		_rebuild_all(live_assembly_ids)
+		_touch()
+		return true
+	for assembly_id: int in live_assembly_ids:
+		var assembly := _world.get_assembly_raw(assembly_id)
+		if (
+			assembly == null
+			or _assembly_signatures.get(assembly_id, "") != _assembly_signature(assembly)
+		):
+			_rebuild_all(live_assembly_ids)
+			_touch()
+			return true
 	last_faces_in_cache = _faces.size()
 	return false
 

@@ -14,6 +14,10 @@ static func capture(world) -> Dictionary:
 		"joints": _serialize_joints(world),
 		"redirects": _serialize_redirects(world),
 		"resource_stores": _serialize_resource_stores(world),
+		"industry_network": world.get_industry_network().to_dict(),
+		"industry_elements": world.list_industry_element_runtimes(),
+		"world_loot_piles": world.list_world_loot_piles(),
+		"simulation_time_s": world.get_simulation_time_s(),
 	}
 
 
@@ -41,6 +45,10 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 	var joint_rows: Variant = snapshot.get("joints")
 	var redirect_rows: Variant = snapshot.get("redirects")
 	var store_rows: Variant = snapshot.get("resource_stores")
+	var industry_network_row: Variant = snapshot.get("industry_network", {})
+	var industry_element_rows: Variant = snapshot.get("industry_elements", [])
+	var loot_rows: Variant = snapshot.get("world_loot_piles", [])
+	var simulation_time_s := float(snapshot.get("simulation_time_s", 0.0))
 	var allocator_data: Variant = snapshot.get("allocator")
 	if (
 		not archetype_rows is Array
@@ -309,15 +317,70 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 			return false
 		stores[store.store_id] = store
 
+	var industry_network := IndustryNetworkState.create_default()
+	if industry_network_row is Dictionary:
+		industry_network.load_from_dict(industry_network_row)
+	var industry_elements: Dictionary = {}
+	if industry_element_rows is Array:
+		for row_variant: Variant in industry_element_rows:
+			if not row_variant is Dictionary:
+				return false
+			var row: Dictionary = row_variant
+			var element_id := int(row.get("element_id", 0))
+			var runtime_row: Variant = row.get("runtime", {})
+			if element_id <= 0 or not runtime_row is Dictionary:
+				return false
+			if not elements.has(element_id):
+				return false
+			industry_elements[element_id] = IndustryElementRuntime.from_dict(
+				runtime_row
+			)
+	var max_link_id := 0
+	var electric_pair_keys: Dictionary = {}
+	for link: IndustryElectricLink in industry_network.list_links():
+		if (
+			link.link_id <= 0
+			or not elements.has(link.element_a)
+			or not elements.has(link.element_b)
+		):
+			return false
+		var pair_key := link.canonical_pair_key()
+		if electric_pair_keys.has(pair_key):
+			return false
+		electric_pair_keys[pair_key] = true
+		max_link_id = maxi(max_link_id, link.link_id)
+		var element_a: SimulationElement = elements[link.element_a]
+		var element_b: SimulationElement = elements[link.element_b]
+		var port_a := IndustryElectricPortUtil.find_port(element_a, link.port_a)
+		var port_b := IndustryElectricPortUtil.find_port(element_b, link.port_b)
+		if (
+			not IndustryElectricPortUtil.is_electric_port(port_a)
+			or not IndustryElectricPortUtil.is_electric_port(port_b)
+			or not IndustryElectricPortUtil.electric_directions_compatible(
+				port_a,
+				port_b
+			)
+			or _snapshot_electric_distance_m(
+				assembly_ids,
+				element_a,
+				port_a,
+				element_b,
+				port_b
+			) > IndustryElectricPortUtil.MAX_CABLE_LENGTH_M + 0.000001
+		):
+			return false
+
 	var next_element_id := int(allocator_data.get("next_element_id", 0))
 	var next_assembly_id := int(allocator_data.get("next_assembly_id", 0))
 	var next_joint_id := int(allocator_data.get("next_joint_id", 0))
 	var next_command_id := int(allocator_data.get("next_command_id", 0))
+	var next_link_id := int(allocator_data.get("next_link_id", 1))
 	if (
 		next_element_id <= max_element_id
 		or next_assembly_id <= max_assembly_id
 		or next_joint_id <= max_joint_id
 		or next_command_id <= 0
+		or next_link_id <= max_link_id
 	):
 		return false
 
@@ -334,6 +397,21 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 	store_ids.sort()
 	for store_id: Variant in store_ids:
 		world._register_resource_store(stores[store_id])
+	world._register_industry_network(industry_network)
+	for element_id: int in _sorted_int_keys(industry_elements):
+		world._register_industry_element_runtime(
+			element_id,
+			industry_elements[element_id]
+		)
+	if loot_rows is Array:
+		for row_variant: Variant in loot_rows:
+			if not row_variant is Dictionary:
+				return false
+			var pile := WorldLootPile.from_dict(row_variant)
+			if pile == null or pile.pile_id <= 0:
+				return false
+			world._register_world_loot_pile(pile)
+	world._register_simulation_time(simulation_time_s)
 	return true
 
 
@@ -398,6 +476,26 @@ static func _element_has_anchor_port(
 	port_id: String
 ) -> bool:
 	return RuntimeConnectivity.ground_anchor_port_id(element) == port_id
+
+
+static func _snapshot_electric_distance_m(
+	assemblies: Dictionary,
+	element_a: SimulationElement,
+	port_a: PortDefinition,
+	element_b: SimulationElement,
+	port_b: PortDefinition
+) -> float:
+	var assembly_a: SimulationAssembly = assemblies[element_a.assembly_id]
+	var assembly_b: SimulationAssembly = assemblies[element_b.assembly_id]
+	var anchor_a := (
+		assembly_a.motion.transform
+		* IndustryPortUtil.port_local_transform(element_a, port_a)
+	).origin
+	var anchor_b := (
+		assembly_b.motion.transform
+		* IndustryPortUtil.port_local_transform(element_b, port_b)
+	).origin
+	return anchor_a.distance_to(anchor_b)
 
 
 static func _sorted_int_keys(values: Dictionary) -> Array[int]:

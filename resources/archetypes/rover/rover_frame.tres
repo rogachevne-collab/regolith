@@ -1,9 +1,9 @@
-[gd_resource type="Resource" script_class="ElementArchetype" format=3]
+[gd_resource type="Resource" script_class="ElementArchetype" format=3 uid="uid://3imhrbehfnx6"]
 
-[ext_resource type="Script" path="res://scripts/simulation/resources/build_requirement.gd" id="1_req"]
-[ext_resource type="Script" path="res://scripts/simulation/resources/collider_definition.gd" id="2_col"]
-[ext_resource type="Script" path="res://scripts/simulation/resources/port_definition.gd" id="3_port"]
-[ext_resource type="Script" path="res://scripts/simulation/resources/element_archetype.gd" id="4_arch"]
+[ext_resource type="Script" uid="uid://c2p36g85wqkru" path="res://scripts/simulation/resources/build_requirement.gd" id="1_req"]
+[ext_resource type="Script" uid="uid://b6d2jhfw581hb" path="res://scripts/simulation/resources/collider_definition.gd" id="2_col"]
+[ext_resource type="Script" uid="uid://c4hgnuqnf2up8" path="res://scripts/simulation/resources/port_definition.gd" id="3_port"]
+[ext_resource type="Script" uid="uid://bxidpb3tep3ih" path="res://scripts/simulation/resources/element_archetype.gd" id="4_arch"]
 
 [sub_resource type="Resource" id="Requirement"]
 script = ExtResource("1_req")

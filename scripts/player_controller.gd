@@ -116,8 +116,6 @@ func _physics_process(delta: float) -> void:
 	if _spawn_locked:
 		return
 
-	var yaw_delta: float = _head.call("consume_yaw_delta")
-	rotate_y(deg_to_rad(yaw_delta))
 	var movement_basis: Basis = _head.call("movement_basis")
 	var forward := -movement_basis.z
 	forward.y = 0.0

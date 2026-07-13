@@ -1,9 +1,9 @@
-[gd_resource type="Resource" script_class="ElementArchetype" format=3]
+[gd_resource type="Resource" script_class="ElementArchetype" format=3 uid="uid://bvvcdqlh1gq7i"]
 
-[ext_resource type="Script" path="res://scripts/simulation/resources/build_requirement.gd" id="1_vn13f"]
-[ext_resource type="Script" path="res://scripts/simulation/resources/collider_definition.gd" id="2_tkxy8"]
-[ext_resource type="Script" path="res://scripts/simulation/resources/port_definition.gd" id="3_y34lf"]
-[ext_resource type="Script" path="res://scripts/simulation/resources/element_archetype.gd" id="4_dde6h"]
+[ext_resource type="Script" uid="uid://c2p36g85wqkru" path="res://scripts/simulation/resources/build_requirement.gd" id="1_vn13f"]
+[ext_resource type="Script" uid="uid://b6d2jhfw581hb" path="res://scripts/simulation/resources/collider_definition.gd" id="2_tkxy8"]
+[ext_resource type="Script" uid="uid://c4hgnuqnf2up8" path="res://scripts/simulation/resources/port_definition.gd" id="3_y34lf"]
+[ext_resource type="Script" uid="uid://bxidpb3tep3ih" path="res://scripts/simulation/resources/element_archetype.gd" id="4_dde6h"]
 
 [sub_resource type="Resource" id="Resource_4orsx"]
 script = ExtResource("1_vn13f")
@@ -55,6 +55,13 @@ kind = 7
 local_face = 2
 compatibility_tags = PackedStringArray("cargo")
 
+[sub_resource type="Resource" id="Resource_cargo_io_nz"]
+script = ExtResource("3_y34lf")
+port_id = "cargo_io_nz"
+kind = 7
+local_face = 5
+compatibility_tags = PackedStringArray("cargo")
+
 [resource]
 script = ExtResource("4_dde6h")
 archetype_id = "cargo_store"
@@ -62,5 +69,5 @@ display_name = "Cargo Store"
 roles = PackedStringArray("CargoHold")
 mass_kg = 90.0
 colliders = Array[ExtResource("2_tkxy8")]([SubResource("Resource_kjr4j")])
-ports = Array[ExtResource("3_y34lf")]([SubResource("Resource_kphv1"), SubResource("Resource_5mvr5"), SubResource("Resource_kg8yg"), SubResource("Resource_gu7q6"), SubResource("Resource_ov1np"), SubResource("Resource_3rlf3"), SubResource("Resource_f2hpt")])
+ports = Array[ExtResource("3_y34lf")]([SubResource("Resource_kphv1"), SubResource("Resource_5mvr5"), SubResource("Resource_kg8yg"), SubResource("Resource_gu7q6"), SubResource("Resource_ov1np"), SubResource("Resource_3rlf3"), SubResource("Resource_f2hpt"), SubResource("Resource_cargo_io_nz")])
 build_requirements = Array[ExtResource("1_vn13f")]([SubResource("Resource_4orsx")])

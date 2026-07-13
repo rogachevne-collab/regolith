@@ -112,6 +112,8 @@ func _target_kind(
 		return collider.call("interaction_target_kind")
 	if metadata.has("element_id"):
 		return InteractionHit.KIND_SIMULATION_ELEMENT
+	if metadata.has("loot_pile_id"):
+		return InteractionHit.KIND_WORLD_LOOT
 	if collider is VoxelTerrain:
 		return InteractionHit.KIND_VOXEL
 	if collider is Node and collider.is_in_group("placed_blocks"):
@@ -159,7 +161,18 @@ func _target_metadata(
 			metadata["build_progress"] = element.build_progress
 			metadata["integrity"] = element.integrity
 			metadata["state_revision"] = element.state_revision
-			metadata["status_reason"] = element.status_reason()
+			metadata["status_reason"] = IndustryStatusUtil.resolve_display_reason(
+				_session.world,
+				element
+			)
+			var runtime := _session.world.ensure_industry_element_runtime(
+				element.element_id
+			)
+			metadata["machine_enabled"] = runtime.machine_enabled
+			if element.archetype_id in ["processor", "fabricator"]:
+				var machine := runtime.ensure_machine_state()
+				metadata["active_recipe_id"] = machine.active_recipe_id
+				metadata["recipe_queue"] = machine.queue.duplicate()
 	return metadata
 
 

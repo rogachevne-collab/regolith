@@ -4,7 +4,7 @@ const SKY_PROBE_Y := 120.0
 const SPAWN_CLEARANCE := 1.05
 const MIN_WARMUP_FRAMES := 30
 const STABLE_PHYSICS_FRAMES := 4
-const STARTER_CONSTRUCTION_COMPONENTS := 120.0
+const STARTER_CONSTRUCTION_COMPONENTS := 1000.0
 
 @onready var _terrain: VoxelTerrain = $VoxelTerrain
 @onready var _player: Node3D = $Player

@@ -11,6 +11,7 @@
 [ext_resource type="Script" uid="uid://b3mkkfnkg88fv" path="res://scripts/tool_controller.gd" id="9"]
 [ext_resource type="PackedScene" uid="uid://c8hudroot0ui01" path="res://scenes/ui/hud_root.tscn" id="10"]
 [ext_resource type="Script" path="res://scripts/construction_preview.gd" id="11"]
+[ext_resource type="Script" path="res://scripts/presentation/industry_port_presentation.gd" id="13"]
 [ext_resource type="Script" path="res://scripts/suit_state.gd" id="12"]
 
 [sub_resource type="CylinderShape3D" id="CylinderShape_player"]
@@ -81,6 +82,9 @@ preview_path = NodePath("../ConstructionPreview")
 [node name="ConstructionPreview" type="Node3D" parent="."]
 script = ExtResource("11")
 camera_path = NodePath("../Camera")
+
+[node name="IndustryPortPresentation" type="Node" parent="."]
+script = ExtResource("13")
 
 [node name="Camera" type="Camera3D" parent="." unique_id=1923783900]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.75, 0)

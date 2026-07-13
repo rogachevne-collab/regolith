@@ -1,0 +1,146 @@
+[gd_scene load_steps=12 format=3]
+
+[ext_resource type="PackedScene" path="res://scenes/vfx/stationary_drill_operation.tscn" id="1_vfx"]
+
+[sub_resource type="StandardMaterial3D" id="Material_housing"]
+albedo_color = Color(0.07, 0.09, 0.12, 1)
+metallic = 0.88
+roughness = 0.28
+
+[sub_resource type="StandardMaterial3D" id="Material_head"]
+albedo_color = Color(0.16, 0.52, 0.72, 1)
+metallic = 0.78
+roughness = 0.24
+
+[sub_resource type="StandardMaterial3D" id="Material_direction"]
+albedo_color = Color(1, 0.56, 0.08, 1)
+shading_mode = 0
+emission_enabled = true
+emission = Color(1, 0.24, 0.015, 1)
+emission_energy_multiplier = 2.4
+
+[sub_resource type="CylinderMesh" id="Mesh_housing"]
+material = SubResource("Material_housing")
+top_radius = 0.25
+bottom_radius = 0.32
+height = 0.36
+radial_segments = 16
+
+[sub_resource type="CylinderMesh" id="Mesh_shaft"]
+material = SubResource("Material_head")
+top_radius = 0.085
+bottom_radius = 0.085
+height = 0.86
+radial_segments = 12
+
+[sub_resource type="TorusMesh" id="Mesh_flight"]
+material = SubResource("Material_head")
+inner_radius = 0.07
+outer_radius = 0.28
+rings = 16
+ring_segments = 8
+
+[sub_resource type="CylinderMesh" id="Mesh_tip"]
+material = SubResource("Material_head")
+top_radius = 0.015
+bottom_radius = 0.22
+height = 0.46
+radial_segments = 16
+
+[sub_resource type="BoxMesh" id="Mesh_tooth"]
+material = SubResource("Material_head")
+size = Vector3(0.2, 0.1, 0.24)
+
+[sub_resource type="CylinderMesh" id="Mesh_arrow_shaft"]
+material = SubResource("Material_direction")
+top_radius = 0.035
+bottom_radius = 0.035
+height = 0.92
+radial_segments = 8
+
+[sub_resource type="CylinderMesh" id="Mesh_arrow_tip"]
+material = SubResource("Material_direction")
+top_radius = 0.0
+bottom_radius = 0.13
+height = 0.34
+radial_segments = 12
+
+[node name="StationaryDrillVisual" type="Node3D"]
+metadata/working_face = "+X"
+
+[node name="Mechanical" type="Node3D" parent="."]
+
+[node name="Housing" type="MeshInstance3D" parent="Mechanical"]
+position = Vector3(0.46, 0, 0)
+rotation = Vector3(0, 0, -1.5708)
+mesh = SubResource("Mesh_housing")
+
+[node name="OperationalRotor" type="Node3D" parent="Mechanical"]
+position = Vector3(0.55, 0, 0)
+
+[node name="Shaft" type="MeshInstance3D" parent="Mechanical/OperationalRotor"]
+position = Vector3(0.39, 0, 0)
+rotation = Vector3(0, 0, -1.5708)
+mesh = SubResource("Mesh_shaft")
+
+[node name="Flight0" type="MeshInstance3D" parent="Mechanical/OperationalRotor"]
+rotation = Vector3(0, 0, -1.5708)
+mesh = SubResource("Mesh_flight")
+
+[node name="Flight1" type="MeshInstance3D" parent="Mechanical/OperationalRotor"]
+position = Vector3(0.2, 0, 0)
+rotation = Vector3(0, 0, -1.5708)
+mesh = SubResource("Mesh_flight")
+
+[node name="Flight2" type="MeshInstance3D" parent="Mechanical/OperationalRotor"]
+position = Vector3(0.4, 0, 0)
+rotation = Vector3(0, 0, -1.5708)
+mesh = SubResource("Mesh_flight")
+
+[node name="Flight3" type="MeshInstance3D" parent="Mechanical/OperationalRotor"]
+position = Vector3(0.6, 0, 0)
+rotation = Vector3(0, 0, -1.5708)
+mesh = SubResource("Mesh_flight")
+
+[node name="Tooth0" type="MeshInstance3D" parent="Mechanical/OperationalRotor"]
+position = Vector3(0.08, 0.27, 0)
+mesh = SubResource("Mesh_tooth")
+
+[node name="Tooth1" type="MeshInstance3D" parent="Mechanical/OperationalRotor"]
+position = Vector3(0.32, 0, 0.27)
+rotation = Vector3(0.785398, 0, 0)
+mesh = SubResource("Mesh_tooth")
+
+[node name="Tooth2" type="MeshInstance3D" parent="Mechanical/OperationalRotor"]
+position = Vector3(0.56, -0.27, 0)
+mesh = SubResource("Mesh_tooth")
+
+[node name="Tooth3" type="MeshInstance3D" parent="Mechanical/OperationalRotor"]
+position = Vector3(0.78, 0, -0.23)
+rotation = Vector3(-0.785398, 0, 0)
+mesh = SubResource("Mesh_tooth")
+
+[node name="WorkingTip" type="MeshInstance3D" parent="Mechanical/OperationalRotor"]
+position = Vector3(0.9, 0, 0)
+rotation = Vector3(0, 0, -1.5708)
+mesh = SubResource("Mesh_tip")
+
+[node name="OperationVfx" parent="Mechanical/OperationalRotor" instance=ExtResource("1_vfx")]
+position = Vector3(0.28, 0, 0)
+rotation = Vector3(0, 0, -1.5708)
+visible = false
+
+[node name="DirectionCue" type="Node3D" parent="."]
+position = Vector3(0, 0.58, 0)
+
+[node name="ArrowShaft" type="MeshInstance3D" parent="DirectionCue"]
+position = Vector3(0.72, 0, 0)
+rotation = Vector3(0, 0, -1.5708)
+mesh = SubResource("Mesh_arrow_shaft")
+cast_shadow = 0
+
+[node name="ArrowTip" type="MeshInstance3D" parent="DirectionCue"]
+position = Vector3(1.32, 0, 0)
+rotation = Vector3(0, 0, -1.5708)
+mesh = SubResource("Mesh_arrow_tip")
+cast_shadow = 0

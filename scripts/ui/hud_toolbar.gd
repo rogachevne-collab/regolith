@@ -265,6 +265,8 @@ func _selection_label() -> String:
 			return "СВАРКА"
 		&"grinder":
 			return "БОЛГАРКА"
+		&"connect":
+			return "СОЕДИНЕНИЕ"
 		&"build":
 			return _gateway.archetype_display_name(
 				_tools.selected_archetype_id

@@ -66,8 +66,29 @@ func _process(delta: float) -> void:
 func _prompt_for(hit: InteractionHit) -> String:
 	if _player.call("is_in_vehicle"):
 		return "E — выйти из кокпита"
+	if hit.valid and hit.distance <= 4.0:
+		if hit.target_kind == InteractionHit.KIND_WORLD_LOOT:
+			return "E — собрать %s" % HudTokens.resource_label(
+				str(hit.metadata.get("resource_id", ""))
+			)
+		if _is_recipe_machine(hit):
+			return "E — вкл/выкл · R — добавить рецепт"
+		if (
+			hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
+			and _is_industry_transfer_target(hit)
+		):
+			return "E — забрать / положить груз"
 	if _tools.active_tool == &"drill":
 		return ""
+	if _tools.active_tool == &"connect":
+		if _tools.connect_pending_element_id() > 0:
+			return "ЛКМ — второй блок с соседним электропортом"
+		if (
+			hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
+			and hit.distance <= 4.0
+		):
+			return "ЛКМ — первый блок для провода"
+		return "ЛКМ — электрический провод между соседними блоками"
 	if _tools.active_tool == &"grinder":
 		if (
 			hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
@@ -109,6 +130,27 @@ func _prompt_for(hit: InteractionHit) -> String:
 				return "ЛКМ — поставить %s" % block_name
 		return ""
 	return ""
+
+
+func _is_recipe_machine(hit: InteractionHit) -> bool:
+	if hit.target_kind != InteractionHit.KIND_SIMULATION_ELEMENT:
+		return false
+	return str(hit.metadata.get("archetype_id", "")) in [
+		"processor",
+		"fabricator",
+	]
+
+
+func _is_industry_transfer_target(hit: InteractionHit) -> bool:
+	if _gateway == null:
+		return false
+	var session := _gateway.get_node_or_null(
+		_gateway.simulation_session_path
+	) as SimulationSession
+	if session == null:
+		return false
+	var element := session.world.get_element(int(hit.metadata.get("element_id", 0)))
+	return IndustryTransferUtil.is_transfer_target(element)
 
 
 func _on_command_completed(
@@ -163,5 +205,17 @@ func _reason_text(reason: StringName) -> String:
 			return "Элемент не завершён"
 		&"element_broken":
 			return "Элемент сломан"
+		&"duplicate_connection":
+			return "Провод уже подключён"
+		&"incompatible_connection":
+			return "Нет совместимых электропортов"
+		&"no_electric_ports":
+			return "У блока нет электропортов"
+		&"cable_too_long":
+			return "Кабель длиннее 12 м"
+		&"storage_full":
+			return "Склад полон"
+		&"no_input":
+			return "Нечего переносить"
 		_:
 			return "Действие недоступно"

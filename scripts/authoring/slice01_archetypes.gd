@@ -6,9 +6,13 @@ const REQUIRED_IDS: PackedStringArray = [
 	"foundation",
 	"frame",
 	"frame_beam",
+	"frame_basalt",
 	"power_source",
+	"power_distributor",
+	"power_battery",
 	"stationary_drill",
 	"cargo_store",
+	"cargo_pipe",
 	"processor",
 	"fabricator",
 ]

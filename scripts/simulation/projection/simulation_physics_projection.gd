@@ -14,6 +14,11 @@ var _projected_revision: Dictionary = {}
 var _mounted_bodies: Dictionary = {}
 var _collision_profiles: Dictionary = {}
 var _body_groups: Dictionary = {}
+var _impact_service: ImpactResolverService
+
+
+func bind_impact_service(service: ImpactResolverService) -> void:
+	_impact_service = service
 
 
 func bind_world(world: SimulationWorld) -> void:
@@ -469,6 +474,12 @@ func _project_assembly(
 		rigid.sleeping = motion.sleeping
 		if mounted != null:
 			rigid.freeze = false if motion_override != null else motion.frozen
+		if (
+			_impact_service != null
+			and mounted == null
+			and not anchored
+		):
+			_impact_service.configure_rigid_body(rigid)
 	_bodies[assembly_id] = body
 	for element_id: int in colliders_by_element:
 		_element_records[element_id] = {

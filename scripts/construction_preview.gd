@@ -1,6 +1,10 @@
 class_name ConstructionPreview
 extends Node3D
 
+const STATIONARY_DRILL_VISUAL_SCRIPT := preload(
+	"res://scripts/presentation/stationary_drill_visual.gd"
+)
+
 @export var query_path: NodePath = NodePath("../InteractionQuery")
 @export var tool_controller_path: NodePath = NodePath("../ToolController")
 @export var gateway_path: NodePath = NodePath("../../WorldCommandGateway")
@@ -23,13 +27,19 @@ var _mesh_cache: Dictionary = {}
 var _manual_candidate_index := -1
 var _manual_lock := false
 var _cached_resolve_context_key := ""
+var _ground_pivot_key := ""
+var _held_ground_pivot := Vector3(INF, INF, INF)
+var _attach_pivot_key := ""
+var _held_attach_pivot := Vector3(INF, INF, INF)
+var _held_attach_snap_context: Dictionary = {}
+var _selection_archetype_id := ""
 const _AIM_ORIGIN_STEP := 0.04
 const _AIM_DIRECTION_STEP := 0.02
 
 
 func _ready() -> void:
 	top_level = true
-	process_physics_priority = -10
+	process_physics_priority = 10
 	_query = get_node(query_path)
 	_tools = get_node(tool_controller_path)
 	_gateway = get_node(gateway_path)
@@ -64,33 +74,7 @@ func _physics_process(_delta: float) -> void:
 	if Input.is_action_just_pressed(&"construction_cycle_snap"):
 		_advance_manual_cycle()
 	_update_resolution()
-	if resolved_target.is_empty() or resolved_plan.is_empty():
-		_hide_preview()
-		return
-	var archetype := resolved_plan.get("archetype") as ElementArchetype
-	if archetype == null:
-		_hide_preview()
-		return
-	var origin_cell: Vector3i = resolved_plan.get("origin_cell", Vector3i.ZERO)
-	var next_signature := "%s|%d|%s|%s" % [
-		archetype.archetype_id,
-		_tools.selected_orientation_index,
-		origin_cell,
-		str(bool(resolved_plan.get("valid", false))),
-	]
-	if next_signature != _signature:
-		_apply_cached_mesh(
-			archetype,
-			_tools.selected_orientation_index,
-			origin_cell,
-			bool(resolved_plan.get("valid", false))
-		)
-		_signature = next_signature
-	global_transform = resolved_plan.get(
-		"preview_root_transform",
-		resolved_plan.get("assembly_world_transform", Transform3D.IDENTITY)
-	)
-	visible = true
+	_sync_preview_visuals()
 
 
 func resolved_hit() -> InteractionHit:
@@ -110,7 +94,52 @@ func _update_resolution() -> void:
 		_clear_resolution()
 		return
 	var aim := _aim_ray()
-	var context_key := _resolve_context_key(aim, direct_hit)
+	var held_ground_pivot := Vector3(INF, INF, INF)
+	var held_attach_pivot := Vector3(INF, INF, INF)
+	if (
+		StringName(direct_hit.get("target_kind", &""))
+		== InteractionHit.KIND_VOXEL
+	):
+		var pivot_key := _ground_pivot_key_for(direct_hit)
+		if pivot_key != _ground_pivot_key:
+			_ground_pivot_key = pivot_key
+			_held_ground_pivot = Vector3(INF, INF, INF)
+		if not _held_ground_pivot.is_finite():
+			_held_ground_pivot = _gateway.baseline_ground_pivot(
+				direct_hit,
+				_tools.selected_archetype_id
+			)
+		if _held_ground_pivot.is_finite():
+			held_ground_pivot = _held_ground_pivot
+	elif (
+		StringName(direct_hit.get("target_kind", &""))
+		== InteractionHit.KIND_SIMULATION_ELEMENT
+	):
+		var attach_key := _attach_pivot_key_for(direct_hit)
+		if attach_key != _attach_pivot_key:
+			_attach_pivot_key = attach_key
+			_held_attach_pivot = Vector3(INF, INF, INF)
+			_held_attach_snap_context.clear()
+		if _held_attach_pivot.is_finite():
+			held_attach_pivot = _held_attach_pivot
+			var metadata: Dictionary = direct_hit.get("metadata", {}).duplicate(true)
+			metadata["locked_target_port_cell"] = (
+				_held_attach_snap_context.get(
+					"target_port_cell",
+					Vector3i.ZERO
+				)
+			)
+			metadata["locked_snap_dir"] = _held_attach_snap_context.get(
+				"snap_dir",
+				Vector3i.UP
+			)
+			direct_hit["metadata"] = metadata
+	var context_key := _resolve_context_key(
+		aim,
+		direct_hit,
+		held_ground_pivot,
+		held_attach_pivot
+	)
 	if context_key != _cached_resolve_context_key and _manual_lock:
 		_manual_lock = false
 		_manual_candidate_index = -1
@@ -128,6 +157,8 @@ func _update_resolution() -> void:
 		"camera": _camera,
 		"archetype_id": _tools.selected_archetype_id,
 		"orientation_index": _tools.selected_orientation_index,
+		"held_ground_pivot": held_ground_pivot,
+		"held_attach_pivot": held_attach_pivot,
 		"manual_candidate_index": (
 			_manual_candidate_index if _manual_lock else -1
 		),
@@ -137,19 +168,54 @@ func _update_resolution() -> void:
 	resolved_candidates = resolved.get("candidates", [])
 	resolved_candidate_index = int(resolved.get("selected_index", -1))
 	resolved_candidate_count = resolved_candidates.size()
+	if (
+		StringName(direct_hit.get("target_kind", &""))
+		== InteractionHit.KIND_SIMULATION_ELEMENT
+		and bool(resolved_plan.get("valid", false))
+		and not _held_attach_pivot.is_finite()
+	):
+		_held_attach_pivot = GridPoseUtil.world_footprint_pivot(
+			resolved_plan.get(
+				"preview_root_transform",
+				Transform3D.IDENTITY
+			),
+			resolved_plan.get("archetype") as ElementArchetype,
+			resolved_plan.get("origin_cell", Vector3i.ZERO),
+			int(resolved_plan.get("orientation_index", 0))
+		)
+		_held_attach_snap_context = resolved_plan.get(
+			"attach_snap_context",
+			{}
+		).duplicate(true)
+		# Pivot capture changes origin selection. Re-resolve next physics frame
+		# instead of keeping the initial no-hold plan in the preview cache.
+		_cached_resolve_context_key = ""
 
 
-func _resolve_context_key(aim: Dictionary, direct_hit: Dictionary) -> String:
+func _resolve_context_key(
+	aim: Dictionary,
+	direct_hit: Dictionary,
+	held_ground_pivot: Vector3,
+	held_attach_pivot: Vector3
+) -> String:
 	var origin: Vector3 = aim["origin"]
 	var direction: Vector3 = aim["direction"]
-	return "%d|%s|%s|%s|%d|%s" % [
+	return "%d|%s|%s|%s|%d|%s|%s|%s" % [
 		_gateway.snap_cache_generation(),
 		_quantize_vec3(origin, _AIM_ORIGIN_STEP),
 		_quantize_vec3(direction, _AIM_DIRECTION_STEP),
 		_tools.selected_archetype_id,
 		_tools.selected_orientation_index,
 		StringName(direct_hit.get("target_id", &"")),
+		_pivot_context_token(held_ground_pivot),
+		_pivot_context_token(held_attach_pivot),
 	]
+
+
+func _pivot_context_token(pivot: Vector3) -> String:
+	if not pivot.is_finite():
+		return "unset"
+	return str(_quantize_vec3(pivot, 0.05))
 
 
 static func _quantize_vec3(value: Vector3, step: float) -> Vector3:
@@ -231,6 +297,39 @@ func _clear_resolution() -> void:
 	_manual_candidate_index = -1
 	_manual_lock = false
 	_cached_resolve_context_key = ""
+	_ground_pivot_key = ""
+	_held_ground_pivot = Vector3(INF, INF, INF)
+	_attach_pivot_key = ""
+	_held_attach_pivot = Vector3(INF, INF, INF)
+	_held_attach_snap_context.clear()
+
+
+func _attach_pivot_key_for(target: Dictionary) -> String:
+	var point := _quantize_vec3(
+		Vector3(target.get("point", Vector3.ZERO)),
+		0.1
+	)
+	var normal := _quantize_vec3(
+		Vector3(target.get("normal", Vector3.UP)),
+		0.1
+	)
+	return "%s|%s|%s" % [
+		_tools.selected_archetype_id,
+		point,
+		normal,
+	]
+
+
+func _ground_pivot_key_for(target: Dictionary) -> String:
+	var point := _quantize_vec3(
+		Vector3(target.get("point", Vector3.ZERO)),
+		0.1
+	)
+	var normal := _quantize_vec3(
+		Vector3(target.get("normal", Vector3.UP)),
+		0.1
+	)
+	return "%s|%s|%s" % [_tools.selected_archetype_id, point, normal]
 
 
 func _apply_cached_mesh(
@@ -282,6 +381,76 @@ func _build_mesh_nodes(
 			collider
 		)
 		nodes.append(instance)
+	nodes.append_array(
+		_build_preview_port_markers(
+			archetype,
+			origin_cell,
+			orientation_index
+		)
+	)
+	if archetype.archetype_id == "stationary_drill":
+		var drill_visual: Node3D = STATIONARY_DRILL_VISUAL_SCRIPT.instantiate_for_element(
+			origin_cell,
+			orientation_index
+		)
+		STATIONARY_DRILL_VISUAL_SCRIPT.apply_preview_material(
+			drill_visual,
+			material
+		)
+		nodes.append(drill_visual)
+	return nodes
+
+
+func _build_preview_port_markers(
+	archetype: ElementArchetype,
+	origin_cell: Vector3i,
+	orientation_index: int
+) -> Array[Node]:
+	var nodes: Array[Node] = []
+	if archetype == null:
+		return nodes
+	var preview_element := SimulationElement.frame(
+		-1,
+		-1,
+		archetype,
+		origin_cell,
+		orientation_index,
+		{}
+	)
+	for port: PortDefinition in archetype.ports:
+		if not IndustryPortUtil.is_industry_port(port):
+			continue
+		var marker_root := Node3D.new()
+		marker_root.transform = IndustryPortUtil.port_marker_local_transform(
+			preview_element,
+			port
+		)
+		var color := (
+			Color(0.95, 0.78, 0.16, 0.92)
+			if port.kind == PortDefinition.Kind.ELECTRIC
+			else Color(0.18, 0.82, 0.88, 0.92)
+		)
+		var material := _preview_material(color)
+		var disc := MeshInstance3D.new()
+		var disc_mesh := CylinderMesh.new()
+		disc_mesh.top_radius = 0.14
+		disc_mesh.bottom_radius = 0.14
+		disc_mesh.height = 0.02
+		disc.mesh = disc_mesh
+		disc.material_override = material
+		disc.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		marker_root.add_child(disc)
+		var arrow := MeshInstance3D.new()
+		var arrow_mesh := CylinderMesh.new()
+		arrow_mesh.top_radius = 0.035
+		arrow_mesh.bottom_radius = 0.035
+		arrow_mesh.height = 0.18
+		arrow.mesh = arrow_mesh
+		arrow.material_override = material
+		arrow.position = Vector3(0.0, 0.1, 0.0)
+		arrow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		marker_root.add_child(arrow)
+		nodes.append(marker_root)
 	return nodes
 
 
@@ -316,22 +485,64 @@ func _warm_current_selection() -> void:
 			)
 
 
+func _sync_preview_visuals() -> void:
+	if resolved_target.is_empty() or resolved_plan.is_empty():
+		_hide_preview()
+		return
+	var archetype := resolved_plan.get("archetype") as ElementArchetype
+	if archetype == null:
+		_hide_preview()
+		return
+	var origin_cell: Vector3i = resolved_plan.get("origin_cell", Vector3i.ZERO)
+	var next_signature := "%s|%d|%s|%s" % [
+		archetype.archetype_id,
+		int(resolved_plan.get("orientation_index", _tools.selected_orientation_index)),
+		origin_cell,
+		str(bool(resolved_plan.get("valid", false))),
+	]
+	if next_signature != _signature:
+		_apply_cached_mesh(
+			archetype,
+			int(resolved_plan.get("orientation_index", _tools.selected_orientation_index)),
+			origin_cell,
+			bool(resolved_plan.get("valid", false))
+		)
+		_signature = next_signature
+	global_transform = resolved_plan.get(
+		"preview_root_transform",
+		resolved_plan.get("assembly_world_transform", Transform3D.IDENTITY)
+	)
+	visible = true
+
+
 func _on_selection_changed(
-	_archetype_id: String,
-	_orientation_index: int
+	archetype_id: String,
+	orientation_index: int
 ) -> void:
+	var archetype_changed := archetype_id != _selection_archetype_id
 	_signature = ""
 	_manual_candidate_index = -1
 	_manual_lock = false
 	_cached_resolve_context_key = ""
+	if archetype_changed:
+		_ground_pivot_key = ""
+		_held_ground_pivot = Vector3(INF, INF, INF)
+		_attach_pivot_key = ""
+		_held_attach_pivot = Vector3(INF, INF, INF)
+		_selection_archetype_id = archetype_id
 	_gateway.reset_construction_snap()
-	call_deferred("_warm_archetype", _archetype_id, _orientation_index)
+	call_deferred("_warm_archetype", archetype_id, orientation_index)
+	if not archetype_changed and _tools.active_tool == &"build":
+		_update_resolution()
+		_sync_preview_visuals()
 
 
 func _on_active_tool_changed(_active_tool: StringName) -> void:
 	_manual_candidate_index = -1
 	_manual_lock = false
 	_cached_resolve_context_key = ""
+	_attach_pivot_key = ""
+	_held_attach_pivot = Vector3(INF, INF, INF)
 	_gateway.reset_construction_snap()
 
 

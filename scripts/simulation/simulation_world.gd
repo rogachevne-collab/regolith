@@ -14,6 +14,12 @@ var _elements: Dictionary = {}
 var _joints: Dictionary = {}
 var _redirects: Dictionary = {}
 var _resource_stores: Dictionary = {}
+var _industry_network := IndustryNetworkState.create_default()
+var _industry_elements: Dictionary = {}
+var _cargo_graph := CargoGraph.new()
+var _industry_runner: Node
+var _world_loot_piles: Dictionary = {}
+var _simulation_time_s: float = 0.0
 var _command_queue: Array[StructuralCommand] = []
 var _flush_scheduled := false
 var _occupancy_index_cache: Dictionary = {}
@@ -71,6 +77,231 @@ func get_resource_store(store_id: String) -> SimulationResourceStore:
 	return _resource_stores.get(store_id) as SimulationResourceStore
 
 
+func get_industry_network() -> IndustryNetworkState:
+	return _industry_network
+
+
+func get_cargo_graph() -> CargoGraph:
+	return _cargo_graph
+
+
+func ensure_cargo_graph_current() -> CargoGraph:
+	if _cargo_graph_needs_rebuild():
+		_cargo_graph.rebuild(self)
+	return _cargo_graph
+
+
+func get_cargo_adjacency_graph() -> Array[Dictionary]:
+	return ensure_cargo_graph_current().list_edges()
+
+
+func industry_tick(delta_s: float) -> void:
+	if _industry_runner == null:
+		_industry_runner = IndustrySimulation.new()
+		(_industry_runner as IndustrySimulation).bind_world(self)
+	(_industry_runner as IndustrySimulation).tick(self, delta_s)
+
+
+func advance_industry_time(delta_s: float) -> void:
+	_simulation_time_s += maxf(delta_s, 0.0)
+	_purge_expired_loot_piles()
+
+
+func get_element_industry_buffer(element_id: int) -> ElementIndustryBuffer:
+	var element := get_element(element_id)
+	if element == null:
+		return null
+	return element.industry_buffer
+
+
+func get_element_content_mass_kg(element_id: int) -> float:
+	return IndustryStoreService.content_mass_kg(
+		self,
+		get_element(element_id)
+	)
+
+
+func list_electric_links() -> Array[Dictionary]:
+	var rows: Array[Dictionary] = []
+	for link: IndustryElectricLink in _industry_network.list_links():
+		rows.append(link.to_dict())
+	return rows
+
+
+func connect_network(
+	element_a_id: int,
+	port_a_id: String,
+	element_b_id: int,
+	port_b_id: String,
+	expected_assembly_revision: int = -1
+) -> StructuralCommandResult:
+	var command := ConnectNetworkCommand.new()
+	command.element_a_id = element_a_id
+	command.port_a_id = port_a_id
+	command.element_b_id = element_b_id
+	command.port_b_id = port_b_id
+	command.expected_assembly_revision = expected_assembly_revision
+	return apply_structural_command_now(command)
+
+
+func disconnect_network(
+	element_a_id: int = 0,
+	port_a_id: String = "",
+	element_b_id: int = 0,
+	port_b_id: String = "",
+	link_id: int = 0,
+	expected_assembly_revision: int = -1
+) -> StructuralCommandResult:
+	var command := DisconnectNetworkCommand.new()
+	command.element_a_id = element_a_id
+	command.port_a_id = port_a_id
+	command.element_b_id = element_b_id
+	command.port_b_id = port_b_id
+	command.link_id = link_id
+	command.expected_assembly_revision = expected_assembly_revision
+	return apply_structural_command_now(command)
+
+
+func apply_transfer_resource(command: TransferResourceCommand) -> Dictionary:
+	var service := CargoTransferService.new()
+	return service.transfer_resource_command(self, command)
+
+
+func apply_set_machine_enabled(
+	command: SetMachineEnabledCommand
+) -> Dictionary:
+	if _industry_runner == null:
+		_industry_runner = IndustrySimulation.new()
+		(_industry_runner as IndustrySimulation).bind_world(self)
+	return (_industry_runner as IndustrySimulation).apply_set_machine_enabled(
+		command
+	)
+
+
+func apply_enqueue_recipe(command: EnqueueRecipeCommand) -> Dictionary:
+	if _industry_runner == null:
+		_industry_runner = IndustrySimulation.new()
+		(_industry_runner as IndustrySimulation).bind_world(self)
+	return (_industry_runner as IndustrySimulation).apply_enqueue_recipe(command)
+
+
+func get_simulation_time_s() -> float:
+	return _simulation_time_s
+
+
+func list_world_loot_piles() -> Array[Dictionary]:
+	var rows: Array[Dictionary] = []
+	var pile_ids: Array = _world_loot_piles.keys()
+	pile_ids.sort()
+	for pile_id_variant: Variant in pile_ids:
+		var pile: WorldLootPile = _world_loot_piles[int(pile_id_variant)]
+		if pile != null:
+			rows.append(pile.to_dict())
+	return rows
+
+
+func add_world_loot_pile(
+	position: Vector3,
+	resource_id: String,
+	amount_kg: float,
+	despawn_after_s: float = -1.0
+) -> WorldLootPile:
+	if resource_id.is_empty() or amount_kg <= 0.000001:
+		return null
+	var despawn_at := _simulation_time_s + (
+		despawn_after_s
+		if despawn_after_s > 0.0
+		else IndustryArchetypeProfile.hand_drill_loot_despawn_s()
+	)
+	var pile := WorldLootPile.create(
+		_allocator.allocate_loot_pile_id(),
+		position,
+		resource_id,
+		amount_kg,
+		despawn_at
+	)
+	_world_loot_piles[pile.pile_id] = pile
+	return pile
+
+
+func remove_world_loot_pile(pile_id: int) -> bool:
+	if not _world_loot_piles.has(pile_id):
+		return false
+	_world_loot_piles.erase(pile_id)
+	return true
+
+
+func collect_world_loot_pile(
+	pile_id: int,
+	to_store_id: String = IndustryStoreService.PLAYER_STORE_ID
+) -> Dictionary:
+	var pile := _world_loot_piles.get(pile_id) as WorldLootPile
+	var store := get_resource_store(to_store_id)
+	if pile == null or store == null:
+		return {"status": &"failed", "reason": &"invalid_reference", "amount": 0.0}
+	var unit_mass := ResourceCatalog.mass_per_unit_kg(pile.resource_id)
+	if unit_mass <= 0.000001 or pile.amount_kg <= 0.000001:
+		return {"status": &"failed", "reason": &"no_input", "amount": 0.0}
+	var capacity := IndustryStoreService.capacity_kg_for_store(self, to_store_id)
+	var available_units := pile.amount_kg / unit_mass
+	var amount := minf(
+		available_units,
+		ResourceCatalog.max_addable_amount(
+			store,
+			pile.resource_id,
+			capacity
+		)
+	)
+	if amount <= 0.000001:
+		return {"status": &"failed", "reason": &"storage_full", "amount": 0.0}
+	if not store.add(pile.resource_id, amount, capacity):
+		return {"status": &"failed", "reason": &"storage_full", "amount": 0.0}
+	pile.amount_kg = maxf(pile.amount_kg - amount * unit_mass, 0.0)
+	if pile.amount_kg <= 0.000001:
+		_world_loot_piles.erase(pile_id)
+	return {
+		"status": &"ok",
+		"reason": &"ok",
+		"amount": amount,
+		"resource_id": pile.resource_id,
+	}
+
+
+func get_industry_element_runtime(
+	element_id: int
+) -> IndustryElementRuntime:
+	return _industry_elements.get(element_id) as IndustryElementRuntime
+
+
+func ensure_industry_element_runtime(
+	element_id: int
+) -> IndustryElementRuntime:
+	var existing := get_industry_element_runtime(element_id)
+	if existing != null:
+		return existing
+	var runtime := IndustryElementRuntime.create_default()
+	_industry_elements[element_id] = runtime
+	return runtime
+
+
+func list_industry_element_runtimes() -> Array[Dictionary]:
+	var rows: Array[Dictionary] = []
+	var element_ids: Array = _industry_elements.keys()
+	element_ids.sort()
+	for element_id_variant: Variant in element_ids:
+		var element_id := int(element_id_variant)
+		var runtime: IndustryElementRuntime = _industry_elements[element_id]
+		rows.append({
+			"element_id": element_id,
+			"runtime": runtime.to_dict(),
+		})
+	return rows
+
+
+func get_industry_network_revision() -> int:
+	return _industry_network.industry_network_revision
+
+
 func ensure_resource_store(store_id: String) -> SimulationResourceStore:
 	if store_id.is_empty():
 		return null
@@ -79,6 +310,8 @@ func ensure_resource_store(store_id: String) -> SimulationResourceStore:
 		return existing
 	var store := SimulationResourceStore.new()
 	store.store_id = store_id
+	if store_id == IndustryStoreService.PLAYER_STORE_ID:
+		store.capacity_kg = IndustryArchetypeProfile.player_carry_capacity_kg()
 	_resource_stores[store_id] = store
 	return store
 
@@ -199,6 +432,10 @@ func restore_snapshot(snapshot: Dictionary) -> bool:
 	_joints = restored._joints
 	_redirects = restored._redirects
 	_resource_stores = restored._resource_stores
+	_industry_network = restored._industry_network
+	_industry_elements = restored._industry_elements
+	_world_loot_piles = restored._world_loot_piles
+	_simulation_time_s = restored._simulation_time_s
 	_command_queue.clear()
 	_flush_scheduled = false
 	restored.free()
@@ -233,6 +470,10 @@ func _execute_structural_command(
 		return _repair_element(command as RepairElementCommand)
 	if command is DismantleElementCommand:
 		return _dismantle_element(command as DismantleElementCommand)
+	if command is ConnectNetworkCommand:
+		return _connect_network(command as ConnectNetworkCommand)
+	if command is DisconnectNetworkCommand:
+		return _disconnect_network(command as DisconnectNetworkCommand)
 	return StructuralCommandResult.failed(
 		StructuralCommandResult.REASON_INVALID_TARGET
 	)
@@ -304,7 +545,7 @@ func _spawn_blueprint(
 		_joints[joint.joint_id] = joint
 	_assemblies[assembly_id] = assembly
 	assembly.bump_revision()
-
+	_notify_topology_changed()
 	var joint_ids := _joint_ids_for_assembly(assembly_id)
 	_emit_structural_event({
 		"kind": &"assembly_spawned",
@@ -359,7 +600,11 @@ func _place_element(
 		assembly = SimulationAssembly.new()
 		assembly.assembly_id = _allocator.allocate_assembly_id()
 		assembly.grid_frame = command.new_assembly_grid_frame.duplicate_transform()
-		assembly.motion = AssemblyMotionState.from_grid_frame(assembly.grid_frame)
+		assembly.motion = (
+			command.initial_motion.duplicate_state()
+			if command.initial_motion != null
+			else AssemblyMotionState.from_grid_frame(assembly.grid_frame)
+		)
 	else:
 		assembly = get_assembly_raw(command.assembly_id)
 
@@ -414,6 +659,7 @@ func _place_element(
 	if not new_assembly:
 		_record_placement_terrain_contact(assembly, element, joint_ids)
 	assembly.bump_revision()
+	_notify_topology_changed()
 	joint_ids.sort()
 	var event_kind := &"assembly_spawned" if new_assembly else &"assembly_changed"
 	_emit_structural_event({
@@ -509,6 +755,10 @@ func _validate_place_element(
 		if (
 			command.new_assembly_grid_frame == null
 			or not command.new_assembly_grid_frame.is_valid()
+			or (
+				command.initial_motion != null
+				and not command.initial_motion.is_valid()
+			)
 		):
 			return StructuralCommandResult.failed(
 				StructuralCommandResult.REASON_INVALID_TRANSFORM
@@ -895,6 +1145,7 @@ func _remove_element_from_topology(
 	for joint_id: int in removed_joint_ids:
 		_joints.erase(joint_id)
 	_elements.erase(element.element_id)
+	_notify_topology_changed()
 	for resource_id: Variant in refunds.keys():
 		store.add(str(resource_id), float(refunds[resource_id]))
 	removed_joint_ids.sort()
@@ -920,6 +1171,7 @@ func _remove_element_from_topology(
 		assembly.element_ids.sort()
 		_reconcile_terrain_anchors_for_assemblies([assembly.assembly_id])
 		assembly.bump_revision()
+		_notify_topology_changed()
 		_emit_structural_event({
 			"kind": &"assembly_changed",
 			"command_id": command_id,
@@ -969,6 +1221,7 @@ func _remove_element_from_topology(
 	affected_assembly_ids.append_array(new_ids)
 	_reconcile_terrain_anchors_for_assemblies(affected_assembly_ids)
 	assembly.bump_revision()
+	_notify_topology_changed()
 	_emit_structural_event({
 		"kind": &"assembly_split",
 		"command_id": command_id,
@@ -1034,6 +1287,7 @@ func _break_rigid_joint(
 	if components.size() <= 1:
 		_reconcile_terrain_anchors_for_assemblies([assembly.assembly_id])
 		assembly.bump_revision()
+		_notify_topology_changed()
 		_emit_structural_event({
 			"kind": &"rigid_joint_broken",
 			"command_id": command.command_id,
@@ -1080,6 +1334,7 @@ func _break_rigid_joint(
 	split_assembly_ids.append_array(new_ids)
 	_reconcile_terrain_anchors_for_assemblies(split_assembly_ids)
 	assembly.bump_revision()
+	_notify_topology_changed()
 	_emit_structural_event({
 		"kind": &"assembly_split",
 		"command_id": command.command_id,
@@ -1265,6 +1520,7 @@ func _merge_assemblies(
 	_redirects[loser.assembly_id] = survivor.assembly_id
 	survivor.bump_revision()
 	loser.bump_revision()
+	_notify_topology_changed()
 	removed_anchors.sort()
 	_emit_structural_event({
 		"kind": &"assembly_merged",
@@ -1615,6 +1871,254 @@ func _reconcile_terrain_anchors_for_assemblies(
 			changed = true
 		if changed:
 			assembly.bump_revision()
+			_notify_topology_changed()
+
+
+func _notify_topology_changed() -> void:
+	_industry_network.prune_dangling_links(self)
+	_purge_industry_runtime_for_missing_elements()
+	IndustryStoreService.sync_all_elements(self)
+	_cargo_graph.rebuild(self)
+
+
+func _cargo_graph_needs_rebuild() -> bool:
+	for assembly: SimulationAssembly in list_assemblies():
+		if assembly.tombstoned:
+			continue
+		if _cargo_graph.needs_rebuild_for_assembly(
+			assembly.assembly_id,
+			assembly.topology_revision
+		):
+			return true
+	return false
+
+
+func _purge_industry_runtime_for_missing_elements() -> void:
+	var stale: Array[int] = []
+	for element_id_variant: Variant in _industry_elements.keys():
+		var element_id := int(element_id_variant)
+		if not _elements.has(element_id):
+			stale.append(element_id)
+	for element_id: int in stale:
+		_industry_elements.erase(element_id)
+
+
+func _connect_network(
+	command: ConnectNetworkCommand
+) -> StructuralCommandResult:
+	var validation := IndustryElectricPortUtil.validate_connect_endpoints(
+		self,
+		command.element_a_id,
+		command.port_a_id,
+		command.element_b_id,
+		command.port_b_id
+	)
+	if not validation.is_ok():
+		return validation
+	var assembly_a_id := int(validation.data["assembly_a_id"])
+	var assembly_b_id := int(validation.data["assembly_b_id"])
+	if command.assembly_id > 0 and command.assembly_id != assembly_a_id:
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INVALID_TARGET
+		)
+	var assembly_a := get_assembly_raw(assembly_a_id)
+	var assembly_b := get_assembly_raw(assembly_b_id)
+	if (
+		assembly_a == null
+		or assembly_a.tombstoned
+		or assembly_b == null
+		or assembly_b.tombstoned
+	):
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INVALID_REFERENCE
+		)
+	var expected_a := command.expected_revision_a
+	if expected_a < 0:
+		expected_a = command.expected_assembly_revision
+	if (
+		expected_a >= 0
+		and assembly_a.topology_revision != expected_a
+	):
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_STALE_REVISION,
+			{
+				"endpoint": &"a",
+				"expected": expected_a,
+				"actual": assembly_a.topology_revision,
+			}
+		)
+	if (
+		command.expected_revision_b >= 0
+		and assembly_b.topology_revision != command.expected_revision_b
+	):
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_STALE_REVISION,
+			{
+				"endpoint": &"b",
+				"expected": command.expected_revision_b,
+				"actual": assembly_b.topology_revision,
+			}
+		)
+	if _industry_network.has_pair(
+		command.element_a_id,
+		command.port_a_id,
+		command.element_b_id,
+		command.port_b_id
+	):
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_DUPLICATE_CONNECTION
+		)
+	var link_id := _allocator.allocate_link_id()
+	var link := _industry_network.add_link(
+		link_id,
+		command.element_a_id,
+		command.port_a_id,
+		command.element_b_id,
+		command.port_b_id
+	)
+	_industry_network.bump_revision()
+	_emit_structural_event({
+		"kind": &"electric_link_added",
+		"command_id": command.command_id,
+		"assembly_id": assembly_a_id,
+		"assembly_a_id": assembly_a_id,
+		"assembly_b_id": assembly_b_id,
+		"topology_revision": assembly_a.topology_revision,
+		"industry_network_revision": _industry_network.industry_network_revision,
+		"link_id": link.link_id,
+		"element_a_id": link.element_a,
+		"port_a_id": link.port_a,
+		"element_b_id": link.element_b,
+		"port_b_id": link.port_b,
+	})
+	return StructuralCommandResult.ok({
+		"command_id": command.command_id,
+		"assembly_id": assembly_a_id,
+		"assembly_a_id": assembly_a_id,
+		"assembly_b_id": assembly_b_id,
+		"topology_revision": assembly_a.topology_revision,
+		"industry_network_revision": _industry_network.industry_network_revision,
+		"link_id": link.link_id,
+		"distance_m": validation.data["distance_m"],
+	})
+
+
+func _disconnect_network(
+	command: DisconnectNetworkCommand
+) -> StructuralCommandResult:
+	var link: IndustryElectricLink = null
+	if command.link_id > 0:
+		link = _industry_network.get_link(command.link_id)
+	else:
+		link = _find_electric_link_by_endpoints(
+			command.element_a_id,
+			command.port_a_id,
+			command.element_b_id,
+			command.port_b_id
+		)
+	if link == null:
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INVALID_REFERENCE
+		)
+	var element_a := get_element(link.element_a)
+	if element_a == null:
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INVALID_REFERENCE
+		)
+	var assembly := get_assembly_raw(element_a.assembly_id)
+	if assembly == null or assembly.tombstoned:
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INVALID_REFERENCE
+		)
+	if command.assembly_id > 0 and command.assembly_id != assembly.assembly_id:
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INVALID_TARGET
+		)
+	if (
+		command.expected_assembly_revision >= 0
+		and assembly.topology_revision != command.expected_assembly_revision
+	):
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_STALE_REVISION,
+			{
+				"expected": command.expected_assembly_revision,
+				"actual": assembly.topology_revision,
+			}
+		)
+	var removed := _industry_network.remove_link(link.link_id)
+	_industry_network.bump_revision()
+	_emit_structural_event({
+		"kind": &"electric_link_removed",
+		"command_id": command.command_id,
+		"assembly_id": assembly.assembly_id,
+		"topology_revision": assembly.topology_revision,
+		"industry_network_revision": _industry_network.industry_network_revision,
+		"link_id": removed.link_id,
+	})
+	return StructuralCommandResult.ok({
+		"command_id": command.command_id,
+		"assembly_id": assembly.assembly_id,
+		"topology_revision": assembly.topology_revision,
+		"industry_network_revision": _industry_network.industry_network_revision,
+		"link_id": removed.link_id,
+	})
+
+
+func _find_electric_link_by_endpoints(
+	element_a_id: int,
+	port_a_id: String,
+	element_b_id: int,
+	port_b_id: String
+) -> IndustryElectricLink:
+	for link: IndustryElectricLink in _industry_network.list_links():
+		if link.matches_endpoints(
+			element_a_id,
+			port_a_id,
+			element_b_id,
+			port_b_id
+		):
+			return link
+	return null
+
+
+func _register_industry_network(state: IndustryNetworkState) -> void:
+	if state == null:
+		_industry_network = IndustryNetworkState.create_default()
+		return
+	_industry_network = state
+
+
+func _register_industry_element_runtime(
+	element_id: int,
+	runtime: IndustryElementRuntime
+) -> void:
+	if element_id <= 0 or runtime == null:
+		return
+	_industry_elements[element_id] = runtime
+
+
+func _register_world_loot_pile(pile: WorldLootPile) -> void:
+	if pile == null or pile.pile_id <= 0:
+		return
+	_world_loot_piles[pile.pile_id] = pile
+
+
+func _register_simulation_time(time_s: float) -> void:
+	_simulation_time_s = maxf(time_s, 0.0)
+
+
+func _purge_expired_loot_piles() -> void:
+	var stale: Array[int] = []
+	for pile_id_variant: Variant in _world_loot_piles.keys():
+		var pile_id := int(pile_id_variant)
+		var pile: WorldLootPile = _world_loot_piles[pile_id]
+		if pile == null:
+			stale.append(pile_id)
+			continue
+		if pile.despawn_at_s > 0.0 and _simulation_time_s + 0.000001 >= pile.despawn_at_s:
+			stale.append(pile_id)
+	for pile_id: int in stale:
+		_world_loot_piles.erase(pile_id)
 
 
 func _record_placement_terrain_contact(

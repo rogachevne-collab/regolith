@@ -1,9 +1,9 @@
-[gd_resource type="Resource" script_class="ElementArchetype" format=3]
+[gd_resource type="Resource" script_class="ElementArchetype" format=3 uid="uid://clxuekpfxtbqf"]
 
-[ext_resource type="Script" path="res://scripts/simulation/resources/build_requirement.gd" id="1_etio4"]
-[ext_resource type="Script" path="res://scripts/simulation/resources/collider_definition.gd" id="2_pjlip"]
-[ext_resource type="Script" path="res://scripts/simulation/resources/port_definition.gd" id="3_4tj15"]
-[ext_resource type="Script" path="res://scripts/simulation/resources/element_archetype.gd" id="4_nghp0"]
+[ext_resource type="Script" uid="uid://c2p36g85wqkru" path="res://scripts/simulation/resources/build_requirement.gd" id="1_etio4"]
+[ext_resource type="Script" uid="uid://b6d2jhfw581hb" path="res://scripts/simulation/resources/collider_definition.gd" id="2_pjlip"]
+[ext_resource type="Script" uid="uid://c4hgnuqnf2up8" path="res://scripts/simulation/resources/port_definition.gd" id="3_4tj15"]
+[ext_resource type="Script" uid="uid://bxidpb3tep3ih" path="res://scripts/simulation/resources/element_archetype.gd" id="4_nghp0"]
 
 [sub_resource type="Resource" id="Resource_ydh1i"]
 script = ExtResource("1_etio4")
@@ -62,6 +62,13 @@ kind = 7
 local_face = 4
 compatibility_tags = PackedStringArray("cargo")
 
+[sub_resource type="Resource" id="Resource_cargo_in"]
+script = ExtResource("3_4tj15")
+port_id = "cargo_in"
+kind = 7
+local_face = 5
+compatibility_tags = PackedStringArray("cargo")
+
 [resource]
 script = ExtResource("4_nghp0")
 archetype_id = "processor"
@@ -69,5 +76,5 @@ display_name = "Processor"
 roles = PackedStringArray("Processor")
 mass_kg = 140.0
 colliders = Array[ExtResource("2_pjlip")]([SubResource("Resource_18xak")])
-ports = Array[ExtResource("3_4tj15")]([SubResource("Resource_658ob"), SubResource("Resource_uitk2"), SubResource("Resource_hrxqq"), SubResource("Resource_xjwsv"), SubResource("Resource_d7o7r"), SubResource("Resource_svr4w"), SubResource("Resource_ewvaf"), SubResource("Resource_ccucd")])
+ports = Array[ExtResource("3_4tj15")]([SubResource("Resource_658ob"), SubResource("Resource_uitk2"), SubResource("Resource_hrxqq"), SubResource("Resource_xjwsv"), SubResource("Resource_d7o7r"), SubResource("Resource_svr4w"), SubResource("Resource_ewvaf"), SubResource("Resource_ccucd"), SubResource("Resource_cargo_in")])
 build_requirements = Array[ExtResource("1_etio4")]([SubResource("Resource_ydh1i")])

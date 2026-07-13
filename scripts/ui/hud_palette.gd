@@ -7,7 +7,11 @@ extends Control
 ## UI/config remap, not a simulation mutation (see docs/specs/HUD-UI-01.md). The
 ## palette owns only ephemeral open/drag presentation state.
 
-const PANEL_SIZE := Vector2(372, 300)
+const PANEL_WIDTH := 372.0
+const PANEL_HEADER_HEIGHT := 96.0
+const PANEL_MARGIN_V := 32.0
+const PANEL_MIN_HEIGHT := 220.0
+const PANEL_MAX_HEIGHT_RATIO := 0.68
 const GRID_COLUMNS := 4
 const ENTRY_SIZE := Vector2(78, 84)
 
@@ -22,6 +26,9 @@ class PaletteEntry:
 
 	func _get_drag_data(_at_position: Vector2) -> Variant:
 		set_drag_preview(_make_preview())
+		return drag_payload()
+
+	func drag_payload() -> Dictionary:
 		return {"kind": "hud_block", "archetype_id": archetype_id}
 
 	func _make_preview() -> Control:
@@ -47,6 +54,9 @@ class PaletteEntry:
 var _gateway: Node
 var _player: Node
 var _panel: Panel
+var _panel_overlay: ColorRect
+var _scroll: ScrollContainer
+var _grid: GridContainer
 var _open := false
 
 
@@ -60,19 +70,22 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_build()
 	_apply_open_state()
+	call_deferred("_update_panel_layout")
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_RESIZED:
+		_update_panel_layout()
 
 
 func _build() -> void:
 	_panel = Panel.new()
 	_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	_panel.clip_contents = true
 	_panel.anchor_left = 0.5
 	_panel.anchor_top = 0.5
 	_panel.anchor_right = 0.5
 	_panel.anchor_bottom = 0.5
-	_panel.offset_left = -PANEL_SIZE.x * 0.5
-	_panel.offset_right = PANEL_SIZE.x * 0.5
-	_panel.offset_top = -PANEL_SIZE.y * 0.5
-	_panel.offset_bottom = PANEL_SIZE.y * 0.5
 	add_child(_panel)
 
 	var margin := MarginContainer.new()
@@ -85,6 +98,8 @@ func _build() -> void:
 	_panel.add_child(margin)
 
 	var vb := VBoxContainer.new()
+	vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vb.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	vb.add_theme_constant_override("separation", HudTokens.SECTION_GAP)
 	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	margin.add_child(vb)
@@ -120,17 +135,26 @@ func _build() -> void:
 
 	vb.add_child(HudTokens.make_gap(2))
 
-	var grid := GridContainer.new()
-	grid.columns = GRID_COLUMNS
-	grid.add_theme_constant_override("h_separation", HudTokens.SLOT_GAP)
-	grid.add_theme_constant_override("v_separation", HudTokens.SLOT_GAP)
-	grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vb.add_child(grid)
+	_scroll = ScrollContainer.new()
+	_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	_scroll.mouse_filter = Control.MOUSE_FILTER_PASS
+	vb.add_child(_scroll)
+
+	_grid = GridContainer.new()
+	_grid.columns = GRID_COLUMNS
+	_grid.add_theme_constant_override("h_separation", HudTokens.SLOT_GAP)
+	_grid.add_theme_constant_override("v_separation", HudTokens.SLOT_GAP)
+	_grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_scroll.add_child(_grid)
 
 	for archetype_id: String in ToolController.CONSTRUCTION_ARCHETYPES:
-		grid.add_child(_make_entry(archetype_id))
+		_grid.add_child(_make_entry(archetype_id))
 
-	_panel.add_child(HudTokens.make_panel_overlay(PANEL_SIZE))
+	_panel_overlay = HudTokens.make_panel_overlay(Vector2(PANEL_WIDTH, PANEL_MIN_HEIGHT))
+	_panel.add_child(_panel_overlay)
 
 
 func _make_entry(archetype_id: String) -> Control:
@@ -154,6 +178,8 @@ func _make_entry(archetype_id: String) -> Control:
 	code_label.theme_type_variation = &"HudValue"
 	code_label.add_theme_color_override("font_color", HudTokens.COL_VALID)
 	code_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	code_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	code_label.clip_text = true
 	code_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vb.add_child(code_label)
 
@@ -161,7 +187,10 @@ func _make_entry(archetype_id: String) -> Control:
 	name_label.text = _display_name(archetype_id)
 	name_label.theme_type_variation = &"HudSmall"
 	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	name_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	name_label.clip_text = true
+	name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	name_label.custom_minimum_size = Vector2(ENTRY_SIZE.x - 8, 0)
 	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vb.add_child(name_label)
 
@@ -169,9 +198,39 @@ func _make_entry(archetype_id: String) -> Control:
 
 
 func _display_name(archetype_id: String) -> String:
+	var gateway_name := ""
 	if _gateway != null and _gateway.has_method("archetype_display_name"):
-		return String(_gateway.archetype_display_name(archetype_id)).to_upper()
-	return archetype_id.to_upper()
+		gateway_name = String(_gateway.archetype_display_name(archetype_id))
+	return HudTokens.archetype_label(archetype_id, gateway_name)
+
+
+func _update_panel_layout() -> void:
+	if _panel == null or _grid == null:
+		return
+	var viewport_h := _available_height()
+	var grid_h := _grid.get_combined_minimum_size().y
+	var ideal_h := PANEL_MARGIN_V + PANEL_HEADER_HEIGHT + grid_h
+	var max_h := viewport_h * PANEL_MAX_HEIGHT_RATIO
+	var panel_h := minf(ideal_h, max_h)
+	panel_h = maxf(panel_h, minf(PANEL_MIN_HEIGHT, max_h))
+	var half_w := PANEL_WIDTH * 0.5
+	var half_h := panel_h * 0.5
+	_panel.offset_left = -half_w
+	_panel.offset_right = half_w
+	_panel.offset_top = -half_h
+	_panel.offset_bottom = half_h
+	if _panel_overlay != null and _panel_overlay.material is ShaderMaterial:
+		(_panel_overlay.material as ShaderMaterial).set_shader_parameter(
+			"rect_size",
+			Vector2(PANEL_WIDTH, panel_h)
+		)
+
+
+func _available_height() -> float:
+	var viewport_h := get_viewport_rect().size.y
+	if size.y > 0.0:
+		return minf(viewport_h, size.y)
+	return viewport_h
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -192,6 +251,8 @@ func _apply_open_state() -> void:
 	if _panel == null:
 		return
 	_panel.visible = _open
+	if _open:
+		call_deferred("_update_panel_layout")
 	# While the palette is open the cursor must be visible to drag, and gameplay
 	# input is paused so WASD/drill do not fire behind the overlay. Both are
 	# ephemeral presentation concerns (mirrors player_settings_overlay).

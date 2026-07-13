@@ -117,6 +117,16 @@ func _execute(command: Dictionary) -> Dictionary:
 			return _weld_element(command, target)
 		&"dismantle_element":
 			return _dismantle_element(command, target)
+		&"transfer_resource":
+			return _transfer_resource(command, target)
+		&"connect_network":
+			return _connect_network(command, target)
+		&"set_machine_enabled":
+			return _set_machine_enabled(command, target)
+		&"enqueue_recipe":
+			return _enqueue_recipe(command, target)
+		&"collect_world_loot":
+			return _collect_world_loot(command)
 		_:
 			return _result(&"invalid_target")
 
@@ -140,7 +150,131 @@ func _remove_voxel(
 	var center := Vector3(target["point"]) - direction * radius * 0.25
 	_voxel_tool.mode = VoxelTool.MODE_REMOVE
 	_voxel_tool.do_sphere(center, radius)
+	_spawn_hand_drill_loot(center, radius)
 	return _result(&"ok", {"point": target["point"]})
+
+
+func _spawn_hand_drill_loot(center: Vector3, radius: float) -> void:
+	if _session == null or _session.world == null:
+		return
+	var volume := TerrainImpactCarver.sphere_volume(radius)
+	if volume <= 0.000001:
+		return
+	var mass_kg := volume * IndustryArchetypeProfile.hand_drill_loot_kg_per_m3()
+	if mass_kg <= 0.000001:
+		return
+	_session.world.add_world_loot_pile(center, "raw_regolith", mass_kg)
+
+
+func apply_terrain_carve(
+	op: Dictionary,
+	volume_budget_m3: float = INF
+) -> float:
+	if _voxel_tool == null or op.is_empty():
+		return 0.0
+	return TerrainImpactCarver.apply(_voxel_tool, op, volume_budget_m3)
+
+
+func stationary_drill_has_terrain_contact(element_id: int) -> bool:
+	return not _stationary_drill_contact(element_id).is_empty()
+
+
+func carve_stationary_drill(element_id: int) -> float:
+	var contact := _stationary_drill_contact(element_id)
+	if contact.is_empty():
+		return 0.0
+	var radius := IndustryArchetypeProfile.drill_carve_radius_m()
+	var direction: Vector3 = contact["direction"]
+	var center: Vector3 = contact["point"] + direction * radius * 0.55
+	return _remove_sphere_measured(center, radius)
+
+
+func _stationary_drill_contact(element_id: int) -> Dictionary:
+	if _session == null or _session.world == null or _voxel_tool == null:
+		return {}
+	var element := _session.world.get_element(element_id)
+	if element == null or element.archetype_id != "stationary_drill":
+		return {}
+	var assembly := _session.world.get_assembly_raw(element.assembly_id)
+	if assembly == null:
+		return {}
+	# The authored working face is local +X. Presentation uses the same axis.
+	var local_direction := OrientationUtil.rotate_direction(
+		Vector3i.RIGHT,
+		element.orientation_index
+	)
+	var direction := (
+		assembly.motion.transform.basis * Vector3(local_direction)
+	).normalized()
+	var local_head := (
+		Vector3(element.origin_cell)
+		+ Vector3(0.5, 0.5, 0.5)
+		+ Vector3(local_direction)
+		* IndustryArchetypeProfile.drill_head_offset_m()
+	)
+	var head := assembly.motion.transform * local_head
+	var head_cell := Vector3i(
+		floori(head.x),
+		floori(head.y),
+		floori(head.z)
+	)
+	if _sdf_occupancy(_voxel_tool.get_voxel_f(head_cell)) > 0.0:
+		return {"point": head, "direction": direction}
+	var probe_start := head - direction * 0.08
+	var hit: VoxelRaycastResult = _voxel_tool.raycast(
+		probe_start,
+		direction,
+		IndustryArchetypeProfile.drill_contact_reach_m() + 0.08
+	)
+	if hit == null:
+		return {}
+	return {
+		"point": probe_start + direction * hit.distance,
+		"direction": direction,
+	}
+
+
+func _remove_sphere_measured(center: Vector3, radius: float) -> float:
+	# Voxel Tools does not return a removed-volume result. Measure the authored
+	# SDF lattice before and after the edit, and credit only positive occupancy
+	# delta. This can under-count sub-voxel detail but cannot mint default yield.
+	var margin := radius + 1.0
+	var min_cell := Vector3i(
+		floori(center.x - margin),
+		floori(center.y - margin),
+		floori(center.z - margin)
+	)
+	var max_cell := Vector3i(
+		ceili(center.x + margin),
+		ceili(center.y + margin),
+		ceili(center.z + margin)
+	)
+	var before: Dictionary = {}
+	for x: int in range(min_cell.x, max_cell.x + 1):
+		for y: int in range(min_cell.y, max_cell.y + 1):
+			for z: int in range(min_cell.z, max_cell.z + 1):
+				var cell := Vector3i(x, y, z)
+				before[cell] = _sdf_occupancy(_voxel_tool.get_voxel_f(cell))
+	_voxel_tool.channel = VoxelBuffer.CHANNEL_SDF
+	_voxel_tool.mode = VoxelTool.MODE_REMOVE
+	_voxel_tool.sdf_strength = 1.0
+	_voxel_tool.do_sphere(center, radius)
+	var removed_m3 := 0.0
+	for cell: Vector3i in before:
+		var after := _sdf_occupancy(_voxel_tool.get_voxel_f(cell))
+		removed_m3 += maxf(float(before[cell]) - after, 0.0)
+	return minf(
+		removed_m3,
+		IndustryArchetypeProfile.drill_carve_volume_budget_m3()
+	)
+
+
+func _sdf_occupancy(sdf: float) -> float:
+	return clampf(0.5 - sdf, 0.0, 1.0)
+
+
+func get_voxel_tool() -> VoxelTool:
+	return _voxel_tool
 
 
 func _place_block(
@@ -185,7 +319,9 @@ func _toggle_control_seat(
 func preview_construction(
 	target: Dictionary,
 	archetype_id: String,
-	orientation_index: int
+	orientation_index: int,
+	held_ground_pivot: Vector3 = Vector3(INF, INF, INF),
+	held_attach_pivot: Vector3 = Vector3(INF, INF, INF)
 ) -> Dictionary:
 	if _session == null:
 		return {
@@ -198,8 +334,24 @@ func preview_construction(
 			_session.world,
 			target,
 			archetype,
-			orientation_index
+			orientation_index,
+			"player",
+			held_ground_pivot,
+			held_attach_pivot
 		)
+	)
+
+
+func baseline_ground_pivot(
+	target: Dictionary,
+	archetype_id: String
+) -> Vector3:
+	if _session == null:
+		return Vector3(INF, INF, INF)
+	return ConstructionPlacement.baseline_ground_pivot(
+		_session.world,
+		target,
+		_get_archetype(archetype_id)
 	)
 
 
@@ -208,11 +360,21 @@ func resolve_construction_placement(params: Dictionary) -> Dictionary:
 	var orientation_index := int(params.get("orientation_index", 0))
 	var direct_hit: Dictionary = params.get("direct_hit", {})
 	var manual_index := int(params.get("manual_candidate_index", -1))
+	var held_ground_pivot: Vector3 = params.get(
+		"held_ground_pivot",
+		Vector3(INF, INF, INF)
+	)
+	var held_attach_pivot: Vector3 = params.get(
+		"held_attach_pivot",
+		Vector3(INF, INF, INF)
+	)
 	if _session == null:
 		var plan := preview_construction(
 			direct_hit,
 			archetype_id,
-			orientation_index
+			orientation_index,
+			held_ground_pivot,
+			held_attach_pivot
 		)
 		var selected_index := 0 if bool(plan.get("valid", false)) else -1
 		return {
@@ -240,6 +402,8 @@ func resolve_construction_placement(params: Dictionary) -> Dictionary:
 		"camera": params.get("camera"),
 		"direct_hit": direct_hit,
 		"manual_candidate_index": manual_index,
+		"held_ground_pivot": held_ground_pivot,
+		"held_attach_pivot": held_attach_pivot,
 	})
 	result["selected_plan"] = _seat_ground_plan(
 		result.get("selected_plan", {})
@@ -292,7 +456,7 @@ func _resolve_cache_key(params: Dictionary) -> String:
 	).normalized()
 	var direct_hit: Dictionary = params.get("direct_hit", {})
 	var target_id := StringName(direct_hit.get("target_id", &""))
-	return "%d|%s|%s|%s|%d|%s|%s" % [
+	return "%d|%s|%s|%s|%d|%s|%s|%s|%s" % [
 		_snap_face_cache.generation,
 		_quantize_vec3(ray_origin, 0.04),
 		_quantize_vec3(ray_direction, 0.02),
@@ -300,6 +464,8 @@ func _resolve_cache_key(params: Dictionary) -> String:
 		int(params.get("orientation_index", 0)),
 		target_id,
 		str(bool(direct_hit.get("valid", false))),
+		_pivot_cache_token(params.get("held_ground_pivot", Vector3(INF, INF, INF))),
+		_pivot_cache_token(params.get("held_attach_pivot", Vector3(INF, INF, INF))),
 	]
 
 
@@ -311,6 +477,13 @@ static func _quantize_vec3(value: Vector3, step: float) -> Vector3:
 		snapped(value.y, step),
 		snapped(value.z, step),
 	)
+
+
+static func _pivot_cache_token(value: Variant) -> String:
+	var pivot := Vector3(value)
+	if not pivot.is_finite():
+		return "unset"
+	return str(_quantize_vec3(pivot, 0.05))
 
 
 func construction_resource_amount() -> float:
@@ -501,15 +674,6 @@ func _weld_element(
 func _apply_place_plan(plan: Dictionary) -> Dictionary:
 	var place := plan.get("command") as PlaceElementCommand
 	var result := _session.world.apply_structural_command_now(place)
-	if result.is_ok() and place.assembly_id == 0:
-		var assembly_id := int(result.data["assembly_id"])
-		var anchored := _session.world.assembly_has_anchor(assembly_id)
-		var motion := GridSpawnUtil.motion_from_transform(
-			plan["assembly_world_transform"],
-			anchored
-		)
-		_session.projection.project_assembly_now(assembly_id, motion)
-		_session.visuals.rebuild_assembly(assembly_id)
 	return _structural_result(result)
 
 
@@ -574,6 +738,10 @@ func _seat_ground_plan(plan: Dictionary) -> Dictionary:
 	var seated_root := root.translated(shift)
 	seated["assembly_world_transform"] = seated_root
 	seated["preview_root_transform"] = seated_root
+	var seated_command := seated.get("command") as PlaceElementCommand
+	if seated_command != null:
+		seated_command.initial_motion = AssemblyMotionState.new()
+		seated_command.initial_motion.transform = seated_root
 	var world_transform: Transform3D = plan.get(
 		"world_transform", root
 	)
@@ -587,6 +755,187 @@ func _get_archetype(archetype_id: String) -> ElementArchetype:
 			archetype_id
 		)
 	return _archetype_cache[archetype_id] as ElementArchetype
+
+
+func apply_transfer_resource(command: TransferResourceCommand) -> Dictionary:
+	if _session == null or command == null:
+		return _result(&"not_ready")
+	var result := _session.apply_transfer_resource(command)
+	return _result(
+		StringName(result.get("reason", &"invalid_target")),
+		{
+			"amount": float(result.get("amount", 0.0)),
+			"from_store_id": command.from_store_id,
+			"to_store_id": command.to_store_id,
+			"resource_id": command.resource_id,
+		}
+	)
+
+
+func apply_connect_network(
+	element_a_id: int,
+	element_b_id: int,
+	port_a_id: String = "",
+	port_b_id: String = ""
+) -> Dictionary:
+	if _session == null:
+		return _result(&"not_ready")
+	var diagnosis := IndustryElectricPortUtil.diagnose_electric_pair(
+		_session.world,
+		element_a_id,
+		element_b_id,
+		port_a_id,
+		port_b_id
+	)
+	var pair: Dictionary = diagnosis.get("pair", {})
+	if pair.is_empty():
+		var reason: StringName = diagnosis.get("reason", &"incompatible_connection")
+		if reason == &"ok":
+			reason = &"incompatible_connection"
+		return _result(reason)
+	var resolved_a := int(pair.get("element_a_id", element_a_id))
+	var resolved_b := int(pair.get("element_b_id", element_b_id))
+	var resolved_port_a := (
+		port_a_id if not port_a_id.is_empty() else str(pair["port_a_id"])
+	)
+	var resolved_port_b := (
+		port_b_id if not port_b_id.is_empty() else str(pair["port_b_id"])
+	)
+	var element_a := _session.world.get_element(resolved_a)
+	var element_b := _session.world.get_element(resolved_b)
+	if element_a == null or element_b == null:
+		return _result(&"invalid_target")
+	var assembly_a := _session.world.get_assembly(element_a.assembly_id)
+	var assembly_b := _session.world.get_assembly(element_b.assembly_id)
+	var command := ConnectNetworkCommand.new()
+	command.element_a_id = resolved_a
+	command.port_a_id = resolved_port_a
+	command.element_b_id = resolved_b
+	command.port_b_id = resolved_port_b
+	if assembly_a != null:
+		command.expected_revision_a = assembly_a.topology_revision
+	if assembly_b != null:
+		command.expected_revision_b = assembly_b.topology_revision
+	var result := _session.world.apply_structural_command_now(command)
+	if result == null:
+		return _result(&"not_ready")
+	if result.is_ok():
+		return _result(&"ok", result.data)
+	return _result(_connect_failure_reason(result.reason), result.data)
+
+
+func _connect_network(
+	command: Dictionary,
+	_target: Dictionary
+) -> Dictionary:
+	var parameters: Dictionary = command.get("parameters", {})
+	return apply_connect_network(
+		int(parameters.get("element_a_id", 0)),
+		int(parameters.get("element_b_id", 0)),
+		str(parameters.get("port_a_id", "")),
+		str(parameters.get("port_b_id", ""))
+	)
+
+
+func _connect_failure_reason(reason: StringName) -> StringName:
+	match reason:
+		StructuralCommandResult.REASON_DUPLICATE_CONNECTION:
+			return &"duplicate_connection"
+		StructuralCommandResult.REASON_INCOMPATIBLE_CONNECTION:
+			return &"incompatible_connection"
+		StructuralCommandResult.REASON_CABLE_TOO_LONG:
+			return &"cable_too_long"
+		StructuralCommandResult.REASON_ELEMENT_INCOMPLETE:
+			return &"element_incomplete"
+		StructuralCommandResult.REASON_ELEMENT_BROKEN:
+			return &"element_broken"
+		_:
+			return _map_structural_reason(reason)
+
+
+func _transfer_resource(
+	command: Dictionary,
+	_target: Dictionary
+) -> Dictionary:
+	if _session == null:
+		return _result(&"not_ready")
+	var parameters: Dictionary = command.get("parameters", {})
+	var transfer := TransferResourceCommand.new()
+	transfer.from_store_id = str(parameters.get("from_store_id", ""))
+	transfer.to_store_id = str(parameters.get("to_store_id", ""))
+	transfer.resource_id = str(parameters.get("resource_id", ""))
+	transfer.amount = float(parameters.get("amount", 0.0))
+	return apply_transfer_resource(transfer)
+
+
+func _set_machine_enabled(
+	command: Dictionary,
+	target: Dictionary
+) -> Dictionary:
+	if _session == null:
+		return _result(&"not_ready")
+	var parameters: Dictionary = command.get("parameters", {})
+	var machine := SetMachineEnabledCommand.new()
+	machine.element_id = int(
+		parameters.get(
+			"element_id",
+			target.get("metadata", {}).get("element_id", 0)
+		)
+	)
+	machine.enabled = bool(parameters.get("enabled", true))
+	var result := _session.apply_set_machine_enabled(machine)
+	return _result(
+		StringName(result.get("reason", &"invalid_target")),
+		{"element_id": machine.element_id, "enabled": machine.enabled}
+	)
+
+
+func _enqueue_recipe(
+	command: Dictionary,
+	target: Dictionary
+) -> Dictionary:
+	if _session == null:
+		return _result(&"not_ready")
+	var parameters: Dictionary = command.get("parameters", {})
+	var recipe := EnqueueRecipeCommand.new()
+	recipe.element_id = int(
+		parameters.get(
+			"element_id",
+			target.get("metadata", {}).get("element_id", 0)
+		)
+	)
+	recipe.recipe_id = str(parameters.get("recipe_id", ""))
+	var result := _session.apply_enqueue_recipe(recipe)
+	return _result(
+		StringName(result.get("reason", &"invalid_target")),
+		{"element_id": recipe.element_id, "recipe_id": recipe.recipe_id}
+	)
+
+
+func _collect_world_loot(command: Dictionary) -> Dictionary:
+	if _session == null:
+		return _result(&"not_ready")
+	var parameters: Dictionary = command.get("parameters", {})
+	var pile_id := int(parameters.get("pile_id", 0))
+	var to_store_id := str(
+		parameters.get(
+			"to_store_id",
+			IndustryStoreService.PLAYER_STORE_ID
+		)
+	)
+	var result := _session.world.collect_world_loot_pile(
+		pile_id,
+		to_store_id
+	)
+	return _result(
+		StringName(result.get("reason", &"invalid_target")),
+		{
+			"pile_id": pile_id,
+			"to_store_id": to_store_id,
+			"resource_id": str(result.get("resource_id", "")),
+			"amount": float(result.get("amount", 0.0)),
+		}
+	)
 
 
 func _dismantle_element(

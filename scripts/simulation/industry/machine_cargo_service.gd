@@ -1,0 +1,138 @@
+class_name MachineCargoService
+extends RefCounted
+
+const EPSILON := 0.000001
+const PULL_UNIT_PER_TICK := 1.0
+
+
+func pull_inputs_for_recipe(
+	world: SimulationWorld,
+	cargo_graph: CargoGraph,
+	transfer_service: CargoTransferService,
+	element: SimulationElement,
+	inputs: Dictionary
+) -> void:
+	if (
+		world == null
+		or cargo_graph == null
+		or transfer_service == null
+		or element == null
+		or inputs.is_empty()
+	):
+		return
+	IndustryStoreService.sync_element_storage(world, element)
+	var buffer_capacity := IndustryArchetypeProfile.internal_buffer_capacity_kg(
+		element.archetype_id
+	)
+	var store_id := _nearest_connected_store_id(world, cargo_graph, element.element_id)
+	if store_id.is_empty():
+		return
+	for resource_id: Variant in inputs.keys():
+		var needed := float(inputs[resource_id])
+		if needed <= EPSILON:
+			continue
+		var have := element.industry_buffer.amount(str(resource_id))
+		var remaining := maxf(needed - have, 0.0)
+		while remaining > EPSILON:
+			var pull_amount := minf(remaining, PULL_UNIT_PER_TICK)
+			var result := transfer_service.transfer_between_stores(
+				world,
+				store_id,
+				IndustryStoreService.buffer_store_id(element.element_id),
+				str(resource_id),
+				pull_amount
+			)
+			if StringName(result.get("reason", &"")) != &"ok":
+				break
+			var transferred := float(result.get("amount", 0.0))
+			if transferred <= EPSILON:
+				break
+			remaining -= transferred
+
+
+func can_accept_outputs(
+	world: SimulationWorld,
+	cargo_graph: CargoGraph,
+	element: SimulationElement,
+	outputs: Dictionary
+) -> bool:
+	if element == null or outputs.is_empty():
+		return false
+	IndustryStoreService.sync_element_storage(world, element)
+	var buffer_capacity := IndustryArchetypeProfile.internal_buffer_capacity_kg(
+		element.archetype_id
+	)
+	for resource_id: Variant in outputs.keys():
+		var amount := float(outputs[resource_id])
+		if amount <= EPSILON:
+			continue
+		var resource := str(resource_id)
+		if not element.industry_buffer.can_add(resource, amount, buffer_capacity):
+			var store_id := _nearest_connected_store_id(
+				world,
+				cargo_graph,
+				element.element_id
+			)
+			if store_id.is_empty():
+				return false
+			var store := world.get_resource_store(store_id)
+			if store == null:
+				return false
+			var capacity := IndustryStoreService.capacity_kg_for_store(
+				world,
+				store_id
+			)
+			if (
+				ResourceCatalog.max_addable_amount(store, resource, capacity)
+				+ EPSILON
+				< amount
+			):
+				return false
+	return true
+
+
+func push_outputs_from_buffer(
+	world: SimulationWorld,
+	cargo_graph: CargoGraph,
+	transfer_service: CargoTransferService,
+	element: SimulationElement,
+	resource_ids: PackedStringArray
+) -> void:
+	if (
+		world == null
+		or cargo_graph == null
+		or transfer_service == null
+		or element == null
+	):
+		return
+	var store_id := _nearest_connected_store_id(world, cargo_graph, element.element_id)
+	if store_id.is_empty():
+		return
+	for resource_id: String in resource_ids:
+		var transferable := minf(
+			element.industry_buffer.amount(resource_id),
+			PULL_UNIT_PER_TICK
+		)
+		if transferable <= EPSILON:
+			continue
+		transfer_service.transfer_between_stores(
+			world,
+			IndustryStoreService.buffer_store_id(element.element_id),
+			store_id,
+			resource_id,
+			transferable
+		)
+
+
+func _nearest_connected_store_id(
+	world: SimulationWorld,
+	cargo_graph: CargoGraph,
+	from_element_id: int
+) -> String:
+	var target_element_id := cargo_graph.nearest_cargo_store_element_id(
+		world,
+		from_element_id
+	)
+	if target_element_id <= 0:
+		return ""
+	return IndustryStoreService.element_store_id(target_element_id)

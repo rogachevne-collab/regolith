@@ -49,6 +49,14 @@ func resolve(params: Dictionary) -> Dictionary:
 	var camera: Camera3D = params.get("camera")
 	var direct_hit: Dictionary = params.get("direct_hit", {})
 	var manual_index := int(params.get("manual_candidate_index", -1))
+	var held_ground_pivot: Vector3 = params.get(
+		"held_ground_pivot",
+		Vector3(INF, INF, INF)
+	)
+	var held_attach_pivot: Vector3 = params.get(
+		"held_attach_pivot",
+		Vector3(INF, INF, INF)
+	)
 	if (
 		manual_index < 0
 		and bool(direct_hit.get("valid", false))
@@ -61,7 +69,9 @@ func resolve(params: Dictionary) -> Dictionary:
 			direct_hit,
 			archetype,
 			orientation_index,
-			store_id
+			store_id,
+			held_ground_pivot,
+			held_attach_pivot
 		)
 		var direct_command: PlaceElementCommand = direct_plan.get("command")
 		if (
@@ -101,7 +111,9 @@ func resolve(params: Dictionary) -> Dictionary:
 		store_id,
 		ray_origin,
 		ray_direction,
-		camera
+		camera,
+		held_ground_pivot,
+		held_attach_pivot
 	):
 		candidates.append(candidate)
 		if candidates.size() >= MAX_CANDIDATES:
@@ -118,7 +130,9 @@ func resolve(params: Dictionary) -> Dictionary:
 				direct_hit,
 				archetype,
 				orientation_index,
-				store_id
+				store_id,
+				held_ground_pivot,
+				held_attach_pivot
 			)
 			var command: PlaceElementCommand = direct_plan.get("command")
 			if (
@@ -143,7 +157,9 @@ func resolve(params: Dictionary) -> Dictionary:
 				direct_hit,
 				archetype,
 				orientation_index,
-				store_id
+				store_id,
+				held_ground_pivot,
+				held_attach_pivot
 			)
 			if bool(voxel_plan.get("valid", false)):
 				candidates.append(
@@ -263,7 +279,9 @@ func _collect_face_candidates(
 	store_id: String,
 	ray_origin: Vector3,
 	ray_direction: Vector3,
-	camera: Camera3D
+	camera: Camera3D,
+	held_ground_pivot: Vector3 = Vector3(INF, INF, INF),
+	held_attach_pivot: Vector3 = Vector3(INF, INF, INF)
 ) -> Array[Dictionary]:
 	var ranked: Array[Dictionary] = []
 	if _face_cache != null:
@@ -333,7 +351,9 @@ func _collect_face_candidates(
 			target,
 			archetype,
 			orientation_index,
-			store_id
+			store_id,
+			held_ground_pivot,
+			held_attach_pivot
 		)
 		if not bool(plan.get("valid", false)):
 			continue

@@ -5,6 +5,8 @@ extends Control
 ## simulation element is targeted. Never mutates state.
 
 const PANEL_SIZE := Vector2(320, 126)
+const PANEL_SIZE_WITH_STORE := Vector2(320, 248)
+const PANEL_SIZE_WITH_MACHINE := Vector2(320, 184)
 const KEY_COL := 72.0
 const INDEX_LETTERS: PackedStringArray = [
 	"А", "Б", "В", "Г", "Д", "Е", "Ж", "З", "И", "К",
@@ -13,6 +15,7 @@ const INDEX_LETTERS: PackedStringArray = [
 
 var _query: InteractionQuery
 var _gateway: WorldCommandGateway
+var _tools: ToolController
 
 var _panel: Panel
 var _emblem_mat: ShaderMaterial
@@ -22,12 +25,16 @@ var _name_val: Label
 var _status_val: Label
 var _metric_key: Label
 var _metric_val: Label
+var _store_view: HudStoreView
+var _machine_info: Label
 var _max_integrity_cache: Dictionary = {}
+var _last_store_element_id := -1
 
 
 func setup(ctx: Dictionary) -> void:
 	_query = ctx.get("query")
 	_gateway = ctx.get("gateway")
+	_tools = ctx.get("tools")
 
 
 func _ready() -> void:
@@ -101,6 +108,17 @@ func _build() -> void:
 	_metric_key = metric[0] as Label
 	_metric_val = metric[1] as Label
 
+	_store_view = HudStoreView.new()
+	_store_view.visible = false
+	_store_view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vb.add_child(_store_view)
+
+	_machine_info = Label.new()
+	_machine_info.theme_type_variation = &"HudSmall"
+	_machine_info.add_theme_color_override("font_color", HudTokens.COL_TEXT)
+	_machine_info.visible = false
+	vb.add_child(_machine_info)
+
 	# Glow / border / scanline overlay on top of the fill.
 	_panel.add_child(HudTokens.make_panel_overlay(PANEL_SIZE))
 
@@ -155,6 +173,71 @@ func _process(_delta: float) -> void:
 	_metric_key.text = "ЦЕЛОСТНОСТЬ"
 	_metric_val.text = "%d%%" % int(round(_integrity_fraction(archetype_id, meta) * 100.0))
 	_metric_val.add_theme_color_override("font_color", status_color)
+	_refresh_store_view(archetype_id, meta)
+	_refresh_machine_info(archetype_id, meta, hit)
+
+
+func _refresh_store_view(archetype_id: String, meta: Dictionary) -> void:
+	if _store_view == null or _gateway == null:
+		return
+	if archetype_id != "cargo_store":
+		_store_view.visible = false
+		_panel.size = PANEL_SIZE
+		_last_store_element_id = -1
+		return
+	var element_id := int(meta.get("element_id", 0))
+	if element_id <= 0:
+		_store_view.visible = false
+		_panel.size = PANEL_SIZE
+		return
+	var store_id := IndustryStoreService.element_store_id(element_id)
+	var store := _gateway.resource_store(store_id)
+	if store == null:
+		_store_view.visible = false
+		_panel.size = PANEL_SIZE
+		return
+	_panel.size = PANEL_SIZE_WITH_STORE
+	_store_view.visible = true
+	if element_id != _last_store_element_id:
+		_store_view.bind(store, "СКЛАД")
+		_last_store_element_id = element_id
+	else:
+		_store_view.refresh()
+
+
+func _refresh_machine_info(
+	archetype_id: String,
+	meta: Dictionary,
+	hit: InteractionHit
+) -> void:
+	if _machine_info == null:
+		return
+	if archetype_id not in ["stationary_drill", "processor", "fabricator"]:
+		_machine_info.visible = false
+		return
+	_store_view.visible = false
+	_panel.size = PANEL_SIZE_WITH_MACHINE
+	_machine_info.visible = true
+	var enabled := bool(meta.get("machine_enabled", true))
+	if archetype_id == "stationary_drill":
+		_machine_info.text = (
+			"ГОЛОВКА: РАБОЧАЯ ГРАНЬ +X\n"
+			+ "E — %s"
+		) % ("ВЫКЛЮЧИТЬ" if enabled else "ВКЛЮЧИТЬ")
+		return
+	var active := str(meta.get("active_recipe_id", ""))
+	var queue: Array = meta.get("recipe_queue", [])
+	var next_recipe := (
+		_tools.next_recipe_for_target(hit)
+		if _tools != null
+		else ""
+	)
+	_machine_info.text = "ПИТАНИЕ: %s · ОЧЕРЕДЬ: %d\nАКТИВНО: %s\nE — ВКЛ/ВЫКЛ · R — +%s" % [
+		"ВКЛ" if enabled else "ВЫКЛ",
+		queue.size(),
+		HudTokens.recipe_label(active),
+		HudTokens.recipe_label(next_recipe),
+	]
 
 
 func _integrity_fraction(archetype_id: String, meta: Dictionary) -> float:

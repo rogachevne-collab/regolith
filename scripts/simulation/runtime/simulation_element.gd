@@ -22,6 +22,8 @@ const WELD_REPAIR_INTEGRITY_FRACTION := 0.25
 # (terrain is destructible). Drives ground anchoring so a construction keeps every
 # ground-touching block anchored, not just the first-placed one.
 var terrain_contact: bool = false
+var industry_buffer: ElementIndustryBuffer = null
+var industry_functional_reason: StringName = &"ok"
 
 var _archetype: ElementArchetype
 
@@ -82,6 +84,40 @@ func dry_mass_kg() -> float:
 	if archetype == null:
 		return 0.0
 	return archetype.mass_kg
+
+
+func industry_buffer_amount(resource_id: String) -> float:
+	if industry_buffer == null:
+		return 0.0
+	return industry_buffer.amount(resource_id)
+
+
+func set_industry_buffer(amounts: Dictionary) -> void:
+	if industry_buffer == null:
+		industry_buffer = ElementIndustryBuffer.new()
+	for resource_id: Variant in amounts.keys():
+		var amount := float(amounts[resource_id])
+		if amount <= 0.000001:
+			continue
+		industry_buffer.remove(resource_id, INF)
+		var capacity := IndustryArchetypeProfile.internal_buffer_capacity_kg(
+			archetype_id
+		)
+		if capacity <= 0.0:
+			capacity = INF
+		industry_buffer.add(str(resource_id), amount, capacity)
+
+
+func content_mass_kg(world: SimulationWorld = null) -> float:
+	if world != null:
+		return IndustryStoreService.content_mass_kg(world, self)
+	if industry_buffer != null:
+		return industry_buffer.mass_kg()
+	return 0.0
+
+
+func total_mass_kg(world: SimulationWorld = null) -> float:
+	return dry_mass_kg() + content_mass_kg(world)
 
 
 func bump_state_revision() -> void:
@@ -209,6 +245,13 @@ func status_reason() -> StringName:
 	return &"ok"
 
 
+func industry_status_reason() -> StringName:
+	var construction := status_reason()
+	if construction != &"ok":
+		return construction
+	return industry_functional_reason
+
+
 func occupied_cells() -> Array[Vector3i]:
 	var archetype: ElementArchetype = get_archetype()
 	if archetype == null:
@@ -217,7 +260,7 @@ func occupied_cells() -> Array[Vector3i]:
 
 
 func to_dict() -> Dictionary:
-	return {
+	var row := {
 		"element_id": element_id,
 		"assembly_id": assembly_id,
 		"archetype_id": archetype_id,
@@ -230,6 +273,11 @@ func to_dict() -> Dictionary:
 		"terrain_contact": terrain_contact,
 		"installed_materials": installed_materials.duplicate(true),
 	}
+	if industry_functional_reason != &"ok":
+		row["industry_functional_reason"] = industry_functional_reason
+	if industry_buffer != null and not industry_buffer.resource_ids().is_empty():
+		row["industry_buffer"] = industry_buffer.to_dict()
+	return row
 
 
 static func from_dict(data: Dictionary) -> SimulationElement:
@@ -244,7 +292,15 @@ static func from_dict(data: Dictionary) -> SimulationElement:
 	element.condition = float(data.get("condition", 1.0))
 	element.state_revision = int(data.get("state_revision", 0))
 	element.terrain_contact = bool(data.get("terrain_contact", false))
+	var functional_reason: Variant = data.get("industry_functional_reason", &"ok")
+	if functional_reason is StringName:
+		element.industry_functional_reason = functional_reason
+	elif str(functional_reason) != "":
+		element.industry_functional_reason = StringName(str(functional_reason))
 	var materials: Variant = data.get("installed_materials", {})
 	if materials is Dictionary:
 		element.installed_materials = materials.duplicate(true)
+	var buffer_data: Variant = data.get("industry_buffer", {})
+	if buffer_data is Dictionary and not buffer_data.is_empty():
+		element.industry_buffer = ElementIndustryBuffer.from_dict(buffer_data)
 	return element

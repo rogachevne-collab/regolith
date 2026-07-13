@@ -2,11 +2,16 @@ class_name ElementVisualProjection
 extends Node
 
 const VISUAL_PREFIX := "ElementVisual_"
+const DRILL_SPIN_SPEED := 7.0
+const STATIONARY_DRILL_VISUAL_SCRIPT := preload(
+	"res://scripts/presentation/stationary_drill_visual.gd"
+)
 
 var _world: SimulationWorld
 var _physics_projection: SimulationPhysicsProjection
 var _materials: Dictionary = {}
 var _known_bodies: Dictionary = {}
+var _drill_rotors: Dictionary = {}
 
 
 func bind(
@@ -38,6 +43,28 @@ func rebuild_all() -> void:
 
 func rebuild_assembly(assembly_id: int) -> void:
 	_rebuild_assembly(assembly_id)
+
+
+func _process(delta: float) -> void:
+	if _world == null:
+		return
+	for element_id_variant: Variant in _drill_rotors.keys():
+		var element_id := int(element_id_variant)
+		var rotor_variant: Variant = _drill_rotors[element_id]
+		if not is_instance_valid(rotor_variant):
+			_drill_rotors.erase(element_id)
+			continue
+		var rotor := rotor_variant as Node3D
+		var element := _world.get_element(element_id)
+		if element == null:
+			_drill_rotors.erase(element_id)
+			continue
+		var running := element.industry_status_reason() == &"ok"
+		var operation_vfx := rotor.get_node_or_null("OperationVfx") as Node3D
+		if operation_vfx != null:
+			operation_vfx.visible = running
+		if running:
+			rotor.rotate_x(DRILL_SPIN_SPEED * delta)
 
 
 func _on_structural_event(event: Dictionary) -> void:
@@ -102,6 +129,26 @@ func _rebuild_assembly(assembly_id: int) -> void:
 			visual.set_meta("element_visual", true)
 			visual.set_meta("assembly_id", assembly_id)
 			body.add_child(visual)
+		if element.archetype_id == "stationary_drill":
+			_add_stationary_drill_visual(body, assembly_id, element)
+
+
+func _add_stationary_drill_visual(
+	body: PhysicsBody3D,
+	assembly_id: int,
+	element: SimulationElement
+) -> void:
+	var root: Node3D = STATIONARY_DRILL_VISUAL_SCRIPT.instantiate_for_element(
+		element.origin_cell,
+		element.orientation_index
+	)
+	root.name = "StationaryDrillWorkingHead_%d" % element.element_id
+	root.set_meta("element_visual", true)
+	root.set_meta("assembly_id", assembly_id)
+	body.add_child(root)
+	var rotor: Node3D = STATIONARY_DRILL_VISUAL_SCRIPT.operational_rotor(root)
+	if rotor != null:
+		_drill_rotors[element.element_id] = rotor
 
 
 func _clear_visuals(body: PhysicsBody3D, assembly_id: int = 0) -> void:

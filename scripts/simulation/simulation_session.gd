@@ -5,16 +5,71 @@ const SLICE01_BASE_MINIMAL := preload(
 	"res://resources/blueprints/baked/slice01_base_minimal.tres"
 )
 
+@export var gateway_path: NodePath
+
 @onready var world: SimulationWorld = $SimulationWorld
 @onready var projection: SimulationPhysicsProjection = (
 	$SimulationPhysicsProjection
 )
 @onready var visuals: ElementVisualProjection = $ElementVisualProjection
+@onready var impact_service: ImpactResolverService = $ImpactResolverService
+@onready var industry_network: IndustryNetworkProjection = $IndustryNetworkProjection
+@onready var industry_ports: IndustryPortProjection = $IndustryPortProjection
+@onready var world_loot: WorldLootProjection = $WorldLootProjection
+
+var _industry_simulation := IndustrySimulation.new()
 
 
 func _ready() -> void:
 	projection.bind_world(world)
 	visuals.bind(world, projection)
+	industry_network.bind(world, projection)
+	industry_ports.bind(world, projection)
+	world_loot.bind(world)
+	_industry_simulation.bind_world(world)
+	call_deferred("_bind_impact_service")
+	call_deferred("_bind_stationary_drill_gateway")
+
+
+func _physics_process(delta: float) -> void:
+	_industry_simulation.tick(world, delta)
+
+
+func get_industry_simulation() -> IndustrySimulation:
+	return _industry_simulation
+
+
+func apply_transfer_resource(command: TransferResourceCommand) -> Dictionary:
+	return _industry_simulation.apply_transfer_command(command)
+
+
+func apply_set_machine_enabled(command: SetMachineEnabledCommand) -> Dictionary:
+	return world.apply_set_machine_enabled(command)
+
+
+func apply_enqueue_recipe(command: EnqueueRecipeCommand) -> Dictionary:
+	return world.apply_enqueue_recipe(command)
+
+
+func _bind_impact_service() -> void:
+	var gateway: WorldCommandGateway = null
+	if not gateway_path.is_empty():
+		gateway = get_node_or_null(gateway_path) as WorldCommandGateway
+	impact_service.bind(world, gateway)
+	projection.bind_impact_service(impact_service)
+	ProjectedAssemblyBody.impact_service = impact_service
+
+
+func _bind_stationary_drill_gateway() -> void:
+	var gateway: WorldCommandGateway = null
+	if not gateway_path.is_empty():
+		gateway = get_node_or_null(gateway_path) as WorldCommandGateway
+	if gateway == null:
+		return
+	_industry_simulation.set_drill_terrain_hooks(
+		gateway.stationary_drill_has_terrain_contact,
+		gateway.carve_stationary_drill
+	)
 
 
 func spawn_blueprint(

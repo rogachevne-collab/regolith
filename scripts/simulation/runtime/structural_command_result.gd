@@ -24,6 +24,8 @@ const REASON_ANCHOR_REQUIRED := &"anchor_required"
 const REASON_ANCHOR_NOT_ALLOWED := &"anchor_not_allowed"
 const REASON_NO_GROUND_CONTACT := &"no_ground_contact"
 const REASON_NO_EFFECT := &"no_effect"
+const REASON_DUPLICATE_CONNECTION := &"duplicate_connection"
+const REASON_CABLE_TOO_LONG := &"cable_too_long"
 
 var status: StringName = STATUS_FAILED
 var reason: StringName = REASON_INVALID_TARGET

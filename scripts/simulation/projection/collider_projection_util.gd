@@ -10,7 +10,7 @@ static func assembly_dry_mass(
 	for element_id: int in assembly.element_ids:
 		var element: SimulationElement = world.get_element(element_id)
 		if element != null:
-			total += element.dry_mass_kg()
+			total += element.total_mass_kg(world)
 	return total
 
 
@@ -24,7 +24,7 @@ static func assembly_center_of_mass_local(
 		var element: SimulationElement = world.get_element(element_id)
 		if element == null:
 			continue
-		var mass: float = element.dry_mass_kg()
+		var mass: float = element.total_mass_kg(world)
 		total_mass += mass
 		weighted += element_center_of_mass_local(element) * mass
 	if total_mass <= 0.0:

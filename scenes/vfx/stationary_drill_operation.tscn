@@ -1,0 +1,32 @@
+[gd_scene load_steps=4 format=3]
+
+[sub_resource type="StandardMaterial3D" id="Material_glow"]
+albedo_color = Color(0.18, 0.72, 1, 1)
+metallic = 0.55
+roughness = 0.24
+emission_enabled = true
+emission = Color(0.05, 0.42, 1, 1)
+emission_energy_multiplier = 2.2
+
+[sub_resource type="TorusMesh" id="Torus_work"]
+material = SubResource("Material_glow")
+inner_radius = 0.16
+outer_radius = 0.22
+rings = 16
+ring_segments = 8
+
+[sub_resource type="TorusMesh" id="Torus_guard"]
+material = SubResource("Material_glow")
+inner_radius = 0.23
+outer_radius = 0.25
+rings = 16
+ring_segments = 8
+
+[node name="StationaryDrillOperationVfx" type="Node3D"]
+
+[node name="WorkingRing" type="MeshInstance3D" parent="."]
+mesh = SubResource("Torus_work")
+
+[node name="GuardRing" type="MeshInstance3D" parent="."]
+position = Vector3(0, -0.13, 0)
+mesh = SubResource("Torus_guard")
