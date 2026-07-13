@@ -11,11 +11,7 @@ static func nearest_alignment(
 ) -> Dictionary:
 	var relative: Transform3D = transform_a.inverse() * transform_b
 	var grid := GridTransform.new()
-	grid.translation = Vector3i(
-		int(round(relative.origin.x)),
-		int(round(relative.origin.y)),
-		int(round(relative.origin.z))
-	)
+	grid.translation = GridMetric.meters_to_cell_round(relative.origin)
 	var best_index := 0
 	var best_score := -INF
 	for index: int in range(OrientationUtil.ORIENTATION_COUNT):
@@ -31,7 +27,7 @@ static func nearest_alignment(
 	grid.orientation_index = best_index
 	var snapped_transform := Transform3D(
 		OrientationUtil.orientation_basis(best_index),
-		Vector3(grid.translation)
+		GridMetric.cell_to_meters(grid.translation)
 	)
 	var position_error: float = (
 		relative.origin - snapped_transform.origin

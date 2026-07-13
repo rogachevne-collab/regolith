@@ -14,7 +14,7 @@ static func capture(world) -> Dictionary:
 		"joints": _serialize_joints(world),
 		"redirects": _serialize_redirects(world),
 		"resource_stores": _serialize_resource_stores(world),
-		"industry_network": world.get_industry_network().to_dict(),
+		"industry_network": world.get_industry_network().to_dict(true),
 		"industry_elements": world.list_industry_element_runtimes(),
 		"world_loot_piles": world.list_world_loot_piles(),
 		"simulation_time_s": world.get_simulation_time_s(),
@@ -360,13 +360,6 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 				port_a,
 				port_b
 			)
-			or _snapshot_electric_distance_m(
-				assembly_ids,
-				element_a,
-				port_a,
-				element_b,
-				port_b
-			) > IndustryElectricPortUtil.MAX_CABLE_LENGTH_M + 0.000001
 		):
 			return false
 
@@ -476,26 +469,6 @@ static func _element_has_anchor_port(
 	port_id: String
 ) -> bool:
 	return RuntimeConnectivity.ground_anchor_port_id(element) == port_id
-
-
-static func _snapshot_electric_distance_m(
-	assemblies: Dictionary,
-	element_a: SimulationElement,
-	port_a: PortDefinition,
-	element_b: SimulationElement,
-	port_b: PortDefinition
-) -> float:
-	var assembly_a: SimulationAssembly = assemblies[element_a.assembly_id]
-	var assembly_b: SimulationAssembly = assemblies[element_b.assembly_id]
-	var anchor_a := (
-		assembly_a.motion.transform
-		* IndustryPortUtil.port_local_transform(element_a, port_a)
-	).origin
-	var anchor_b := (
-		assembly_b.motion.transform
-		* IndustryPortUtil.port_local_transform(element_b, port_b)
-	).origin
-	return anchor_a.distance_to(anchor_b)
 
 
 static func _sorted_int_keys(values: Dictionary) -> Array[int]:

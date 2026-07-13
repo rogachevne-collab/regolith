@@ -20,43 +20,43 @@ archetype = ExtResource("2_htm1a")
 script = ExtResource("1_kxpac")
 local_id = "frame_a"
 archetype = ExtResource("3_xp3p4")
-origin_cell = Vector3i(1, 0, 0)
+origin_cell = Vector3i(4, 0, 1)
 
 [sub_resource type="Resource" id="Resource_ewb6q"]
 script = ExtResource("1_kxpac")
 local_id = "beam_0"
 archetype = ExtResource("4_4mx1p")
-origin_cell = Vector3i(2, 0, 0)
+origin_cell = Vector3i(5, 0, 1)
 
 [sub_resource type="Resource" id="Resource_u0m0n"]
 script = ExtResource("1_kxpac")
 local_id = "power_0"
 archetype = ExtResource("5_ockin")
-origin_cell = Vector3i(4, 0, 0)
+origin_cell = Vector3i(9, 0, 0)
 
 [sub_resource type="Resource" id="Resource_wuvqc"]
 script = ExtResource("1_kxpac")
 local_id = "drill_0"
 archetype = ExtResource("6_8b38f")
-origin_cell = Vector3i(5, 0, 0)
+origin_cell = Vector3i(12, 0, 0)
 
 [sub_resource type="Resource" id="Resource_vslyh"]
 script = ExtResource("1_kxpac")
 local_id = "store_0"
 archetype = ExtResource("7_c0y8g")
-origin_cell = Vector3i(6, 0, 0)
+origin_cell = Vector3i(14, 0, 0)
 
 [sub_resource type="Resource" id="Resource_7pj7t"]
 script = ExtResource("1_kxpac")
 local_id = "processor_0"
 archetype = ExtResource("8_pwyfv")
-origin_cell = Vector3i(7, 0, 0)
+origin_cell = Vector3i(17, 0, 0)
 
 [sub_resource type="Resource" id="Resource_3sn82"]
 script = ExtResource("1_kxpac")
 local_id = "fabricator_0"
 archetype = ExtResource("9_dpjla")
-origin_cell = Vector3i(8, 0, 0)
+origin_cell = Vector3i(21, 0, 0)
 
 [resource]
 script = ExtResource("10_dtdjy")

@@ -76,7 +76,7 @@ static func element_port_direction(
 static func port_local_transform(
 	element: SimulationElement,
 	port: PortDefinition,
-	face_offset: float = 0.48
+	face_offset: float = 0.23
 ) -> Transform3D:
 	if element == null or port == null:
 		return Transform3D.IDENTITY
@@ -94,7 +94,7 @@ static func port_world_transform(
 	world: SimulationWorld,
 	element: SimulationElement,
 	port: PortDefinition,
-	face_offset: float = 0.48
+	face_offset: float = 0.23
 ) -> Transform3D:
 	if world == null or element == null or port == null:
 		return Transform3D.IDENTITY
@@ -111,7 +111,7 @@ static func port_world_transform(
 static func port_marker_local_transform(
 	element: SimulationElement,
 	port: PortDefinition,
-	face_offset: float = 0.48
+	face_offset: float = 0.23
 ) -> Transform3D:
 	var port_tf := port_local_transform(element, port, face_offset)
 	if element == null or port == null:
@@ -132,7 +132,7 @@ static func port_marker_world_transform(
 	world: SimulationWorld,
 	element: SimulationElement,
 	port: PortDefinition,
-	face_offset: float = 0.48
+	face_offset: float = 0.23
 ) -> Transform3D:
 	if world == null or element == null or port == null:
 		return Transform3D.IDENTITY

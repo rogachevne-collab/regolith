@@ -149,7 +149,7 @@ func _test_merge_a_wins_preserves_identity() -> bool:
 	var world := SimulationWorld.new()
 	var a := _spawn(world, _foundation_frame_blueprint(), GridTransform.identity())
 	var b_frame := GridTransform.new()
-	b_frame.translation = Vector3i(2, 0, 0)
+	b_frame.translation = Vector3i(5, 0, 1)
 	var b := _spawn(world, _single_blueprint(Slice01Archetypes.frame()), b_frame)
 	var a_element := world.get_element(
 		int(a.data["local_to_element_id"]["frame_0"])
@@ -191,7 +191,7 @@ func _test_merge_a_wins_preserves_identity() -> bool:
 func _test_merge_b_wins_fixed_endpoint_order() -> bool:
 	var world := SimulationWorld.new()
 	var a_frame := GridTransform.new()
-	a_frame.translation = Vector3i(-1, 0, 0)
+	a_frame.translation = Vector3i(-1, 0, 1)
 	var a := _spawn(
 		world,
 		_single_blueprint(Slice01Archetypes.frame()),
@@ -218,7 +218,7 @@ func _test_merge_b_wins_fixed_endpoint_order() -> bool:
 	var bridge := world.get_joint(int(merge.data["bridge_joint_id"]))
 	if bridge.element_a_id != a_id or bridge.element_b_id != b_id:
 		return _fail("merge reordered A/B bridge endpoints")
-	if world.get_element(a_id).origin_cell != Vector3i(-1, 0, 0):
+	if world.get_element(a_id).origin_cell != Vector3i(-1, 0, 1):
 		return _fail("B-wins merge used wrong inverse frame")
 	world.free()
 	return true
@@ -379,7 +379,7 @@ func _test_dual_anchor_and_rejections() -> bool:
 		GridTransform.identity()
 	)
 	var b_frame := GridTransform.new()
-	b_frame.translation = Vector3i.RIGHT
+	b_frame.translation = Vector3i(4, 0, 0)
 	var b := _spawn(
 		world,
 		_single_blueprint(Slice01Archetypes.foundation()),
@@ -759,7 +759,7 @@ func _foundation_frame_blueprint() -> Blueprint:
 			_placement(
 				"frame_0",
 				Slice01Archetypes.frame(),
-				Vector3i.RIGHT
+				Vector3i(4, 0, 1)
 			),
 		]
 	)

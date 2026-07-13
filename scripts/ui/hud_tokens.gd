@@ -44,6 +44,7 @@ const TOOL_CODES := {
 	"weld": "WLD",
 	"grinder": "GRD",
 	"frame": "FRM",
+	"large_frame": "L25",
 	"frame_beam": "BEM",
 	"frame_basalt": "BAS",
 	"power_source": "PWR",
@@ -62,6 +63,7 @@ const TOOL_CODES := {
 ## Palette name row. Keeps cards readable without mid-word wrapping of raw ids.
 const ARCHETYPE_LABELS := {
 	"frame": "КАРКАС",
+	"large_frame": "БЛОК 2.5М",
 	"frame_beam": "БАЛКА",
 	"frame_basalt": "БАЗАЛЬТ",
 	"power_source": "ПИТАНИЕ",
@@ -73,6 +75,13 @@ const ARCHETYPE_LABELS := {
 	"processor": "ПРОЦЕССОР",
 	"fabricator": "ФАБРИКАТОР",
 	"foundation": "ФУНДАМЕНТ",
+	"rover_frame": "БЛОК РОВЕРА",
+	"rover_wheel": "КОЛЕСО",
+	"runtime_custom": "СВОЙ БЛОК",
+}
+
+const STORE_LABELS := {
+	"player": "ИГРОК",
 }
 
 
@@ -86,6 +95,7 @@ const RESOURCE_LABELS := {
 	"sintered_basalt": "БАЗАЛЬТ",
 	"calcined_oxide": "ОКСИД",
 	"metal_ingot": "СЛИТОК",
+	"custom_component": "КОМПОНЕНТ",
 }
 
 const RECIPE_LABELS := {
@@ -99,6 +109,14 @@ const RECIPE_LABELS := {
 
 static func load_theme() -> Theme:
 	return load(THEME_PATH)
+
+
+static func store_label(store_id: String) -> String:
+	if STORE_LABELS.has(store_id):
+		return STORE_LABELS[store_id]
+	if store_id.is_empty():
+		return "—"
+	return store_id.to_upper()
 
 
 static func resource_label(resource_id: String) -> String:
@@ -138,6 +156,8 @@ static func color_for_status(status: StringName) -> Color:
 			return COL_CRITICAL
 		&"no_power", &"outside_power_radius", &"port_disconnected":
 			return COL_WARNING
+		&"electric_disconnected", &"cargo_disconnected":
+			return COL_WARNING
 		&"no_input", &"no_terrain_contact", &"storage_full", &"queue_full":
 			return COL_WARNING
 		&"disabled":
@@ -162,6 +182,10 @@ static func status_label(status: StringName) -> String:
 			return "ВНЕ ЗОНЫ"
 		&"port_disconnected":
 			return "НЕТ СВЯЗИ"
+		&"electric_disconnected":
+			return "НЕТ ЭЛЕКТРОСВЯЗИ"
+		&"cargo_disconnected":
+			return "НЕТ КАРГО-СВЯЗИ"
 		&"no_input":
 			return "НЕТ СЫРЬЯ"
 		&"no_terrain_contact":

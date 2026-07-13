@@ -1,8 +1,6 @@
 class_name IndustryElectricPortUtil
 extends RefCounted
 
-const MAX_CABLE_LENGTH_M := 12.0
-
 enum Direction {
 	INPUT,
 	OUTPUT,
@@ -90,13 +88,12 @@ static func diagnose_electric_pair(
 			ports_b.append(requested_b)
 	if ports_a.is_empty() or ports_b.is_empty():
 		return {"pair": {}, "reason": &"no_electric_ports"}
-	var compatible_direction_found := false
 	var shortest_distance := INF
+	var best_pair: Dictionary = {}
 	for port_a: PortDefinition in ports_a:
 		for port_b: PortDefinition in ports_b:
 			if not electric_directions_compatible(port_a, port_b):
 				continue
-			compatible_direction_found = true
 			var distance_m := cable_distance_m(
 				world,
 				element_a,
@@ -105,26 +102,20 @@ static func diagnose_electric_pair(
 				port_b,
 				waypoints
 			)
-			shortest_distance = minf(shortest_distance, distance_m)
-			if distance_m > MAX_CABLE_LENGTH_M + 0.000001:
+			if distance_m >= shortest_distance:
 				continue
-			return {
-				"pair": {
-					"element_a_id": element_a_id,
-					"port_a_id": port_a.port_id,
-					"element_b_id": element_b_id,
-					"port_b_id": port_b.port_id,
-				},
-				"reason": &"ok",
-				"distance_m": distance_m,
-				"max_distance_m": MAX_CABLE_LENGTH_M,
+			shortest_distance = distance_m
+			best_pair = {
+				"element_a_id": element_a_id,
+				"port_a_id": port_a.port_id,
+				"element_b_id": element_b_id,
+				"port_b_id": port_b.port_id,
 			}
-	if compatible_direction_found:
+	if not best_pair.is_empty():
 		return {
-			"pair": {},
-			"reason": &"cable_too_long",
+			"pair": best_pair,
+			"reason": &"ok",
 			"distance_m": shortest_distance,
-			"max_distance_m": MAX_CABLE_LENGTH_M,
 		}
 	return {"pair": {}, "reason": &"incompatible_connection"}
 
@@ -308,14 +299,6 @@ static func validate_connect_endpoints(
 		port_b,
 		waypoints
 	)
-	if distance_m > MAX_CABLE_LENGTH_M + 0.000001:
-		return StructuralCommandResult.failed(
-			StructuralCommandResult.REASON_CABLE_TOO_LONG,
-			{
-				"distance_m": distance_m,
-				"max_distance_m": MAX_CABLE_LENGTH_M,
-			}
-		)
 	return StructuralCommandResult.ok({
 		"element_a_id": element_a_id,
 		"port_a_id": port_a_id,
@@ -324,7 +307,6 @@ static func validate_connect_endpoints(
 		"assembly_a_id": element_a.assembly_id,
 		"assembly_b_id": element_b.assembly_id,
 		"distance_m": distance_m,
-		"max_distance_m": MAX_CABLE_LENGTH_M,
 	})
 
 
@@ -343,9 +325,8 @@ static func link_endpoints_exist(
 	)
 
 
-## Activity criterion: dormant links (endpoint not operational, cable stretched
-## beyond max length) stay stored but drop out of the electric graph until the
-## condition clears.
+## Activity criterion: dormant links (endpoint not operational) stay stored but
+## drop out of the electric graph until the condition clears.
 static func link_still_valid(
 	world: SimulationWorld,
 	link: IndustryElectricLink
@@ -366,17 +347,7 @@ static func link_still_valid(
 		or not electric_directions_compatible(port_a, port_b)
 	):
 		return false
-	return (
-		cable_distance_m(
-			world,
-			element_a,
-			port_a,
-			element_b,
-			port_b,
-			link.waypoints
-		)
-		<= MAX_CABLE_LENGTH_M + 0.000001
-	)
+	return true
 
 
 static func _electric_tags_compatible(

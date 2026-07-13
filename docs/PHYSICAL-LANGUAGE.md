@@ -56,8 +56,8 @@ ADR. Интеграция в Erebus — через Erebus Lite addon, когда
 - *Структурные* (редкие, обязаны быть надёжными и упорядоченными): `place`,
   `attach`, `detach`, `weld`, `damage`, `break`, `repair`, `dismantle`,
   `connect_network`, `disconnect_network`. Industry v1: `connect_network` создаёт
-  **electric** cable edge между compatible output/input ports на расстоянии до
-  **12 m**; cable может связывать разные Assembly и не создаёт mechanical merge.
+  **electric** cable edge между compatible output/input ports; cable может
+  связывать разные Assembly и не создаёт mechanical merge.
   **Cargo** — placeable `cargo_pipe` modules + auto-link on topology, без
   `connect_network`; см. `docs/specs/INDUSTRY-V1.md`.
 - *Управляющие* (частые, допускают перезапись последним значением):
@@ -561,9 +561,10 @@ authoring nodes. Подробности — `docs/specs/SIMULATION-KERNEL-V0.md`
 | `AssemblyId` | persistent | владеет элементами, joints, revision |
 | Body/projection id | transient | Jolt compound body; пересоздаётся из snapshot |
 
-Placement использует integer grid **1 m** и `orientation_index` из **24**
+Placement использует единую integer grid **0.5 m** и `orientation_index` из **24**
 ортогональных кубических ориентаций. Один элемент может занимать несколько cells
-через `footprint_cells` archetype.
+через `footprint_cells` archetype. Вторая несовместимая grid не вводится:
+малые rover/frame/pipe элементы и крупные машины разделяют одну topology.
 
 `orientation_index = 0` — точный identity. Остальные индексы следуют стабильной
 канонической таблице right-handed integer Basis с determinant `+1`.
@@ -651,7 +652,8 @@ Jolt авторитетен за импульс контакта; правила
 
 Вырезанный regolith:
 
-- **Hand drill:** создаёт **world loot pile** у точки carve (mass ∝ volume); игрок
+- **Hand drill:** создаёт **world loot pile** у точки carve (mass ∝ measured
+  removed volume); nearby piles merge в радиусе fixture; игрок
   собирает в Store командой transfer/collect — не прямой credit в `player` store.
 - **Stationary drill / impact loot (later):** credit в internal buffer или store по
   `docs/specs/INDUSTRY-V1.md`. Stationary drill yield derives only from measured

@@ -2,6 +2,7 @@ class_name SimulationElement
 extends RefCounted
 
 const _SCRIPT := preload("res://scripts/simulation/runtime/simulation_element.gd")
+const _CODEC := preload("res://scripts/simulation/snapshot_codec.gd")
 
 var element_id: int = 0
 var assembly_id: int = 0
@@ -264,7 +265,7 @@ func to_dict() -> Dictionary:
 		"element_id": element_id,
 		"assembly_id": assembly_id,
 		"archetype_id": archetype_id,
-		"origin_cell": origin_cell,
+		"origin_cell": _CODEC.vector3i_to_array(origin_cell),
 		"orientation_index": orientation_index,
 		"build_progress": build_progress,
 		"integrity": integrity,
@@ -285,7 +286,9 @@ static func from_dict(data: Dictionary) -> SimulationElement:
 	element.element_id = int(data.get("element_id", 0))
 	element.assembly_id = int(data.get("assembly_id", 0))
 	element.archetype_id = str(data.get("archetype_id", ""))
-	element.origin_cell = data.get("origin_cell", Vector3i.ZERO)
+	element.origin_cell = _CODEC.vector3i_from_variant(
+		data.get("origin_cell", Vector3i.ZERO)
+	)
 	element.orientation_index = int(data.get("orientation_index", 0))
 	element.build_progress = float(data.get("build_progress", 1.0))
 	element.integrity = float(data.get("integrity", 0.0))

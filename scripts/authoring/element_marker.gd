@@ -47,10 +47,8 @@ func _get_configuration_warnings() -> PackedStringArray:
 
 
 func _snap_position() -> void:
-	position = Vector3(
-		roundf(position.x),
-		roundf(position.y),
-		roundf(position.z)
+	position = GridMetric.cell_vector_to_meters(
+		Vector3(GridMetric.meters_to_cell_round(position))
 	)
 	_last_snapped_position = position
 
@@ -61,11 +59,7 @@ func to_placement() -> BlueprintElementPlacement:
 	var placement := BlueprintElementPlacement.new()
 	placement.local_id = local_id
 	placement.archetype = archetype
-	placement.origin_cell = Vector3i(
-		int(round(position.x)),
-		int(round(position.y)),
-		int(round(position.z))
-	)
+	placement.origin_cell = GridMetric.meters_to_cell_round(position)
 	placement.orientation_index = orientation_index
 	return placement
 
@@ -101,7 +95,7 @@ func preview_local_centers() -> Array[Vector3]:
 			cell,
 			orientation_index
 		)
-		centers.append(Vector3(rotated) + Vector3(0.5, 0.5, 0.5))
+		centers.append(GridMetric.cell_center_meters(rotated))
 	return centers
 
 
@@ -136,7 +130,7 @@ func _update_preview() -> void:
 	for center: Vector3 in preview_local_centers():
 		var mesh_instance := MeshInstance3D.new()
 		var mesh := BoxMesh.new()
-		mesh.size = Vector3.ONE
+		mesh.size = Vector3.ONE * GridMetric.CELL_SIZE_M
 		mesh_instance.mesh = mesh
 		mesh_instance.position = center
 		mesh_instance.material_override = material

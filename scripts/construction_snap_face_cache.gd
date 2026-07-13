@@ -13,7 +13,7 @@ var _assembly_ids: Array[int] = []
 var _anchored_assembly_ids: Dictionary = {}
 var _initialized := false
 
-const BUCKET_SIZE := 1.0
+const BUCKET_SIZE := GridMetric.CELL_SIZE_M
 
 
 func bind_world(world: SimulationWorld) -> void:
@@ -282,9 +282,8 @@ static func _port_world_point(
 	var port_direction := _element_port_direction(element, port)
 	var local_normal := Vector3(port_direction).normalized()
 	var local_center := (
-		Vector3(port_cell)
-		+ Vector3(0.5, 0.5, 0.5)
-		+ local_normal * 0.5
+		GridMetric.cell_center_meters(port_cell)
+		+ local_normal * GridMetric.HALF_CELL_SIZE_M
 	)
 	return assembly_transform * local_center
 

@@ -5,6 +5,7 @@ const ARCHETYPE_DIR := "res://resources/archetypes/slice01/"
 const REQUIRED_IDS: PackedStringArray = [
 	"foundation",
 	"frame",
+	"large_frame",
 	"frame_beam",
 	"frame_basalt",
 	"power_source",
@@ -58,6 +59,10 @@ static func foundation() -> ElementArchetype:
 
 static func frame() -> ElementArchetype:
 	return load_required("frame")
+
+
+static func large_frame() -> ElementArchetype:
+	return load_required("large_frame")
 
 
 static func frame_beam() -> ElementArchetype:

@@ -169,6 +169,7 @@ func _on_command_completed(
 	action_result: Dictionary
 ) -> void:
 	var reason := StringName(action_result.get("reason", &"not_ready"))
+	var data: Dictionary = action_result.get("data", {})
 	if reason == &"ok":
 		if _suppress_success_feedback():
 			return
@@ -176,7 +177,7 @@ func _on_command_completed(
 		_result.add_theme_color_override("font_color", HudTokens.COL_OK)
 		_result_left = 0.35
 		return
-	_result.text = _reason_text(reason)
+	_result.text = _reason_text(reason, data)
 	_result.add_theme_color_override("font_color", HudTokens.COL_CRITICAL)
 	_result_left = 1.2
 
@@ -192,7 +193,7 @@ func _suppress_success_feedback() -> bool:
 	return false
 
 
-func _reason_text(reason: StringName) -> String:
+func _reason_text(reason: StringName, data: Dictionary = {}) -> String:
 	match reason:
 		&"no_target":
 			return "Нет цели"
@@ -203,7 +204,10 @@ func _reason_text(reason: StringName) -> String:
 		&"blocked":
 			return "Действие заблокировано"
 		&"insufficient_material":
-			return "Недостаточно компонентов"
+			var resource_id := str(data.get("resource_id", ""))
+			if not resource_id.is_empty():
+				return "Недостаточно: %s" % HudTokens.resource_label(resource_id)
+			return "Недостаточно материалов"
 		&"anchor_required":
 			return "Нет опоры для первого блока"
 		&"anchor_not_allowed":

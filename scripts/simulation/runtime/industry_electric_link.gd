@@ -4,6 +4,7 @@ extends RefCounted
 const _SCRIPT := preload(
 	"res://scripts/simulation/runtime/industry_electric_link.gd"
 )
+const _CODEC := preload("res://scripts/simulation/snapshot_codec.gd")
 
 var link_id: int = 0
 var element_a: int = 0
@@ -79,14 +80,19 @@ func canonical_pair_key() -> String:
 	return "%d:%s|%d:%s" % [low_element, low_port, high_element, high_port]
 
 
-func to_dict() -> Dictionary:
+func to_dict(for_snapshot := false) -> Dictionary:
+	var waypoint_row: Variant = (
+		_CODEC.packed_vector3_array_to_array(waypoints)
+		if for_snapshot
+		else waypoints.duplicate()
+	)
 	return {
 		"link_id": link_id,
 		"element_a": element_a,
 		"port_a": port_a,
 		"element_b": element_b,
 		"port_b": port_b,
-		"waypoints": waypoints.duplicate(),
+		"waypoints": waypoint_row,
 	}
 
 
@@ -97,7 +103,7 @@ static func from_dict(data: Dictionary) -> IndustryElectricLink:
 	link.port_a = str(data.get("port_a", ""))
 	link.element_b = int(data.get("element_b", 0))
 	link.port_b = str(data.get("port_b", ""))
-	link.waypoints = PackedVector3Array(
+	link.waypoints = _CODEC.packed_vector3_array_from_variant(
 		data.get("waypoints", PackedVector3Array())
 	)
 	return link

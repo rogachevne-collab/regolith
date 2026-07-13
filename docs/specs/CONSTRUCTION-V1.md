@@ -94,6 +94,23 @@ archetype, grid pose, grid frame новой Assembly и `store_id`.
 можно крепить другие блоки без заварки; functional roles активны только после
 `build_progress = 1.0` (`is_operational()`).
 
+### Масштаб production archetypes
+
+Все размеры заданы в общей grid 0.5 m. Footprint определяет occupancy, а один
+box-collider может покрывать несколько cells.
+
+| Archetype | Footprint cells | Физический габарит |
+|---|---:|---:|
+| `frame`, `frame_basalt`, `cargo_pipe`, `rover_frame`, `rover_wheel` | 1×1×1 | 0.5×0.5×0.5 m envelope |
+| `frame_beam` | 4×1×1 | 2×0.5×0.5 m |
+| `foundation` | 4×1×4 | 2×0.5×2 m |
+| `power_distributor` | 2×2×2 | 1×1×1 m |
+| `power_battery` | 2×3×2 | 1×1.5×1 m |
+| `stationary_drill` | 2×2×2 | 1×1×1 m body + working head |
+| `power_source`, `cargo_store` | 3×3×3 | 1.5×1.5×1.5 m |
+| `processor`, `fabricator` | 4×3×3 | 2×1.5×1.5 m |
+| `large_frame` | 5×5×5 | 2.5×2.5×2.5 m test cube |
+
 **Terrain-contact per block.** Каждый construction-элемент хранит устойчивый факт
 контакта с terrain (`SimulationElement.terrain_contact`, сериализуется в snapshot).
 Флаг ставится в момент постановки: первый блок (`assembly_id = 0`) — `true` по

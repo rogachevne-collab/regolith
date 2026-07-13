@@ -210,6 +210,16 @@ func add_world_loot_pile(
 ) -> WorldLootPile:
 	if resource_id.is_empty() or amount_kg <= 0.000001:
 		return null
+	var merge_radius := IndustryArchetypeProfile.hand_drill_loot_merge_radius_m()
+	var existing := _find_mergeable_loot_pile(
+		position,
+		resource_id,
+		merge_radius
+	)
+	if existing != null:
+		var max_mass := IndustryArchetypeProfile.hand_drill_loot_pile_max_mass_kg()
+		if existing.amount_kg + amount_kg <= max_mass + 0.000001:
+			return _merge_loot_pile(existing, position, amount_kg)
 	var despawn_at := _simulation_time_s + (
 		despawn_after_s
 		if despawn_after_s > 0.0
@@ -224,6 +234,40 @@ func add_world_loot_pile(
 	)
 	_world_loot_piles[pile.pile_id] = pile
 	return pile
+
+
+func _find_mergeable_loot_pile(
+	position: Vector3,
+	resource_id: String,
+	radius_m: float
+) -> WorldLootPile:
+	var best: WorldLootPile = null
+	var best_dist_sq := radius_m * radius_m
+	for pile_variant: Variant in _world_loot_piles.values():
+		var pile := pile_variant as WorldLootPile
+		if pile == null or pile.resource_id != resource_id:
+			continue
+		var dist_sq := position.distance_squared_to(pile.position)
+		if dist_sq > radius_m * radius_m:
+			continue
+		if best == null or dist_sq < best_dist_sq:
+			best = pile
+			best_dist_sq = dist_sq
+	return best
+
+
+func _merge_loot_pile(
+	target: WorldLootPile,
+	new_position: Vector3,
+	add_amount_kg: float
+) -> WorldLootPile:
+	var total := target.amount_kg + add_amount_kg
+	if total <= 0.000001:
+		return target
+	var blend := add_amount_kg / total
+	target.position = target.position.lerp(new_position, blend)
+	target.amount_kg = total
+	return target
 
 
 func remove_world_loot_pile(pile_id: int) -> bool:
@@ -423,7 +467,7 @@ func capture_snapshot() -> Dictionary:
 	return SimulationSnapshot.capture(self)
 
 
-func restore_snapshot(snapshot: Dictionary) -> bool:
+func restore_snapshot(snapshot: Dictionary, emit_event := true) -> bool:
 	var restored = SimulationSnapshot.create_from_snapshot(snapshot)
 	if restored == null:
 		return false
@@ -441,8 +485,13 @@ func restore_snapshot(snapshot: Dictionary) -> bool:
 	_command_queue.clear()
 	_flush_scheduled = false
 	restored.free()
-	_emit_structural_event({"kind": &"world_restored"})
+	if emit_event:
+		emit_world_restored()
 	return true
+
+
+func emit_world_restored() -> void:
+	_emit_structural_event({"kind": &"world_restored"})
 
 
 func _flush_commands() -> void:
@@ -1616,6 +1665,11 @@ func _emit_element_state_changed(
 		"integrity": element.integrity,
 		"status_reason": element.status_reason(),
 	})
+	# Cargo adjacency depends on operational membership, not only topology.
+	# Welding a pipe into service must refresh the graph even when no new joint
+	# was added (topology_revision unchanged).
+	if change_kind in [&"weld", &"repair", &"damage"]:
+		_cargo_graph.rebuild(self)
 
 
 func _element_state_result(

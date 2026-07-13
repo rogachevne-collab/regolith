@@ -51,7 +51,7 @@ compatibility_tags = PackedStringArray("structural")
 [resource]
 script = ExtResource("4_4mnc2")
 archetype_id = "frame"
-display_name = "Frame"
+display_name = "Каркас"
 roles = PackedStringArray("Frame")
 mass_kg = 50.0
 colliders = Array[ExtResource("2_cijrg")]([SubResource("Resource_rbwyb")])

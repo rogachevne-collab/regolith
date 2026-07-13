@@ -142,10 +142,10 @@ func ensure_graph_current(world: SimulationWorld) -> IndustryElectricGraph:
 	return _graph
 
 
-func to_dict() -> Dictionary:
+func to_dict(for_snapshot := false) -> Dictionary:
 	var rows: Array[Dictionary] = []
 	for link: IndustryElectricLink in _links:
-		rows.append(link.to_dict())
+		rows.append(link.to_dict(for_snapshot))
 	return {
 		"industry_network_revision": industry_network_revision,
 		"electric_links": rows,

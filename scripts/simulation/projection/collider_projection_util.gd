@@ -37,7 +37,7 @@ static func element_center_of_mass_local(
 ) -> Vector3:
 	var archetype: ElementArchetype = element.get_archetype()
 	if archetype == null or archetype.colliders.is_empty():
-		return Vector3(element.origin_cell)
+		return GridMetric.cell_to_meters(element.origin_cell)
 	var weighted := Vector3.ZERO
 	var total_volume := 0.0
 	for collider: ColliderDefinition in archetype.colliders:
@@ -58,7 +58,7 @@ static func element_center_of_mass_local(
 		weighted += local_transform.origin * volume
 		total_volume += volume
 	if total_volume <= 0.0:
-		return Vector3(element.origin_cell)
+		return GridMetric.cell_to_meters(element.origin_cell)
 	return weighted / total_volume
 
 

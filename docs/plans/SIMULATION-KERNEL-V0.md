@@ -33,7 +33,7 @@ deterministic split/merge, momentum-safe Jolt projection и snapshot roundtrip.
   split/merge, две истины авторитетного состояния.
 - Три identity: persistent `ElementId`, persistent `AssemblyId`, transient
   projection/body id; Godot `NodePath`/`RID`/`instance_id` не доменные ссылки.
-- Grid — 1 m, 24 ортогональные ориентации, multi-cell footprint. Rigid edge — только
+- Grid — 0.5 m, 24 ортогональные ориентации, multi-cell footprint. Rigid edge — только
   при совместимых structural faces/ports.
 - Split survivor: `Anchor → element count → dry mass → lowest ElementId` (tie внутри
   одной Assembly); merge survivor: `Anchor → count → mass → lowest AssemblyId`.

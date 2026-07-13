@@ -141,7 +141,7 @@ static func _validate_archetype(
 				"archetype '%s' has duplicate footprint cell %s"
 				% [archetype.archetype_id, key]
 			)
-		footprint[key] = true
+		footprint[key] = cell
 
 	if archetype.colliders.is_empty():
 		result.add_error(
@@ -173,7 +173,30 @@ static func _validate_archetype(
 				"archetype '%s' collider at %s has non-positive size"
 				% [archetype.archetype_id, collider_key]
 			)
-		collider_coverage[collider_key] = true
+		if (
+			collider.size.is_finite()
+			and collider.offset_in_cell.is_finite()
+			and collider.size.x > 0.0
+			and collider.size.y > 0.0
+			and collider.size.z > 0.0
+		):
+			var collider_center := (
+				GridMetric.cell_to_meters(collider.local_cell)
+				+ collider.offset_in_cell
+			)
+			var collider_half_extents := collider.size * 0.5
+			for footprint_key: String in footprint:
+				var footprint_cell: Vector3i = footprint[footprint_key]
+				var cell_center := GridMetric.cell_center_meters(
+					footprint_cell
+				)
+				var delta := (cell_center - collider_center).abs()
+				if (
+					delta.x <= collider_half_extents.x + 0.0001
+					and delta.y <= collider_half_extents.y + 0.0001
+					and delta.z <= collider_half_extents.z + 0.0001
+				):
+					collider_coverage[footprint_key] = true
 	for footprint_key: String in footprint:
 		if not collider_coverage.has(footprint_key):
 			result.add_error(

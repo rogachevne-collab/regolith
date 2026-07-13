@@ -18,6 +18,7 @@ func _run_tests() -> void:
 		_test_orientation_contract,
 		_test_face_rotation,
 		_test_multi_cell_rotation_and_colliders,
+		_test_large_frame_fixture,
 		_test_marker_preview_matches_occupancy,
 		_test_valid_connected_bake,
 		_test_deterministic_local_id_ordering,
@@ -140,15 +141,8 @@ func _test_face_rotation() -> bool:
 
 func _test_multi_cell_rotation_and_colliders() -> bool:
 	var beam: ElementArchetype = Slice01Archetypes.frame_beam()
-	if beam.colliders.size() != beam.footprint_cells.size():
-		return _fail("frame_beam collider piece count does not cover footprint")
-	for cell: Vector3i in beam.footprint_cells:
-		var covered := false
-		for collider: ColliderDefinition in beam.colliders:
-			if collider.local_cell == cell:
-				covered = true
-		if not covered:
-			return _fail("frame_beam collider missing cell %s" % cell)
+	if beam.colliders.is_empty():
+		return _fail("frame_beam has no collider")
 
 	var origin := Vector3i(2, 0, -1)
 	for orientation_index: int in range(OrientationUtil.ORIENTATION_COUNT):
@@ -156,14 +150,49 @@ func _test_multi_cell_rotation_and_colliders() -> bool:
 			origin,
 			orientation_index
 		)
-		if cells.size() != 2:
-			return _fail("rotated frame_beam does not occupy two cells")
-		var delta: Vector3i = cells[0] - cells[1]
-		if absi(delta.x) + absi(delta.y) + absi(delta.z) != 1:
+		if cells.size() != 4:
+			return _fail("rotated frame_beam does not occupy four cells")
+		for cell_index: int in range(1, cells.size()):
+			var delta: Vector3i = cells[cell_index - 1] - cells[cell_index]
+			if absi(delta.x) + absi(delta.y) + absi(delta.z) == 1:
+				continue
 			return _fail(
 				"orientation %d beam cells are not adjacent"
 				% orientation_index
 			)
+	return true
+
+
+func _test_large_frame_fixture() -> bool:
+	var large_frame: ElementArchetype = Slice01Archetypes.large_frame()
+	if large_frame == null:
+		return _fail("large_frame fixture is missing")
+	if large_frame.footprint_cells.size() != 125:
+		return _fail(
+			"large_frame footprint has %d cells instead of 125"
+			% large_frame.footprint_cells.size()
+		)
+	if (
+		large_frame.colliders.size() != 1
+		or not large_frame.colliders[0].size.is_equal_approx(
+			Vector3(2.5, 2.5, 2.5)
+		)
+	):
+		return _fail("large_frame collider is not a 2.5 m cube")
+	var validation := _validate(
+		"large_frame_fixture",
+		[_make_placement(
+			"large_frame_0",
+			large_frame,
+			Vector3i.ZERO,
+			0
+		)]
+	)
+	if not validation.ok:
+		return _fail(
+			"large_frame fixture rejected: %s"
+			% ", ".join(validation.errors)
+		)
 	return true
 
 
@@ -188,7 +217,7 @@ func _test_marker_preview_matches_occupancy() -> bool:
 		marker.free()
 		return _fail("marker preview count differs from baked occupancy")
 	for cell: Vector3i in occupied:
-		if not centers.has(Vector3(cell) + Vector3(0.5, 0.5, 0.5)):
+		if not centers.has(GridMetric.cell_center_meters(cell)):
 			marker.free()
 			return _fail("marker preview misses rotated cell %s" % cell)
 	marker.free()
@@ -437,13 +466,13 @@ func _fixture_placements() -> Array[BlueprintElementPlacement]:
 		_make_placement(
 			"frame_0",
 			Slice01Archetypes.frame(),
-			Vector3i.RIGHT,
+			Vector3i(4, 0, 1),
 			0
 		),
 		_make_placement(
 			"beam_0",
 			Slice01Archetypes.frame_beam(),
-			Vector3i(2, 0, 0),
+			Vector3i(5, 0, 1),
 			0
 		),
 	]

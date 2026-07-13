@@ -4,8 +4,12 @@ extends Node3D
 ## Polling is intentional: loot mutations are non-structural and currently expose
 ## a read model rather than presentation events.
 
-const LOOT_RADIUS := 0.22
+const LOOT_RADIUS := 0.16
+const LOOT_MASS_REFERENCE_KG := 12.0
+const LOOT_SCALE_MIN := 0.75
+const LOOT_SCALE_MAX := 1.35
 const LOOT_COLOR := Color(0.44, 0.38, 0.31, 1.0)
+const _CODEC := preload("res://scripts/simulation/snapshot_codec.gd")
 
 var _world: SimulationWorld
 var _signature := ""
@@ -53,7 +57,9 @@ func _make_pile(row: Dictionary) -> StaticBody3D:
 
 	var body := StaticBody3D.new()
 	body.name = "WorldLootPile_%d" % pile_id
-	body.position = row.get("position", Vector3.ZERO)
+	body.position = _CODEC.vector3_from_variant(
+		row.get("position", Vector3.ZERO)
+	)
 	body.collision_layer = 2
 	body.collision_mask = 0
 	body.set_meta("interaction_metadata", {
@@ -64,23 +70,29 @@ func _make_pile(row: Dictionary) -> StaticBody3D:
 
 	var shape_node := CollisionShape3D.new()
 	var shape := SphereShape3D.new()
-	shape.radius = LOOT_RADIUS
+	var scale := _loot_scale_for_mass(amount_kg)
+	shape.radius = LOOT_RADIUS * scale
 	shape_node.shape = shape
-	shape_node.position.y = LOOT_RADIUS * 0.5
+	shape_node.position.y = shape.radius * 0.5
 	body.add_child(shape_node)
 
 	var visual := MeshInstance3D.new()
 	var mesh := SphereMesh.new()
-	mesh.radius = LOOT_RADIUS
-	mesh.height = LOOT_RADIUS * 2.0
+	mesh.radius = LOOT_RADIUS * scale
+	mesh.height = LOOT_RADIUS * scale * 2.0
 	mesh.radial_segments = 12
 	mesh.rings = 6
 	visual.mesh = mesh
 	visual.material_override = _material
 	visual.scale = Vector3(1.35, 0.55, 1.1)
-	visual.position.y = LOOT_RADIUS * 0.5
+	visual.position.y = shape.radius * 0.5
 	body.add_child(visual)
 	return body
+
+
+static func _loot_scale_for_mass(amount_kg: float) -> float:
+	var ratio := maxf(amount_kg / LOOT_MASS_REFERENCE_KG, 0.2)
+	return clampf(pow(ratio, 1.0 / 3.0), LOOT_SCALE_MIN, LOOT_SCALE_MAX)
 
 
 func _rows_signature(rows: Array[Dictionary]) -> String:

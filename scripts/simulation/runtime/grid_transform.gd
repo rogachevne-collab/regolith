@@ -2,6 +2,7 @@ class_name GridTransform
 extends RefCounted
 
 const _SCRIPT := preload("res://scripts/simulation/runtime/grid_transform.gd")
+const _CODEC := preload("res://scripts/simulation/snapshot_codec.gd")
 
 var translation: Vector3i = Vector3i.ZERO
 var orientation_index: int = 0
@@ -13,7 +14,9 @@ static func identity() -> GridTransform:
 
 static func from_dict(data: Dictionary) -> GridTransform:
 	var transform: GridTransform = _SCRIPT.new()
-	transform.translation = data.get("translation", Vector3i.ZERO)
+	transform.translation = _CODEC.vector3i_from_variant(
+		data.get("translation", Vector3i.ZERO)
+	)
 	transform.orientation_index = int(data.get("orientation_index", 0))
 	return transform
 
@@ -27,7 +30,7 @@ func duplicate_transform() -> GridTransform:
 
 func to_dict() -> Dictionary:
 	return {
-		"translation": translation,
+		"translation": _CODEC.vector3i_to_array(translation),
 		"orientation_index": orientation_index,
 	}
 

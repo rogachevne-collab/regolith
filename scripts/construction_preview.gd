@@ -391,7 +391,8 @@ func _build_mesh_nodes(
 	if archetype.archetype_id == "stationary_drill":
 		var drill_visual: Node3D = STATIONARY_DRILL_VISUAL_SCRIPT.instantiate_for_element(
 			origin_cell,
-			orientation_index
+			orientation_index,
+			archetype
 		)
 		STATIONARY_DRILL_VISUAL_SCRIPT.apply_preview_material(
 			drill_visual,

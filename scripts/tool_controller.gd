@@ -58,6 +58,7 @@ const ACTIONS := {
 
 const CONSTRUCTION_ARCHETYPES: PackedStringArray = [
 	"frame",
+	"large_frame",
 	"frame_beam",
 	"frame_basalt",
 	"power_source",
@@ -100,7 +101,7 @@ const TOOLBAR_PAGES: Array = [
 		{"type": &"block", "archetype_id": "power_distributor"},
 		{"type": &"block", "archetype_id": "power_battery"},
 		{"type": &"block", "archetype_id": "frame_basalt"},
-		{"type": &"block", "archetype_id": "frame"},
+		{"type": &"block", "archetype_id": "large_frame"},
 		{"type": &"block", "archetype_id": "frame_beam"},
 		{"type": &"block", "archetype_id": "power_source"},
 	],
@@ -206,6 +207,9 @@ func _physics_process(delta: float) -> void:
 	elif active_action == &"tool_primary" and active_tool == &"grinder":
 		profile = profile.duplicate()
 		profile["interval"] = GRINDER_INTERVAL
+	elif active_action == &"tool_primary" and active_tool == &"drill":
+		profile = profile.duplicate()
+		profile["interval"] = IndustryArchetypeProfile.hand_drill_interval_s()
 	elif active_action == &"tool_primary" and active_tool == &"weld":
 		profile = ACTIONS[&"tool_weld"].duplicate()
 	var hit := _action_hit(active_action, profile)

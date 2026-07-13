@@ -43,6 +43,12 @@ const DRILL_HEAD_OFFSET_M := 0.92
 const DRILL_CONTACT_REACH_M := 0.72
 const DRILL_REQUIRES_POWER := true
 
+const HAND_DRILL_CARVE_RADIUS_M := 0.12
+const HAND_DRILL_CARVE_VOLUME_BUDGET_M3 := 0.006
+const HAND_DRILL_MAX_LOOT_MASS_KG_PER_TICK := 9.0
+const HAND_DRILL_LOOT_PILE_MAX_MASS_KG := 24.0
+const HAND_DRILL_LOOT_MERGE_RADIUS_M := 0.55
+const HAND_DRILL_INTERVAL_S := 0.14
 const HAND_DRILL_LOOT_DESPAWN_S := 600.0
 const HAND_DRILL_LOOT_KG_PER_M3 := 1500.0
 
@@ -99,9 +105,39 @@ static func drill_requires_power() -> bool:
 	return DRILL_REQUIRES_POWER
 
 
+static func hand_drill_carve_radius_m() -> float:
+	return HAND_DRILL_CARVE_RADIUS_M
+
+
+static func hand_drill_carve_volume_budget_m3() -> float:
+	return HAND_DRILL_CARVE_VOLUME_BUDGET_M3
+
+
+static func hand_drill_max_loot_mass_kg_per_tick() -> float:
+	return HAND_DRILL_MAX_LOOT_MASS_KG_PER_TICK
+
+
+static func hand_drill_loot_pile_max_mass_kg() -> float:
+	return HAND_DRILL_LOOT_PILE_MAX_MASS_KG
+
+
+static func hand_drill_interval_s() -> float:
+	return HAND_DRILL_INTERVAL_S
+
+
+static func hand_drill_loot_merge_radius_m() -> float:
+	return HAND_DRILL_LOOT_MERGE_RADIUS_M
+
+
 static func hand_drill_loot_despawn_s() -> float:
 	return HAND_DRILL_LOOT_DESPAWN_S
 
 
 static func hand_drill_loot_kg_per_m3() -> float:
 	return HAND_DRILL_LOOT_KG_PER_M3
+
+
+static func raw_mass_kg_from_volume_m3(volume_m3: float) -> float:
+	if volume_m3 <= 0.0:
+		return 0.0
+	return volume_m3 * DRILL_KG_PER_M3

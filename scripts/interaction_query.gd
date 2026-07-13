@@ -5,6 +5,7 @@ signal hit_updated(hit: InteractionHit)
 
 @export var player_path: NodePath = NodePath("..")
 @export var camera_path: NodePath = NodePath("../Camera")
+@export var tool_controller_path: NodePath = NodePath("../ToolController")
 @export var terrain_path: NodePath = NodePath("../../VoxelTerrain")
 @export var simulation_session_path: NodePath = NodePath("../../SimulationSession")
 @export var max_distance := 4.0
@@ -15,6 +16,7 @@ var current_hit := InteractionHit.empty()
 
 var _player: CollisionObject3D
 var _camera: Camera3D
+var _tools: ToolController
 var _terrain: VoxelTerrain
 var _voxel_tool: VoxelTool
 var _session: SimulationSession
@@ -23,6 +25,7 @@ var _session: SimulationSession
 func _ready() -> void:
 	_player = get_node(player_path)
 	_camera = get_node(camera_path)
+	_tools = get_node_or_null(tool_controller_path) as ToolController
 	_terrain = get_node(terrain_path)
 	_session = get_node_or_null(simulation_session_path) as SimulationSession
 	_voxel_tool = _terrain.get_voxel_tool()
@@ -65,6 +68,8 @@ func _query_physics(
 
 	var collider: Object = raw["collider"]
 	var metadata := _target_metadata(collider, raw)
+	if metadata.has("loot_pile_id") and _should_skip_loot_for_drill():
+		return InteractionHit.empty()
 	var kind := _target_kind(collider, metadata)
 	metadata["aim_direction"] = direction
 	var stable_target_id := (
@@ -177,6 +182,17 @@ func _target_metadata(
 				metadata["active_recipe_id"] = machine.active_recipe_id
 				metadata["recipe_queue"] = machine.queue.duplicate()
 	return metadata
+
+
+func _should_skip_loot_for_drill() -> bool:
+	if _tools == null or _tools.active_tool != &"drill":
+		return false
+	if Input.is_action_pressed(&"tool_primary"):
+		return true
+	return (
+		_tools.state == ToolController.ActionState.HOLDING
+		or _tools.state == ToolController.ActionState.COMPLETED
+	)
 
 
 func _publish(hit: InteractionHit) -> void:

@@ -141,7 +141,12 @@ func _remove_voxel(
 		return _result(&"invalid_target")
 	var parameters: Dictionary = command.get("parameters", {})
 	var radius := clampf(
-		float(parameters.get("radius", 0.68)),
+		float(
+			parameters.get(
+				"radius",
+				IndustryArchetypeProfile.hand_drill_carve_radius_m()
+			)
+		),
 		0.05,
 		2.0
 	)
@@ -150,19 +155,28 @@ func _remove_voxel(
 		metadata.get("aim_direction", Vector3.FORWARD)
 	).normalized()
 	var center := Vector3(target["point"]) - direction * radius * 0.25
-	_voxel_tool.mode = VoxelTool.MODE_REMOVE
-	_voxel_tool.do_sphere(center, radius)
-	_spawn_hand_drill_loot(center, radius)
+	var removed_m3 := _remove_sphere_measured(
+		center,
+		radius,
+		IndustryArchetypeProfile.hand_drill_carve_volume_budget_m3()
+	)
+	if removed_m3 > 0.000001:
+		_spawn_hand_drill_loot(center, removed_m3)
 	return _result(&"ok", {"point": target["point"]})
 
 
-func _spawn_hand_drill_loot(center: Vector3, radius: float) -> void:
+func _spawn_hand_drill_loot(center: Vector3, removed_volume_m3: float) -> void:
 	if _session == null or _session.world == null:
 		return
-	var volume := TerrainImpactCarver.sphere_volume(radius)
-	if volume <= 0.000001:
+	if removed_volume_m3 <= 0.000001:
 		return
-	var mass_kg := volume * IndustryArchetypeProfile.hand_drill_loot_kg_per_m3()
+	var mass_kg := IndustryArchetypeProfile.raw_mass_kg_from_volume_m3(
+		removed_volume_m3
+	)
+	mass_kg = minf(
+		mass_kg,
+		IndustryArchetypeProfile.hand_drill_max_loot_mass_kg_per_tick()
+	)
 	if mass_kg <= 0.000001:
 		return
 	_session.world.add_world_loot_pile(center, "raw_regolith", mass_kg)
@@ -209,8 +223,11 @@ func _stationary_drill_contact(element_id: int) -> Dictionary:
 		assembly.motion.transform.basis * Vector3(local_direction)
 	).normalized()
 	var local_head := (
-		Vector3(element.origin_cell)
-		+ Vector3(0.5, 0.5, 0.5)
+		GridPoseUtil.oriented_footprint_pivot(
+			element.get_archetype(),
+			element.origin_cell,
+			element.orientation_index
+		)
 		+ Vector3(local_direction)
 		* IndustryArchetypeProfile.drill_head_offset_m()
 	)
@@ -236,7 +253,11 @@ func _stationary_drill_contact(element_id: int) -> Dictionary:
 	}
 
 
-func _remove_sphere_measured(center: Vector3, radius: float) -> float:
+func _remove_sphere_measured(
+	center: Vector3,
+	radius: float,
+	volume_budget_m3: float = -1.0
+) -> float:
 	# Voxel Tools does not return a removed-volume result. Measure the authored
 	# SDF lattice before and after the edit, and credit only positive occupancy
 	# delta. This can under-count sub-voxel detail but cannot mint default yield.
@@ -265,10 +286,12 @@ func _remove_sphere_measured(center: Vector3, radius: float) -> float:
 	for cell: Vector3i in before:
 		var after := _sdf_occupancy(_voxel_tool.get_voxel_f(cell))
 		removed_m3 += maxf(float(before[cell]) - after, 0.0)
-	return minf(
-		removed_m3,
-		IndustryArchetypeProfile.drill_carve_volume_budget_m3()
+	var budget := (
+		volume_budget_m3
+		if volume_budget_m3 > 0.0
+		else IndustryArchetypeProfile.drill_carve_volume_budget_m3()
 	)
+	return minf(removed_m3, budget)
 
 
 func _sdf_occupancy(sdf: float) -> float:
@@ -509,9 +532,10 @@ func resource_store(store_id: String) -> SimulationResourceStore:
 
 func archetype_display_name(archetype_id: String) -> String:
 	var archetype := _get_archetype(archetype_id)
-	if archetype == null or archetype.display_name.is_empty():
-		return archetype_id
-	return archetype.display_name
+	var gateway_name := ""
+	if archetype != null and not archetype.display_name.is_empty():
+		gateway_name = archetype.display_name
+	return HudTokens.archetype_label(archetype_id, gateway_name)
 
 
 func _damage_element(

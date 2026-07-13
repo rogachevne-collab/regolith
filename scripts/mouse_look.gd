@@ -47,6 +47,26 @@ func _process(_delta: float) -> void:
 	)
 
 
+func view_angles() -> Vector2:
+	var yaw := _target.rotation.y if _target != null else 0.0
+	return Vector2(yaw, _pitch)
+
+
+func apply_view_angles(yaw_rad: float, pitch_deg: float) -> void:
+	if _target != null:
+		_target.rotation.y = yaw_rad
+	_pitch = clampf(pitch_deg, min_pitch, max_pitch)
+	if _target == null:
+		return
+	var target_transform := _target.global_transform
+	_last_target_position = target_transform.origin
+	global_transform = _camera_transform(
+		target_transform.origin,
+		_target.global_transform.basis.orthonormalized()
+	)
+	reset_physics_interpolation()
+
+
 func movement_basis() -> Basis:
 	if _target == null:
 		return Basis.IDENTITY
@@ -66,6 +86,10 @@ func aim_transform() -> Transform3D:
 func consume_yaw_delta() -> float:
 	# Yaw is applied immediately in _unhandled_input; kept for callers.
 	return 0.0
+
+
+func snap_after_teleport() -> void:
+	_snap_to_target()
 
 
 func set_look_sensitivity(value: float) -> void:

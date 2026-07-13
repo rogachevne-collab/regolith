@@ -190,11 +190,7 @@ static func _attach_snap_context(
 		var local_point := assembly.motion.transform.affine_inverse() * (
 			point + normal * SURFACE_EPSILON
 		)
-		target_port_cell = Vector3i(
-			floori(local_point.x),
-			floori(local_point.y),
-			floori(local_point.z)
-		) - snap_dir
+		target_port_cell = GridMetric.meters_to_cell_floor(local_point) - snap_dir
 	elif metadata.has("element_id"):
 		var target_element := world.get_element(int(metadata.get("element_id", 0)))
 		if (

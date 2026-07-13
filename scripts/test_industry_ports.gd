@@ -8,7 +8,7 @@ func _ready() -> void:
 func _run() -> void:
 	if not _test_distance_pair_across_assemblies():
 		return
-	if not _test_overlength_rejected():
+	if not _test_overlength_allowed():
 		return
 	if not _test_cargo_rejected():
 		return
@@ -65,9 +65,6 @@ func _test_distance_pair_across_assemblies() -> bool:
 			"expected compatible distance pair, got reason=%s pair=%s"
 			% [diagnosis.get("reason", &""), pair]
 		)
-	if float(diagnosis.get("distance_m", INF)) >= 12.0:
-		world.free()
-		return _fail("distance-pair fixture unexpectedly exceeds cable limit")
 	if str(pair.get("port_a_id", "")) != "power_out":
 		world.free()
 		return _fail("expected source power_out, got %s" % pair.get("port_a_id", ""))
@@ -108,14 +105,19 @@ func _test_distance_pair_across_assemblies() -> bool:
 		world.free()
 		return _fail("failed to move cable endpoint assembly")
 	world.get_industry_network().ensure_graph_current(world)
-	if not world.list_electric_links().is_empty():
+	var stored_links := world.list_electric_links()
+	if stored_links.size() != 1:
 		world.free()
-		return _fail("overlength moving cable must be pruned")
+		return _fail("moved endpoint must keep stored cable link")
+	var moved_link_id := int(stored_links[0]["link_id"])
+	if not world.get_industry_network().is_link_active(world, moved_link_id):
+		world.free()
+		return _fail("cable must stay active after endpoint assembly moves")
 	world.free()
 	return true
 
 
-func _test_overlength_rejected() -> bool:
+func _test_overlength_allowed() -> bool:
 	var world := SimulationWorld.new()
 	var source_spawn := _spawn_single_at(
 		world,
@@ -127,11 +129,11 @@ func _test_overlength_rejected() -> bool:
 		world,
 		"distributor_0",
 		"power_distributor",
-		Vector3i(13, 0, 0)
+		Vector3i(26, 0, 0)
 	)
 	if not source_spawn.is_ok() or not distributor_spawn.is_ok():
 		world.free()
-		return _fail("overlength fixture spawn failed")
+		return _fail("long cable fixture spawn failed")
 	var source_id := int(source_spawn.data["local_to_element_id"]["source_0"])
 	var distributor_id := int(
 		distributor_spawn.data["local_to_element_id"]["distributor_0"]
@@ -141,15 +143,11 @@ func _test_overlength_rejected() -> bool:
 		source_id,
 		distributor_id
 	)
-	if not diagnosis.get("pair", {}).is_empty():
-		world.free()
-		return _fail("overlength placement must not expose a cable pair")
-	var reason := StringName(diagnosis.get("reason", &""))
-	if reason != &"cable_too_long":
+	if diagnosis.get("pair", {}).is_empty():
 		world.free()
 		return _fail(
-			"expected cable_too_long for 13 m placement, got %s"
-			% reason
+			"long cable placement must expose a compatible pair, got %s"
+			% diagnosis.get("reason", &"")
 		)
 	var result := world.connect_network(
 		source_id,
@@ -157,12 +155,9 @@ func _test_overlength_rejected() -> bool:
 		distributor_id,
 		"power_in"
 	)
-	if (
-		result.is_ok()
-		or result.reason != StructuralCommandResult.REASON_CABLE_TOO_LONG
-	):
+	if not result.is_ok():
 		world.free()
-		return _fail("authority must reject overlength cable")
+		return _fail("authority must accept long electric cable: %s" % result.reason)
 	world.free()
 	return true
 
@@ -494,7 +489,7 @@ func _new_large_projection_fixture(element_count: int) -> Dictionary:
 			_placement(
 				"source_%d" % index,
 				Slice01Archetypes.load_required("power_source"),
-				Vector3i(index, 0, 0)
+				Vector3i(index * 3, 0, 0)
 			)
 		)
 	var spawn := _spawn(

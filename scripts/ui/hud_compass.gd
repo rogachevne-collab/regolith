@@ -1,13 +1,12 @@
 extends Control
 ## Top-centre compass ribbon. Presentation only: derives heading from the camera
 ## aim basis (North = -Z, East = +X, clockwise) and draws a scrolling tape. Never
-## writes to any transform. Cardinal letters: N / В / Ю / З (latin N kept as the
-## internationally recognised North marker, Cyrillic for the rest — noted in spec).
+## writes to any transform. Cardinal letters: С / В / Ю / З.
 
 const RIBBON_WIDTH := 360.0
 const TOP := 22.0
 const HALF_SPAN_DEG := 60.0        # degrees visible each side of centre
-const CARDINALS := {0: "N", 90: "В", 180: "Ю", 270: "З"}
+const CARDINALS := {0: "С", 90: "В", 180: "Ю", 270: "З"}
 
 var _camera: Camera3D
 var _font: Font

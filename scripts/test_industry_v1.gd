@@ -71,6 +71,7 @@ func _run_tests() -> void:
 		_test_recipe_fixture_chain,
 		_test_cargo_graph_reference_adjacency,
 		_test_cargo_graph_spawned_topology,
+		_test_cargo_graph_rebuild_on_weld,
 		_test_cargo_connect_network_absent_or_rejects_cargo,
 		_test_electric_connect_network_runtime,
 		_test_electric_link_dormancy_survives_damage_repair,
@@ -78,6 +79,7 @@ func _run_tests() -> void:
 		_test_electric_cable_waypoints_polyline,
 		_test_industry_simulation_tick_runtime,
 		_test_drill_mining_storage_full_runtime,
+		_test_hand_drill_loot_merge_runtime,
 		_test_integration_isru_scenario,
 	]
 	for test: Callable in tests:
@@ -244,6 +246,60 @@ func _test_cargo_graph_spawned_topology() -> bool:
 	return true
 
 
+func _test_cargo_graph_rebuild_on_weld() -> bool:
+	var world := SimulationWorld.new()
+	world.set_resource_amount("player", "construction_component", 100.0)
+	var spawn := _spawn(world, _cargo_line_blueprint(), GridTransform.identity())
+	if not spawn.is_ok():
+		world.free()
+		return _fail("cargo weld rebuild spawn failed: %s" % spawn.reason)
+	var mapping: Dictionary = spawn.data["local_to_element_id"]
+	var drill_id := int(mapping["drill_0"])
+	var corner_pipe_id := int(mapping["pipe_corner"])
+	var store_id := int(mapping["store_0"])
+	var corner_pipe := world.get_element(corner_pipe_id)
+	if corner_pipe == null:
+		world.free()
+		return _fail("cargo weld rebuild missing corner pipe")
+	corner_pipe.integrity = corner_pipe.get_archetype().max_integrity * 0.05
+	corner_pipe.sync_build_progress_from_integrity()
+	world.get_cargo_graph().rebuild(world)
+	var graph := world.get_cargo_graph()
+	if graph.shortest_hop_distance(drill_id, store_id) >= 0:
+		world.free()
+		return _fail(
+			"incomplete pipe must break cargo path before weld rebuild test"
+		)
+	var weld := WeldElementCommand.new()
+	weld.element_id = corner_pipe_id
+	weld.expected_state_revision = corner_pipe.state_revision
+	weld.store_id = "player"
+	weld.max_material_amount = 100.0
+	var weld_result := world.apply_structural_command_now(weld)
+	if not weld_result.is_ok():
+		world.free()
+		return _fail("cargo weld rebuild weld failed: %s" % weld_result.reason)
+	if not corner_pipe.is_operational():
+		world.free()
+		return _fail("cargo weld rebuild pipe still incomplete after weld")
+	graph = world.get_cargo_graph()
+	if not graph.elements_are_connected(drill_id, corner_pipe_id):
+		world.free()
+		return _fail("welded pipe must join cargo graph to drill")
+	var east_pipe_id := int(mapping["pipe_east"])
+	if not graph.elements_are_connected(corner_pipe_id, east_pipe_id):
+		world.free()
+		return _fail("welded pipe must join cargo graph to next pipe segment")
+	if not graph.elements_are_connected(east_pipe_id, store_id):
+		world.free()
+		return _fail("welded pipe chain must reach cargo store")
+	if graph.shortest_hop_distance(drill_id, store_id) < 0:
+		world.free()
+		return _fail("welded pipe must restore drill-to-store cargo path")
+	world.free()
+	return true
+
+
 func _test_cargo_connect_network_absent_or_rejects_cargo() -> bool:
 	return await _assert_connect_network_rejects_cargo_ports()
 
@@ -272,6 +328,50 @@ func _test_drill_mining_storage_full_runtime() -> bool:
 	return await _run_drill_storage_full_scenario()
 
 
+func _test_hand_drill_loot_merge_runtime() -> bool:
+	var world := SimulationWorld.new()
+	world.add_world_loot_pile(Vector3(1.0, 0.0, 0.0), "raw_regolith", 4.0)
+	world.add_world_loot_pile(Vector3(1.2, 0.0, 0.15), "raw_regolith", 3.0)
+	var piles := world.list_world_loot_piles()
+	if piles.size() != 1:
+		world.free()
+		return _fail(
+			"nearby hand-drill loot piles must merge, got %d" % piles.size()
+		)
+	if not is_equal_approx(float(piles[0]["amount_kg"]), 7.0):
+		world.free()
+		return _fail(
+			"merged loot mass expected 7.0 kg, got %.3f"
+			% float(piles[0]["amount_kg"])
+		)
+	world.add_world_loot_pile(Vector3(5.0, 0.0, 0.0), "raw_regolith", 2.0)
+	piles = world.list_world_loot_piles()
+	if piles.size() != 2:
+		world.free()
+		return _fail(
+			"distant loot pile must stay separate, got %d" % piles.size()
+		)
+	world.add_world_loot_pile(Vector3(1.1, 0.0, 0.05), "regolith_fines", 1.0)
+	piles = world.list_world_loot_piles()
+	if piles.size() != 3:
+		world.free()
+		return _fail(
+			"different resource must not merge with regolith pile, got %d"
+			% piles.size()
+		)
+	world.add_world_loot_pile(Vector3(2.0, 0.0, 0.0), "raw_regolith", 20.0)
+	world.add_world_loot_pile(Vector3(2.1, 0.0, 0.0), "raw_regolith", 8.0)
+	piles = world.list_world_loot_piles()
+	if piles.size() != 5:
+		world.free()
+		return _fail(
+			"loot pile must split when merge would exceed cap, got %d"
+			% piles.size()
+		)
+	world.free()
+	return true
+
+
 func _test_integration_isru_scenario() -> bool:
 	return await _run_integration_isru_scenario()
 
@@ -288,18 +388,6 @@ func _run_electric_wire_scenario() -> bool:
 	var distributor_id := int(mapping["distributor_0"])
 	var consumer_id := int(mapping["processor_0"])
 	var outside_id := int(mapping["fabricator_outside"])
-	var overlength := world.connect_network(
-		source_id,
-		"power_out",
-		outside_id,
-		"power_in"
-	)
-	if (
-		overlength.is_ok()
-		or overlength.reason != StructuralCommandResult.REASON_CABLE_TOO_LONG
-	):
-		world.free()
-		return _fail("overlength electric cable must be rejected")
 	var source_link := world.connect_network(
 		source_id,
 		"power_out",
@@ -351,9 +439,8 @@ func _run_electric_wire_scenario() -> bool:
 	return true
 
 
-## Freeform routing: cable length limit applies to the routed polyline
-## (anchor → скобы → anchor), waypoints persist on the stored link, and a
-## detour that exceeds max length is rejected at connect time.
+## Freeform routing: waypoints persist on the stored link regardless of polyline
+## length.
 func _run_electric_waypoints_scenario() -> bool:
 	var world := SimulationWorld.new()
 	var spawn := _spawn(
@@ -368,7 +455,7 @@ func _run_electric_waypoints_scenario() -> bool:
 	var source_id := int(mapping["source_0"])
 	var distributor_id := int(mapping["distributor_0"])
 	var long_detour := PackedVector3Array([Vector3(1.5, 30.0, 0.0)])
-	var rejected := world.connect_network(
+	var long_routed := world.connect_network(
 		source_id,
 		"power_out",
 		distributor_id,
@@ -376,12 +463,10 @@ func _run_electric_waypoints_scenario() -> bool:
 		-1,
 		long_detour
 	)
-	if (
-		rejected.is_ok()
-		or rejected.reason != StructuralCommandResult.REASON_CABLE_TOO_LONG
-	):
+	if not long_routed.is_ok():
 		world.free()
-		return _fail("overlength routed polyline must be rejected")
+		return _fail("long routed polyline must be accepted: %s" % long_routed.reason)
+	world.disconnect_network(0, "", 0, "", int(world.list_electric_links()[0]["link_id"]))
 	var detour := PackedVector3Array([
 		Vector3(1.2, 1.4, 0.8),
 		Vector3(2.1, 1.4, -0.6),
@@ -751,7 +836,7 @@ func _line_topology_elements() -> Array:
 		101,
 		1,
 		_test_drill_archetype(),
-		Vector3i(1, 0, 0)
+		Vector3i.ZERO
 	)
 	var pipe := _make_test_element(
 		102,
@@ -952,19 +1037,14 @@ func _cargo_line_blueprint() -> Blueprint:
 		"industry_v1_cargo_l_path",
 		[
 			_placement(
-				"foundation_0",
-				Slice01Archetypes.foundation(),
-				Vector3i(-1, 0, 0)
-			),
-			_placement(
 				"source_0",
 				Slice01Archetypes.power_source(),
-				Vector3i(0, 0, -2)
+				Vector3i(4, 0, 0)
 			),
 			_placement(
 				"distributor_0",
 				Slice01Archetypes.load_required("power_distributor"),
-				Vector3i(0, 0, -1)
+				Vector3i(2, 0, 1)
 			),
 			_placement(
 				"drill_0",
@@ -974,19 +1054,17 @@ func _cargo_line_blueprint() -> Blueprint:
 			_placement(
 				"pipe_corner",
 				Slice01Archetypes.load_required("cargo_pipe"),
-				Vector3i(0, 0, 1)
+				Vector3i(0, 0, 2)
 			),
 			_placement(
 				"pipe_east",
 				Slice01Archetypes.load_required("cargo_pipe"),
-				Vector3i(1, 0, 1)
+				Vector3i(1, 0, 2)
 			),
-			_placement_facing(
+			_placement(
 				"store_0",
 				Slice01Archetypes.cargo_store(),
-				Vector3i(2, 0, 1),
-				OrientationUtil.Face.NEG_Z,
-				OrientationUtil.Face.NEG_X
+				Vector3i(0, 0, 3)
 			),
 		]
 	)
@@ -995,11 +1073,6 @@ func _cargo_line_blueprint() -> Blueprint:
 func _electric_cable_blueprint() -> Blueprint:
 	var placements: Array[BlueprintElementPlacement] = [
 		_placement(
-			"foundation_0",
-			Slice01Archetypes.foundation(),
-			Vector3i(-1, 0, 0)
-		),
-		_placement(
 			"source_0",
 			Slice01Archetypes.power_source(),
 			Vector3i.ZERO
@@ -1007,21 +1080,20 @@ func _electric_cable_blueprint() -> Blueprint:
 		_placement(
 			"distributor_0",
 			Slice01Archetypes.load_required("power_distributor"),
-			Vector3i(3, 0, 0)
+			Vector3i(3, 0, 1)
 		),
 		_placement(
 			"processor_0",
 			Slice01Archetypes.processor(),
-			Vector3i(3, 0, 1)
+			Vector3i(5, 0, 0)
 		),
 		_placement(
 			"fabricator_outside",
 			Slice01Archetypes.fabricator(),
-			Vector3i(16, 0, 1)
+			Vector3i(30, 0, 0)
 		),
 	]
-	placements.append_array(_foundation_span("cable_frame", 1, 2, 0))
-	placements.append_array(_foundation_span("radius_frame", 4, 15, 1))
+	placements.append_array(_foundation_span("radius_frame", 9, 29, 1))
 	return BlueprintBaker.bake_from_placements(
 		"industry_v1_distance_cable",
 		placements
@@ -1033,65 +1105,54 @@ func _integration_blueprint() -> Blueprint:
 		"industry_v1_integration",
 		[
 			_placement(
-				"foundation_0",
-				Slice01Archetypes.foundation(),
-				Vector3i(-1, 0, 0)
-			),
-			_placement(
 				"power_0",
 				Slice01Archetypes.power_source(),
-				Vector3i(0, 0, -1)
+				Vector3i(4, 0, 0)
 			),
 			_placement(
 				"distributor_0",
 				Slice01Archetypes.load_required("power_distributor"),
-				Vector3i.ZERO
+				Vector3i(2, 0, 1)
 			),
 			_placement(
 				"drill_0",
 				Slice01Archetypes.stationary_drill(),
-				Vector3i(1, 0, 0)
+				Vector3i.ZERO
 			),
 			_placement(
 				"pipe_corner",
 				Slice01Archetypes.load_required("cargo_pipe"),
-				Vector3i(1, 0, 1)
+				Vector3i(0, 0, 2)
 			),
 			_placement(
 				"pipe_east",
 				Slice01Archetypes.load_required("cargo_pipe"),
-				Vector3i(2, 0, 1)
+				Vector3i(1, 0, 2)
 			),
-			_placement_facing(
+			_placement(
 				"processor_0",
 				Slice01Archetypes.processor(),
-				Vector3i(3, 0, 1),
-				OrientationUtil.Face.NEG_Z,
-				OrientationUtil.Face.NEG_X
+				Vector3i(0, 0, 3)
 			),
 			_placement(
 				"pipe_after_processor",
 				Slice01Archetypes.load_required("cargo_pipe"),
-				Vector3i(4, 0, 1)
+				Vector3i(1, 0, 6)
 			),
-			_placement_facing(
+			_placement(
 				"fabricator_0",
 				Slice01Archetypes.fabricator(),
-				Vector3i(5, 0, 1),
-				OrientationUtil.Face.NEG_Z,
-				OrientationUtil.Face.NEG_X
+				Vector3i(0, 0, 7)
 			),
 			_placement(
 				"pipe_after_fabricator",
 				Slice01Archetypes.load_required("cargo_pipe"),
-				Vector3i(6, 0, 1)
+				Vector3i(1, 0, 10)
 			),
-			_placement_facing(
+			_placement(
 				"store_0",
 				Slice01Archetypes.cargo_store(),
-				Vector3i(7, 0, 1),
-				OrientationUtil.Face.NEG_Z,
-				OrientationUtil.Face.NEG_X
+				Vector3i(0, 0, 11)
 			),
 		]
 	)
@@ -1138,7 +1199,7 @@ func _foundation_span(
 		placements.append(
 			_placement(
 				"%s_%d" % [id_prefix, x],
-				Slice01Archetypes.foundation(),
+				Slice01Archetypes.frame(),
 				Vector3i(x, 0, z)
 			)
 		)
@@ -1167,23 +1228,35 @@ func _make_test_element(
 
 func _test_drill_archetype() -> ElementArchetype:
 	var base := Slice01Archetypes.stationary_drill().duplicate(true)
-	_set_port_face(base, "cargo_out", OrientationUtil.Face.POS_X)
+	_set_port_pose(
+		base,
+		"cargo_out",
+		Vector3i(1, 0, 0),
+		OrientationUtil.Face.POS_X
+	)
 	return base
 
 
 func _test_cargo_store_archetype() -> ElementArchetype:
 	var base := Slice01Archetypes.cargo_store().duplicate(true)
-	_set_port_face(base, "cargo_in", OrientationUtil.Face.NEG_X)
+	_set_port_pose(
+		base,
+		"cargo_in",
+		Vector3i.ZERO,
+		OrientationUtil.Face.NEG_X
+	)
 	return base
 
 
-func _set_port_face(
+func _set_port_pose(
 	archetype: ElementArchetype,
 	port_id: String,
+	local_cell: Vector3i,
 	face: int
 ) -> void:
 	for port: PortDefinition in archetype.ports:
 		if port.port_id == port_id:
+			port.local_cell = local_cell
 			port.local_face = face
 			return
 

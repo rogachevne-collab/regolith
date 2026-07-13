@@ -254,7 +254,7 @@ ElectricLink {
 1. оба parent elements **operational**;
 2. оба порта `Kind.ELECTRIC`, direction-compatible output → input
    (bidirectional допускается явно);
-3. длина кабеля ≤ **12 m** (`max_cable_length_m`, placeholder v1); длина =
+3. длина кабеля **не ограничена** v1; длина =
    world-space **polyline** port anchor → `waypoints[]` → port anchor
    (скобы свободной протяжки); без waypoints — прямая между anchors;
 4. face adjacency и взаимная ориентация портов **не требуются**;
@@ -272,11 +272,9 @@ Player UX: wire рендерится с interaction-only коллайдером
 Временные условия НЕ удаляют link из `electric_links[]`:
 
 - endpoint не operational (повреждён, недостроен) → link **dormant**;
-- world-space длина кабеля превысила `max_cable_length_m`
-  (endpoint на другой Assembly уехал) → link **dormant**;
 - dormant link выпадает из electric graph (не проводит) и **оживает
-  автоматически**, когда условие снято (ремонт endpoint, возврат в радиус
-  длины) — повторный `connect_network` не требуется;
+  автоматически**, когда endpoint снова operational — повторный
+  `connect_network` не требуется;
 - presentation: dormant wire рендерится приглушённым (без emission);
 - удаление из state — только `disconnect_network` или исчезновение endpoint
   element из мира (destroy/dismantle).
@@ -314,7 +312,6 @@ cable-chain индивидуальным wire — но не является pas
 3. Ghost polyline (`CableRoutingPreview`) рисует протяжку от pending блока
    через скобы до прицела.
 4. **Cargo:** connect tool **не используется** — только placement `cargo_pipe` blocks.
-5. Overlength (по полилинии): HUD toast «Кабель длиннее 12 м».
 6. Wire presentation: полилиния со скобами и лёгким провисанием на span;
    grinder по любому сегменту срезает кабель.
 
@@ -333,7 +330,6 @@ cable-chain индивидуальным wire — но не является pas
 
 - `power_source.output_w`: fixture placeholder **2000 W**;
 - `power_distributor.supply_radius_m`: fixture placeholder **12 m**;
-- `max_cable_length_m`: fixture/runtime placeholder **12 m**;
 - manual electric wires соединяют source/generator cluster,
   `power_distributor`, optional `power_battery` **и consumers** (`power_in`):
   явный wire до машины — валидное питание без distributor;
@@ -418,8 +414,15 @@ those hooks do not define production yield semantics.
 
 Hand drill (`ToolController` → `voxel_remove`) **не** credits player store напрямую.
 
+- carve uses the same measured SDF occupancy delta as the stationary drill
+  (`_remove_sphere_measured`), not a default sphere volume;
+- fixture carve radius `hand_drill_carve_radius_m` (0.12 m), volume budget
+  `0.006 m³` and max **9 kg** loot per stroke; stroke interval `0.14 s`;
 - carved volume spawns **world loot pile** (`WorldLootPile` authoritative, presentation
-  mesh/decal) at carve site with `raw_regolith` mass;
+  mesh/decal) at carve site with `raw_regolith` mass ∝ measured removed volume;
+- nearby piles of the same resource within `hand_drill_loot_merge_radius_m` (0.55 m)
+  merge into one pile up to `24 kg`; presentation scales mesh modestly with mass;
+- while drilling, loot colliders do not steal the terrain raycast;
 - pickup через `TransferResourceCommand` или dedicated collect action в радиусе;
 - pile без pickup — persists в snapshot до collect или despawn timer (fixture);
 - aligns с IMPACT-DESTRUCTION «regolith не в void» без industry machine.
@@ -511,7 +514,7 @@ Typed GDScript classes:
 
 | Domain / GDScript | Назначение |
 |---|---|
-| `connect_network` / `ConnectNetworkCommand` | **electric cable only**, output/input, ≤12 m |
+| `connect_network` / `ConnectNetworkCommand` | **electric cable only**, output/input |
 | `disconnect_network` / `DisconnectNetworkCommand` | remove electric wire |
 | `transfer_resource` / `TransferResourceCommand` | manual pickup/deposit (не structural) |
 | `set_machine_enabled` / `SetMachineEnabledCommand` | toggle machine |

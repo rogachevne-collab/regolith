@@ -10,25 +10,25 @@ script = ExtResource("1_root")
 blueprint_id = "cart_rover"
 
 [node name="FrameN1_0_N1" type="Node3D" parent="."]
-position = Vector3(-1, 0, -1)
+position = Vector3(-0.5, 0, -0.5)
 script = ExtResource("2_marker")
 local_id = "frame_n1_0_n1"
 archetype = ExtResource("3_frame")
 
 [node name="Frame0_0_N1" type="Node3D" parent="."]
-position = Vector3(0, 0, -1)
+position = Vector3(0, 0, -0.5)
 script = ExtResource("2_marker")
 local_id = "frame_0_0_n1"
 archetype = ExtResource("3_frame")
 
 [node name="Frame1_0_N1" type="Node3D" parent="."]
-position = Vector3(1, 0, -1)
+position = Vector3(0.5, 0, -0.5)
 script = ExtResource("2_marker")
 local_id = "frame_1_0_n1"
 archetype = ExtResource("3_frame")
 
 [node name="FrameN1_0_0" type="Node3D" parent="."]
-position = Vector3(-1, 0, 0)
+position = Vector3(-0.5, 0, 0)
 script = ExtResource("2_marker")
 local_id = "frame_n1_0_0"
 archetype = ExtResource("3_frame")
@@ -39,61 +39,61 @@ local_id = "frame_0_0_0"
 archetype = ExtResource("3_frame")
 
 [node name="Frame1_0_0" type="Node3D" parent="."]
-position = Vector3(1, 0, 0)
+position = Vector3(0.5, 0, 0)
 script = ExtResource("2_marker")
 local_id = "frame_1_0_0"
 archetype = ExtResource("3_frame")
 
 [node name="FrameN1_0_1" type="Node3D" parent="."]
-position = Vector3(-1, 0, 1)
+position = Vector3(-0.5, 0, 0.5)
 script = ExtResource("2_marker")
 local_id = "frame_n1_0_1"
 archetype = ExtResource("3_frame")
 
 [node name="Frame0_0_1" type="Node3D" parent="."]
-position = Vector3(0, 0, 1)
+position = Vector3(0, 0, 0.5)
 script = ExtResource("2_marker")
 local_id = "frame_0_0_1"
 archetype = ExtResource("3_frame")
 
 [node name="Frame1_0_1" type="Node3D" parent="."]
-position = Vector3(1, 0, 1)
+position = Vector3(0.5, 0, 0.5)
 script = ExtResource("2_marker")
 local_id = "frame_1_0_1"
 archetype = ExtResource("3_frame")
 
 [node name="BridgeFront" type="Node3D" parent="."]
-position = Vector3(0, 0, -2)
+position = Vector3(0, 0, -1)
 script = ExtResource("2_marker")
 local_id = "bridge_front"
 archetype = ExtResource("3_frame")
 
 [node name="BridgeRear" type="Node3D" parent="."]
-position = Vector3(0, 0, 2)
+position = Vector3(0, 0, 1)
 script = ExtResource("2_marker")
 local_id = "bridge_rear"
 archetype = ExtResource("3_frame")
 
 [node name="WheelFL" type="Node3D" parent="."]
-position = Vector3(-2, 0, -1)
+position = Vector3(-1, 0, -0.5)
 script = ExtResource("2_marker")
 local_id = "wheel_fl"
 archetype = ExtResource("4_wheel")
 
 [node name="WheelFR" type="Node3D" parent="."]
-position = Vector3(2, 0, -1)
+position = Vector3(1, 0, -0.5)
 script = ExtResource("2_marker")
 local_id = "wheel_fr"
 archetype = ExtResource("4_wheel")
 
 [node name="WheelRL" type="Node3D" parent="."]
-position = Vector3(-2, 0, 1)
+position = Vector3(-1, 0, 0.5)
 script = ExtResource("2_marker")
 local_id = "wheel_rl"
 archetype = ExtResource("4_wheel")
 
 [node name="WheelRR" type="Node3D" parent="."]
-position = Vector3(2, 0, 1)
+position = Vector3(1, 0, 0.5)
 script = ExtResource("2_marker")
 local_id = "wheel_rr"
 archetype = ExtResource("4_wheel")

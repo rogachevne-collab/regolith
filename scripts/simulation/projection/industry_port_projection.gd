@@ -3,7 +3,7 @@ extends Node3D
 ## Gameplay port markers for electric + cargo industry ports.
 
 const MARKER_PREFIX := "IndustryPort_"
-const FACE_OFFSET := 0.48
+const FACE_OFFSET := GridMetric.HALF_CELL_SIZE_M - 0.02
 const DISC_RADIUS := 0.14
 const ARROW_LENGTH := 0.18
 const ARROW_RADIUS := 0.035

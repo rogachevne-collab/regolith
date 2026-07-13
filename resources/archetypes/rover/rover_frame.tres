@@ -11,8 +11,8 @@ resource_id = "construction_component"
 
 [sub_resource type="Resource" id="Collider"]
 script = ExtResource("2_col")
-size = Vector3(0.92, 0.6, 0.92)
-offset_in_cell = Vector3(0, 0, 0)
+size = Vector3(0.46, 0.3, 0.46)
+offset_in_cell = Vector3(0.25, 0.25, 0.25)
 
 [sub_resource type="Resource" id="PortPx"]
 script = ExtResource("3_port")
@@ -52,7 +52,7 @@ compatibility_tags = PackedStringArray("structural")
 [resource]
 script = ExtResource("4_arch")
 archetype_id = "rover_frame"
-display_name = "Rover Frame Block"
+display_name = "Блок ровера"
 roles = PackedStringArray("Frame")
 mass_kg = 30.90909090909091
 colliders = Array[ExtResource("2_col")]([SubResource("Collider")])

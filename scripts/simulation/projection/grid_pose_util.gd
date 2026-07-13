@@ -6,7 +6,7 @@ static func grid_frame_to_transform(frame: GridTransform) -> Transform3D:
 	var basis: Basis = OrientationUtil.orientation_basis(
 		frame.orientation_index
 	)
-	return Transform3D(basis, Vector3(frame.translation))
+	return Transform3D(basis, GridMetric.cell_to_meters(frame.translation))
 
 
 static func b_to_a_from_grid_frames(
@@ -41,7 +41,7 @@ static func element_local_transform(
 ) -> Transform3D:
 	return Transform3D(
 		OrientationUtil.orientation_basis(orientation_index),
-		Vector3(origin_cell)
+		GridMetric.cell_to_meters(origin_cell)
 	)
 
 
@@ -61,7 +61,9 @@ static func collider_local_transform(
 	# 1x1x1 element orbit a corner whenever its orientation changes.
 	var local_position := (
 		cell_center
-		+ basis * (collider.offset_in_cell - Vector3(0.5, 0.5, 0.5))
+		+ basis * (
+			collider.offset_in_cell - GridMetric.CELL_CENTER_OFFSET_M
+		)
 	)
 	return Transform3D(basis, local_position)
 
@@ -71,10 +73,10 @@ static func element_cell_center(
 	local_cell: Vector3i,
 	orientation_index: int
 ) -> Vector3:
-	return Vector3(
+	return GridMetric.cell_center_meters(
 		element_origin
 		+ OrientationUtil.rotate_cell(local_cell, orientation_index)
-	) + Vector3(0.5, 0.5, 0.5)
+	)
 
 
 static func collider_world_transform(
@@ -142,10 +144,10 @@ static func projected_element_collider_transforms(
 ## Geometric center of `footprint_cells` in element-local space (assembly frame).
 static func footprint_pivot_local(archetype: ElementArchetype) -> Vector3:
 	if archetype == null or archetype.footprint_cells.is_empty():
-		return Vector3(0.5, 0.5, 0.5)
+		return GridMetric.CELL_CENTER_OFFSET_M
 	var sum := Vector3.ZERO
 	for local_cell: Vector3i in archetype.footprint_cells:
-		sum += Vector3(local_cell) + Vector3(0.5, 0.5, 0.5)
+		sum += GridMetric.cell_center_meters(local_cell)
 	return sum / float(archetype.footprint_cells.size())
 
 
@@ -224,16 +226,12 @@ static func attach_origin_candidates(
 		0
 	)
 	var ref_pivot := (
-		Vector3(ref_origin)
+		GridMetric.cell_to_meters(ref_origin)
 		+ OrientationUtil.orientation_basis(0) * pivot_local
 	)
 	var basis := OrientationUtil.orientation_basis(orientation_index)
 	var corrected := ref_pivot - basis * pivot_local
-	var pivot_origin := Vector3i(
-		int(roundi(corrected.x)),
-		int(roundi(corrected.y)),
-		int(roundi(corrected.z))
-	)
+	var pivot_origin := GridMetric.meters_to_cell_round(corrected)
 	var seen: Dictionary = {primary: true, snap: true}
 	for dx: int in range(-1, 2):
 		for dy: int in range(-1, 2):
@@ -258,7 +256,11 @@ static func ground_contact_local(
 	orientation_index: int
 ) -> Vector3:
 	if archetype == null or archetype.colliders.is_empty():
-		return Vector3(0.5, 0.0, 0.5)
+		return Vector3(
+			GridMetric.HALF_CELL_SIZE_M,
+			0.0,
+			GridMetric.HALF_CELL_SIZE_M
+		)
 	var min_y := INF
 	var bottom_points: Array[Vector3] = []
 	for collider: ColliderDefinition in archetype.colliders:
@@ -285,7 +287,11 @@ static func ground_contact_local(
 					elif absf(corner.y - min_y) <= 0.0001:
 						bottom_points.append(corner)
 	if bottom_points.is_empty():
-		return Vector3(0.5, 0.0, 0.5)
+		return Vector3(
+			GridMetric.HALF_CELL_SIZE_M,
+			0.0,
+			GridMetric.HALF_CELL_SIZE_M
+		)
 	var average := Vector3.ZERO
 	for point: Vector3 in bottom_points:
 		average += point
@@ -329,16 +335,12 @@ static func pivot_compensated_origin(
 		0
 	)
 	var ref_pivot := (
-		Vector3(ref_origin)
+		GridMetric.cell_to_meters(ref_origin)
 		+ OrientationUtil.orientation_basis(0) * pivot_local
 	)
 	var basis := OrientationUtil.orientation_basis(orientation_index)
 	var corrected := ref_pivot - basis * pivot_local
-	return Vector3i(
-		int(roundi(corrected.x)),
-		int(roundi(corrected.y)),
-		int(roundi(corrected.z))
-	)
+	return GridMetric.meters_to_cell_round(corrected)
 
 
 ## Snap origin with pivot compensation when the rotated pose still validates.

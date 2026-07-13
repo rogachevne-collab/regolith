@@ -108,7 +108,7 @@ func _carve_volume(element_id: int) -> float:
 func _raw_amount_from_volume(volume_m3: float) -> float:
 	if volume_m3 <= EPSILON:
 		return 0.0
-	var mass_kg := volume_m3 * IndustryArchetypeProfile.drill_kg_per_m3()
+	var mass_kg := IndustryArchetypeProfile.raw_mass_kg_from_volume_m3(volume_m3)
 	var unit_mass := ResourceCatalog.mass_per_unit_kg("raw_regolith")
 	if unit_mass <= EPSILON:
 		return 0.0

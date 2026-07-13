@@ -140,7 +140,8 @@ func _add_stationary_drill_visual(
 ) -> void:
 	var root: Node3D = STATIONARY_DRILL_VISUAL_SCRIPT.instantiate_for_element(
 		element.origin_cell,
-		element.orientation_index
+		element.orientation_index,
+		element.get_archetype()
 	)
 	root.name = "StationaryDrillWorkingHead_%d" % element.element_id
 	root.set_meta("element_visual", true)

@@ -184,7 +184,7 @@ func _test_almost_aligned_merge() -> bool:
 	)
 	assembly_b.motion.transform = Transform3D(
 		Basis.IDENTITY.rotated(Vector3.UP, deg_to_rad(5.0)),
-		Vector3(1.1, 0.0, 0.0)
+		Vector3(GridMetric.CELL_SIZE_M + 0.1, 0.0, 0.0)
 	)
 	var command: MergeAssembliesCommand = _gateway_merge(world, a, b)
 	if command == null:
@@ -221,7 +221,7 @@ func _test_misaligned_merge(
 	)
 	assembly_b.motion.transform = Transform3D(
 		Basis.IDENTITY.rotated(Vector3.UP, angle_error),
-		Vector3.RIGHT + position_error
+		Vector3.RIGHT * GridMetric.CELL_SIZE_M + position_error
 	)
 	if _gateway_merge(world, a, b) != null:
 		return _fail("gateway accepted out-of-tolerance alignment")
@@ -278,7 +278,7 @@ func _test_b_wins_alignment() -> bool:
 	var fixture: Dictionary = _new_fixture()
 	var world: SimulationWorld = fixture["world"]
 	var a_frame := GridTransform.new()
-	a_frame.translation = Vector3i.LEFT
+	a_frame.translation = Vector3i(-1, 0, 1)
 	var a: StructuralCommandResult = _spawn(
 		world,
 		_single_blueprint(Slice01Archetypes.frame()),
@@ -517,7 +517,7 @@ func _test_dual_anchor_merge() -> bool:
 		GridTransform.identity()
 	)
 	var b_frame := GridTransform.new()
-	b_frame.translation = Vector3i.RIGHT
+	b_frame.translation = Vector3i(4, 0, 0)
 	var b: StructuralCommandResult = _spawn(
 		world,
 		_single_blueprint(Slice01Archetypes.foundation()),

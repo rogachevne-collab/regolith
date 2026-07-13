@@ -4,7 +4,10 @@ const SKY_PROBE_Y := 120.0
 const SPAWN_CLEARANCE := 1.05
 const MIN_WARMUP_FRAMES := 30
 const STABLE_PHYSICS_FRAMES := 4
+const SPAWN_PROBE_TIMEOUT_MS := 30000
+const MAX_SPAWN_SETTLE_FRAMES := 180
 const STARTER_CONSTRUCTION_COMPONENTS := 1000.0
+const AUTOSAVE_INTERVAL_S := 90.0
 
 @onready var _terrain: VoxelTerrain = $VoxelTerrain
 @onready var _player: Node3D = $Player
@@ -23,14 +26,14 @@ var _warmup_frames := 0
 var _stable_player := 0
 var _player_spawn_xz := Vector2.ZERO
 var _player_spawn_pos := Vector3.ZERO
+var _world_ready := false
+var _autosave_accum := 0.0
+var _last_save_ms := 0
+var _spawn_wait_start_ms := 0
+var _save_load_attempted := false
 
 
 func _ready() -> void:
-	_session.world.set_resource_amount(
-		"player",
-		"construction_component",
-		STARTER_CONSTRUCTION_COMPONENTS
-	)
 	for archetype: ElementArchetype in Slice01Archetypes.load_all_required():
 		_session.world.get_archetype_registry().register(archetype)
 	_loading.visible = true
@@ -44,7 +47,12 @@ func _ready() -> void:
 	_place_when_ground_exists()
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	if _world_ready:
+		_autosave_accum += delta
+		if _autosave_accum >= AUTOSAVE_INTERVAL_S:
+			_autosave_accum = 0.0
+			_persist_world()
 	if not debug_overlay:
 		return
 	var player_position: Vector3 = _player.global_position
@@ -55,6 +63,141 @@ func _process(_delta: float) -> void:
 		player_position.y,
 		player_position.z,
 	]
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		_persist_world(true)
+	elif what == NOTIFICATION_APPLICATION_PAUSED:
+		_persist_world(true)
+
+
+func _exit_tree() -> void:
+	_persist_world(true)
+
+
+func _persist_world(force := false) -> void:
+	if not _world_ready or _session == null:
+		return
+	var now_ms := Time.get_ticks_msec()
+	if not force and now_ms - _last_save_ms < 5000:
+		return
+	if WorldPersistence.save(_session.world, _player):
+		_last_save_ms = now_ms
+
+
+func _begin_fresh_world(player_position: Vector3) -> void:
+	_session.world.set_resource_amount(
+		"player",
+		"construction_component",
+		STARTER_CONSTRUCTION_COMPONENTS
+	)
+	var base_origin := Vector3(
+		_base_spawn.global_position.x,
+		SKY_PROBE_Y,
+		_base_spawn.global_position.z
+	)
+	var base_x_minus_origin := base_origin + Vector3.LEFT
+	var base_x_plus_origin := base_origin + Vector3.RIGHT
+	var base_z_minus_origin := base_origin + Vector3.FORWARD
+	var base_z_plus_origin := base_origin + Vector3.BACK
+	var tool: VoxelTool = _terrain.get_voxel_tool()
+	tool.channel = VoxelBuffer.CHANNEL_SDF
+	var base_hit: VoxelRaycastResult = tool.raycast(
+		base_origin, Vector3.DOWN, 200.0
+	)
+	var base_x_minus_hit: VoxelRaycastResult = tool.raycast(
+		base_x_minus_origin, Vector3.DOWN, 200.0
+	)
+	var base_x_plus_hit: VoxelRaycastResult = tool.raycast(
+		base_x_plus_origin, Vector3.DOWN, 200.0
+	)
+	var base_z_minus_hit: VoxelRaycastResult = tool.raycast(
+		base_z_minus_origin, Vector3.DOWN, 200.0
+	)
+	var base_z_plus_hit: VoxelRaycastResult = tool.raycast(
+		base_z_plus_origin, Vector3.DOWN, 200.0
+	)
+	if (
+		base_hit == null
+		or base_x_minus_hit == null
+		or base_x_plus_hit == null
+		or base_z_minus_hit == null
+		or base_z_plus_hit == null
+	):
+		push_error("Fresh world base spawn aborted: terrain raycast failed")
+		_finish_world_entry(player_position)
+		return
+	var base_ground: Vector3 = base_origin + Vector3.DOWN * base_hit.distance
+	var base_x_minus_ground: Vector3 = (
+		base_x_minus_origin + Vector3.DOWN * base_x_minus_hit.distance
+	)
+	var base_x_plus_ground: Vector3 = (
+		base_x_plus_origin + Vector3.DOWN * base_x_plus_hit.distance
+	)
+	var base_z_minus_ground: Vector3 = (
+		base_z_minus_origin + Vector3.DOWN * base_z_minus_hit.distance
+	)
+	var base_z_plus_ground: Vector3 = (
+		base_z_plus_origin + Vector3.DOWN * base_z_plus_hit.distance
+	)
+	var base_basis := GridSpawnUtil.terrain_basis(
+		base_x_plus_ground - base_x_minus_ground,
+		base_z_plus_ground - base_z_minus_ground
+	)
+	var base_transform := GridSpawnUtil.transform_on_terrain(
+		base_ground,
+		base_basis,
+		0.0
+	)
+	var base_result: StructuralCommandResult = (
+		_session.spawn_slice01_base_at(base_transform)
+	)
+	if not base_result.is_ok():
+		push_error(
+			"Anchored base spawn failed: %s"
+			% String(base_result.reason)
+		)
+	_finish_world_entry(player_position)
+
+
+func _finish_world_entry(player_position: Vector3) -> void:
+	_player.call("begin_spawn_settle", player_position)
+	_loading.text = "Посадка..."
+	var settle_frames := 0
+	while not _player.call("is_spawn_settled"):
+		await get_tree().physics_frame
+		settle_frames += 1
+		if settle_frames >= MAX_SPAWN_SETTLE_FRAMES:
+			push_warning(
+				"Spawn settle timed out; releasing player at current position."
+			)
+			_player.call("set_spawn_ready", _player.global_position)
+			break
+	_loading.visible = false
+	_world_ready = true
+	_resync_player_camera()
+	_session.get_industry_simulation().bind_world(_session.world)
+
+
+func _finish_loaded_world_entry(spawn_position: Vector3) -> void:
+	_player.call("set_spawn_ready", spawn_position)
+	_resync_player_camera()
+	_loading.visible = false
+	_world_ready = true
+	_session.get_industry_simulation().bind_world(_session.world)
+
+
+func _resync_player_camera() -> void:
+	var head: Camera3D = _player.get_node_or_null("Camera") as Camera3D
+	if head != null and head.has_method("snap_after_teleport"):
+		head.call("snap_after_teleport")
+
+
+func _finalize_loaded_world_after_entry() -> void:
+	if not _world_ready:
+		return
+	WorldPersistence.finalize_loaded_world(_session.world)
 
 
 func _place_when_ground_exists() -> void:
@@ -98,6 +241,9 @@ func _place_when_ground_exists() -> void:
 			base_z_minus_origin, Vector3.DOWN, 200.0)
 		var base_z_plus_hit: VoxelRaycastResult = tool.raycast(
 			base_z_plus_origin, Vector3.DOWN, 200.0)
+		if _spawn_wait_start_ms == 0:
+			_spawn_wait_start_ms = Time.get_ticks_msec()
+
 		var surfaces_ready := (
 			player_hit != null
 			and vehicle_hit != null
@@ -107,70 +253,79 @@ func _place_when_ground_exists() -> void:
 			and base_z_minus_hit != null
 			and base_z_plus_hit != null
 		)
-		if surfaces_ready and _probe_player_spawn_ready(player_hit.distance):
-			var player_surface_y: float = _resolve_surface_y(
-				_player_spawn_xz,
-				player_origin.y - player_hit.distance
-			)
-			var player_position := Vector3(
-				_player_spawn_xz.x,
-				player_surface_y + SPAWN_CLEARANCE,
-				_player_spawn_xz.y
-			)
+		if surfaces_ready:
 			_launch_vehicle.global_position = (
 				vehicle_origin
 				+ Vector3.DOWN * vehicle_hit.distance
-				+ Vector3.UP * 0.52)
-
-			var base_ground: Vector3 = (
-				base_origin + Vector3.DOWN * base_hit.distance
+				+ Vector3.UP * 0.52
 			)
-			var base_x_minus_ground: Vector3 = (
-				base_x_minus_origin
-				+ Vector3.DOWN * base_x_minus_hit.distance
-			)
-			var base_x_plus_ground: Vector3 = (
-				base_x_plus_origin
-				+ Vector3.DOWN * base_x_plus_hit.distance
-			)
-			var base_z_minus_ground: Vector3 = (
-				base_z_minus_origin
-				+ Vector3.DOWN * base_z_minus_hit.distance
-			)
-			var base_z_plus_ground: Vector3 = (
-				base_z_plus_origin
-				+ Vector3.DOWN * base_z_plus_hit.distance
-			)
-			var base_basis := GridSpawnUtil.terrain_basis(
-				base_x_plus_ground - base_x_minus_ground,
-				base_z_plus_ground - base_z_minus_ground
-			)
-			var base_transform := GridSpawnUtil.transform_on_terrain(
-				base_ground,
-				base_basis,
-				0.0
-			)
-			var base_result: StructuralCommandResult = (
-				_session.spawn_slice01_base_at(base_transform)
-			)
-			if not base_result.is_ok():
-				push_error(
-					"Anchored base spawn failed: %s"
-					% String(base_result.reason)
+			if WorldPersistence.has_save() and not _save_load_attempted:
+				_save_load_attempted = true
+				_loading.text = "Загрузка сохранения..."
+				await get_tree().process_frame
+				var payload: Dictionary = WorldPersistence.read_payload()
+				var simulation: Variant = payload.get("simulation", {})
+				if (
+					not payload.is_empty()
+					and simulation is Dictionary
+					and WorldPersistence.restore_snapshot_data(
+						_session.world,
+						simulation
+					)
+				):
+					var spawn_position := _resolve_saved_player_position(
+						payload.get("player", {}),
+						tool
+					)
+					WorldPersistence.apply_player_view(
+						_player,
+						payload.get("player", {}),
+						spawn_position
+					)
+					await _finish_loaded_world_entry(spawn_position)
+					call_deferred("_finalize_loaded_world_after_entry")
+					return
+				push_warning(
+					"Save rejected or corrupt; starting a fresh world."
 				)
+				var player_surface_y: float = _resolve_surface_y(
+					_player_spawn_xz,
+					player_origin.y - player_hit.distance
+				)
+				var fallback_spawn := Vector3(
+					_player_spawn_xz.x,
+					player_surface_y + SPAWN_CLEARANCE,
+					_player_spawn_xz.y
+				)
+				await _begin_fresh_world(fallback_spawn)
+				return
 
-			_player.call("begin_spawn_settle", player_position)
-			_loading.text = "Посадка..."
-			while not _player.call("is_spawn_settled"):
-				await get_tree().physics_frame
-			_loading.visible = false
-			return
+			var probe_timed_out := (
+				Time.get_ticks_msec() - _spawn_wait_start_ms
+				>= SPAWN_PROBE_TIMEOUT_MS
+			)
+			if _probe_player_spawn_ready(player_hit.distance) or probe_timed_out:
+				if probe_timed_out and _stable_player < STABLE_PHYSICS_FRAMES:
+					push_warning(
+						"Spawn probe timed out; continuing with best effort."
+					)
+				var player_surface_y: float = _resolve_surface_y(
+					_player_spawn_xz,
+					player_origin.y - player_hit.distance
+				)
+				var player_position := Vector3(
+					_player_spawn_xz.x,
+					player_surface_y + SPAWN_CLEARANCE,
+					_player_spawn_xz.y
+				)
+				await _begin_fresh_world(player_position)
+				return
 
 		if not surfaces_ready:
 			_stable_player = 0
 		if _stable_player == 0:
 			_loading.text = "Ожидание коллизии..."
-		await get_tree().process_frame
+		await get_tree().physics_frame
 
 
 func _probe_player_spawn_ready(voxel_distance: float) -> bool:
@@ -219,3 +374,64 @@ func _resolve_surface_y(xz: Vector2, surface_y_voxel: float) -> float:
 
 	var surface_y_phys: float = (phys_hit["position"] as Vector3).y
 	return maxf(surface_y_voxel, surface_y_phys)
+
+
+func _resolve_saved_player_position(
+	row: Variant,
+	tool: VoxelTool
+) -> Vector3:
+	if row is Dictionary:
+		var position_data: Variant = (row as Dictionary).get("position", [])
+		if position_data is Array and position_data.size() >= 3:
+			var saved := Vector3(
+				float(position_data[0]),
+				float(position_data[1]),
+				float(position_data[2]),
+			)
+			if _is_usable_saved_player_position(saved):
+				return saved
+	var xz := _saved_world_spawn_xz()
+	var origin := Vector3(xz.x, SKY_PROBE_Y, xz.y)
+	var hit: VoxelRaycastResult = tool.raycast(origin, Vector3.DOWN, 200.0)
+	if hit != null:
+		return Vector3(
+			xz.x,
+			origin.y - hit.distance + SPAWN_CLEARANCE,
+			xz.y,
+		)
+	return Vector3(xz.x, _saved_world_spawn_y(), xz.y)
+
+
+func _saved_world_spawn_y() -> float:
+	var best_y := -INF
+	for assembly: SimulationAssembly in _session.world.list_assemblies():
+		if assembly.tombstoned or assembly.motion == null:
+			continue
+		best_y = maxf(best_y, assembly.motion.transform.origin.y)
+	if is_finite(best_y):
+		return best_y + SPAWN_CLEARANCE
+	if _player_spawn_pos.y > 0.0:
+		return _player_spawn_pos.y
+	return SPAWN_CLEARANCE
+
+
+func _saved_world_spawn_xz() -> Vector2:
+	var sum := Vector2.ZERO
+	var count := 0
+	for assembly: SimulationAssembly in _session.world.list_assemblies():
+		if assembly.tombstoned or assembly.motion == null:
+			continue
+		var origin: Vector3 = assembly.motion.transform.origin
+		sum += Vector2(origin.x, origin.z)
+		count += 1
+	if count > 0:
+		return sum / float(count)
+	return _player_spawn_xz
+
+
+func _is_usable_saved_player_position(pos: Vector3) -> bool:
+	if not pos.is_finite():
+		return false
+	if absf(pos.x) < 0.25 and absf(pos.z) < 0.25 and pos.y < 2.0:
+		return false
+	return true

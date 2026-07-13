@@ -10,6 +10,8 @@ func _run() -> void:
 		return
 	if not _test_preview_projection_parity_attach():
 		return
+	if not _test_large_frame_attach():
+		return
 	if not _test_snap_resolver_direct_priority():
 		return
 	if not _test_snap_resolver_scoring_and_hysteresis():
@@ -146,10 +148,10 @@ func _test_preview_projection_parity_attach() -> bool:
 	var anchor_element := world.get_element(int(anchor.data["element_id"]))
 	var assembly_transform := assembly.motion.transform
 	var target := InteractionHit.create(
-		assembly_transform * Vector3(1.5, 0.5, 0.5),
+		assembly_transform * Vector3(0.75, 0.25, 0.25),
 		assembly_transform.basis.x,
 		assembly_transform.origin.distance_to(
-			assembly_transform * Vector3(1.5, 0.5, 0.5)
+			assembly_transform * Vector3(0.75, 0.25, 0.25)
 		),
 		InteractionHit.KIND_SIMULATION_ELEMENT,
 		null,
@@ -194,6 +196,47 @@ func _test_preview_projection_parity_attach() -> bool:
 	return true
 
 
+func _test_large_frame_attach() -> bool:
+	var fixture := _new_fixture()
+	var world: SimulationWorld = fixture["world"]
+	var anchor := _spawn_anchored_frame(world)
+	if not anchor.is_ok():
+		return _fail("large frame anchor spawn failed")
+	var assembly_id := int(anchor.data["assembly_id"])
+	var assembly := world.get_assembly_raw(assembly_id)
+	var anchor_element := world.get_element(int(anchor.data["element_id"]))
+	var assembly_transform := assembly.motion.transform
+	var target := InteractionHit.create(
+		assembly_transform * Vector3(0.75, 0.25, 0.25),
+		assembly_transform.basis.x,
+		1.0,
+		InteractionHit.KIND_SIMULATION_ELEMENT,
+		null,
+		StringName(str(anchor_element.element_id)),
+		{
+			"element_id": anchor_element.element_id,
+			"assembly_id": assembly_id,
+			"collider_local_cell": Vector3i.ZERO,
+			"aim_direction": Vector3.FORWARD,
+		}
+	).snapshot()
+	var large_frame := Slice01Archetypes.large_frame()
+	var plan := ConstructionPlacement.plan(world, target, large_frame, 0)
+	if not bool(plan.get("valid", false)):
+		return _fail("large frame attach plan invalid")
+	var result := world.apply_structural_command_now(plan["command"])
+	if not result.is_ok():
+		return _fail("large frame attach failed: %s" % result.reason)
+	var placed := world.get_element(int(result.data["element_id"]))
+	if (
+		placed == null
+		or placed.get_archetype().footprint_cells.size() != 125
+	):
+		return _fail("large frame placement lost its 5x5x5 footprint")
+	_free_fixture(fixture)
+	return true
+
+
 func _test_snap_resolver_direct_priority() -> bool:
 	var fixture := _new_fixture()
 	var world: SimulationWorld = fixture["world"]
@@ -205,7 +248,7 @@ func _test_snap_resolver_direct_priority() -> bool:
 	var anchor_element := world.get_element(int(anchor.data["element_id"]))
 	var assembly_transform := assembly.motion.transform
 	var direct := InteractionHit.create(
-		assembly_transform * Vector3(0.5, 1.5, 0.5),
+		assembly_transform * Vector3(0.25, 0.75, 0.25),
 		assembly_transform.basis.y,
 		1.0,
 		InteractionHit.KIND_SIMULATION_ELEMENT,
@@ -254,7 +297,7 @@ func _test_snap_resolver_scoring_and_hysteresis() -> bool:
 		"world": world,
 		"archetype": frame,
 		"orientation_index": 0,
-		"ray_origin": assembly_transform * Vector3(2.5, 0.5, 0.5),
+		"ray_origin": assembly_transform * Vector3(1.25, 0.25, 0.25),
 		"ray_direction": (-assembly_transform.basis.x).normalized(),
 		"direct_hit": {},
 	})
@@ -268,7 +311,7 @@ func _test_snap_resolver_scoring_and_hysteresis() -> bool:
 		"world": world,
 		"archetype": frame,
 		"orientation_index": 0,
-		"ray_origin": assembly_transform * Vector3(2.2, 1.8, 0.5),
+		"ray_origin": assembly_transform * Vector3(1.1, 0.9, 0.25),
 		"ray_direction": Vector3(-0.2, -0.9, -0.1).normalized(),
 		"direct_hit": {},
 	})
@@ -428,10 +471,10 @@ func _test_rotation_snap_pivot_parity() -> bool:
 	var anchor_element := world.get_element(int(anchor.data["element_id"]))
 	var assembly_transform := assembly.motion.transform
 	var target := InteractionHit.create(
-		assembly_transform * Vector3(1.5, 0.5, 0.5),
+		assembly_transform * Vector3(0.75, 0.25, 0.25),
 		assembly_transform.basis.x,
 		assembly_transform.origin.distance_to(
-			assembly_transform * Vector3(1.5, 0.5, 0.5)
+			assembly_transform * Vector3(0.75, 0.25, 0.25)
 		),
 		InteractionHit.KIND_SIMULATION_ELEMENT,
 		null,
@@ -505,7 +548,7 @@ func _test_rotation_full_cycle_no_drift() -> bool:
 	var anchor_element := world.get_element(int(anchor.data["element_id"]))
 	var assembly_transform := assembly.motion.transform
 	var target := InteractionHit.create(
-		assembly_transform * Vector3(0.5, 1.5, 0.5),
+		assembly_transform * Vector3(0.25, 0.75, 0.25),
 		assembly_transform.basis.y,
 		1.0,
 		InteractionHit.KIND_SIMULATION_ELEMENT,
@@ -572,7 +615,7 @@ func _test_rotation_snap_to_existing_face() -> bool:
 	var anchor_element := world.get_element(int(anchor.data["element_id"]))
 	var assembly_transform := assembly.motion.transform
 	var target := InteractionHit.create(
-		assembly_transform * Vector3(1.5, 0.5, 0.5),
+		assembly_transform * Vector3(0.75, 0.25, 0.25),
 		assembly_transform.basis.x,
 		1.0,
 		InteractionHit.KIND_SIMULATION_ELEMENT,
@@ -681,7 +724,7 @@ func _test_beam_multicell_face_snap_consistency() -> bool:
 	var anchor_element := world.get_element(int(anchor.data["element_id"]))
 	var assembly_transform := assembly.motion.transform
 	var beam: ElementArchetype = Slice01Archetypes.frame_beam()
-	var hit_point := assembly_transform * Vector3(1.5, 0.5, 0.5)
+	var hit_point := assembly_transform * Vector3(0.75, 0.25, 0.25)
 	var hit_normal := assembly_transform.basis.x
 	var target_cell0 := InteractionHit.create(
 		hit_point,
@@ -792,7 +835,7 @@ func _test_preview_port_collider_attach_orient23() -> bool:
 	var anchor_element := world.get_element(int(anchor.data["element_id"]))
 	var assembly_transform := assembly.motion.transform
 	var target := InteractionHit.create(
-		assembly_transform * Vector3(0.5, 1.5, 0.5),
+		assembly_transform * Vector3(0.25, 0.75, 0.25),
 		assembly_transform.basis.y,
 		1.0,
 		InteractionHit.KIND_SIMULATION_ELEMENT,
@@ -841,16 +884,28 @@ func _test_preview_port_collider_attach_orient23() -> bool:
 			)
 		)
 		var delta := port_world.origin.distance_to(collider_world.origin)
-		if absf(delta - 0.48) > 0.05:
+		var expected_delta := (
+			IndustryPortUtil.port_marker_local_transform(
+				preview_element,
+				port
+			).origin.distance_to(
+				GridPoseUtil.collider_local_transform(
+					origin_cell,
+					orientation_index,
+					collider
+				).origin
+			)
+		)
+		if absf(delta - expected_delta) > 0.01:
 			return _fail(
-				"orient23 port/collider delta %.4f expected ~0.48"
-				% delta
+				"orient23 port/collider delta %.4f expected %.4f"
+				% [delta, expected_delta]
 			)
 	var bottom_y := collider_world.origin.y - collider.size.y * 0.5
-	if absf(bottom_y - 1.0) > 0.01:
+	if absf(bottom_y - GridMetric.CELL_SIZE_M) > 0.01:
 		return _fail(
-			"orient23 top attach bottom y %.3f expected 1.0"
-			% bottom_y
+			"orient23 top attach bottom y %.3f expected %.1f"
+			% [bottom_y, GridMetric.CELL_SIZE_M]
 		)
 	_free_fixture(fixture)
 	return true
@@ -870,32 +925,32 @@ func _test_attach_face_snap_table() -> bool:
 	var faces: Array[Dictionary] = [
 		{
 			"label": "+X",
-			"point": Vector3(1.5, 0.5, 0.5),
+			"point": Vector3(0.75, 0.25, 0.25),
 			"normal": Vector3.RIGHT,
 		},
 		{
 			"label": "-X",
-			"point": Vector3(-0.5, 0.5, 0.5),
+			"point": Vector3(-0.25, 0.25, 0.25),
 			"normal": Vector3.LEFT,
 		},
 		{
 			"label": "+Y",
-			"point": Vector3(0.5, 1.5, 0.5),
+			"point": Vector3(0.25, 0.75, 0.25),
 			"normal": Vector3.UP,
 		},
 		{
 			"label": "-Y",
-			"point": Vector3(0.5, -0.5, 0.5),
+			"point": Vector3(0.25, -0.25, 0.25),
 			"normal": Vector3.DOWN,
 		},
 		{
 			"label": "+Z",
-			"point": Vector3(0.5, 0.5, 1.5),
+			"point": Vector3(0.25, 0.25, 0.75),
 			"normal": Vector3.BACK,
 		},
 		{
 			"label": "-Z",
-			"point": Vector3(0.5, 0.5, -0.5),
+			"point": Vector3(0.25, 0.25, -0.25),
 			"normal": Vector3.FORWARD,
 		},
 	]
@@ -960,7 +1015,7 @@ func _test_gateway_attach_orientation_replay() -> bool:
 	var anchor_element := world.get_element(int(anchor.data["element_id"]))
 	var assembly_transform := assembly.motion.transform
 	var direct_hit := InteractionHit.create(
-		assembly_transform * Vector3(1.5, 0.5, 0.5),
+		assembly_transform * Vector3(0.75, 0.25, 0.25),
 		assembly_transform.basis.x,
 		1.0,
 		InteractionHit.KIND_SIMULATION_ELEMENT,
@@ -973,7 +1028,7 @@ func _test_gateway_attach_orientation_replay() -> bool:
 			"aim_direction": Vector3.FORWARD,
 		}
 	).snapshot()
-	var ray_origin := assembly_transform * Vector3(2.5, 0.5, 0.5)
+	var ray_origin := assembly_transform * Vector3(1.25, 0.25, 0.25)
 	var ray_direction := (-assembly_transform.basis.x).normalized()
 	var baseline := gateway.resolve_construction_placement({
 		"direct_hit": direct_hit,
@@ -1091,7 +1146,7 @@ func _test_power_source_attach_rotation_cycle() -> bool:
 	var anchor_element := world.get_element(int(anchor.data["element_id"]))
 	var assembly_transform := assembly.motion.transform
 	var target := InteractionHit.create(
-		assembly_transform * Vector3(1.5, 0.5, 0.5),
+		assembly_transform * Vector3(0.75, 0.25, 0.25),
 		assembly_transform.basis.x,
 		1.0,
 		InteractionHit.KIND_SIMULATION_ELEMENT,
@@ -1225,7 +1280,7 @@ func _test_snap_resolver_performance() -> bool:
 	var assembly_transform := assembly.motion.transform
 	var params := {
 		"direct_hit": {},
-		"ray_origin": assembly_transform * Vector3(7.5, 0.5, 2.0),
+		"ray_origin": assembly_transform * Vector3(3.75, 0.25, 1.0),
 		"ray_direction": Vector3(0.0, -0.2, -1.0).normalized(),
 		"archetype_id": "frame",
 		"orientation_index": 0,
@@ -1280,7 +1335,10 @@ func _spawn_frame_row(
 		var assembly_transform := assembly.motion.transform
 		var attach_cell := attach_element.origin_cell
 		var target := InteractionHit.create(
-			assembly_transform * (Vector3(attach_cell) + Vector3(1.5, 0.5, 0.5)),
+			assembly_transform * (
+				GridMetric.cell_to_meters(attach_cell)
+				+ Vector3(0.75, 0.25, 0.25)
+			),
 			assembly_transform.basis.x,
 			1.0,
 			InteractionHit.KIND_SIMULATION_ELEMENT,

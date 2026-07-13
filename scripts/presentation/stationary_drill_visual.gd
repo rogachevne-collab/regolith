@@ -8,13 +8,18 @@ const SCENE := preload(
 
 static func instantiate_for_element(
 	origin_cell: Vector3i,
-	orientation_index: int
+	orientation_index: int,
+	archetype: ElementArchetype
 ) -> Node3D:
 	var visual := SCENE.instantiate() as Node3D
 	var basis := OrientationUtil.orientation_basis(orientation_index)
 	visual.transform = Transform3D(
 		basis,
-		Vector3(origin_cell) + basis * Vector3(0.5, 0.5, 0.5)
+		GridPoseUtil.oriented_footprint_pivot(
+			archetype,
+			origin_cell,
+			orientation_index
+		)
 	)
 	return visual
 

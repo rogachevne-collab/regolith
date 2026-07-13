@@ -4,6 +4,7 @@ extends RefCounted
 const _SCRIPT := preload(
 	"res://scripts/simulation/runtime/assembly_motion_state.gd"
 )
+const _CODEC := preload("res://scripts/simulation/snapshot_codec.gd")
 const RIGID_BASIS_EPSILON := 0.0001
 
 var transform: Transform3D = Transform3D.IDENTITY
@@ -26,15 +27,15 @@ func duplicate_state() -> AssemblyMotionState:
 func to_dict() -> Dictionary:
 	return {
 		"transform": {
-			"origin": transform.origin,
+			"origin": _CODEC.vector3_to_array(transform.origin),
 			"basis": [
-				transform.basis.x,
-				transform.basis.y,
-				transform.basis.z,
+				_CODEC.vector3_to_array(transform.basis.x),
+				_CODEC.vector3_to_array(transform.basis.y),
+				_CODEC.vector3_to_array(transform.basis.z),
 			],
 		},
-		"linear_velocity": linear_velocity,
-		"angular_velocity": angular_velocity,
+		"linear_velocity": _CODEC.vector3_to_array(linear_velocity),
+		"angular_velocity": _CODEC.vector3_to_array(angular_velocity),
 		"sleeping": sleeping,
 		"frozen": frozen,
 	}
@@ -47,14 +48,20 @@ static func from_dict(data: Dictionary) -> AssemblyMotionState:
 	if basis_rows is Array and basis_rows.size() == 3:
 		state.transform = Transform3D(
 			Basis(
-				basis_rows[0],
-				basis_rows[1],
-				basis_rows[2]
+				_CODEC.vector3_from_variant(basis_rows[0]),
+				_CODEC.vector3_from_variant(basis_rows[1]),
+				_CODEC.vector3_from_variant(basis_rows[2]),
 			),
-			transform_data.get("origin", Vector3.ZERO)
+			_CODEC.vector3_from_variant(
+				transform_data.get("origin", Vector3.ZERO)
+			),
 		)
-	state.linear_velocity = data.get("linear_velocity", Vector3.ZERO)
-	state.angular_velocity = data.get("angular_velocity", Vector3.ZERO)
+	state.linear_velocity = _CODEC.vector3_from_variant(
+		data.get("linear_velocity", Vector3.ZERO)
+	)
+	state.angular_velocity = _CODEC.vector3_from_variant(
+		data.get("angular_velocity", Vector3.ZERO)
+	)
 	state.sleeping = bool(data.get("sleeping", false))
 	state.frozen = bool(data.get("frozen", false))
 	return state
@@ -64,7 +71,7 @@ static func from_grid_frame(frame: GridTransform) -> AssemblyMotionState:
 	var state: AssemblyMotionState = _SCRIPT.new()
 	state.transform = Transform3D(
 		OrientationUtil.orientation_basis(frame.orientation_index),
-		Vector3(frame.translation)
+		GridMetric.cell_to_meters(frame.translation)
 	)
 	return state
 

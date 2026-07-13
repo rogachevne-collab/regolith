@@ -21,43 +21,43 @@ local_id = "foundation_0"
 archetype = ExtResource("3_foundation")
 
 [node name="FrameA" type="Node3D" parent="."]
-position = Vector3(1, 0, 0)
+position = Vector3(2, 0, 0.5)
 script = ExtResource("2_marker")
 local_id = "frame_a"
 archetype = ExtResource("4_frame")
 
 [node name="Beam" type="Node3D" parent="."]
-position = Vector3(2, 0, 0)
+position = Vector3(2.5, 0, 0.5)
 script = ExtResource("2_marker")
 local_id = "beam_0"
 archetype = ExtResource("5_beam")
 
 [node name="Power" type="Node3D" parent="."]
-position = Vector3(4, 0, 0)
+position = Vector3(4.5, 0, 0)
 script = ExtResource("2_marker")
 local_id = "power_0"
 archetype = ExtResource("6_power")
 
 [node name="Drill" type="Node3D" parent="."]
-position = Vector3(5, 0, 0)
+position = Vector3(6, 0, 0)
 script = ExtResource("2_marker")
 local_id = "drill_0"
 archetype = ExtResource("7_drill")
 
 [node name="Store" type="Node3D" parent="."]
-position = Vector3(6, 0, 0)
+position = Vector3(7, 0, 0)
 script = ExtResource("2_marker")
 local_id = "store_0"
 archetype = ExtResource("8_store")
 
 [node name="Processor" type="Node3D" parent="."]
-position = Vector3(7, 0, 0)
+position = Vector3(8.5, 0, 0)
 script = ExtResource("2_marker")
 local_id = "processor_0"
 archetype = ExtResource("9_processor")
 
 [node name="Fabricator" type="Node3D" parent="."]
-position = Vector3(8, 0, 0)
+position = Vector3(10.5, 0, 0)
 script = ExtResource("2_marker")
 local_id = "fabricator_0"
 archetype = ExtResource("10_fabricator")

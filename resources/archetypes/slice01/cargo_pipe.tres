@@ -7,7 +7,7 @@
 
 [sub_resource type="Resource" id="Requirement"]
 script = ExtResource("1_bom")
-resource_id = "sintered_basalt"
+resource_id = "construction_component"
 amount = 1.0
 
 [sub_resource type="Resource" id="Collider"]
@@ -92,7 +92,7 @@ compatibility_tags = PackedStringArray("cargo")
 [resource]
 script = ExtResource("4_arch")
 archetype_id = "cargo_pipe"
-display_name = "Cargo Pipe"
+display_name = "Грузовая труба"
 roles = PackedStringArray("Frame")
 mass_kg = 30.0
 colliders = Array[ExtResource("2_col")]([SubResource("Collider")])

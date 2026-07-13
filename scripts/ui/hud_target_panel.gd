@@ -221,7 +221,7 @@ func _refresh_machine_info(
 	var enabled := bool(meta.get("machine_enabled", true))
 	if archetype_id == "stationary_drill":
 		_machine_info.text = (
-			"ГОЛОВКА: РАБОЧАЯ ГРАНЬ +X\n"
+			"ГОЛОВКА: РАБОЧАЯ ГРАНЬ +ИКС\n"
 			+ "E — %s"
 		) % ("ВЫКЛЮЧИТЬ" if enabled else "ВКЛЮЧИТЬ")
 		return

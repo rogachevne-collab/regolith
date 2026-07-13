@@ -213,8 +213,9 @@ Godot `NodePath`, `RID`, `instance_id` и scene node names **не** являют
 
 ## Grid и ориентация
 
-- Базовая сетка: **1 m** integer cells (`Vector3i`).
+- Базовая сетка: **0.5 m** integer cells (`Vector3i`).
 - Элемент занимает один или несколько cells (`footprint_cells` archetype).
+- Все archetypes используют одну совместимую grid; отдельной large/small grid нет.
 - Допустимы **24** ортогональные ориентации куба (`orientation_index` 0–23).
 - В baked Blueprint хранится только integer index, не float-матрица.
 - Индекс `0` — точный `Basis.IDENTITY`.

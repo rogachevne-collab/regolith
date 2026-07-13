@@ -94,7 +94,7 @@ static func vector_to_face(direction: Vector3i) -> Face:
 
 
 static func orientation_label(orientation_index: int) -> String:
-	return "O%02d" % orientation_index
+	return "%02d" % orientation_index
 
 
 static func _ensure_initialized() -> void:

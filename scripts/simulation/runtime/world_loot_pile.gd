@@ -4,6 +4,7 @@ extends RefCounted
 const _SCRIPT := preload(
 	"res://scripts/simulation/runtime/world_loot_pile.gd"
 )
+const _CODEC := preload("res://scripts/simulation/snapshot_codec.gd")
 
 var pile_id: int = 0
 var position: Vector3 = Vector3.ZERO
@@ -31,7 +32,7 @@ static func create(
 func to_dict() -> Dictionary:
 	return {
 		"pile_id": pile_id,
-		"position": position,
+		"position": _CODEC.vector3_to_array(position),
 		"resource_id": resource_id,
 		"amount_kg": amount_kg,
 		"despawn_at_s": despawn_at_s,
@@ -41,7 +42,7 @@ func to_dict() -> Dictionary:
 static func from_dict(data: Dictionary) -> WorldLootPile:
 	return create(
 		int(data.get("pile_id", 0)),
-		data.get("position", Vector3.ZERO),
+		_CODEC.vector3_from_variant(data.get("position", Vector3.ZERO)),
 		str(data.get("resource_id", "")),
 		float(data.get("amount_kg", 0.0)),
 		float(data.get("despawn_at_s", 0.0))

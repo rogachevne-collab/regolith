@@ -12,39 +12,47 @@ amount = 10.0
 
 [sub_resource type="Resource" id="Resource_upqa6"]
 script = ExtResource("2_sccqd")
+size = Vector3(2, 1.5, 1.5)
+offset_in_cell = Vector3(1, 0.75, 0.75)
 
 [sub_resource type="Resource" id="Resource_m35lp"]
 script = ExtResource("3_8b2qj")
 port_id = "structural_0_0_0_px"
+local_cell = Vector3i(3, 0, 1)
 compatibility_tags = PackedStringArray("structural")
 
 [sub_resource type="Resource" id="Resource_pjtuh"]
 script = ExtResource("3_8b2qj")
 port_id = "structural_0_0_0_nx"
+local_cell = Vector3i(0, 0, 1)
 local_face = 1
 compatibility_tags = PackedStringArray("structural")
 
 [sub_resource type="Resource" id="Resource_uk4tm"]
 script = ExtResource("3_8b2qj")
 port_id = "structural_0_0_0_py"
+local_cell = Vector3i(1, 2, 1)
 local_face = 2
 compatibility_tags = PackedStringArray("structural")
 
 [sub_resource type="Resource" id="Resource_uqlfa"]
 script = ExtResource("3_8b2qj")
 port_id = "structural_0_0_0_ny"
+local_cell = Vector3i(1, 0, 1)
 local_face = 3
 compatibility_tags = PackedStringArray("structural")
 
 [sub_resource type="Resource" id="Resource_1xdoo"]
 script = ExtResource("3_8b2qj")
 port_id = "structural_0_0_0_pz"
+local_cell = Vector3i(1, 0, 2)
 local_face = 4
 compatibility_tags = PackedStringArray("structural")
 
 [sub_resource type="Resource" id="Resource_k2k1o"]
 script = ExtResource("3_8b2qj")
 port_id = "structural_0_0_0_nz"
+local_cell = Vector3i(1, 0, 0)
 local_face = 5
 compatibility_tags = PackedStringArray("structural")
 
@@ -52,6 +60,7 @@ compatibility_tags = PackedStringArray("structural")
 script = ExtResource("3_8b2qj")
 port_id = "power_in"
 kind = 1
+local_cell = Vector3i(1, 0, 0)
 local_face = 5
 compatibility_tags = PackedStringArray("electric")
 
@@ -59,6 +68,7 @@ compatibility_tags = PackedStringArray("electric")
 script = ExtResource("3_8b2qj")
 port_id = "cargo_out"
 kind = 7
+local_cell = Vector3i(1, 2, 1)
 local_face = 2
 compatibility_tags = PackedStringArray("cargo")
 
@@ -66,6 +76,7 @@ compatibility_tags = PackedStringArray("cargo")
 script = ExtResource("3_8b2qj")
 port_id = "cargo_in"
 kind = 7
+local_cell = Vector3i(1, 0, 0)
 local_face = 5
 compatibility_tags = PackedStringArray("cargo")
 
@@ -73,15 +84,17 @@ compatibility_tags = PackedStringArray("cargo")
 script = ExtResource("3_8b2qj")
 port_id = "cargo_out_z"
 kind = 7
+local_cell = Vector3i(1, 0, 2)
 local_face = 4
 compatibility_tags = PackedStringArray("cargo")
 
 [resource]
 script = ExtResource("4_ndrh1")
 archetype_id = "fabricator"
-display_name = "Fabricator"
+display_name = "Фабрикатор"
 roles = PackedStringArray("Fabricator")
 mass_kg = 160.0
+footprint_cells = Array[Vector3i]([Vector3i(0, 0, 0), Vector3i(0, 0, 1), Vector3i(0, 0, 2), Vector3i(0, 1, 0), Vector3i(0, 1, 1), Vector3i(0, 1, 2), Vector3i(0, 2, 0), Vector3i(0, 2, 1), Vector3i(0, 2, 2), Vector3i(1, 0, 0), Vector3i(1, 0, 1), Vector3i(1, 0, 2), Vector3i(1, 1, 0), Vector3i(1, 1, 1), Vector3i(1, 1, 2), Vector3i(1, 2, 0), Vector3i(1, 2, 1), Vector3i(1, 2, 2), Vector3i(2, 0, 0), Vector3i(2, 0, 1), Vector3i(2, 0, 2), Vector3i(2, 1, 0), Vector3i(2, 1, 1), Vector3i(2, 1, 2), Vector3i(2, 2, 0), Vector3i(2, 2, 1), Vector3i(2, 2, 2), Vector3i(3, 0, 0), Vector3i(3, 0, 1), Vector3i(3, 0, 2), Vector3i(3, 1, 0), Vector3i(3, 1, 1), Vector3i(3, 1, 2), Vector3i(3, 2, 0), Vector3i(3, 2, 1), Vector3i(3, 2, 2)])
 colliders = Array[ExtResource("2_sccqd")]([SubResource("Resource_upqa6")])
 ports = Array[ExtResource("3_8b2qj")]([SubResource("Resource_m35lp"), SubResource("Resource_pjtuh"), SubResource("Resource_uk4tm"), SubResource("Resource_uqlfa"), SubResource("Resource_1xdoo"), SubResource("Resource_k2k1o"), SubResource("Resource_3kygw"), SubResource("Resource_pylx6"), SubResource("Resource_cargo_in"), SubResource("Resource_cargo_out_z")])
 build_requirements = Array[ExtResource("1_ha5t1")]([SubResource("Resource_d556r")])

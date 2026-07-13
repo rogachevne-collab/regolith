@@ -81,7 +81,7 @@ func _build() -> void:
 	title_row.add_child(right_box)
 	right_box.add_child(HudTokens.make_national_tick())
 	var store_id_label := Label.new()
-	store_id_label.text = "СКЛАД · %s" % PLAYER_STORE_ID.to_upper()
+	store_id_label.text = "СКЛАД · %s" % HudTokens.store_label(PLAYER_STORE_ID)
 	store_id_label.theme_type_variation = &"HudSmall"
 	store_id_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	store_id_label.size_flags_horizontal = Control.SIZE_SHRINK_END
