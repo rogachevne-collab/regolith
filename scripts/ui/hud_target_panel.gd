@@ -36,6 +36,8 @@ var _machine_cargo_val: Label
 var _machine_recipe_box: VBoxContainer
 var _machine_hints: Label
 var _machine_drill_info: Label
+var _actuator_tune_box: VBoxContainer
+var _actuator_tune_values: Dictionary = {}
 var _machine_progress_row: HBoxContainer
 var _machine_progress_name: Label
 var _machine_progress_mat: ShaderMaterial
@@ -66,7 +68,7 @@ func _build() -> void:
 	_panel.resized.connect(_on_panel_resized)
 	add_child(_panel)
 
-	_panel_overlay = HudTokens.make_panel_overlay(Vector2(320.0, 128.0))
+	_panel_overlay = HudTokens.make_panel_overlay(Vector2(360.0, 128.0))
 	_panel_overlay_mat = _panel_overlay.material as ShaderMaterial
 	_panel_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_panel_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -157,6 +159,14 @@ func _build() -> void:
 	_machine_hints.custom_minimum_size.y = HINT_LINES_HEIGHT
 	_machine_hints.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_machine_block.add_child(_machine_hints)
+
+	_actuator_tune_box = VBoxContainer.new()
+	_actuator_tune_box.add_theme_constant_override("separation", 4)
+	_actuator_tune_box.visible = false
+	_actuator_tune_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_machine_block.add_child(_actuator_tune_box)
+	for row: Dictionary in HudActuatorTuneUtil.TUNE_ROWS:
+		_build_actuator_readout_row(str(row["key"]), str(row["field"]))
 
 	_machine_drill_info = Label.new()
 	_machine_drill_info.theme_type_variation = &"HudSmall"
@@ -255,6 +265,27 @@ func _add_info_row_keyed(parent: Node, key: String, value_color: Color) -> Array
 	return [k, v]
 
 
+func _build_actuator_readout_row(key: String, field: String) -> void:
+	var row := HBoxContainer.new()
+	row.custom_minimum_size.y = INFO_ROW_HEIGHT
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_actuator_tune_box.add_child(row)
+	var k := Label.new()
+	k.text = key
+	k.theme_type_variation = &"HudSmall"
+	k.custom_minimum_size = Vector2(KEY_COL, INFO_ROW_HEIGHT)
+	k.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	row.add_child(k)
+	var value := Label.new()
+	value.theme_type_variation = &"HudValue"
+	value.add_theme_color_override("font_color", HudTokens.COL_TEXT)
+	value.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	value.custom_minimum_size.y = INFO_ROW_HEIGHT
+	value.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	row.add_child(value)
+	_actuator_tune_values[field] = value
+
+
 func _process(_delta: float) -> void:
 	if _query == null:
 		return
@@ -284,8 +315,9 @@ func _process(_delta: float) -> void:
 	_metric_val.text = "%d%%" % int(round(_integrity_fraction(archetype_id, meta) * 100.0))
 	_metric_val.add_theme_color_override("font_color", status_color)
 	_refresh_store_view(archetype_id, meta)
-	if _refresh_actuator_info(meta, status):
+	if _refresh_actuator_info(hit, meta, status):
 		return
+	_actuator_tune_box.visible = false
 	_refresh_machine_info(archetype_id, meta, hit)
 
 
@@ -332,21 +364,25 @@ func _refresh_store_view(archetype_id: String, meta: Dictionary) -> void:
 		_store_view.refresh()
 
 
-func _refresh_actuator_info(meta: Dictionary, status: StringName) -> bool:
+func _refresh_actuator_info(
+	hit: InteractionHit,
+	meta: Dictionary,
+	status: StringName
+) -> bool:
 	if not meta.has("piston_joint_id"):
 		return false
 	_store_view.visible = false
 	_machine_block.visible = true
+	_actuator_tune_box.visible = true
 	_machine_drill_info.visible = false
 	_set_machine_progress_visible(false)
 	var observed := float(meta.get("piston_observed_position_m", 0.0))
 	var target := float(meta.get("piston_target_position_m", observed))
-	var extend_speed := float(meta.get("piston_extend_velocity_mps", 0.0))
-	var retract_speed := float(meta.get("piston_retract_velocity_mps", 0.0))
 	var target_velocity := float(meta.get("piston_target_velocity_mps", 0.0))
 	var powered := bool(meta.get("piston_powered", false))
 	var enabled := bool(meta.get("piston_motor_enabled", true))
 	var actuator_status := StringName(meta.get("actuator_status", status))
+	_refresh_actuator_tune_values(meta)
 	_metric_key.text = "ХОД"
 	_metric_val.text = "%.2f / %.2f М" % [observed, target]
 	_metric_val.add_theme_color_override(
@@ -382,16 +418,28 @@ func _refresh_actuator_info(meta: Dictionary, status: StringName) -> bool:
 	_machine_cargo_val.get_parent().visible = false
 	_machine_recipe_box.visible = false
 	_machine_hints.visible = true
-	_machine_hints.text = (
-		"ВЫД %.2f · ВТЯ %.2f М/С · [+] выдв · [-] втяг · Y стоп"
-		% [extend_speed, retract_speed]
-	)
+	_machine_hints.text = "E — настройки · [+] выдв · [-] втяг · Y стоп"
 	if absf(target_velocity) > 0.0001:
 		_status_val.text = (
 			"%s · %.2f М/С"
 			% [_status_summary(meta, actuator_status), target_velocity]
 		)
 	return true
+
+
+func _refresh_actuator_tune_values(meta: Dictionary) -> void:
+	for row: Dictionary in HudActuatorTuneUtil.TUNE_ROWS:
+		var field := str(row["field"])
+		_set_actuator_tune_value(
+			field,
+			HudActuatorTuneUtil.format_value(field, meta)
+		)
+
+
+func _set_actuator_tune_value(field: String, text: String) -> void:
+	var label: Label = _actuator_tune_values.get(field)
+	if label != null:
+		label.text = text
 
 
 func _refresh_machine_info(

@@ -32,6 +32,7 @@ enum ActionState {
 @export var gateway_path: NodePath = NodePath("../../WorldCommandGateway")
 @export var preview_path: NodePath = NodePath("../ConstructionPreview")
 @export var terminal_path: NodePath = NodePath("../HUDRoot/Screen/Terminal")
+@export var actuator_panel_path: NodePath = NodePath("../HUDRoot/Screen/ActuatorPanel")
 
 const ACTIONS := {
 	&"tool_primary": {
@@ -128,6 +129,7 @@ var _query: InteractionQuery
 var _gateway: WorldCommandGateway
 var _preview: ConstructionPreview
 var _terminal: Node
+var _actuator_panel: Node
 var _cooldown := 0.0
 var _issued_for_press := false
 var _locked_hit: InteractionHit
@@ -161,6 +163,7 @@ func _ready() -> void:
 	_gateway = get_node(gateway_path)
 	_preview = get_node_or_null(preview_path) as ConstructionPreview
 	_terminal = get_node_or_null(terminal_path)
+	_actuator_panel = get_node_or_null(actuator_panel_path)
 	_ensure_runtime_state()
 	command_requested.connect(_gateway.submit)
 	_gateway.command_completed.connect(_on_gateway_command_completed)
@@ -170,14 +173,18 @@ func _ready() -> void:
 func _physics_process(delta: float) -> void:
 	_sync_inventory_toolbar_if_needed()
 	_cooldown = maxf(_cooldown - delta, 0.0)
-	if _terminal != null and _terminal_blocks_world_interact():
-		if Input.is_action_just_pressed(&"interact") and _terminal_is_open():
-			if _terminal.has_method("close_for_interact"):
-				_terminal.call("close_for_interact")
-			else:
-				_terminal.call("close")
-		# While the terminal is open or its release latch is active, do not
-		# process held E as toggle_control_seat / drill / etc.
+	if _ui_modal_blocks_world_interact():
+		if Input.is_action_just_pressed(&"interact"):
+			if _actuator_panel_is_open():
+				if _actuator_panel.has_method("close_for_interact"):
+					_actuator_panel.call("close_for_interact")
+				else:
+					_actuator_panel.call("close")
+			elif _terminal_is_open():
+				if _terminal.has_method("close_for_interact"):
+					_terminal.call("close_for_interact")
+				else:
+					_terminal.call("close")
 		return
 	var player := get_parent()
 	if (
@@ -1016,9 +1023,41 @@ func _is_recipe_machine_hit(hit: InteractionHit) -> bool:
 func _try_emit_context_interaction(hit: InteractionHit) -> bool:
 	if _try_collect_world_loot(hit):
 		return true
+	if active_tool != &"connect" and _try_open_actuator_panel(hit):
+		return true
 	if active_tool != &"connect" and _try_open_terminal(hit):
 		return true
 	return false
+
+
+func _ui_modal_blocks_world_interact() -> bool:
+	return _terminal_blocks_world_interact() or _actuator_panel_blocks_world_interact()
+
+
+func _actuator_panel_is_open() -> bool:
+	return (
+		_actuator_panel != null
+		and _actuator_panel.has_method("is_open")
+		and bool(_actuator_panel.call("is_open"))
+	)
+
+
+func _actuator_panel_blocks_world_interact() -> bool:
+	return (
+		_actuator_panel != null
+		and _actuator_panel.has_method("blocks_world_interact")
+		and bool(_actuator_panel.call("blocks_world_interact"))
+	)
+
+
+func _try_open_actuator_panel(hit: InteractionHit) -> bool:
+	if _actuator_panel == null or not _actuator_panel.has_method("try_open_on_target"):
+		return false
+	if _ui_modal_blocks_world_interact():
+		return false
+	if _actuator_panel.has_method("is_open") and bool(_actuator_panel.call("is_open")):
+		return false
+	return bool(_actuator_panel.call("try_open_on_target", hit))
 
 
 func _terminal_is_open() -> bool:
