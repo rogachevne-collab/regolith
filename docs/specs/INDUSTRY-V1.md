@@ -357,11 +357,11 @@ ElectricLink {
 1. оба parent elements **operational**;
 2. оба порта `Kind.ELECTRIC`, direction-compatible output → input
    (bidirectional допускается явно);
-3. лимит **12 m** (`max_cable_length_m`, placeholder v1) применяется к
+3. лимит **999 m** (`max_cable_length_m`, placeholder v1) применяется к
    **каждому пролёту** polyline port anchor → `waypoints[]` → port anchor:
-   суммарная длина не ограничена, но скоба нужна минимум каждые 12 m;
+   суммарная длина не ограничена, но скоба нужна минимум каждые 999 m;
    кабель без waypoints (межгридовая «пуповина») — один пролёт, т.е.
-   обычные 12 m;
+   обычные 999 m;
 3a. оба endpoint — **энергоинфраструктура** (source / distributor / battery),
    иначе `endpoint_not_wireable`; consumers к проводам не подключаются —
    их питает distributor radius;
@@ -416,8 +416,8 @@ outputs могут сходиться на distributor/battery input, а battery
 2. **Свободная протяжка (скобы):** между первым и финальным кликом клики по
    поверхностям (terrain, любые блоки без wireable-портов) добавляют
    world-space **waypoints** — кабель идёт по полу/стенам/потолку как
-   проложил игрок. Лимит 12 m — **на пролёт**: длинная трасса требует скобу
-   минимум каждые 12 m. ПКМ — убрать последнюю скобу; ПКМ без скоб —
+   проложил игрок. Лимит 999 m — **на пролёт**: длинная трасса требует скобу
+   минимум каждые 999 m. ПКМ — убрать последнюю скобу; ПКМ без скоб —
    отменить протяжку. Waypoints прибиты к миру и не следуют за движущимися
    Assembly (межгридовый кабель — прямая «пуповина» без скоб, один пролёт).
 3. **Преграды:** каждый новый пролёт проверяется raycast'ом при клике —
@@ -427,9 +427,21 @@ outputs могут сходиться на distributor/battery input, а battery
 4. Ghost polyline (`CableRoutingPreview`) рисует протяжку от **ближайшего
    электропорта** pending блока через скобы до прицела.
 5. **Cargo:** connect tool **не используется** — только placement `cargo_pipe` blocks.
-6. Overlength (по пролёту): HUD toast «Пролёт кабеля длиннее 12 м — нужна скоба».
+6. Overlength (по пролёту): HUD toast «Пролёт кабеля длиннее 999 м — нужна скоба».
 7. Wire presentation: тонкий чёрный кабель (spline tube — изгибы гладкие),
    лёгкое провисание на span; grinder по любому сегменту срезает кабель.
+8. **Радиус распределителя:** при прицеле на `power_distributor` удерживай **`/`**
+   — `PowerRadiusPreview` рисует горизонтальное кольцо `supply_radius_m` и
+   тонкие линии к consumers внутри радиуса (зелёные = сейчас powered,
+   бледные = в радиусе, но без питания).
+
+### Player UX (power radius inspect)
+
+1. Прицел на operational `power_distributor` (≤ 4 m).
+2. Удерживай **`/`** (`show_power_radius`).
+3. Кольцо: голубое, если distributor на supplied electric network; янтарное —
+   если сеть без source/battery.
+4. Линии к machines в радиусе; маркер ярче, если consumer сейчас `powered`.
 
 ## Electric Flow
 
@@ -446,7 +458,7 @@ outputs могут сходиться на distributor/battery input, а battery
 
 - `power_source.output_w`: fixture placeholder **2000 W**;
 - `power_distributor.supply_radius_m`: fixture placeholder **12 m**;
-- `max_cable_length_m`: fixture/runtime placeholder **12 m**;
+- `max_cable_length_m`: fixture/runtime placeholder **999 m**;
 - manual electric wires соединяют **только** энергоинфраструктуру:
   source/generator cluster, `power_distributor`, optional `power_battery`;
 - stationary drill / processor / fabricator к проводам не подключаются
@@ -540,6 +552,19 @@ those hooks do not define production yield semantics.
 - `max_view_distance` terrain ≈ **200** локальных вокселей (≈128 м мира /
   0.65); иначе плагин клампит `VoxelViewer` и блоки вокруг игрока не грузятся.
 - `VoxelViewer` игрока: `view_distance` ≈ **197** (128 м / 0.65).
+- **VoxelSpaceUtil:** `VoxelTool.raycast` — **Godot world-space**
+  origin/direction/max_distance (плагин сам учитывает transform terrain);
+  world hit = `origin + direction * hit.distance`. Редактирование SDF
+  (`do_sphere`, …) — через `world_to_local`. При scale ≠ 1 SDF-Y может быть
+  выше mesh/collider; **якорь посадки** (spawn, base, ground placement) берёт Y
+  из physics collider, SDF — fallback до готовности коллизии.
+  `generate_collisions = true` на terrain обязателен. Прицел/бур/проекция на
+  terrain — physics raycast (collider); SDF-raycast — fallback без collider.
+- **Bootstrap spawn:** gate только по SDF-raycast игрока и корабля; высота
+  спавна — `resolve_ground_surface_y` (physics если есть, иначе SDF), без
+  ожидания готовности collider. Physics floor — через `begin_spawn_settle`.
+  (`BaseSpawn`, 5 SDF-проб) — **async после** посадки игрока, не блокирует
+  старт мира.
 - Генератор height/noise задан в мировых метрах; вертикальный масштаб рельефа
   не сжимается вместе с узлом.
 

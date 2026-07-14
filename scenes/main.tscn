@@ -70,6 +70,7 @@ max_view_distance = 200
 generator = ExtResource("3")
 mesher = SubResource("VoxelMesherTransvoxel_main")
 material_override = ExtResource("4")
+generate_collisions = true
 
 [node name="PlacedBlocks" type="Node3D" parent="." unique_id=1799464660]
 script = ExtResource("6")

@@ -45,12 +45,6 @@ func _physics_process(_delta: float) -> void:
 	var direction := -aim.basis.z.normalized()
 	var physics_hit := _query_physics(origin, direction)
 	if physics_hit.valid:
-		if physics_hit.target_kind == InteractionHit.KIND_VOXEL:
-			# Terrain edits mutate the SDF immediately while its generated
-			# physics collider can lag behind. Keep terrain targeting on the
-			# authoritative SDF so a held drill advances without aim jitter.
-			_publish(_query_voxel(origin, direction))
-			return
 		_publish(physics_hit)
 		return
 	_publish(_query_voxel(origin, direction))

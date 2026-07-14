@@ -10,7 +10,6 @@ extends Node
 )
 @export var sparks_path: NodePath = NodePath("../Camera/DrillVisual/Sparks")
 @export var drill_audio_path: NodePath = NodePath("../Camera/DrillAudio")
-@export var reach := 2.2
 @export var drill_spin_speed := 28.0
 @export var rest_offset := Vector3(0.28, -0.22, -0.05)
 
@@ -51,6 +50,7 @@ func _physics_process(_delta: float) -> void:
 		return
 	var aim: Transform3D = _head.call("aim_transform")
 	var direction := -aim.basis.z.normalized()
+	var reach := IndustryArchetypeProfile.hand_drill_reach_m()
 	var hit: InteractionHit = _query.current_hit
 	var has_hit := (
 		hit.valid

@@ -222,19 +222,28 @@ func _run_drill_sampling(tool: VoxelTool) -> Dictionary:
 
 
 ## Raycasts from the camera to the terrain surface and carves there, matching
-## how the hand drill digs at the aim point. Ray runs in terrain-local space.
+## how the hand drill digs at the aim point (VoxelTool.raycast: world space).
 func _apply_drill_sphere(tool: VoxelTool) -> void:
 	var forward := -_camera.global_transform.basis.z.normalized()
-	var inverse := _terrain.global_transform.affine_inverse()
-	var local_origin := inverse * _camera.global_position
-	var local_direction := (inverse.basis * forward).normalized()
-	var max_distance := 220.0 / _terrain_scale
-	var hit: VoxelRaycastResult = tool.raycast(
-		local_origin, local_direction, max_distance
+	var world_origin := _camera.global_position
+	var hit: VoxelRaycastResult = VoxelSpaceUtil.raycast_world(
+		tool,
+		_terrain,
+		world_origin,
+		forward,
+		220.0
 	)
 	if hit == null:
 		return
-	var local_center := Vector3(hit.position)
+	var local_center := VoxelSpaceUtil.world_to_local(
+		_terrain,
+		VoxelSpaceUtil.raycast_hit_world_point(
+			_terrain,
+			world_origin,
+			forward,
+			hit
+		)
+	)
 	var local_radius := DRILL_WORLD_RADIUS_M / _terrain_scale
 	tool.do_sphere(local_center, local_radius)
 

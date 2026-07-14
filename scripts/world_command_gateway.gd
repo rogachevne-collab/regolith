@@ -66,9 +66,7 @@ func _probe_assembly_terrain_contact(
 	assembly: SimulationAssembly,
 	elements: Array[SimulationElement]
 ) -> Array[int]:
-	var space_state: PhysicsDirectSpaceState3D = null
-	if _terrain != null and _terrain.is_inside_tree():
-		space_state = _terrain.get_world_3d().direct_space_state
+	var space_state: PhysicsDirectSpaceState3D = _physics_space_state()
 	return TerrainAnchorProbe.touching_element_ids(
 		_voxel_tool,
 		assembly,
@@ -835,6 +833,18 @@ func _seat_ground_plan(plan: Dictionary) -> Dictionary:
 	var center := footprint.position + footprint.size * 0.5
 	var lowest_surface := INF
 	for sample: Vector2 in _GROUND_SEAT_SAMPLES:
+		var sample_x := center.x + sample.x * footprint.size.x
+		var sample_z := center.z + sample.y * footprint.size.z
+		var sample_xz := Vector2(sample_x, sample_z)
+		var physics_y := VoxelSpaceUtil.physics_down_surface_y(
+			_physics_space_state(),
+			sample_xz,
+			probe_from_y,
+			probe_distance
+		)
+		if is_finite(physics_y):
+			lowest_surface = minf(lowest_surface, physics_y)
+			continue
 		var hit: VoxelRaycastResult = VoxelSpaceUtil.raycast_world(
 			_voxel_tool,
 			_terrain,
@@ -872,6 +882,12 @@ func _seat_ground_plan(plan: Dictionary) -> Dictionary:
 	)
 	seated["world_transform"] = world_transform.translated(shift)
 	return seated
+
+
+func _physics_space_state() -> PhysicsDirectSpaceState3D:
+	if _terrain == null or not _terrain.is_inside_tree():
+		return null
+	return _terrain.get_world_3d().direct_space_state
 
 
 func _get_archetype(archetype_id: String) -> ElementArchetype:

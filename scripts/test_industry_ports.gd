@@ -112,8 +112,8 @@ func _test_distance_pair_across_assemblies() -> bool:
 	var moved_link_id := int(stored_links[0]["link_id"])
 	if not world.get_industry_network().is_link_active(world, moved_link_id):
 		world.free()
-		return _fail("cable must stay active while span stays within 12 m")
-	moved.transform.origin += Vector3(20.0, 0.0, 0.0)
+		return _fail("cable must stay active while span stays within limit")
+	moved.transform.origin += Vector3(1000.0, 0.0, 0.0)
 	if not world.sync_assembly_motion(assembly.assembly_id, moved):
 		world.free()
 		return _fail("failed to overstretch cable endpoint assembly")
@@ -140,7 +140,7 @@ func _test_overlength_rejected() -> bool:
 		world,
 		"distributor_0",
 		"power_distributor",
-		Vector3i(26, 0, 0)
+		Vector3i(2000, 0, 0)
 	)
 	if not source_spawn.is_ok() or not distributor_spawn.is_ok():
 		world.free()
@@ -172,7 +172,7 @@ func _test_overlength_rejected() -> bool:
 	):
 		world.free()
 		return _fail(
-			"authority must reject span over 12 m: %s" % result.reason
+			"authority must reject span over limit: %s" % result.reason
 		)
 	world.free()
 	return true

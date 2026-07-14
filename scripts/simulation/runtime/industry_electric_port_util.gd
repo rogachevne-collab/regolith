@@ -5,8 +5,8 @@ extends RefCounted
 ## first скоба, between consecutive скобы, and from the last скоба to the far
 ## port anchor. Total routed length is unbounded — long runs just need a скоба
 ## at least every MAX_CABLE_LENGTH_M. A cable without waypoints (inter-grid
-## umbilical) is a single span, so it keeps the plain 12 m rule.
-const MAX_CABLE_LENGTH_M := 12.0
+## umbilical) is a single span, so it keeps the plain max-span rule.
+const MAX_CABLE_LENGTH_M := 999.0
 
 enum Direction {
 	INPUT,

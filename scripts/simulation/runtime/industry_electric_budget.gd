@@ -49,6 +49,20 @@ static func apply_tick(world: SimulationWorld, dt: float) -> void:
 		_solve_supplied_network(world, supplied_network, dt)
 
 
+static func is_element_on_supplied_network(
+	world: SimulationWorld,
+	element_id: int
+) -> bool:
+	if world == null or element_id <= 0:
+		return false
+	var graph := world.get_industry_network().ensure_graph_current(world)
+	for component: Array in graph.components():
+		if not component.has(element_id):
+			continue
+		return bool(_build_component_network(world, component)["supplied"])
+	return false
+
+
 static func element_world_position(
 	world: SimulationWorld,
 	element: SimulationElement

@@ -14,6 +14,7 @@
 [ext_resource type="Script" path="res://scripts/presentation/industry_port_presentation.gd" id="13"]
 [ext_resource type="Script" path="res://scripts/suit_state.gd" id="12"]
 [ext_resource type="Script" path="res://scripts/cable_routing_preview.gd" id="14"]
+[ext_resource type="Script" path="res://scripts/power_radius_preview.gd" id="15"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape_player"]
 height = 1.8
@@ -87,6 +88,9 @@ camera_path = NodePath("../Camera")
 
 [node name="CableRoutingPreview" type="Node3D" parent="."]
 script = ExtResource("14")
+
+[node name="PowerRadiusPreview" type="Node3D" parent="."]
+script = ExtResource("15")
 
 [node name="IndustryPortPresentation" type="Node" parent="."]
 script = ExtResource("13")

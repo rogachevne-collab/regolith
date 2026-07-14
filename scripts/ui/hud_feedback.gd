@@ -104,6 +104,13 @@ func _prompt_for(hit: InteractionHit) -> String:
 		):
 			return "Удерживать ЛКМ — снос с возвратом материалов"
 		return "ЛКМ — снос только по конструкции"
+	if (
+		hit.valid
+		and hit.distance <= 4.0
+		and hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
+		and str(hit.metadata.get("archetype_id", "")) == "power_distributor"
+	):
+		return "Удерживай / — радиус питания"
 	if not hit.valid:
 		return ""
 	if (
@@ -213,7 +220,10 @@ func _reason_text(reason: StringName, data: Dictionary = {}) -> String:
 		&"no_electric_ports":
 			return "У блока нет электропортов"
 		&"cable_too_long":
-			return "Пролёт кабеля длиннее 12 м — нужна скоба"
+			return (
+				"Пролёт кабеля длиннее %d м — нужна скоба"
+				% int(IndustryElectricPortUtil.MAX_CABLE_LENGTH_M)
+			)
 		&"endpoint_not_wireable":
 			return "Провод — только между генераторами, распределителями и батареями"
 		&"cable_obstructed":

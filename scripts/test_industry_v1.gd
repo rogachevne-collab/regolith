@@ -717,7 +717,7 @@ func _run_electric_waypoints_scenario() -> bool:
 	var mapping: Dictionary = spawn.data["local_to_element_id"]
 	var source_id := int(mapping["source_0"])
 	var distributor_id := int(mapping["distributor_0"])
-	var long_span := PackedVector3Array([Vector3(1.5, 30.0, 0.0)])
+	var long_span := PackedVector3Array([Vector3(1.5, 1001.0, 0.0)])
 	var rejected := world.connect_network(
 		source_id,
 		"power_out",
@@ -732,7 +732,7 @@ func _run_electric_waypoints_scenario() -> bool:
 	):
 		world.free()
 		return _fail("routed span over the limit must be rejected")
-	# Total ≈ 20 m > 12 m, but every span stays under 12 m → accepted.
+	# Total routed length can exceed the span limit when every span stays under it.
 	var detour := PackedVector3Array([
 		Vector3(1.5, 1.0, 5.0),
 		Vector3(2.5, 1.0, -5.0),

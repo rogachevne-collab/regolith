@@ -3,9 +3,9 @@ extends Node3D
 const SKY_PROBE_Y := 120.0
 const SPAWN_CLEARANCE := 1.05
 const MIN_WARMUP_FRAMES := 30
-const STABLE_PHYSICS_FRAMES := 4
-const SPAWN_PROBE_TIMEOUT_MS := 30000
 const MAX_SPAWN_SETTLE_FRAMES := 180
+const GROUND_PROBE_MAX_DISTANCE := 200.0
+const BASE_SPAWN_TIMEOUT_MS := 60000
 const AUTOSAVE_INTERVAL_S := 90.0
 
 @onready var _terrain: VoxelTerrain = $VoxelTerrain
@@ -24,13 +24,11 @@ const AUTOSAVE_INTERVAL_S := 90.0
 @onready var _hint: Label = $CanvasLayer/Hint
 
 var _warmup_frames := 0
-var _stable_player := 0
 var _player_spawn_xz := Vector2.ZERO
 var _player_spawn_pos := Vector3.ZERO
 var _world_ready := false
 var _autosave_accum := 0.0
 var _last_save_ms := 0
-var _spawn_wait_start_ms := 0
 var _save_load_attempted := false
 
 
@@ -45,7 +43,7 @@ func _ready() -> void:
 	_player_spawn_xz = Vector2(_player.global_position.x, _player.global_position.z)
 	if _player.has_method("set_spawn_locked"):
 		_player.set_spawn_locked(true)
-	# Hold player in the sky until physics collider exists — no fall at y=0.
+	# Hold player in the sky until terrain collider exists — settle finds physics floor.
 	_player.global_position = Vector3(_player_spawn_xz.x, SKY_PROBE_Y, _player_spawn_xz.y)
 	_place_when_ground_exists()
 
@@ -92,78 +90,8 @@ func _persist_world(force := false) -> void:
 func _begin_fresh_world(player_position: Vector3) -> void:
 	if not IndustryStoreService.seed_player_starter_resources(_session.world):
 		push_error("Fresh world player starter resources seed failed")
-	var base_origin := Vector3(
-		_base_spawn.global_position.x,
-		SKY_PROBE_Y,
-		_base_spawn.global_position.z
-	)
-	var base_x_minus_origin := base_origin + Vector3.LEFT
-	var base_x_plus_origin := base_origin + Vector3.RIGHT
-	var base_z_minus_origin := base_origin + Vector3.FORWARD
-	var base_z_plus_origin := base_origin + Vector3.BACK
-	var tool: VoxelTool = _terrain.get_voxel_tool()
-	tool.channel = VoxelBuffer.CHANNEL_SDF
-	var base_hit: VoxelRaycastResult = _voxel_down_hit(base_origin, tool)
-	var base_x_minus_hit: VoxelRaycastResult = _voxel_down_hit(
-		base_x_minus_origin, tool
-	)
-	var base_x_plus_hit: VoxelRaycastResult = _voxel_down_hit(
-		base_x_plus_origin, tool
-	)
-	var base_z_minus_hit: VoxelRaycastResult = _voxel_down_hit(
-		base_z_minus_origin, tool
-	)
-	var base_z_plus_hit: VoxelRaycastResult = _voxel_down_hit(
-		base_z_plus_origin, tool
-	)
-	if (
-		base_hit == null
-		or base_x_minus_hit == null
-		or base_x_plus_hit == null
-		or base_z_minus_hit == null
-		or base_z_plus_hit == null
-	):
-		push_error("Fresh world base spawn aborted: terrain raycast failed")
-		_finish_world_entry(player_position)
-		return
-	var base_ground: Vector3 = (
-		base_origin
-		+ Vector3.DOWN * _voxel_down_world_distance(base_hit)
-	)
-	var base_x_minus_ground: Vector3 = (
-		base_x_minus_origin
-		+ Vector3.DOWN * _voxel_down_world_distance(base_x_minus_hit)
-	)
-	var base_x_plus_ground: Vector3 = (
-		base_x_plus_origin
-		+ Vector3.DOWN * _voxel_down_world_distance(base_x_plus_hit)
-	)
-	var base_z_minus_ground: Vector3 = (
-		base_z_minus_origin
-		+ Vector3.DOWN * _voxel_down_world_distance(base_z_minus_hit)
-	)
-	var base_z_plus_ground: Vector3 = (
-		base_z_plus_origin
-		+ Vector3.DOWN * _voxel_down_world_distance(base_z_plus_hit)
-	)
-	var base_basis := GridSpawnUtil.terrain_basis(
-		base_x_plus_ground - base_x_minus_ground,
-		base_z_plus_ground - base_z_minus_ground
-	)
-	var base_transform := GridSpawnUtil.transform_on_terrain(
-		base_ground,
-		base_basis,
-		0.0
-	)
-	var base_result: StructuralCommandResult = (
-		_session.spawn_slice01_base_at(base_transform)
-	)
-	if not base_result.is_ok():
-		push_error(
-			"Anchored base spawn failed: %s"
-			% String(base_result.reason)
-		)
-	_finish_world_entry(player_position)
+	await _finish_world_entry(player_position)
+	_spawn_base_when_terrain_ready()
 
 
 func _finish_world_entry(player_position: Vector3) -> void:
@@ -222,14 +150,6 @@ func _place_when_ground_exists() -> void:
 		_launch_vehicle.global_position.x,
 		SKY_PROBE_Y,
 		_launch_vehicle.global_position.z)
-	var base_origin := Vector3(
-		_base_spawn.global_position.x,
-		SKY_PROBE_Y,
-		_base_spawn.global_position.z)
-	var base_x_minus_origin := base_origin + Vector3.LEFT
-	var base_x_plus_origin := base_origin + Vector3.RIGHT
-	var base_z_minus_origin := base_origin + Vector3.FORWARD
-	var base_z_plus_origin := base_origin + Vector3.BACK
 
 	while true:
 		if _warmup_frames < MIN_WARMUP_FRAMES:
@@ -243,36 +163,14 @@ func _place_when_ground_exists() -> void:
 
 		var player_hit: VoxelRaycastResult = _voxel_down_hit(player_origin, tool)
 		var vehicle_hit: VoxelRaycastResult = _voxel_down_hit(vehicle_origin, tool)
-		var base_hit: VoxelRaycastResult = _voxel_down_hit(base_origin, tool)
-		var base_x_minus_hit: VoxelRaycastResult = _voxel_down_hit(
-			base_x_minus_origin, tool
-		)
-		var base_x_plus_hit: VoxelRaycastResult = _voxel_down_hit(
-			base_x_plus_origin, tool
-		)
-		var base_z_minus_hit: VoxelRaycastResult = _voxel_down_hit(
-			base_z_minus_origin, tool
-		)
-		var base_z_plus_hit: VoxelRaycastResult = _voxel_down_hit(
-			base_z_plus_origin, tool
-		)
-		if _spawn_wait_start_ms == 0:
-			_spawn_wait_start_ms = Time.get_ticks_msec()
-
-		var surfaces_ready := (
-			player_hit != null
-			and vehicle_hit != null
-			and base_hit != null
-			and base_x_minus_hit != null
-			and base_x_plus_hit != null
-			and base_z_minus_hit != null
-			and base_z_plus_hit != null
-		)
-		if surfaces_ready:
+		var spawn_area_ready := player_hit != null and vehicle_hit != null
+		if spawn_area_ready:
+			var vehicle_ground := _ground_point_from_down_hit(
+				vehicle_origin,
+				vehicle_hit
+			)
 			_launch_vehicle.global_position = (
-				vehicle_origin
-				+ Vector3.DOWN * _voxel_down_world_distance(vehicle_hit)
-				+ Vector3.UP * 0.52
+				vehicle_ground + Vector3.UP * 0.52
 			)
 			if WorldPersistence.has_save() and not _save_load_attempted:
 				_save_load_attempted = true
@@ -303,97 +201,145 @@ func _place_when_ground_exists() -> void:
 				push_warning(
 					"Save rejected or corrupt; starting a fresh world."
 				)
-				var player_surface_y: float = _resolve_surface_y(
+				var fallback_spawn := _spawn_position_from_voxel_hit(
 					_player_spawn_xz,
-					player_origin.y - _voxel_down_world_distance(player_hit)
-				)
-				var fallback_spawn := Vector3(
-					_player_spawn_xz.x,
-					player_surface_y + SPAWN_CLEARANCE,
-					_player_spawn_xz.y
+					player_origin,
+					player_hit
 				)
 				await _begin_fresh_world(fallback_spawn)
 				return
 
-			var probe_timed_out := (
-				Time.get_ticks_msec() - _spawn_wait_start_ms
-				>= SPAWN_PROBE_TIMEOUT_MS
+			var player_position := _spawn_position_from_voxel_hit(
+				_player_spawn_xz,
+				player_origin,
+				player_hit
 			)
-			if (
-				_probe_player_spawn_ready(
-					_voxel_down_world_distance(player_hit)
-				)
-				or probe_timed_out
-			):
-				if probe_timed_out and _stable_player < STABLE_PHYSICS_FRAMES:
-					push_warning(
-						"Spawn probe timed out; continuing with best effort."
-					)
-				var player_surface_y: float = _resolve_surface_y(
-					_player_spawn_xz,
-					player_origin.y - _voxel_down_world_distance(player_hit)
-				)
-				var player_position := Vector3(
-					_player_spawn_xz.x,
-					player_surface_y + SPAWN_CLEARANCE,
-					_player_spawn_xz.y
-				)
-				await _begin_fresh_world(player_position)
-				return
+			await _begin_fresh_world(player_position)
+			return
 
-		if not surfaces_ready:
-			_stable_player = 0
-		if _stable_player == 0:
-			_loading.text = "Ожидание коллизии..."
+		_loading.text = "Стриминг террейна..."
 		await get_tree().physics_frame
 
 
-func _probe_player_spawn_ready(voxel_distance: float) -> bool:
-	var surface_y_voxel: float = SKY_PROBE_Y - voxel_distance
-	var surface_y: float = _resolve_surface_y(_player_spawn_xz, surface_y_voxel)
-	_player_spawn_pos = Vector3(
-		_player_spawn_xz.x,
-		surface_y + SPAWN_CLEARANCE,
-		_player_spawn_xz.y
+func _spawn_base_when_terrain_ready() -> void:
+	var tool: VoxelTool = _terrain.get_voxel_tool()
+	tool.channel = VoxelBuffer.CHANNEL_SDF
+	var base_origin := Vector3(
+		_base_spawn.global_position.x,
+		SKY_PROBE_Y,
+		_base_spawn.global_position.z
+	)
+	var base_x_minus_origin := base_origin + Vector3.LEFT
+	var base_x_plus_origin := base_origin + Vector3.RIGHT
+	var base_z_minus_origin := base_origin + Vector3.FORWARD
+	var base_z_plus_origin := base_origin + Vector3.BACK
+	var wait_start_ms := Time.get_ticks_msec()
+
+	while true:
+		var base_hit: VoxelRaycastResult = _voxel_down_hit(base_origin, tool)
+		var base_x_minus_hit: VoxelRaycastResult = _voxel_down_hit(
+			base_x_minus_origin, tool
+		)
+		var base_x_plus_hit: VoxelRaycastResult = _voxel_down_hit(
+			base_x_plus_origin, tool
+		)
+		var base_z_minus_hit: VoxelRaycastResult = _voxel_down_hit(
+			base_z_minus_origin, tool
+		)
+		var base_z_plus_hit: VoxelRaycastResult = _voxel_down_hit(
+			base_z_plus_origin, tool
+		)
+		if (
+			base_hit != null
+			and base_x_minus_hit != null
+			and base_x_plus_hit != null
+			and base_z_minus_hit != null
+			and base_z_plus_hit != null
+		):
+			var base_ground: Vector3 = _ground_point_from_down_hit(
+				base_origin,
+				base_hit
+			)
+			var base_x_minus_ground: Vector3 = _ground_point_from_down_hit(
+				base_x_minus_origin,
+				base_x_minus_hit
+			)
+			var base_x_plus_ground: Vector3 = _ground_point_from_down_hit(
+				base_x_plus_origin,
+				base_x_plus_hit
+			)
+			var base_z_minus_ground: Vector3 = _ground_point_from_down_hit(
+				base_z_minus_origin,
+				base_z_minus_hit
+			)
+			var base_z_plus_ground: Vector3 = _ground_point_from_down_hit(
+				base_z_plus_origin,
+				base_z_plus_hit
+			)
+			var base_basis := GridSpawnUtil.terrain_basis(
+				base_x_plus_ground - base_x_minus_ground,
+				base_z_plus_ground - base_z_minus_ground
+			)
+			var base_transform := GridSpawnUtil.transform_on_terrain(
+				base_ground,
+				base_basis,
+				0.0
+			)
+			var base_result: StructuralCommandResult = (
+				_session.spawn_slice01_base_at(base_transform)
+			)
+			if not base_result.is_ok():
+				push_error(
+					"Anchored base spawn failed: %s"
+					% String(base_result.reason)
+				)
+			return
+
+		if Time.get_ticks_msec() - wait_start_ms >= BASE_SPAWN_TIMEOUT_MS:
+			push_error("Base spawn aborted: terrain SDF raycast timed out")
+			return
+
+		await get_tree().physics_frame
+
+
+func _spawn_position_from_voxel_hit(
+	xz: Vector2,
+	origin: Vector3,
+	hit: VoxelRaycastResult
+) -> Vector3:
+	var surface_y_sdf := origin.y - _voxel_down_world_distance(hit)
+	var surface_y := _resolve_surface_y(xz, surface_y_sdf)
+	_player_spawn_pos = Vector3(xz.x, surface_y + SPAWN_CLEARANCE, xz.y)
+	return _player_spawn_pos
+
+
+func _ground_point_from_down_hit(
+	origin: Vector3,
+	hit: VoxelRaycastResult
+) -> Vector3:
+	var sdf_y := origin.y - _voxel_down_world_distance(hit)
+	var xz := Vector2(origin.x, origin.z)
+	return Vector3(
+		origin.x,
+		_resolve_surface_y(xz, sdf_y),
+		origin.z
 	)
 
-	var space: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
-	var ray_from := Vector3(_player_spawn_xz.x, SKY_PROBE_Y, _player_spawn_xz.y)
-	var ray_to := Vector3(_player_spawn_xz.x, surface_y - 8.0, _player_spawn_xz.y)
-	var query: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(
-		ray_from, ray_to
+
+func _resolve_surface_y(xz: Vector2, surface_y_sdf: float) -> float:
+	return VoxelSpaceUtil.resolve_ground_surface_y(
+		_physics_space_state(),
+		xz,
+		surface_y_sdf,
+		SKY_PROBE_Y,
+		GROUND_PROBE_MAX_DISTANCE
 	)
-	query.collision_mask = 1
-	query.collide_with_areas = false
-	query.collide_with_bodies = true
-
-	var phys_hit: Dictionary = space.intersect_ray(query)
-	if phys_hit.is_empty():
-		_stable_player = 0
-		return false
-
-	_stable_player += 1
-	_loading.text = "Посадка %d/%d" % [_stable_player, STABLE_PHYSICS_FRAMES]
-	return _stable_player >= STABLE_PHYSICS_FRAMES
 
 
-func _resolve_surface_y(xz: Vector2, surface_y_voxel: float) -> float:
-	var space: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
-	var ray_from := Vector3(xz.x, SKY_PROBE_Y, xz.y)
-	var ray_to := Vector3(xz.x, surface_y_voxel - 8.0, xz.y)
-	var query: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(
-		ray_from, ray_to
-	)
-	query.collision_mask = 1
-	query.collide_with_areas = false
-	query.collide_with_bodies = true
-
-	var phys_hit: Dictionary = space.intersect_ray(query)
-	if phys_hit.is_empty():
-		return surface_y_voxel
-
-	var surface_y_phys: float = (phys_hit["position"] as Vector3).y
-	return maxf(surface_y_voxel, surface_y_phys)
+func _physics_space_state() -> PhysicsDirectSpaceState3D:
+	if _terrain == null or not _terrain.is_inside_tree():
+		return null
+	return _terrain.get_world_3d().direct_space_state
 
 
 func _resolve_saved_player_position(
@@ -414,10 +360,10 @@ func _resolve_saved_player_position(
 	var origin := Vector3(xz.x, SKY_PROBE_Y, xz.y)
 	var hit: VoxelRaycastResult = _voxel_down_hit(origin, tool)
 	if hit != null:
-		return Vector3(
-			xz.x,
-			origin.y - _voxel_down_world_distance(hit) + SPAWN_CLEARANCE,
-			xz.y,
+		return _spawn_position_from_voxel_hit(
+			xz,
+			origin,
+			hit
 		)
 	return Vector3(xz.x, _saved_world_spawn_y(), xz.y)
 
