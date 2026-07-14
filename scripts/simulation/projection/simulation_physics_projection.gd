@@ -2,9 +2,14 @@ class_name SimulationPhysicsProjection
 extends Node3D
 
 const BODY_NAME_PREFIX := "AssemblyBody_"
+const GROUP_BODY_NAME_PREFIX := "AssemblyGroupBody_"
+const PISTON_JOINT_NAME_PREFIX := "PistonJoint_"
 const MIN_MASS := 0.001
 const FragmentBodyScript := preload(
 	"res://scripts/simulation/projection/projected_assembly_body.gd"
+)
+const PistonProjectionUtil := preload(
+	"res://scripts/simulation/projection/piston_projection_util.gd"
 )
 
 var _world: SimulationWorld
@@ -14,6 +19,9 @@ var _projected_revision: Dictionary = {}
 var _mounted_bodies: Dictionary = {}
 var _collision_profiles: Dictionary = {}
 var _body_groups: Dictionary = {}
+var _assembly_group_bodies: Dictionary = {}
+var _piston_constraints: Dictionary = {}
+var _root_group_ids: Dictionary = {}
 var _impact_service: ImpactResolverService
 
 
@@ -51,6 +59,20 @@ func rebuild_all() -> void:
 
 func get_physics_body(assembly_id: int) -> PhysicsBody3D:
 	return _bodies.get(assembly_id) as PhysicsBody3D
+
+
+func get_group_physics_body(assembly_id: int, group_id: int) -> PhysicsBody3D:
+	var groups: Variant = _assembly_group_bodies.get(assembly_id)
+	if groups is Dictionary:
+		return groups.get(group_id) as PhysicsBody3D
+	return null
+
+
+func list_piston_constraint_records(assembly_id: int) -> Array[Dictionary]:
+	var records: Variant = _piston_constraints.get(assembly_id, [])
+	if records is Array:
+		return records
+	return []
 
 
 func get_element_projection(element_id: int) -> Dictionary:
@@ -170,9 +192,10 @@ func align_body_motion(
 	return sync_body_motion_now(target_assembly_id)
 
 
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
 	if _world == null:
 		return
+	_tick_piston_actuators(delta)
 	for assembly_id: int in _sorted_int_keys(_bodies):
 		var assembly: SimulationAssembly = _world.get_assembly_raw(assembly_id)
 		var body: PhysicsBody3D = _bodies[assembly_id] as PhysicsBody3D
@@ -393,6 +416,30 @@ func _project_assembly(
 		and get_physics_body(assembly_id) != null
 	):
 		return
+	var compiled := _compile_assembly_groups(assembly)
+	var piston_specs: Array = compiled.get("piston_specs", [])
+	if (
+		bool(compiled.get("valid", false))
+		and not piston_specs.is_empty()
+		and not _mounted_bodies.has(assembly_id)
+	):
+		_project_assembly_multibody(
+			assembly_id,
+			motion_override,
+			compiled
+		)
+		return
+	_project_assembly_single(assembly_id, motion_override)
+
+
+func _project_assembly_single(
+	assembly_id: int,
+	motion_override: AssemblyMotionState
+) -> void:
+	var assembly: SimulationAssembly = _world.get_assembly_raw(assembly_id)
+	if assembly == null or assembly.tombstoned:
+		_remove_body(assembly_id)
+		return
 	var seed_motion: AssemblyMotionState = (
 		motion_override
 		if motion_override != null
@@ -489,6 +536,362 @@ func _project_assembly(
 		}
 	_world.sync_assembly_motion(assembly_id, motion)
 	_projected_revision[assembly_id] = assembly.topology_revision
+
+
+func _project_assembly_multibody(
+	assembly_id: int,
+	motion_override: AssemblyMotionState,
+	compiled: Dictionary
+) -> void:
+	var assembly: SimulationAssembly = _world.get_assembly_raw(assembly_id)
+	if assembly == null:
+		return
+	_remove_body(assembly_id)
+	var groups: Dictionary = compiled["groups"]
+	var element_to_group: Dictionary = compiled["element_to_group"]
+	var root_group_id := int(compiled.get("root_group_id", 0))
+	var seed_motion: AssemblyMotionState = (
+		motion_override
+		if motion_override != null
+		else assembly.motion
+	)
+	var groups_map: Dictionary = {}
+	for group_id: int in _sorted_int_keys(groups):
+		var members: Array = groups[group_id]
+		var element_ids: Array[int] = []
+		for member_variant: Variant in members:
+			element_ids.append(int(member_variant))
+		var is_root := group_id == root_group_id
+		var is_static := is_root and _world.assembly_has_anchor(assembly_id)
+		var body := _create_group_body(assembly_id, group_id, is_static)
+		var records: Array[Dictionary] = (
+			PistonProjectionUtil.build_collision_shapes_for_elements(
+				_world,
+				assembly,
+				element_ids
+			)
+		)
+		_attach_colliders_to_body(
+			body,
+			records,
+			assembly_id,
+			element_ids
+		)
+		body.global_transform = seed_motion.transform
+		if body is RigidBody3D:
+			var rigid: RigidBody3D = body as RigidBody3D
+			rigid.mass = maxf(
+				PistonProjectionUtil.dry_mass_for_elements(
+					_world,
+					element_ids
+				),
+				MIN_MASS
+			)
+			rigid.center_of_mass_mode = (
+				RigidBody3D.CENTER_OF_MASS_MODE_CUSTOM
+			)
+			rigid.center_of_mass = (
+				PistonProjectionUtil.center_of_mass_local_for_records(
+					records
+				)
+			)
+			if is_static:
+				rigid.linear_velocity = Vector3.ZERO
+				rigid.angular_velocity = Vector3.ZERO
+				rigid.sleeping = true
+				rigid.freeze = true
+			else:
+				rigid.linear_velocity = seed_motion.linear_velocity
+				rigid.angular_velocity = seed_motion.angular_velocity
+				rigid.sleeping = seed_motion.sleeping
+				rigid.freeze = false
+				if _impact_service != null:
+					_impact_service.configure_rigid_body(rigid)
+		add_child(body)
+		_apply_collision_profile(assembly_id, body)
+		_apply_body_groups(assembly_id, body)
+		groups_map[group_id] = body
+
+	_assembly_group_bodies[assembly_id] = groups_map
+	_root_group_ids[assembly_id] = root_group_id
+	if root_group_id > 0 and groups_map.has(root_group_id):
+		_bodies[assembly_id] = groups_map[root_group_id]
+
+	var piston_records: Array[Dictionary] = []
+	for spec_variant: Variant in compiled.get("piston_specs", []):
+		if not spec_variant is Dictionary:
+			continue
+		var spec: Dictionary = spec_variant
+		var sim_joint: SimulationJoint = _world.get_joint(
+			int(spec.get("joint_id", 0))
+		)
+		if sim_joint == null or sim_joint.motor == null:
+			continue
+		var base_body: PhysicsBody3D = (
+			groups_map.get(int(spec.get("base_group_id", 0))) as PhysicsBody3D
+		)
+		var head_body: PhysicsBody3D = (
+			groups_map.get(int(spec.get("head_group_id", 0))) as PhysicsBody3D
+		)
+		if base_body == null or head_body == null:
+			continue
+		base_body.add_collision_exception_with(head_body)
+		head_body.add_collision_exception_with(base_body)
+		var base_element: SimulationElement = _world.get_element(
+			int(spec.get("base_element_id", 0))
+		)
+		var head_element: SimulationElement = _world.get_element(
+			int(spec.get("head_element_id", 0))
+		)
+		if base_element == null or head_element == null:
+			continue
+		var definition: PistonDefinition = (
+			base_element.get_archetype().piston_definition
+		)
+		if definition == null:
+			continue
+		var axis_local: Vector3 = (
+			PistonProjectionUtil.piston_axis_assembly_local(
+				base_element,
+				definition
+			)
+		)
+		var axis_world: Vector3 = seed_motion.transform.basis * axis_local
+		var base_anchor: Vector3 = (
+			PistonProjectionUtil.port_anchor_assembly_local(
+				base_element,
+				SimulationMotorState.PISTON_DRIVE_PORT
+			)
+		)
+		var head_anchor: Vector3 = (
+			PistonProjectionUtil.port_anchor_assembly_local(
+				head_element,
+				SimulationMotorState.PISTON_CARRIAGE_PORT
+			)
+		)
+		var joint_node := Generic6DOFJoint3D.new()
+		joint_node.name = "%s%d_%d" % [
+			PISTON_JOINT_NAME_PREFIX,
+			assembly_id,
+			sim_joint.joint_id,
+		]
+		add_child(joint_node)
+		joint_node.global_transform = Transform3D(
+			PistonProjectionUtil.basis_from_axis(axis_world),
+			seed_motion.transform * base_anchor
+		)
+		joint_node.node_a = joint_node.get_path_to(base_body)
+		joint_node.node_b = joint_node.get_path_to(head_body)
+		PistonProjectionUtil.configure_slider_joint(
+			joint_node,
+			sim_joint.motor
+		)
+		piston_records.append({
+			"joint_id": sim_joint.joint_id,
+			"sim_joint": sim_joint,
+			"constraint": joint_node,
+			"base_body": base_body,
+			"head_body": head_body,
+			"base_anchor_local": base_anchor,
+			"head_anchor_local": head_anchor,
+			"axis_local": axis_local,
+		})
+	_piston_constraints[assembly_id] = piston_records
+	var motion: AssemblyMotionState = seed_motion.duplicate_state()
+	if _world.assembly_has_anchor(assembly_id):
+		motion.frozen = true
+		motion.linear_velocity = Vector3.ZERO
+		motion.angular_velocity = Vector3.ZERO
+		motion.sleeping = true
+	_world.sync_assembly_motion(assembly_id, motion)
+	_projected_revision[assembly_id] = assembly.topology_revision
+
+
+func _compile_assembly_groups(
+	assembly: SimulationAssembly
+) -> Dictionary:
+	var elements_by_id: Dictionary = {}
+	for element_id: int in assembly.element_ids:
+		var element: SimulationElement = _world.get_element(element_id)
+		if element != null:
+			elements_by_id[element_id] = element
+	var joints: Array[SimulationJoint] = []
+	for joint: SimulationJoint in _world.list_joints():
+		if joint.assembly_id == assembly.assembly_id:
+			joints.append(joint)
+	return BodyGroupCompiler.compile(
+		assembly.element_ids,
+		elements_by_id,
+		joints
+	)
+
+
+func _create_group_body(
+	assembly_id: int,
+	group_id: int,
+	is_static: bool
+) -> PhysicsBody3D:
+	var body: PhysicsBody3D
+	if is_static:
+		body = StaticBody3D.new()
+	else:
+		body = FragmentBodyScript.new() as RigidBody3D
+	body.name = "%s%d_%d" % [
+		GROUP_BODY_NAME_PREFIX,
+		assembly_id,
+		group_id,
+	]
+	body.collision_layer = 1
+	body.collision_mask = 1
+	body.set_meta("assembly_id", assembly_id)
+	body.set_meta("body_group_id", group_id)
+	return body
+
+
+func _attach_colliders_to_body(
+	body: PhysicsBody3D,
+	records: Array[Dictionary],
+	assembly_id: int,
+	element_ids: Array[int]
+) -> void:
+	var colliders_by_element: Dictionary = {}
+	for record: Dictionary in records:
+		var element_id: int = int(record["element_id"])
+		var existing_colliders: Array = colliders_by_element.get(
+			element_id,
+			[]
+		)
+		var collider := CollisionShape3D.new()
+		collider.name = "ElementCollider_%d_%d" % [
+			element_id,
+			existing_colliders.size(),
+		]
+		collider.shape = record["shape"]
+		collider.transform = record["local_transform"]
+		collider.set_meta("element_id", element_id)
+		collider.set_meta("collider_index", int(record["collider_index"]))
+		collider.set_meta(
+			"collider_local_cell",
+			record["collider_local_cell"]
+		)
+		body.add_child(collider)
+		if not colliders_by_element.has(element_id):
+			colliders_by_element[element_id] = []
+		colliders_by_element[element_id].append(collider)
+	for element_id: int in element_ids:
+		if not colliders_by_element.has(element_id):
+			continue
+		_element_records[element_id] = {
+			"assembly_id": assembly_id,
+			"body": body,
+			"colliders": colliders_by_element[element_id],
+		}
+
+
+func _tick_piston_actuators(delta: float) -> void:
+	if _world == null or delta <= 0.0:
+		return
+	for assembly_id: int in _sorted_int_keys(_piston_constraints):
+		var assembly: SimulationAssembly = _world.get_assembly_raw(assembly_id)
+		if assembly == null or assembly.tombstoned:
+			continue
+		var root_body: PhysicsBody3D = _bodies.get(assembly_id) as PhysicsBody3D
+		if root_body == null:
+			continue
+		var assembly_transform: Transform3D = root_body.global_transform
+		for record_variant: Variant in _piston_constraints[assembly_id]:
+			if not record_variant is Dictionary:
+				continue
+			var record: Dictionary = record_variant
+			var sim_joint: SimulationJoint = record.get("sim_joint")
+			if sim_joint == null or sim_joint.motor == null:
+				continue
+			var base_body: PhysicsBody3D = record.get("base_body")
+			var head_body: PhysicsBody3D = record.get("head_body")
+			if base_body == null or head_body == null:
+				continue
+			var axis_world: Vector3 = (
+				assembly_transform.basis * record.get("axis_local", Vector3.UP)
+			)
+			var measured: Dictionary = PistonProjectionUtil.measure_axial_state(
+				base_body,
+				head_body,
+				record.get("base_anchor_local", Vector3.ZERO),
+				record.get("head_anchor_local", Vector3.ZERO),
+				axis_world
+			)
+			_world.sync_actuator_observation(
+				int(record.get("joint_id", 0)),
+				float(measured.get("extension_m", 0.0)),
+				float(measured.get("relative_velocity_mps", 0.0)),
+				sim_joint.motor.applied_force_n,
+				sim_joint.motor.force_saturated
+			)
+			var powered: bool = PistonProjectionUtil.is_piston_powered(
+				_world,
+				sim_joint.element_a_id
+			)
+			var force_result: Dictionary = (
+				PistonProjectionUtil.compute_motor_force_scalar(
+					sim_joint.motor,
+					float(measured.get("relative_velocity_mps", 0.0)),
+					powered
+				)
+			)
+			var force_n := float(force_result.get("force_n", 0.0))
+			var saturated := bool(force_result.get("saturated", false))
+			sim_joint.motor.applied_force_n = absf(force_n)
+			sim_joint.motor.force_saturated = saturated
+			var axis_dir := axis_world.normalized()
+			if head_body is RigidBody3D:
+				(head_body as RigidBody3D).apply_central_force(
+					axis_dir * force_n
+				)
+			if base_body is RigidBody3D and not base_body is StaticBody3D:
+				(base_body as RigidBody3D).apply_central_force(
+					-axis_dir * force_n
+				)
+			_world.sync_actuator_observation(
+				int(record.get("joint_id", 0)),
+				float(measured.get("extension_m", 0.0)),
+				float(measured.get("relative_velocity_mps", 0.0)),
+				absf(force_n),
+				saturated
+			)
+	_world.tick_actuators(delta)
+
+
+func _clear_piston_constraints(assembly_id: int) -> void:
+	var records: Variant = _piston_constraints.get(assembly_id, [])
+	if records is Array:
+		for record_variant: Variant in records:
+			if not record_variant is Dictionary:
+				continue
+			var constraint: Generic6DOFJoint3D = (
+				record_variant.get("constraint") as Generic6DOFJoint3D
+			)
+			if constraint != null and is_instance_valid(constraint):
+				constraint.queue_free()
+	_piston_constraints.erase(assembly_id)
+	_root_group_ids.erase(assembly_id)
+
+
+func _remove_group_bodies(assembly_id: int) -> void:
+	var groups: Variant = _assembly_group_bodies.get(assembly_id)
+	if not groups is Dictionary:
+		return
+	for group_id_variant: Variant in groups.keys():
+		var body: PhysicsBody3D = groups[group_id_variant] as PhysicsBody3D
+		if body == null:
+			continue
+		if _mounted_bodies.get(assembly_id) == body:
+			_clear_body_colliders(body)
+		else:
+			body.collision_layer = 0
+			body.collision_mask = 0
+			body.process_mode = Node.PROCESS_MODE_DISABLED
+			body.queue_free()
+	_assembly_group_bodies.erase(assembly_id)
 
 
 func _create_body(
@@ -600,9 +1003,11 @@ func _estimate_body_inertia(body: PhysicsBody3D) -> Vector3:
 
 
 func _remove_body(assembly_id: int) -> void:
+	_clear_piston_constraints(assembly_id)
+	_remove_group_bodies(assembly_id)
 	_remove_element_records_for_assembly(assembly_id)
 	var body: PhysicsBody3D = get_physics_body(assembly_id)
-	if body != null:
+	if body != null and not _assembly_group_bodies.has(assembly_id):
 		if _mounted_bodies.get(assembly_id) == body:
 			_clear_body_colliders(body)
 		else:
@@ -627,11 +1032,16 @@ func _remove_element_records_for_assembly(
 
 
 func _clear_all_bodies() -> void:
+	for assembly_id: int in _sorted_int_keys(_piston_constraints):
+		_clear_piston_constraints(assembly_id)
 	for assembly_id: int in _sorted_int_keys(_bodies):
 		_remove_body(assembly_id)
 	_bodies.clear()
 	_element_records.clear()
 	_projected_revision.clear()
+	_assembly_group_bodies.clear()
+	_root_group_ids.clear()
+	_piston_constraints.clear()
 
 
 func _sorted_int_keys(dictionary: Dictionary) -> Array[int]:

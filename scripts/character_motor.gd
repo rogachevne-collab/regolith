@@ -11,11 +11,13 @@ extends CharacterBody3D
 @export var ground_adhesion := 0.5
 @export var step_height := 0.3
 @export var step_probe_margin := 0.01
+@export var step_forward_min := 0.12
 @export_range(0.0, 89.0, 0.1) var max_floor_angle_degrees := 45.0
 @export var support_frame_path: NodePath = NodePath("SupportFrame")
 
 var _support_frame: Node
 var _last_step_height := 0.0
+var _passive_step_height := 0.0
 
 
 func _ready() -> void:
@@ -83,6 +85,7 @@ func move_character(
 	velocity.x = current_horizontal.x
 	velocity.z = current_horizontal.y
 	_last_step_height = 0.0
+	var move_start_y := global_position.y
 	var stepped := false
 	if was_on_floor and not jump_requested:
 		stepped = _try_step(
@@ -96,6 +99,17 @@ func move_character(
 	if stepped:
 		velocity.x = stepped_horizontal.x
 		velocity.z = stepped_horizontal.y
+		_passive_step_height = 0.0
+	elif was_on_floor and not jump_requested:
+		var passive_rise := global_position.y - move_start_y
+		if passive_rise > 0.0001:
+			_passive_step_height = minf(
+				_passive_step_height + passive_rise,
+				step_height
+			)
+			_last_step_height = _passive_step_height
+		else:
+			_passive_step_height = 0.0
 	if _support_frame != null:
 		_support_frame.call("update_from_character", self)
 
@@ -119,13 +133,17 @@ func _try_step(horizontal_motion: Vector3) -> bool:
 	if _body_test_motion(from, up_motion, up_result):
 		return false
 	var raised := Transform3D(from.basis, from.origin + up_motion)
+	var forward_motion := (
+		horizontal_motion.normalized()
+		* maxf(horizontal_motion.length(), step_forward_min)
+	)
 
 	var forward_result := PhysicsTestMotionResult3D.new()
-	if _body_test_motion(raised, horizontal_motion, forward_result):
+	if _body_test_motion(raised, forward_motion, forward_result):
 		return false
 	var advanced := Transform3D(
 		raised.basis,
-		raised.origin + horizontal_motion
+		raised.origin + forward_motion
 	)
 
 	var down_motion := Vector3.DOWN * (
@@ -150,16 +168,31 @@ func _try_step(horizontal_motion: Vector3) -> bool:
 	# between prediction and application.
 	if move_and_collide(up_motion) != null:
 		return false
-	if move_and_collide(horizontal_motion) != null:
+	if move_and_collide(forward_motion) != null:
 		move_and_collide(-up_motion)
 		return false
 	var down_collision := move_and_collide(down_motion)
 	if down_collision == null:
-		move_and_collide(-horizontal_motion)
+		move_and_collide(-forward_motion)
 		move_and_collide(-up_motion)
 		return false
-	_last_step_height = rise
+	var contact_rise := (
+		down_collision.get_position().y
+		- (from.origin.y - _collision_half_height())
+	)
+	_last_step_height = maxf(rise, contact_rise)
 	return true
+
+
+func _collision_half_height() -> float:
+	var collider := get_node_or_null("CollisionShape3D") as CollisionShape3D
+	if collider == null or collider.shape == null:
+		return 0.9
+	if collider.shape is CapsuleShape3D:
+		return (collider.shape as CapsuleShape3D).height * 0.5
+	if collider.shape is CylinderShape3D:
+		return (collider.shape as CylinderShape3D).height * 0.5
+	return 0.9
 
 
 func _body_test_motion(

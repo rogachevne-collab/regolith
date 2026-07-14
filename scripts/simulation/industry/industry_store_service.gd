@@ -5,6 +5,29 @@ const PLAYER_STORE_ID := "player"
 const ELEMENT_STORE_PREFIX := "element:"
 const BUFFER_STORE_PREFIX := "buffer:"
 
+## Fresh-world player cargo fixture for manual playtest (INDUSTRY-V1 § Player store).
+## Volumes must fit `player_carry_capacity_l` together with `PlayerInventoryRegistry`
+## starter tool instances (25 L); current mix uses 72.6 L of store + 25 L tools.
+const PLAYER_STARTER_RESOURCES: Dictionary = {
+	"raw_regolith": 6.0,
+	"regolith_fines": 6.0,
+	"sintered_basalt": 4.0,
+	"calcined_oxide": 3.0,
+	"metal_ingot": 3.0,
+	"construction_component": 12.0,
+}
+
+## Dev playtest cargo — fills player store on world entry when enabled in bootstrap.
+const PLAYTEST_PLAYER_CARRY_CAPACITY_L := 2000.0
+const PLAYTEST_PLAYER_RESOURCES: Dictionary = {
+	"raw_regolith": 250.0,
+	"regolith_fines": 150.0,
+	"sintered_basalt": 60.0,
+	"calcined_oxide": 40.0,
+	"metal_ingot": 50.0,
+	"construction_component": 300.0,
+}
+
 
 static func element_store_id(element_id: int) -> String:
 	return "%s%d" % [ELEMENT_STORE_PREFIX, element_id]
@@ -26,15 +49,15 @@ static func parse_buffer_element_id(store_id: String) -> int:
 	return int(store_id.substr(BUFFER_STORE_PREFIX.length()))
 
 
-static func capacity_kg_for_store(world: SimulationWorld, store_id: String) -> float:
+static func capacity_l_for_store(world: SimulationWorld, store_id: String) -> float:
 	if store_id == PLAYER_STORE_ID:
-		return IndustryArchetypeProfile.player_carry_capacity_kg()
+		return IndustryArchetypeProfile.player_carry_capacity_l()
 	var element_id := parse_element_id_from_store(store_id)
 	if element_id > 0:
 		var element := world.get_element(element_id)
 		if element == null:
 			return 0.0
-		return IndustryArchetypeProfile.keyed_store_capacity_kg(
+		return IndustryArchetypeProfile.keyed_store_capacity_l(
 			element.archetype_id
 		)
 	element_id = parse_buffer_element_id(store_id)
@@ -42,7 +65,7 @@ static func capacity_kg_for_store(world: SimulationWorld, store_id: String) -> f
 		var element := world.get_element(element_id)
 		if element == null:
 			return 0.0
-		return IndustryArchetypeProfile.internal_buffer_capacity_kg(
+		return IndustryArchetypeProfile.internal_buffer_capacity_l(
 			element.archetype_id
 		)
 	return INF
@@ -51,8 +74,84 @@ static func capacity_kg_for_store(world: SimulationWorld, store_id: String) -> f
 static func ensure_player_store(world: SimulationWorld) -> SimulationResourceStore:
 	var store := world.ensure_resource_store(PLAYER_STORE_ID)
 	if store != null:
-		store.capacity_kg = IndustryArchetypeProfile.player_carry_capacity_kg()
+		store.capacity_l = IndustryArchetypeProfile.player_carry_capacity_l()
 	return store
+
+
+static func seed_player_starter_resources(world: SimulationWorld) -> bool:
+	if world == null:
+		return false
+	ensure_player_store(world)
+	ensure_player_inventory(world)
+	var projected := player_instance_volume_l(world)
+	for resource_id: String in PLAYER_STARTER_RESOURCES.keys():
+		var amount := float(PLAYER_STARTER_RESOURCES[resource_id])
+		projected += ResourceCatalog.resource_volume_l(resource_id, amount)
+	if projected > player_carry_capacity_l() + ResourceCatalog.EPSILON:
+		push_error(
+			"PLAYER_STARTER_RESOURCES exceeds player carry capacity (%.1f L > %.1f L)"
+			% [projected, player_carry_capacity_l()]
+		)
+		return false
+	for resource_id: String in PLAYER_STARTER_RESOURCES.keys():
+		world.set_resource_amount(
+			PLAYER_STORE_ID,
+			resource_id,
+			float(PLAYER_STARTER_RESOURCES[resource_id])
+		)
+	return true
+
+
+static func apply_playtest_cargo(world: SimulationWorld) -> bool:
+	if world == null:
+		return false
+	var store := ensure_player_store(world)
+	if store == null:
+		return false
+	store.capacity_l = PLAYTEST_PLAYER_CARRY_CAPACITY_L
+	ensure_player_inventory(world)
+	var projected := player_instance_volume_l(world)
+	for resource_id: String in PLAYTEST_PLAYER_RESOURCES.keys():
+		projected += ResourceCatalog.resource_volume_l(
+			resource_id,
+			float(PLAYTEST_PLAYER_RESOURCES[resource_id])
+		)
+	if projected > PLAYTEST_PLAYER_CARRY_CAPACITY_L + ResourceCatalog.EPSILON:
+		push_error(
+			"PLAYTEST_PLAYER_RESOURCES exceeds playtest carry capacity (%.1f L > %.1f L)"
+			% [projected, PLAYTEST_PLAYER_CARRY_CAPACITY_L]
+		)
+		return false
+	for resource_id: String in PLAYTEST_PLAYER_RESOURCES.keys():
+		world.set_resource_amount(
+			PLAYER_STORE_ID,
+			resource_id,
+			float(PLAYTEST_PLAYER_RESOURCES[resource_id])
+		)
+	return true
+
+
+static func ensure_player_inventory(
+	world: SimulationWorld
+) -> PlayerInventoryRegistry:
+	return world.ensure_player_inventory()
+
+
+static func player_instance_volume_l(world: SimulationWorld) -> float:
+	var registry := world.get_player_inventory()
+	return registry.volume_l() if registry != null else 0.0
+
+
+static func player_total_volume_l(world: SimulationWorld) -> float:
+	var store := world.get_resource_store(PLAYER_STORE_ID)
+	var total := player_instance_volume_l(world)
+	if store != null:
+		total += store.volume_l()
+	return total
+
+
+static func player_carry_capacity_l() -> float:
+	return IndustryArchetypeProfile.player_carry_capacity_l()
 
 
 static func ensure_element_keyed_store(
@@ -61,7 +160,7 @@ static func ensure_element_keyed_store(
 ) -> SimulationResourceStore:
 	if element == null:
 		return null
-	var capacity := IndustryArchetypeProfile.keyed_store_capacity_kg(
+	var capacity := IndustryArchetypeProfile.keyed_store_capacity_l(
 		element.archetype_id
 	)
 	if capacity <= 0.0:
@@ -69,7 +168,7 @@ static func ensure_element_keyed_store(
 	var store_id := element_store_id(element.element_id)
 	var store := world.ensure_resource_store(store_id)
 	if store != null:
-		store.capacity_kg = capacity
+		store.capacity_l = capacity
 	return store
 
 
@@ -88,6 +187,7 @@ static func sync_element_storage(world: SimulationWorld, element: SimulationElem
 
 static func sync_all_elements(world: SimulationWorld) -> void:
 	ensure_player_store(world)
+	ensure_player_inventory(world)
 	for element: SimulationElement in world.list_elements():
 		sync_element_storage(world, element)
 

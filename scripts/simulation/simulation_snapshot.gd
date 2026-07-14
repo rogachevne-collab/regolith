@@ -1,7 +1,9 @@
 class_name SimulationSnapshot
 extends RefCounted
 
-const VERSION := 3
+const VERSION := 6
+
+static var last_validate_error: String = ""
 
 
 static func capture(world) -> Dictionary:
@@ -14,6 +16,7 @@ static func capture(world) -> Dictionary:
 		"joints": _serialize_joints(world),
 		"redirects": _serialize_redirects(world),
 		"resource_stores": _serialize_resource_stores(world),
+		"player_inventory": _serialize_player_inventory(world),
 		"industry_network": world.get_industry_network().to_dict(true),
 		"industry_elements": world.list_industry_element_runtimes(),
 		"world_loot_piles": world.list_world_loot_piles(),
@@ -36,8 +39,16 @@ static func semantic_equals(left: Dictionary, right: Dictionary) -> bool:
 	)
 
 
+static func _reject(reason: String) -> bool:
+	last_validate_error = reason
+	return false
+
+
 static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
-	if int(snapshot.get("version", 0)) != VERSION:
+	last_validate_error = ""
+	var version := int(snapshot.get("version", 0))
+	if version != VERSION:
+		last_validate_error = "bad_version:%d" % version
 		return false
 	var archetype_rows: Variant = snapshot.get("archetypes")
 	var assembly_rows: Variant = snapshot.get("assemblies")
@@ -45,6 +56,7 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 	var joint_rows: Variant = snapshot.get("joints")
 	var redirect_rows: Variant = snapshot.get("redirects")
 	var store_rows: Variant = snapshot.get("resource_stores")
+	var player_inventory_row: Variant = snapshot.get("player_inventory", {})
 	var industry_network_row: Variant = snapshot.get("industry_network", {})
 	var industry_element_rows: Variant = snapshot.get("industry_elements", [])
 	var loot_rows: Variant = snapshot.get("world_loot_piles", [])
@@ -217,6 +229,18 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 		elif joint.kind == SimulationJoint.Kind.ANCHOR:
 			if joint.element_b_id != 0 or not joint.port_b_id.is_empty():
 				return false
+		elif joint.kind == SimulationJoint.Kind.PISTON:
+			if (
+				joint.element_b_id <= 0
+				or joint.element_b_id == joint.element_a_id
+				or not elements.has(joint.element_b_id)
+				or (elements[joint.element_b_id] as SimulationElement).assembly_id
+				!= joint.assembly_id
+				or joint.port_a_id != SimulationMotorState.PISTON_DRIVE_PORT
+				or joint.port_b_id != SimulationMotorState.PISTON_CARRIAGE_PORT
+				or joint.motor == null
+			):
+				return false
 		else:
 			return false
 		var canonical_key := "%d|%s" % [joint.kind, joint.canonical_key()]
@@ -250,19 +274,29 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 					joint.port_b_id
 				):
 					return false
-			elif not _element_has_anchor_port(
-				elements[joint.element_a_id],
-				joint.port_a_id
-			):
+			elif joint.kind == SimulationJoint.Kind.ANCHOR:
+				if not _element_has_anchor_port(
+					elements[joint.element_a_id],
+					joint.port_a_id
+				):
+					return false
+			elif joint.kind != SimulationJoint.Kind.PISTON:
 				return false
 		if assembly.element_ids.size() > 1:
-			var components := RuntimeConnectivity.connected_components(
+			var components := RuntimeConnectivity.mechanical_connected_components(
 				assembly.element_ids,
 				elements,
 				assembly_joints
 			)
 			if components.size() != 1:
-				return false
+				return _reject("mechanical_components:%d" % components.size())
+			var compiled := BodyGroupCompiler.compile(
+				assembly.element_ids,
+				elements,
+				assembly_joints
+			)
+			if not bool(compiled.get("valid", false)):
+				return _reject("body_group_compile:%s" % str(compiled.get("reason", "")))
 
 	var redirects: Dictionary = {}
 	for row_variant: Variant in redirect_rows:
@@ -390,6 +424,12 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 	store_ids.sort()
 	for store_id: Variant in store_ids:
 		world._register_resource_store(stores[store_id])
+	if player_inventory_row is Dictionary and not player_inventory_row.is_empty():
+		world._register_player_inventory(
+			PlayerInventoryRegistry.from_dict(player_inventory_row)
+		)
+	else:
+		world.ensure_player_inventory().migrate_legacy_save()
 	world._register_industry_network(industry_network)
 	for element_id: int in _sorted_int_keys(industry_elements):
 		world._register_industry_element_runtime(
@@ -453,10 +493,19 @@ static func _serialize_resource_stores(world) -> Array[Dictionary]:
 	return rows
 
 
+static func _serialize_player_inventory(world) -> Dictionary:
+	var registry: PlayerInventoryRegistry = world.get_player_inventory()
+	if registry == null:
+		return {}
+	return registry.to_dict()
+
+
 static func _element_has_port(
 	element: SimulationElement,
 	port_id: String
 ) -> bool:
+	if GridSurfaceUtil.element_has_structural_surface(element, port_id):
+		return true
 	var archetype := element.get_archetype()
 	for port: PortDefinition in archetype.ports:
 		if port.port_id == port_id:

@@ -156,6 +156,9 @@ static func ground_anchor_port_id(element: SimulationElement) -> String:
 	for port: PortDefinition in archetype.ports:
 		if _is_anchor_port(port):
 			return port.port_id
+	var derived_id := GridSurfaceUtil.ground_anchor_structural_id(element)
+	if not derived_id.is_empty():
+		return derived_id
 	for port: PortDefinition in archetype.ports:
 		if (
 			port != null
@@ -172,12 +175,40 @@ static func connected_components(
 	elements_by_id: Dictionary,
 	joints: Array[SimulationJoint]
 ) -> Array[Array]:
+	return rigid_connected_components(element_ids, elements_by_id, joints)
+
+
+static func rigid_connected_components(
+	element_ids: Array[int],
+	elements_by_id: Dictionary,
+	joints: Array[SimulationJoint]
+) -> Array[Array]:
+	return _connected_components(element_ids, joints, [SimulationJoint.Kind.RIGID])
+
+
+static func mechanical_connected_components(
+	element_ids: Array[int],
+	elements_by_id: Dictionary,
+	joints: Array[SimulationJoint]
+) -> Array[Array]:
+	return _connected_components(
+		element_ids,
+		joints,
+		[SimulationJoint.Kind.RIGID, SimulationJoint.Kind.PISTON]
+	)
+
+
+static func _connected_components(
+	element_ids: Array[int],
+	joints: Array[SimulationJoint],
+	kinds: Array
+) -> Array[Array]:
 	var adjacency: Dictionary = {}
 	for element_id: int in element_ids:
 		adjacency[element_id] = {}
 
 	for joint: SimulationJoint in joints:
-		if joint.kind != SimulationJoint.Kind.RIGID:
+		if not kinds.has(joint.kind):
 			continue
 		if (
 			not adjacency.has(joint.element_a_id)
@@ -225,11 +256,12 @@ static func validate_merge_connection(
 	right: SimulationElement,
 	right_port_id: String
 ) -> bool:
-	var left_port: PortDefinition = _find_port(left, left_port_id)
-	var right_port: PortDefinition = _find_port(right, right_port_id)
-	if left_port == null or right_port == null:
-		return false
-	return _ports_form_rigid_edge(left, left_port, right, right_port)
+	return GridSurfaceUtil.validate_rigid_connection(
+		left,
+		left_port_id,
+		right,
+		right_port_id
+	)
 
 
 static func find_rigid_connection(
@@ -243,90 +275,7 @@ static func _rigid_connection(
 	left: SimulationElement,
 	right: SimulationElement
 ) -> Dictionary:
-	var left_archetype: ElementArchetype = left.get_archetype()
-	var right_archetype: ElementArchetype = right.get_archetype()
-	if left_archetype == null or right_archetype == null:
-		return {}
-
-	for left_port: PortDefinition in left_archetype.ports:
-		if not _is_structural_port(left_port):
-			continue
-		for right_port: PortDefinition in right_archetype.ports:
-			if not _is_structural_port(right_port):
-				continue
-			if _ports_form_rigid_edge(left, left_port, right, right_port):
-				return {
-					"left_port_id": left_port.port_id,
-					"right_port_id": right_port.port_id,
-				}
-	return {}
-
-
-static func _ports_form_rigid_edge(
-	left: SimulationElement,
-	left_port: PortDefinition,
-	right: SimulationElement,
-	right_port: PortDefinition
-) -> bool:
-	if left_port.face_slot != right_port.face_slot:
-		return false
-	if not _tags_are_compatible(
-		left_port.compatibility_tags,
-		right_port.compatibility_tags
-	):
-		return false
-	var left_cell: Vector3i = _element_port_cell(left, left_port)
-	var left_direction: Vector3i = _element_port_direction(left, left_port)
-	var right_cell: Vector3i = _element_port_cell(right, right_port)
-	var right_direction: Vector3i = _element_port_direction(right, right_port)
-	return (
-		right_cell == left_cell + left_direction
-		and right_direction == -left_direction
-	)
-
-
-static func _element_port_cell(
-	element: SimulationElement,
-	port: PortDefinition
-) -> Vector3i:
-	return (
-		element.origin_cell
-		+ OrientationUtil.rotate_cell(
-			port.local_cell,
-			element.orientation_index
-		)
-	)
-
-
-static func _element_port_direction(
-	element: SimulationElement,
-	port: PortDefinition
-) -> Vector3i:
-	return OrientationUtil.rotate_direction(
-		OrientationUtil.face_to_vector(port.local_face),
-		element.orientation_index
-	)
-
-
-static func _find_port(
-	element: SimulationElement,
-	port_id: String
-) -> PortDefinition:
-	var archetype: ElementArchetype = element.get_archetype()
-	if archetype == null:
-		return null
-	for port: PortDefinition in archetype.ports:
-		if port.port_id == port_id:
-			return port
-	return null
-
-
-static func _is_structural_port(port: PortDefinition) -> bool:
-	return (
-		port != null
-		and port.kind == PortDefinition.Kind.MECHANICAL
-		and port.compatibility_tags.has("structural")
-	)
+	return GridSurfaceUtil.find_rigid_connection(left, right)
 
 
 static func _is_anchor_port(port: PortDefinition) -> bool:
@@ -334,21 +283,6 @@ static func _is_anchor_port(port: PortDefinition) -> bool:
 		port != null
 		and port.kind == PortDefinition.Kind.MECHANICAL
 		and port.compatibility_tags.has("anchor")
-	)
-
-
-static func _tags_are_compatible(
-	left_tags: PackedStringArray,
-	right_tags: PackedStringArray
-) -> bool:
-	for tag: String in left_tags:
-		if tag != "structural" and right_tags.has(tag):
-			return true
-	return (
-		left_tags.has("structural")
-		and right_tags.has("structural")
-		and left_tags.size() == 1
-		and right_tags.size() == 1
 	)
 
 

@@ -25,6 +25,7 @@ func _run_tests() -> void:
 		_test_overlap_and_local_id_diagnostics,
 		_test_archetype_schema_diagnostics,
 		_test_connectivity_diagnostics,
+		_test_mount_pad_connectivity_policy,
 		_test_baked_resources,
 	]
 	for test: Callable in tests:
@@ -338,7 +339,7 @@ func _test_overlap_and_local_id_diagnostics() -> bool:
 
 func _test_archetype_schema_diagnostics() -> bool:
 	var bad: ElementArchetype = (
-		Slice01Archetypes.frame().duplicate(true) as ElementArchetype
+		Slice01Archetypes.cargo_store().duplicate(true) as ElementArchetype
 	)
 	bad.archetype_id = "bad_schema"
 	bad.colliders = []
@@ -346,6 +347,8 @@ func _test_archetype_schema_diagnostics() -> bool:
 	duplicate_requirement.resource_id = "construction_component"
 	duplicate_requirement.amount = 0.0
 	bad.build_requirements.append(duplicate_requirement)
+	if bad.ports.is_empty():
+		return _fail("schema fixture archetype has no ports")
 	var duplicate_port: PortDefinition = bad.ports[0].duplicate(true)
 	duplicate_port.local_cell = Vector3i(9, 0, 0)
 	duplicate_port.compatibility_tags = PackedStringArray()
@@ -401,35 +404,73 @@ func _test_connectivity_diagnostics() -> bool:
 	if not BlueprintValidator.validate(allowed).ok:
 		return _fail("allow_disconnected blueprint was rejected")
 
-	var incompatible_left: ElementArchetype = (
-		Slice01Archetypes.frame().duplicate(true) as ElementArchetype
-	)
-	var incompatible_right: ElementArchetype = (
-		Slice01Archetypes.frame().duplicate(true) as ElementArchetype
-	)
-	for port: PortDefinition in incompatible_right.ports:
-		if port.kind == PortDefinition.Kind.MECHANICAL:
-			port.compatibility_tags = PackedStringArray(["other_structure"])
-	var incompatible: BlueprintValidationResult = _validate(
-		"incompatible",
+	return true
+
+
+func _test_mount_pad_connectivity_policy() -> bool:
+	var cargo_store: ElementArchetype = Slice01Archetypes.cargo_store()
+	var frame: ElementArchetype = Slice01Archetypes.frame()
+	var allow_baked: Blueprint = BlueprintBaker.bake_from_placements(
+		"mount_pad_allow",
 		[
-			_make_placement(
-				"left",
-				incompatible_left,
-				Vector3i.ZERO,
-				0
-			),
-			_make_placement(
-				"right",
-				incompatible_right,
-				Vector3i.RIGHT,
-				0
-			),
+			_make_placement("store", cargo_store, Vector3i.ZERO, 0),
+			_make_placement("frame", frame, Vector3i(-1, 0, 1), 0),
 		]
 	)
-	if incompatible.ok or not _errors_contain(incompatible, "disconnected"):
-		return _fail("incompatible structural faces connected")
+	if not BlueprintValidator.validate(allow_baked).ok:
+		return _fail("mount-pad-aligned blueprint rejected")
+	if BlueprintConnectivity.connected_components(allow_baked).size() != 1:
+		return _fail("mount-pad-aligned blueprint disconnected")
+
+	var deny: BlueprintValidationResult = _validate(
+		"mount_pad_deny",
+		[
+			_make_placement("store", cargo_store, Vector3i.ZERO, 0),
+			_make_placement("frame", frame, Vector3i(0, 0, 3), 0),
+		]
+	)
+	if deny.ok or not _errors_contain(deny, "disconnected"):
+		return _fail("non-pad structural contact connected")
+
+	var tagged_left: ElementArchetype = (
+		Slice01Archetypes.frame().duplicate(true) as ElementArchetype
+	)
+	var tagged_right: ElementArchetype = (
+		Slice01Archetypes.frame().duplicate(true) as ElementArchetype
+	)
+	for port: PortDefinition in tagged_right.ports:
+		if port.kind == PortDefinition.Kind.MECHANICAL:
+			port.compatibility_tags = PackedStringArray(["other_structure"])
+	var full_surface: BlueprintValidationResult = _validate(
+		"full_surface_tags_ignored",
+		[
+			_make_placement("left", tagged_left, Vector3i.ZERO, 0),
+			_make_placement("right", tagged_right, Vector3i.RIGHT, 0),
+		]
+	)
+	if not full_surface.ok:
+		return _fail("FULL_SURFACE frames rejected despite tag mismatch")
+
+	var beam: ElementArchetype = Slice01Archetypes.frame_beam()
+	if GridSurfaceUtil.element_has_structural_surface(
+		_preview_element(beam, Vector3i.ZERO, 0),
+		"structural_1_0_0_px"
+	):
+		return _fail("internal multi-cell face exposed as structural surface")
 	return true
+
+
+func _preview_element(
+	archetype: ElementArchetype,
+	origin_cell: Vector3i,
+	orientation_index: int
+) -> SimulationElement:
+	var element := SimulationElement.new()
+	element.archetype_id = archetype.archetype_id
+	element.bind_archetype(archetype)
+	element.origin_cell = origin_cell
+	element.orientation_index = orientation_index
+	return element
 
 
 func _test_baked_resources() -> bool:

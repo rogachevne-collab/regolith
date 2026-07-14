@@ -1,0 +1,58 @@
+[gd_resource type="Resource" script_class="ElementArchetype" load_steps=8 format=3]
+
+[ext_resource type="Script" path="res://scripts/simulation/resources/build_requirement.gd" id="1"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/collider_definition.gd" id="2"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/port_definition.gd" id="3"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/piston_definition.gd" id="4"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/structural_mount_pad.gd" id="5"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/element_archetype.gd" id="6"]
+
+[sub_resource type="Resource" id="Requirement"]
+script = ExtResource("1")
+resource_id = "construction_component"
+amount = 4.0
+
+[sub_resource type="Resource" id="Collider"]
+script = ExtResource("2")
+
+[sub_resource type="Resource" id="PistonDefinition"]
+script = ExtResource("4")
+head_archetype_id = "piston_head"
+
+[sub_resource type="Resource" id="MountNy"]
+script = ExtResource("5")
+local_face = 3
+
+[sub_resource type="Resource" id="MountPx"]
+script = ExtResource("5")
+local_face = 0
+
+[sub_resource type="Resource" id="MountNx"]
+script = ExtResource("5")
+local_face = 1
+
+[sub_resource type="Resource" id="DrivePort"]
+script = ExtResource("3")
+port_id = "piston_drive"
+local_face = 2
+compatibility_tags = PackedStringArray("piston", "internal")
+
+[sub_resource type="Resource" id="PowerPort"]
+script = ExtResource("3")
+port_id = "power_in"
+kind = 1
+compatibility_tags = PackedStringArray("electric", "input")
+
+[resource]
+script = ExtResource("6")
+archetype_id = "piston_base"
+display_name = "Piston"
+roles = PackedStringArray("Actuator")
+	mass_kg = 40.0
+	max_integrity = 100.0
+	structural_surface_policy = 2
+structural_mount_pads = Array[ExtResource("5")]([SubResource("MountNy"), SubResource("MountPx"), SubResource("MountNx")])
+colliders = Array[ExtResource("2")]([SubResource("Collider")])
+ports = Array[ExtResource("3")]([SubResource("DrivePort"), SubResource("PowerPort")])
+build_requirements = Array[ExtResource("1")]([SubResource("Requirement")])
+piston_definition = SubResource("PistonDefinition")

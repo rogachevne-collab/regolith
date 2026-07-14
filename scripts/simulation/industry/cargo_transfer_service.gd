@@ -10,7 +10,8 @@ func transfer_between_stores(
 	from_store_id: String,
 	to_store_id: String,
 	resource_id: String,
-	requested_amount: float
+	requested_amount: float,
+	instance_id: String = ""
 ) -> Dictionary:
 	if (
 		world == null
@@ -23,6 +24,21 @@ func transfer_between_stores(
 		return _failed(&"invalid_target")
 	if not is_finite(requested_amount) or requested_amount < 0.0:
 		return _failed(&"invalid_target")
+	if not instance_id.is_empty():
+		return _transfer_player_tool_instance(
+			world,
+			from_store_id,
+			to_store_id,
+			instance_id
+		)
+	if (
+		ResourceCatalog.is_tool_item(resource_id)
+		and (
+			from_store_id == IndustryStoreService.PLAYER_STORE_ID
+			or to_store_id == IndustryStoreService.PLAYER_STORE_ID
+		)
+	):
+		return _transfer_tool_item(world, from_store_id, to_store_id, resource_id, requested_amount)
 
 	var from_store = _resolve_store(world, from_store_id)
 	var to_store = _resolve_store(world, to_store_id)
@@ -35,22 +51,31 @@ func transfer_between_stores(
 	if amount <= EPSILON:
 		return _failed(&"no_input")
 
-	var dest_capacity := IndustryStoreService.capacity_kg_for_store(
+	var dest_capacity := IndustryStoreService.capacity_l_for_store(
 		world,
 		to_store_id
 	)
+	var extra_used_l := _destination_extra_used_l(world, to_store_id)
 	var max_addable := _max_addable_amount(
 		to_store,
 		resource_id,
-		dest_capacity
+		dest_capacity,
+		extra_used_l
 	)
 	amount = minf(amount, max_addable)
+	amount = ResourceCatalog.quantize_transfer_amount(resource_id, amount)
 	if amount <= EPSILON:
 		return _failed(&"storage_full")
 
 	if not _store_can_remove(from_store, resource_id, amount):
 		return _failed(&"no_input")
-	if not _store_can_add(to_store, resource_id, amount, dest_capacity):
+	if not _store_can_add(
+		to_store,
+		resource_id,
+		amount,
+		dest_capacity,
+		extra_used_l
+	):
 		return _failed(&"storage_full")
 
 	_store_remove(from_store, resource_id, amount)
@@ -69,8 +94,127 @@ func transfer_resource_command(
 		command.from_store_id,
 		command.to_store_id,
 		command.resource_id,
-		command.amount
+		command.amount,
+		command.instance_id
 	)
+
+
+func _transfer_player_tool_instance(
+	world: SimulationWorld,
+	from_store_id: String,
+	to_store_id: String,
+	instance_id: String
+) -> Dictionary:
+	if from_store_id != IndustryStoreService.PLAYER_STORE_ID:
+		return _failed(&"invalid_target")
+	var registry := world.ensure_player_inventory()
+	if registry == null or not registry.has_instance(instance_id):
+		return _failed(&"no_input")
+	var item_id := registry.item_id_for_instance(instance_id)
+	if item_id.is_empty() or not ResourceCatalog.is_tool_item(item_id):
+		return _failed(&"invalid_target")
+	var to_store = _resolve_store(world, to_store_id)
+	if to_store == null:
+		return _failed(&"invalid_reference")
+	var dest_capacity := IndustryStoreService.capacity_l_for_store(
+		world,
+		to_store_id
+	)
+	var extra_used_l := _destination_extra_used_l(world, to_store_id)
+	if not _store_can_add(to_store, item_id, 1.0, dest_capacity, extra_used_l):
+		return _failed(&"storage_full")
+	if not registry.remove_instance(instance_id):
+		return _failed(&"no_input")
+	_store_add(to_store, item_id, 1.0, dest_capacity)
+	return _ok(1.0)
+
+
+func _transfer_tool_item(
+	world: SimulationWorld,
+	from_store_id: String,
+	to_store_id: String,
+	resource_id: String,
+	requested_amount: float
+) -> Dictionary:
+	if from_store_id == IndustryStoreService.PLAYER_STORE_ID:
+		return _failed(&"invalid_target")
+	if to_store_id != IndustryStoreService.PLAYER_STORE_ID:
+		return _transfer_stack_only(
+			world,
+			from_store_id,
+			to_store_id,
+			resource_id,
+			requested_amount
+		)
+	var from_store = _resolve_store(world, from_store_id)
+	if from_store == null:
+		return _failed(&"invalid_reference")
+	var available := _store_amount(from_store, resource_id)
+	var amount := requested_amount if requested_amount > EPSILON else available
+	amount = minf(amount, minf(available, 1.0))
+	amount = ResourceCatalog.quantize_transfer_amount(resource_id, amount)
+	if amount <= EPSILON:
+		return _failed(&"no_input")
+	var registry := world.ensure_player_inventory()
+	var capacity_l := IndustryStoreService.player_carry_capacity_l()
+	var projected := IndustryStoreService.player_total_volume_l(world)
+	projected += ResourceCatalog.resource_volume_l(resource_id, 1.0)
+	if projected > capacity_l + EPSILON:
+		return _failed(&"storage_full")
+	if not _store_can_remove(from_store, resource_id, 1.0):
+		return _failed(&"no_input")
+	if registry.create_instance(resource_id).is_empty():
+		return _failed(&"storage_full")
+	_store_remove(from_store, resource_id, 1.0)
+	return _ok(1.0)
+
+
+func _transfer_stack_only(
+	world: SimulationWorld,
+	from_store_id: String,
+	to_store_id: String,
+	resource_id: String,
+	requested_amount: float
+) -> Dictionary:
+	var from_store = _resolve_store(world, from_store_id)
+	var to_store = _resolve_store(world, to_store_id)
+	if from_store == null or to_store == null:
+		return _failed(&"invalid_reference")
+	var available: float = _store_amount(from_store, resource_id)
+	var amount: float = requested_amount if requested_amount > EPSILON else available
+	amount = minf(amount, available)
+	if amount <= EPSILON:
+		return _failed(&"no_input")
+	var dest_capacity := IndustryStoreService.capacity_l_for_store(
+		world,
+		to_store_id
+	)
+	var max_addable := _max_addable_amount(
+		to_store,
+		resource_id,
+		dest_capacity,
+		0.0
+	)
+	amount = minf(amount, max_addable)
+	amount = ResourceCatalog.quantize_transfer_amount(resource_id, amount)
+	if amount <= EPSILON:
+		return _failed(&"storage_full")
+	if not _store_can_remove(from_store, resource_id, amount):
+		return _failed(&"no_input")
+	if not _store_can_add(to_store, resource_id, amount, dest_capacity, 0.0):
+		return _failed(&"storage_full")
+	_store_remove(from_store, resource_id, amount)
+	_store_add(to_store, resource_id, amount, dest_capacity)
+	return _ok(amount)
+
+
+func _destination_extra_used_l(
+	world: SimulationWorld,
+	store_id: String
+) -> float:
+	if store_id != IndustryStoreService.PLAYER_STORE_ID:
+		return 0.0
+	return IndustryStoreService.player_instance_volume_l(world)
 
 
 func auto_transfer_tick(
@@ -188,18 +332,20 @@ func _store_amount(target: Variant, resource_id: String) -> float:
 func _max_addable_amount(
 	target: Variant,
 	resource_id: String,
-	capacity_kg: float
+	capacity_l: float,
+	extra_used_l: float = 0.0
 ) -> float:
 	if target is SimulationElement:
 		return (target as SimulationElement).industry_buffer.max_addable_amount(
 			resource_id,
-			capacity_kg
+			capacity_l
 		)
 	if target is SimulationResourceStore:
 		return ResourceCatalog.max_addable_amount(
 			target as SimulationResourceStore,
 			resource_id,
-			capacity_kg
+			capacity_l,
+			extra_used_l
 		)
 	return 0.0
 
@@ -223,20 +369,23 @@ func _store_can_add(
 	target: Variant,
 	resource_id: String,
 	amount: float,
-	capacity_kg: float
+	capacity_l: float,
+	extra_used_l: float = 0.0
 ) -> bool:
 	if target is SimulationElement:
 		return (target as SimulationElement).industry_buffer.can_add(
 			resource_id,
 			amount,
-			capacity_kg
+			capacity_l
 		)
 	if target is SimulationResourceStore:
-		return (target as SimulationResourceStore).can_add(
+		var max_addable := ResourceCatalog.max_addable_amount(
+			target as SimulationResourceStore,
 			resource_id,
-			amount,
-			capacity_kg
+			capacity_l,
+			extra_used_l
 		)
+		return amount <= max_addable + EPSILON
 	return false
 
 
@@ -244,19 +393,19 @@ func _store_add(
 	target: Variant,
 	resource_id: String,
 	amount: float,
-	capacity_kg: float
+	capacity_l: float
 ) -> void:
 	if target is SimulationElement:
 		(target as SimulationElement).industry_buffer.add(
 			resource_id,
 			amount,
-			capacity_kg
+			capacity_l
 		)
 	elif target is SimulationResourceStore:
 		(target as SimulationResourceStore).add(
 			resource_id,
 			amount,
-			capacity_kg
+			capacity_l
 		)
 
 

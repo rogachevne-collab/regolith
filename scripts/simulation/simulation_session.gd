@@ -55,6 +55,10 @@ func apply_dequeue_recipe(command: DequeueRecipeCommand) -> Dictionary:
 	return world.apply_dequeue_recipe(command)
 
 
+func apply_set_actuator_target(command: SetActuatorTargetCommand) -> Dictionary:
+	return world.apply_set_actuator_target(command)
+
+
 func _bind_impact_service() -> void:
 	var gateway: WorldCommandGateway = null
 	if not gateway_path.is_empty():

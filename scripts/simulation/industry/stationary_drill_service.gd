@@ -5,6 +5,7 @@ const EPSILON := 0.000001
 
 var _drill_contact_probe: Callable = Callable()
 var _drill_carve: Callable = Callable()
+var _material_source := TerrainMaterialSource.new()
 
 
 func set_drill_carve_stub(stub: Callable) -> void:
@@ -66,9 +67,8 @@ func _tick_drill(
 	if not _has_terrain_contact(element.element_id):
 		element.industry_functional_reason = &"no_terrain_contact"
 		return
-
 	var maximum_yield := _raw_amount_from_volume(
-		IndustryArchetypeProfile.drill_carve_volume_budget_m3()
+		IndustryArchetypeProfile.drill_max_request_volume_m3()
 	)
 	if not _can_accept_yield(world, cargo_graph, element, maximum_yield):
 		element.industry_functional_reason = &"storage_full"
@@ -98,18 +98,22 @@ func _has_terrain_contact(element_id: int) -> bool:
 func _carve_volume(element_id: int) -> float:
 	if not _drill_carve.is_valid():
 		return 0.0
-	return clampf(
-		float(_drill_carve.call(element_id)),
-		0.0,
-		IndustryArchetypeProfile.drill_carve_volume_budget_m3()
-	)
+	return maxf(float(_drill_carve.call(element_id)), 0.0)
 
 
 func _raw_amount_from_volume(volume_m3: float) -> float:
 	if volume_m3 <= EPSILON:
 		return 0.0
-	var mass_kg := IndustryArchetypeProfile.raw_mass_kg_from_volume_m3(volume_m3)
-	var unit_mass := ResourceCatalog.mass_per_unit_kg("raw_regolith")
+	var yields := _material_source.yield_for_removed_volume(
+		volume_m3,
+		IndustryArchetypeProfile.terrain_collectible_fraction()
+	)
+	if yields.is_empty():
+		return 0.0
+	var yield_entry: Dictionary = yields[0]
+	var resource_id := String(yield_entry.get("resource_id", ""))
+	var mass_kg := float(yield_entry.get("mass_kg", 0.0))
+	var unit_mass := ResourceCatalog.mass_per_unit_kg(resource_id)
 	if unit_mass <= EPSILON:
 		return 0.0
 	return mass_kg / unit_mass
@@ -123,7 +127,7 @@ func _credit_raw_regolith(
 	var amount := _raw_amount_from_volume(volume_m3)
 	if amount <= EPSILON:
 		return 0.0
-	var capacity := IndustryArchetypeProfile.internal_buffer_capacity_kg(
+	var capacity := IndustryArchetypeProfile.internal_buffer_capacity_l(
 		element.archetype_id
 	)
 	if not element.industry_buffer.can_add("raw_regolith", amount, capacity):
@@ -138,7 +142,7 @@ func _can_accept_yield(
 	element: SimulationElement,
 	amount: float
 ) -> bool:
-	var capacity := IndustryArchetypeProfile.internal_buffer_capacity_kg(
+	var capacity := IndustryArchetypeProfile.internal_buffer_capacity_l(
 		element.archetype_id
 	)
 	return element.industry_buffer.can_add(

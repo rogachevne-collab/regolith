@@ -2,7 +2,6 @@
 
 [ext_resource type="Script" path="res://scripts/simulation/resources/build_requirement.gd" id="1_req"]
 [ext_resource type="Script" path="res://scripts/simulation/resources/collider_definition.gd" id="2_col"]
-[ext_resource type="Script" path="res://scripts/simulation/resources/port_definition.gd" id="3_port"]
 [ext_resource type="Script" path="res://scripts/simulation/resources/element_archetype.gd" id="4_arch"]
 
 [sub_resource type="Resource" id="Requirement"]
@@ -15,47 +14,6 @@ script = ExtResource("2_col")
 size = Vector3(2.5, 2.5, 2.5)
 offset_in_cell = Vector3(1.25, 1.25, 1.25)
 
-[sub_resource type="Resource" id="StructuralPx"]
-script = ExtResource("3_port")
-port_id = "structural_4_2_2_px"
-local_cell = Vector3i(4, 2, 2)
-compatibility_tags = PackedStringArray("structural")
-
-[sub_resource type="Resource" id="StructuralNx"]
-script = ExtResource("3_port")
-port_id = "structural_0_2_2_nx"
-local_cell = Vector3i(0, 2, 2)
-local_face = 1
-compatibility_tags = PackedStringArray("structural")
-
-[sub_resource type="Resource" id="StructuralPy"]
-script = ExtResource("3_port")
-port_id = "structural_2_4_2_py"
-local_cell = Vector3i(2, 4, 2)
-local_face = 2
-compatibility_tags = PackedStringArray("structural")
-
-[sub_resource type="Resource" id="StructuralNy"]
-script = ExtResource("3_port")
-port_id = "structural_2_0_2_ny"
-local_cell = Vector3i(2, 0, 2)
-local_face = 3
-compatibility_tags = PackedStringArray("structural")
-
-[sub_resource type="Resource" id="StructuralPz"]
-script = ExtResource("3_port")
-port_id = "structural_2_2_4_pz"
-local_cell = Vector3i(2, 2, 4)
-local_face = 4
-compatibility_tags = PackedStringArray("structural")
-
-[sub_resource type="Resource" id="StructuralNz"]
-script = ExtResource("3_port")
-port_id = "structural_2_2_0_nz"
-local_cell = Vector3i(2, 2, 0)
-local_face = 5
-compatibility_tags = PackedStringArray("structural")
-
 [resource]
 script = ExtResource("4_arch")
 archetype_id = "large_frame"
@@ -63,6 +21,6 @@ display_name = "Блок 2.5 м"
 roles = PackedStringArray("Frame")
 mass_kg = 625.0
 footprint_cells = Array[Vector3i]([Vector3i(0, 0, 0), Vector3i(0, 0, 1), Vector3i(0, 0, 2), Vector3i(0, 0, 3), Vector3i(0, 0, 4), Vector3i(0, 1, 0), Vector3i(0, 1, 1), Vector3i(0, 1, 2), Vector3i(0, 1, 3), Vector3i(0, 1, 4), Vector3i(0, 2, 0), Vector3i(0, 2, 1), Vector3i(0, 2, 2), Vector3i(0, 2, 3), Vector3i(0, 2, 4), Vector3i(0, 3, 0), Vector3i(0, 3, 1), Vector3i(0, 3, 2), Vector3i(0, 3, 3), Vector3i(0, 3, 4), Vector3i(0, 4, 0), Vector3i(0, 4, 1), Vector3i(0, 4, 2), Vector3i(0, 4, 3), Vector3i(0, 4, 4), Vector3i(1, 0, 0), Vector3i(1, 0, 1), Vector3i(1, 0, 2), Vector3i(1, 0, 3), Vector3i(1, 0, 4), Vector3i(1, 1, 0), Vector3i(1, 1, 1), Vector3i(1, 1, 2), Vector3i(1, 1, 3), Vector3i(1, 1, 4), Vector3i(1, 2, 0), Vector3i(1, 2, 1), Vector3i(1, 2, 2), Vector3i(1, 2, 3), Vector3i(1, 2, 4), Vector3i(1, 3, 0), Vector3i(1, 3, 1), Vector3i(1, 3, 2), Vector3i(1, 3, 3), Vector3i(1, 3, 4), Vector3i(1, 4, 0), Vector3i(1, 4, 1), Vector3i(1, 4, 2), Vector3i(1, 4, 3), Vector3i(1, 4, 4), Vector3i(2, 0, 0), Vector3i(2, 0, 1), Vector3i(2, 0, 2), Vector3i(2, 0, 3), Vector3i(2, 0, 4), Vector3i(2, 1, 0), Vector3i(2, 1, 1), Vector3i(2, 1, 2), Vector3i(2, 1, 3), Vector3i(2, 1, 4), Vector3i(2, 2, 0), Vector3i(2, 2, 1), Vector3i(2, 2, 2), Vector3i(2, 2, 3), Vector3i(2, 2, 4), Vector3i(2, 3, 0), Vector3i(2, 3, 1), Vector3i(2, 3, 2), Vector3i(2, 3, 3), Vector3i(2, 3, 4), Vector3i(2, 4, 0), Vector3i(2, 4, 1), Vector3i(2, 4, 2), Vector3i(2, 4, 3), Vector3i(2, 4, 4), Vector3i(3, 0, 0), Vector3i(3, 0, 1), Vector3i(3, 0, 2), Vector3i(3, 0, 3), Vector3i(3, 0, 4), Vector3i(3, 1, 0), Vector3i(3, 1, 1), Vector3i(3, 1, 2), Vector3i(3, 1, 3), Vector3i(3, 1, 4), Vector3i(3, 2, 0), Vector3i(3, 2, 1), Vector3i(3, 2, 2), Vector3i(3, 2, 3), Vector3i(3, 2, 4), Vector3i(3, 3, 0), Vector3i(3, 3, 1), Vector3i(3, 3, 2), Vector3i(3, 3, 3), Vector3i(3, 3, 4), Vector3i(3, 4, 0), Vector3i(3, 4, 1), Vector3i(3, 4, 2), Vector3i(3, 4, 3), Vector3i(3, 4, 4), Vector3i(4, 0, 0), Vector3i(4, 0, 1), Vector3i(4, 0, 2), Vector3i(4, 0, 3), Vector3i(4, 0, 4), Vector3i(4, 1, 0), Vector3i(4, 1, 1), Vector3i(4, 1, 2), Vector3i(4, 1, 3), Vector3i(4, 1, 4), Vector3i(4, 2, 0), Vector3i(4, 2, 1), Vector3i(4, 2, 2), Vector3i(4, 2, 3), Vector3i(4, 2, 4), Vector3i(4, 3, 0), Vector3i(4, 3, 1), Vector3i(4, 3, 2), Vector3i(4, 3, 3), Vector3i(4, 3, 4), Vector3i(4, 4, 0), Vector3i(4, 4, 1), Vector3i(4, 4, 2), Vector3i(4, 4, 3), Vector3i(4, 4, 4)])
+structural_surface_policy = 1
 colliders = Array[ExtResource("2_col")]([SubResource("Collider")])
-ports = Array[ExtResource("3_port")]([SubResource("StructuralPx"), SubResource("StructuralNx"), SubResource("StructuralPy"), SubResource("StructuralNy"), SubResource("StructuralPz"), SubResource("StructuralNz")])
 build_requirements = Array[ExtResource("1_req")]([SubResource("Requirement")])

@@ -69,7 +69,11 @@ func _physics_process(_delta: float) -> void:
 			or _tool_controller.state == ToolController.ActionState.COMPLETED
 		)
 	)
-	_set_drilling(has_hit and action_active)
+	_set_drilling(
+		has_hit
+		and action_active
+		and _tool_controller.is_drill_excavating()
+	)
 	if _drilling:
 		_sparks.global_position = contact
 		_sparks.look_at(contact + direction, Vector3.UP)
@@ -114,6 +118,7 @@ func _set_drilling(active: bool) -> void:
 		return
 	_drilling = active
 	if active:
+		_sparks.emitting = true
 		if not _audio.playing:
 			_audio.play()
 	else:

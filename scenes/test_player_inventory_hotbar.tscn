@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://test_player_inventory_hotbar"]
+
+[ext_resource type="Script" path="res://scripts/test_player_inventory_hotbar.gd" id="1"]
+
+[node name="TestPlayerInventoryHotbar" type="Node"]
+script = ExtResource("1")

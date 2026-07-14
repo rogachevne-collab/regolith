@@ -1,0 +1,41 @@
+[gd_scene load_steps=6 format=3 uid="uid://bench_voxel_scale"]
+
+[ext_resource type="Script" path="res://scripts/bench_voxel_scale.gd" id="1"]
+[ext_resource type="VoxelGeneratorNoise2D" uid="uid://cngp1p34afd2p" path="res://resources/terrain_generator.tres" id="2"]
+[ext_resource type="Material" path="res://resources/terrain_material_smooth.tres" id="3"]
+
+[sub_resource type="Environment" id="Environment_bench"]
+background_mode = 1
+background_color = Color(0.05, 0.06, 0.09, 1)
+ambient_light_source = 1
+ambient_light_color = Color(0.35, 0.38, 0.45, 1)
+ambient_light_energy = 0.35
+
+[sub_resource type="VoxelMesherTransvoxel" id="VoxelMesherTransvoxel_bench"]
+
+[node name="BenchVoxelScale" type="Node3D"]
+script = ExtResource("1")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_bench")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.866025, -0.25, 0.433013, 0, 0.866025, 0.5, -0.5, -0.433013, 0.75, 0, 40, 0)
+light_energy = 1.4
+shadow_enabled = true
+
+[node name="VoxelTerrain" type="VoxelTerrain" parent="."]
+generator = ExtResource("2")
+mesher = SubResource("VoxelMesherTransvoxel_bench")
+material_override = ExtResource("3")
+generate_collisions = true
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0.707107, 0.707107, 0, -0.707107, 0.707107, 0, 70, 16)
+current = true
+fov = 75.0
+far = 512.0
+
+[node name="VoxelViewer" type="VoxelViewer" parent="Camera3D"]
+view_distance = 128
+requires_collisions = true

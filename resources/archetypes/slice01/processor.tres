@@ -4,6 +4,7 @@
 [ext_resource type="Script" uid="uid://b6d2jhfw581hb" path="res://scripts/simulation/resources/collider_definition.gd" id="2_pjlip"]
 [ext_resource type="Script" uid="uid://c4hgnuqnf2up8" path="res://scripts/simulation/resources/port_definition.gd" id="3_4tj15"]
 [ext_resource type="Script" uid="uid://bxidpb3tep3ih" path="res://scripts/simulation/resources/element_archetype.gd" id="4_nghp0"]
+[ext_resource type="Script" uid="uid://bfuxth8e6lccw" path="res://scripts/simulation/resources/structural_mount_pad.gd" id="5_pad"]
 
 [sub_resource type="Resource" id="Resource_ydh1i"]
 script = ExtResource("1_etio4")
@@ -15,46 +16,34 @@ script = ExtResource("2_pjlip")
 size = Vector3(2, 1.5, 1.5)
 offset_in_cell = Vector3(1, 0.75, 0.75)
 
-[sub_resource type="Resource" id="Resource_658ob"]
-script = ExtResource("3_4tj15")
-port_id = "structural_0_0_0_px"
+[sub_resource type="Resource" id="Mount_px"]
+script = ExtResource("5_pad")
 local_cell = Vector3i(3, 0, 1)
-compatibility_tags = PackedStringArray("structural")
 
-[sub_resource type="Resource" id="Resource_uitk2"]
-script = ExtResource("3_4tj15")
-port_id = "structural_0_0_0_nx"
+[sub_resource type="Resource" id="Mount_nx"]
+script = ExtResource("5_pad")
 local_cell = Vector3i(0, 0, 1)
 local_face = 1
-compatibility_tags = PackedStringArray("structural")
 
-[sub_resource type="Resource" id="Resource_hrxqq"]
-script = ExtResource("3_4tj15")
-port_id = "structural_0_0_0_py"
+[sub_resource type="Resource" id="Mount_py"]
+script = ExtResource("5_pad")
 local_cell = Vector3i(1, 2, 1)
 local_face = 2
-compatibility_tags = PackedStringArray("structural")
 
-[sub_resource type="Resource" id="Resource_xjwsv"]
-script = ExtResource("3_4tj15")
-port_id = "structural_0_0_0_ny"
+[sub_resource type="Resource" id="Mount_ny"]
+script = ExtResource("5_pad")
 local_cell = Vector3i(1, 0, 1)
 local_face = 3
-compatibility_tags = PackedStringArray("structural")
 
-[sub_resource type="Resource" id="Resource_d7o7r"]
-script = ExtResource("3_4tj15")
-port_id = "structural_0_0_0_pz"
+[sub_resource type="Resource" id="Mount_pz"]
+script = ExtResource("5_pad")
 local_cell = Vector3i(1, 0, 2)
 local_face = 4
-compatibility_tags = PackedStringArray("structural")
 
-[sub_resource type="Resource" id="Resource_svr4w"]
-script = ExtResource("3_4tj15")
-port_id = "structural_0_0_0_nz"
+[sub_resource type="Resource" id="Mount_nz"]
+script = ExtResource("5_pad")
 local_cell = Vector3i(1, 0, 0)
 local_face = 5
-compatibility_tags = PackedStringArray("structural")
 
 [sub_resource type="Resource" id="Resource_ewvaf"]
 script = ExtResource("3_4tj15")
@@ -87,6 +76,8 @@ display_name = "Процессор"
 roles = PackedStringArray("Processor")
 mass_kg = 140.0
 footprint_cells = Array[Vector3i]([Vector3i(0, 0, 0), Vector3i(0, 0, 1), Vector3i(0, 0, 2), Vector3i(0, 1, 0), Vector3i(0, 1, 1), Vector3i(0, 1, 2), Vector3i(0, 2, 0), Vector3i(0, 2, 1), Vector3i(0, 2, 2), Vector3i(1, 0, 0), Vector3i(1, 0, 1), Vector3i(1, 0, 2), Vector3i(1, 1, 0), Vector3i(1, 1, 1), Vector3i(1, 1, 2), Vector3i(1, 2, 0), Vector3i(1, 2, 1), Vector3i(1, 2, 2), Vector3i(2, 0, 0), Vector3i(2, 0, 1), Vector3i(2, 0, 2), Vector3i(2, 1, 0), Vector3i(2, 1, 1), Vector3i(2, 1, 2), Vector3i(2, 2, 0), Vector3i(2, 2, 1), Vector3i(2, 2, 2), Vector3i(3, 0, 0), Vector3i(3, 0, 1), Vector3i(3, 0, 2), Vector3i(3, 1, 0), Vector3i(3, 1, 1), Vector3i(3, 1, 2), Vector3i(3, 2, 0), Vector3i(3, 2, 1), Vector3i(3, 2, 2)])
+structural_surface_policy = 2
+structural_mount_pads = Array[ExtResource("5_pad")]([SubResource("Mount_px"), SubResource("Mount_nx"), SubResource("Mount_py"), SubResource("Mount_ny"), SubResource("Mount_pz"), SubResource("Mount_nz")])
 colliders = Array[ExtResource("2_pjlip")]([SubResource("Resource_18xak")])
-ports = Array[ExtResource("3_4tj15")]([SubResource("Resource_658ob"), SubResource("Resource_uitk2"), SubResource("Resource_hrxqq"), SubResource("Resource_xjwsv"), SubResource("Resource_d7o7r"), SubResource("Resource_svr4w"), SubResource("Resource_ewvaf"), SubResource("Resource_ccucd"), SubResource("Resource_cargo_in")])
+ports = Array[ExtResource("3_4tj15")]([SubResource("Resource_ewvaf"), SubResource("Resource_ccucd"), SubResource("Resource_cargo_in")])
 build_requirements = Array[ExtResource("1_etio4")]([SubResource("Resource_ydh1i")])

@@ -31,6 +31,7 @@ enum ActionState {
 @export var query_path: NodePath = NodePath("../InteractionQuery")
 @export var gateway_path: NodePath = NodePath("../../WorldCommandGateway")
 @export var preview_path: NodePath = NodePath("../ConstructionPreview")
+@export var terminal_path: NodePath = NodePath("../HUDRoot/Screen/Terminal")
 
 const ACTIONS := {
 	&"tool_primary": {
@@ -72,6 +73,7 @@ const CONSTRUCTION_ARCHETYPES: PackedStringArray = [
 	"cargo_pipe",
 	"processor",
 	"fabricator",
+	"piston_base",
 ]
 
 const TOOLBAR_SLOTS_PER_PAGE := 9
@@ -95,7 +97,7 @@ const TOOLBAR_PAGES: Array = [
 		{"type": &"block", "archetype_id": "stationary_drill"},
 		{"type": &"block", "archetype_id": "cargo_store"},
 		{"type": &"connect"},
-		{},
+		{"type": &"block", "archetype_id": "piston_base"},
 	],
 	[
 		{"type": &"block", "archetype_id": "processor"},
@@ -125,6 +127,7 @@ var toolbar_layout_revision := 0
 var _query: InteractionQuery
 var _gateway: WorldCommandGateway
 var _preview: ConstructionPreview
+var _terminal: Node
 var _cooldown := 0.0
 var _issued_for_press := false
 var _locked_hit: InteractionHit
@@ -139,6 +142,8 @@ var _connect_pending_element_id := 0
 ## element and the final one. Sent with connect_network as `waypoints`.
 var _connect_waypoints: PackedVector3Array = PackedVector3Array()
 var _recipe_cursor_by_element: Dictionary = {}
+var _inventory_revision := -1
+var _last_drill_excavation_msec := -1
 
 const CONNECT_RANGE := 4.0
 const CONNECT_MAX_WAYPOINTS := 16
@@ -155,13 +160,25 @@ func _ready() -> void:
 	_query = get_node(query_path)
 	_gateway = get_node(gateway_path)
 	_preview = get_node_or_null(preview_path) as ConstructionPreview
+	_terminal = get_node_or_null(terminal_path)
 	_ensure_runtime_state()
 	command_requested.connect(_gateway.submit)
+	_gateway.command_completed.connect(_on_gateway_command_completed)
 	_apply_toolbar_slot(toolbar_page, toolbar_slot, false)
 
 
 func _physics_process(delta: float) -> void:
+	_sync_inventory_toolbar_if_needed()
 	_cooldown = maxf(_cooldown - delta, 0.0)
+	if _terminal != null and _terminal_blocks_world_interact():
+		if Input.is_action_just_pressed(&"interact") and _terminal_is_open():
+			if _terminal.has_method("close_for_interact"):
+				_terminal.call("close_for_interact")
+			else:
+				_terminal.call("close")
+		# While the terminal is open or its release latch is active, do not
+		# process held E as toggle_control_seat / drill / etc.
+		return
 	var player := get_parent()
 	if (
 		player.has_method("is_gameplay_input_enabled")
@@ -218,6 +235,7 @@ func _physics_process(delta: float) -> void:
 	elif active_action == &"tool_primary" and active_tool == &"drill":
 		profile = profile.duplicate()
 		profile["interval"] = IndustryArchetypeProfile.hand_drill_interval_s()
+		profile["max_range"] = IndustryArchetypeProfile.hand_drill_reach_m()
 	elif active_action == &"tool_primary" and active_tool == &"weld":
 		profile = ACTIONS[&"tool_weld"].duplicate()
 	var hit := _action_hit(active_action, profile)
@@ -235,6 +253,10 @@ func _physics_process(delta: float) -> void:
 			progress = 0.0
 			state_changed.emit(active_action, state, progress)
 			return
+		_transition(ActionState.CANCELLED)
+		progress = 0.0
+		return
+	if not _active_tool_is_equipped():
 		_transition(ActionState.CANCELLED)
 		progress = 0.0
 		return
@@ -278,27 +300,39 @@ func cancel() -> void:
 	_construction_mode = &"context"
 
 
+func is_drill_excavating() -> bool:
+	if _last_drill_excavation_msec < 0:
+		return false
+	return (
+		Time.get_ticks_msec() - _last_drill_excavation_msec
+		<= int(IndustryArchetypeProfile.hand_drill_interval_s() * 2000.0)
+	)
+
+
+func _on_gateway_command_completed(
+	_command_id: int,
+	result: Dictionary
+) -> void:
+	if StringName(result.get("command_kind", &"")) != &"voxel_remove":
+		return
+	if float(result.get("removed_volume_m3", 0.0)) <= 0.000001:
+		return
+	_last_drill_excavation_msec = Time.get_ticks_msec()
+
+
 func toolbar_page_count() -> int:
 	return TOOLBAR_PAGES.size()
 
 
 func toolbar_slot_label(page: int, slot: int) -> String:
 	var entry := _toolbar_entry(page, slot)
-	if entry.is_empty():
-		return "—"
-	match StringName(entry.get("type", &"")):
-		&"drill":
-			return "бур"
-		&"weld":
-			return "сварка"
-		&"grinder":
-			return "болгарка"
-		&"connect":
-			return "соединение"
-		&"block":
-			return str(entry.get("archetype_id", ""))
-		_:
-			return "—"
+	return PlayerHotbarBridge.slot_label(entry, _player_inventory())
+
+
+func _player_inventory() -> PlayerInventoryRegistry:
+	if _gateway == null:
+		return null
+	return _gateway.player_inventory()
 
 
 func _emit_command_for_action(
@@ -312,8 +346,12 @@ func _emit_command_for_action(
 		"orientation_index": selected_orientation_index,
 		"construction_mode": _construction_mode,
 	}
-	if action == &"interact" and _try_emit_context_interaction(hit):
-		return
+	if action == &"interact":
+		if _try_emit_context_interaction(hit):
+			return
+		# Cargo/machines use the terminal, not toggle_control_seat.
+		if _is_terminal_target_hit(hit):
+			return
 	if (
 		_construction_mode == &"place"
 		and _preview != null
@@ -415,21 +453,30 @@ func _update_toolbar_input() -> void:
 		var action := StringName("toolbar_slot_%d" % [slot_index + 1])
 		if Input.is_action_just_pressed(action):
 			_apply_toolbar_slot(toolbar_page, slot_index)
-	if Input.is_action_just_pressed(&"capture_mouse"):
-		_try_enqueue_target_recipe(_query.current_hit)
+	var hit := _query.current_hit
+	var terminal_target := _is_terminal_target_hit(hit)
+	if not terminal_target:
+		if Input.is_action_just_pressed(&"capture_mouse"):
+			_try_enqueue_target_recipe(hit)
 	if Input.is_action_just_pressed(&"construction_rotate_yaw"):
-		if _cycle_target_recipe(_query.current_hit, 1):
+		if not terminal_target and _cycle_target_recipe(hit, 1):
 			pass
 		elif active_tool == &"build":
 			_rotate_orientation(Vector3.UP)
 	if Input.is_action_just_pressed(&"construction_rotate_pitch"):
-		if _cycle_target_recipe(_query.current_hit, -1):
+		if not terminal_target and _cycle_target_recipe(hit, -1):
 			pass
 		elif active_tool == &"build":
 			_rotate_orientation(Vector3.RIGHT)
 	if Input.is_action_just_pressed(&"construction_rotate_roll"):
 		if active_tool == &"build":
 			_rotate_orientation(Vector3.BACK)
+	if Input.is_action_just_pressed(&"actuator_extend"):
+		_try_actuator_extend(hit)
+	elif Input.is_action_just_pressed(&"actuator_retract"):
+		_try_actuator_retract(hit)
+	elif Input.is_action_just_pressed(&"actuator_stop"):
+		_try_actuator_stop(hit)
 
 
 func _change_toolbar_page(delta: int) -> void:
@@ -456,21 +503,22 @@ func _apply_toolbar_slot(
 	toolbar_page = page
 	toolbar_slot = slot
 	_toolbar_slot_by_page[page] = slot
+	var resolved := PlayerHotbarBridge.resolve_slot_entry(
+		_player_inventory(),
+		entry
+	)
+	if resolved.is_empty():
+		return
 	var previous_tool := active_tool
-	match StringName(entry.get("type", &"")):
-		&"drill":
-			active_tool = &"drill"
-		&"weld":
-			active_tool = &"weld"
-		&"grinder":
-			active_tool = &"grinder"
-		&"connect":
-			active_tool = &"connect"
-			_connect_pending_element_id = 0
-			_connect_waypoints = PackedVector3Array()
+	match StringName(resolved.get("kind", &"")):
+		&"tool_instance":
+			active_tool = StringName(resolved.get("active_tool", &""))
+			if active_tool == &"connect":
+				_connect_pending_element_id = 0
+				_connect_waypoints = PackedVector3Array()
 		&"block":
 			active_tool = &"build"
-			selected_archetype_id = str(entry.get("archetype_id", "frame"))
+			selected_archetype_id = str(resolved.get("archetype_id", "frame"))
 			construction_selection_changed.emit(
 				selected_archetype_id,
 				selected_orientation_index
@@ -505,6 +553,16 @@ func _toolbar_entry(page: int, slot: int) -> Dictionary:
 	return entry if entry is Dictionary else {}
 
 
+func _canonical_toolbar_entry(page: int, slot: int) -> Dictionary:
+	if page < 0 or page >= TOOLBAR_PAGES.size():
+		return {}
+	var slots: Array = TOOLBAR_PAGES[page]
+	if slot < 0 or slot >= slots.size():
+		return {}
+	var entry: Variant = slots[slot]
+	return entry if entry is Dictionary else {}
+
+
 ## Lazily builds the mutable runtime layout (a deep copy of TOOLBAR_PAGES) and
 ## the per-page selected-slot memory. Safe to call repeatedly; idempotent.
 func _ensure_runtime_state() -> void:
@@ -518,6 +576,7 @@ func _ensure_runtime_state() -> void:
 					else {}
 				)
 			_toolbar_layout.append(page_copy)
+		_sync_toolbar_from_inventory()
 	if _toolbar_slot_by_page.size() != _toolbar_layout.size():
 		_toolbar_slot_by_page.resize(_toolbar_layout.size())
 		for page_index: int in range(_toolbar_slot_by_page.size()):
@@ -528,21 +587,7 @@ func _ensure_runtime_state() -> void:
 ## empty. Reads the runtime layout so presentation reflects live remaps.
 func toolbar_slot_archetype_id(page: int, slot: int) -> String:
 	var entry := _toolbar_entry(page, slot)
-	if entry.is_empty():
-		return ""
-	match StringName(entry.get("type", &"")):
-		&"drill":
-			return "drill"
-		&"weld":
-			return "weld"
-		&"grinder":
-			return "grinder"
-		&"connect":
-			return "connect"
-		&"block":
-			return str(entry.get("archetype_id", ""))
-		_:
-			return ""
+	return PlayerHotbarBridge.slot_archetype_id(entry, _player_inventory())
 
 
 ## Whether a slot may be reassigned to a construction archetype. Empty and
@@ -550,11 +595,51 @@ func toolbar_slot_archetype_id(page: int, slot: int) -> String:
 func toolbar_slot_accepts_block(page: int, slot: int) -> bool:
 	if page < 0 or slot < 0 or slot >= TOOLBAR_SLOTS_PER_PAGE:
 		return false
-	var entry := _toolbar_entry(page, slot)
-	if entry.is_empty():
+	var canonical := _canonical_toolbar_entry(page, slot)
+	if canonical.is_empty():
 		return true
-	var slot_type := StringName(entry.get("type", &""))
-	return slot_type == &"block"
+	return StringName(canonical.get("type", &"")) == &"block"
+
+
+## Fixed tool slots accept only an instance of their original tool type. This
+## retains the existing toolbar roles while binding each slot to an owned item.
+func toolbar_slot_accepts_tool_instance(
+	page: int,
+	slot: int,
+	instance_id: String
+) -> bool:
+	var registry := _player_inventory()
+	if registry == null or not registry.has_instance(instance_id):
+		return false
+	var canonical := _canonical_toolbar_entry(page, slot)
+	var expected_type := StringName(canonical.get("type", &""))
+	if not PlayerHotbarBridge.LEGACY_TOOL_TYPES.has(expected_type):
+		return false
+	return (
+		PlayerHotbarBridge.active_tool_for_instance(registry, instance_id)
+		== expected_type
+	)
+
+
+## Binds an owned tool instance to its matching fixed toolbar slot. The
+## authoritative registry clears any prior binding for this instance first.
+func assign_slot_tool_instance(
+	page: int,
+	slot: int,
+	instance_id: String
+) -> bool:
+	if (
+		_gateway == null
+		or not toolbar_slot_accepts_tool_instance(page, slot, instance_id)
+		or not _gateway.assign_player_hotbar_instance(page, slot, instance_id)
+	):
+		return false
+	_inventory_revision = _gateway.player_inventory_revision()
+	_sync_toolbar_from_inventory()
+	toolbar_layout_revision += 1
+	if page == toolbar_page and slot == toolbar_slot:
+		_apply_toolbar_slot(page, slot, true)
+	return true
 
 
 ## Runtime slot remap (BlockPalette drag-drop target). Reassigns page/slot to a
@@ -931,9 +1016,42 @@ func _is_recipe_machine_hit(hit: InteractionHit) -> bool:
 func _try_emit_context_interaction(hit: InteractionHit) -> bool:
 	if _try_collect_world_loot(hit):
 		return true
-	if _try_toggle_target_machine(hit):
+	if active_tool != &"connect" and _try_open_terminal(hit):
 		return true
-	return _try_emit_industry_transfer(hit)
+	return false
+
+
+func _terminal_is_open() -> bool:
+	return (
+		_terminal != null
+		and _terminal.has_method("is_open")
+		and bool(_terminal.call("is_open"))
+	)
+
+
+func _terminal_blocks_world_interact() -> bool:
+	return (
+		_terminal != null
+		and _terminal.has_method("blocks_world_interact")
+		and bool(_terminal.call("blocks_world_interact"))
+	)
+
+
+func _try_open_terminal(hit: InteractionHit) -> bool:
+	if _terminal == null or not _terminal.has_method("try_open_on_target"):
+		return false
+	if (
+		_terminal.has_method("blocks_world_interact")
+		and bool(_terminal.call("blocks_world_interact"))
+	):
+		return false
+	if _terminal.has_method("is_open") and bool(_terminal.call("is_open")):
+		return false
+	return bool(_terminal.call("try_open_on_target", hit))
+
+
+func _is_terminal_target_hit(hit: InteractionHit) -> bool:
+	return not IndustryTransferUtil.terminal_store_id_for_hit(hit, _gateway).is_empty()
 
 
 func _try_collect_world_loot(hit: InteractionHit) -> bool:
@@ -954,29 +1072,6 @@ func _try_collect_world_loot(hit: InteractionHit) -> bool:
 		"parameters": {
 			"pile_id": pile_id,
 			"to_store_id": IndustryStoreService.PLAYER_STORE_ID,
-		},
-	})
-	return true
-
-
-func _try_toggle_target_machine(hit: InteractionHit) -> bool:
-	if (
-		hit == null
-		or not hit.valid
-		or hit.target_kind != InteractionHit.KIND_SIMULATION_ELEMENT
-		or hit.distance > 4.0
-	):
-		return false
-	var archetype_id := str(hit.metadata.get("archetype_id", ""))
-	if archetype_id not in ["stationary_drill", "processor", "fabricator"]:
-		return false
-	command_requested.emit({
-		"kind": &"set_machine_enabled",
-		"source": get_parent(),
-		"target": hit.snapshot(),
-		"parameters": {
-			"element_id": int(hit.metadata.get("element_id", 0)),
-			"enabled": not bool(hit.metadata.get("machine_enabled", true)),
 		},
 	})
 	return true
@@ -1018,33 +1113,76 @@ func _try_dequeue_target_recipe(hit: InteractionHit) -> bool:
 	return true
 
 
-func _try_emit_industry_transfer(hit: InteractionHit) -> bool:
-	if _gateway == null:
-		return false
+func _is_actuator_target_hit(hit: InteractionHit) -> bool:
 	if (
-		not hit.valid
+		hit == null
+		or not hit.valid
 		or hit.target_kind != InteractionHit.KIND_SIMULATION_ELEMENT
-		or hit.distance > 4.0
+		or hit.distance > 4.5
 	):
 		return false
-	var session := _gateway.get_node_or_null(
-		_gateway.simulation_session_path
-	) as SimulationSession
-	if session == null:
+	return hit.metadata.has("piston_joint_id")
+
+
+func _try_actuator_extend(hit: InteractionHit) -> bool:
+	if not _is_actuator_target_hit(hit):
 		return false
-	var element := session.world.get_element(int(hit.metadata.get("element_id", 0)))
-	if not IndustryTransferUtil.is_transfer_target(element):
-		return false
-	var parameters := IndustryTransferUtil.pickup_parameters(session.world, element)
-	if parameters.is_empty():
-		parameters = IndustryTransferUtil.deposit_parameters(session.world, element)
-	if parameters.is_empty():
+	var joint_id := int(hit.metadata.get("piston_joint_id", 0))
+	if joint_id <= 0:
 		return false
 	command_requested.emit({
-		"kind": &"transfer_resource",
+		"kind": &"set_actuator_target",
 		"source": get_parent(),
 		"target": hit.snapshot(),
-		"parameters": parameters,
+		"parameters": {
+			"joint_id": joint_id,
+			"mode": SimulationMotorState.ControlMode.POSITION,
+			"target_position_m": float(
+				hit.metadata.get("piston_upper_limit_m", 0.0)
+			),
+			"enabled": true,
+		},
+	})
+	return true
+
+
+func _try_actuator_retract(hit: InteractionHit) -> bool:
+	if not _is_actuator_target_hit(hit):
+		return false
+	var joint_id := int(hit.metadata.get("piston_joint_id", 0))
+	if joint_id <= 0:
+		return false
+	command_requested.emit({
+		"kind": &"set_actuator_target",
+		"source": get_parent(),
+		"target": hit.snapshot(),
+		"parameters": {
+			"joint_id": joint_id,
+			"mode": SimulationMotorState.ControlMode.POSITION,
+			"target_position_m": float(
+				hit.metadata.get("piston_lower_limit_m", 0.0)
+			),
+			"enabled": true,
+		},
+	})
+	return true
+
+
+func _try_actuator_stop(hit: InteractionHit) -> bool:
+	if not _is_actuator_target_hit(hit):
+		return false
+	var joint_id := int(hit.metadata.get("piston_joint_id", 0))
+	if joint_id <= 0:
+		return false
+	command_requested.emit({
+		"kind": &"set_actuator_target",
+		"source": get_parent(),
+		"target": hit.snapshot(),
+		"parameters": {
+			"joint_id": joint_id,
+			"mode": SimulationMotorState.ControlMode.STOP,
+			"enabled": true,
+		},
 	})
 	return true
 
@@ -1067,6 +1205,65 @@ func _target_for_action(action: StringName) -> InteractionHit:
 				StringName(str(vehicle.get_instance_id()))
 			)
 	return _query.current_hit
+
+
+func _sync_inventory_toolbar_if_needed() -> void:
+	if _gateway == null:
+		return
+	var revision := _gateway.player_inventory_revision()
+	if revision == _inventory_revision:
+		return
+	_inventory_revision = revision
+	_sync_toolbar_from_inventory()
+	toolbar_layout_revision += 1
+	_apply_toolbar_slot_or_first_nonempty(
+		toolbar_page,
+		toolbar_slot,
+		true
+	)
+
+
+func _sync_toolbar_from_inventory() -> void:
+	_ensure_runtime_state()
+	var registry := _player_inventory()
+	if registry == null:
+		return
+	PlayerHotbarBridge.apply_registry_to_layout(
+		registry,
+		_toolbar_layout,
+		TOOLBAR_PAGES
+	)
+
+
+func _active_slot_resolved() -> Dictionary:
+	return PlayerHotbarBridge.resolve_slot_entry(
+		_player_inventory(),
+		_toolbar_entry(toolbar_page, toolbar_slot)
+	)
+
+
+func _active_tool_is_equipped() -> bool:
+	match active_tool:
+		&"drill", &"weld", &"grinder", &"connect":
+			var resolved := _active_slot_resolved()
+			if StringName(resolved.get("kind", &"")) != &"tool_instance":
+				return false
+			var instance_id := str(resolved.get("instance_id", ""))
+			if instance_id.is_empty():
+				return bool(resolved.get("legacy", false))
+			var registry := _player_inventory()
+			return (
+				registry != null
+				and registry.has_instance(instance_id)
+				and PlayerHotbarBridge.slot_owns_instance(
+					registry,
+					toolbar_page,
+					toolbar_slot,
+					instance_id
+				)
+			)
+		_:
+			return true
 
 
 func _transition(next_state: ActionState) -> void:

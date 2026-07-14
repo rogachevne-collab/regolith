@@ -8,7 +8,7 @@
 [ext_resource type="Script" path="res://scripts/ui/hud_feedback.gd" id="6"]
 [ext_resource type="Script" path="res://scripts/ui/hud_toolbar.gd" id="7"]
 [ext_resource type="Script" path="res://scripts/ui/hud_vitals.gd" id="8"]
-[ext_resource type="Script" path="res://scripts/ui/hud_inventory.gd" id="9"]
+[ext_resource type="Script" path="res://scripts/ui/hud_terminal.gd" id="9"]
 [ext_resource type="Script" path="res://scripts/ui/hud_palette.gd" id="10"]
 
 [node name="HUDRoot" type="CanvasLayer"]
@@ -85,7 +85,7 @@ grow_vertical = 2
 mouse_filter = 2
 script = ExtResource("8")
 
-[node name="Inventory" type="Control" parent="Screen"]
+[node name="Terminal" type="Control" parent="Screen"]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0

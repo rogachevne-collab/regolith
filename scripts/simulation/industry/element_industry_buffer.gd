@@ -22,43 +22,38 @@ func resource_ids() -> PackedStringArray:
 
 
 func mass_kg() -> float:
-	var total := 0.0
-	for resource_id: String in resource_ids():
-		total += ResourceCatalog.resource_mass_kg(
-			resource_id,
-			amount(resource_id)
-		)
-	return total
+	return ResourceCatalog.buffer_mass_kg(self)
 
 
-func is_full(capacity_kg: float) -> bool:
-	if capacity_kg <= EPSILON:
-		return false
-	return mass_kg() + EPSILON >= capacity_kg
+func volume_l() -> float:
+	return ResourceCatalog.buffer_volume_l(self)
 
 
-func can_add(resource_id: String, requested: float, capacity_kg: float) -> bool:
+func is_full(capacity_l: float) -> bool:
+	return ResourceCatalog.is_buffer_full(self, capacity_l)
+
+
+func can_add(resource_id: String, requested: float, capacity_l: float) -> bool:
 	if (
 		resource_id.is_empty()
 		or not is_finite(requested)
 		or requested < 0.0
-		or capacity_kg <= EPSILON
+		or capacity_l <= EPSILON
+		or ResourceCatalog.rejects_fractional_amount(resource_id, requested)
 	):
 		return false
 	if requested <= EPSILON:
 		return true
-	var unit_mass := ResourceCatalog.mass_per_unit_kg(resource_id)
-	if unit_mass <= EPSILON:
-		return false
-	return mass_kg() + requested * unit_mass <= capacity_kg + EPSILON
+	var max_addable := max_addable_amount(resource_id, capacity_l)
+	return requested <= max_addable + EPSILON
 
 
 func add(
 	resource_id: String,
 	added: float,
-	capacity_kg: float
+	capacity_l: float
 ) -> bool:
-	if not can_add(resource_id, added, capacity_kg):
+	if not can_add(resource_id, added, capacity_l):
 		return false
 	if added <= EPSILON:
 		return true
@@ -67,12 +62,14 @@ func add(
 
 
 func can_remove(resource_id: String, requested: float) -> bool:
-	return (
-		not resource_id.is_empty()
-		and is_finite(requested)
-		and requested >= 0.0
-		and amount(resource_id) + EPSILON >= requested
-	)
+	if (
+		resource_id.is_empty()
+		or not is_finite(requested)
+		or requested < 0.0
+		or ResourceCatalog.rejects_fractional_amount(resource_id, requested)
+	):
+		return false
+	return amount(resource_id) + EPSILON >= requested
 
 
 func remove(resource_id: String, requested: float) -> bool:
@@ -88,23 +85,22 @@ func remove(resource_id: String, requested: float) -> bool:
 	return true
 
 
-func max_addable_amount(resource_id: String, capacity_kg: float) -> float:
-	if resource_id.is_empty() or capacity_kg <= EPSILON:
-		return 0.0
-	var unit_mass := ResourceCatalog.mass_per_unit_kg(resource_id)
-	if unit_mass <= EPSILON:
-		return 0.0
-	var remaining_kg := capacity_kg - mass_kg()
-	if remaining_kg <= EPSILON:
-		return 0.0
-	return remaining_kg / unit_mass
+func max_addable_amount(resource_id: String, capacity_l: float) -> float:
+	return ResourceCatalog.max_addable_amount_buffer(
+		self,
+		resource_id,
+		capacity_l
+	)
 
 
-func to_dict() -> Dictionary:
+func to_dict(capacity_l: float = INF) -> Dictionary:
 	var amounts: Dictionary = {}
 	for resource_id: String in resource_ids():
 		amounts[resource_id] = amount(resource_id)
-	return {"amounts": amounts}
+	var row := {"amounts": amounts}
+	if is_finite(capacity_l) and capacity_l > EPSILON:
+		row["capacity_l"] = capacity_l
+	return row
 
 
 static func from_dict(data: Dictionary) -> ElementIndustryBuffer:
@@ -114,5 +110,10 @@ static func from_dict(data: Dictionary) -> ElementIndustryBuffer:
 		for resource_id: Variant in amounts.keys():
 			var value := float(amounts[resource_id])
 			if value > EPSILON:
+				if ResourceCatalog.rejects_fractional_amount(
+					str(resource_id),
+					value
+				):
+					return null
 				buffer._amounts[str(resource_id)] = value
 	return buffer

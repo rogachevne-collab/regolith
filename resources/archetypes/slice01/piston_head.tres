@@ -1,0 +1,48 @@
+[gd_resource type="Resource" script_class="ElementArchetype" load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://scripts/simulation/resources/collider_definition.gd" id="1"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/port_definition.gd" id="2"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/structural_mount_pad.gd" id="3"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/element_archetype.gd" id="4"]
+
+[sub_resource type="Resource" id="Collider"]
+script = ExtResource("1")
+
+[sub_resource type="Resource" id="MountPy"]
+script = ExtResource("3")
+local_face = 2
+
+[sub_resource type="Resource" id="MountPx"]
+script = ExtResource("3")
+local_face = 0
+
+[sub_resource type="Resource" id="MountNx"]
+script = ExtResource("3")
+local_face = 1
+
+[sub_resource type="Resource" id="MountPz"]
+script = ExtResource("3")
+local_face = 4
+
+[sub_resource type="Resource" id="MountNz"]
+script = ExtResource("3")
+local_face = 5
+
+[sub_resource type="Resource" id="CarriagePort"]
+script = ExtResource("2")
+port_id = "piston_carriage"
+local_face = 3
+compatibility_tags = PackedStringArray("piston", "internal")
+
+[resource]
+script = ExtResource("4")
+archetype_id = "piston_head"
+display_name = "Piston Head"
+roles = PackedStringArray("Frame")
+mass_kg = 20.0
+max_integrity = 100.0
+structural_surface_policy = 2
+internal_archetype = true
+structural_mount_pads = Array[ExtResource("3")]([SubResource("MountPy"), SubResource("MountPx"), SubResource("MountNx"), SubResource("MountPz"), SubResource("MountNz")])
+colliders = Array[ExtResource("1")]([SubResource("Collider")])
+ports = Array[ExtResource("2")]([SubResource("CarriagePort")])

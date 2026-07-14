@@ -9,8 +9,8 @@ signal hit_updated(hit: InteractionHit)
 @export var terrain_path: NodePath = NodePath("../../VoxelTerrain")
 @export var simulation_session_path: NodePath = NodePath("../../SimulationSession")
 @export var max_distance := 4.0
-## Layers 1 (terrain), 2 (bodies/loot) and 4 (interaction-only wire colliders).
-@export_flags_3d_physics var collision_mask := 11
+## Layers 1 (terrain), 4 (interaction wire colliders), 8 (loot pickup only).
+@export_flags_3d_physics var collision_mask := 13
 
 var current_hit := InteractionHit.empty()
 
@@ -45,6 +45,12 @@ func _physics_process(_delta: float) -> void:
 	var direction := -aim.basis.z.normalized()
 	var physics_hit := _query_physics(origin, direction)
 	if physics_hit.valid:
+		if physics_hit.target_kind == InteractionHit.KIND_VOXEL:
+			# Terrain edits mutate the SDF immediately while its generated
+			# physics collider can lag behind. Keep terrain targeting on the
+			# authoritative SDF so a held drill advances without aim jitter.
+			_publish(_query_voxel(origin, direction))
+			return
 		_publish(physics_hit)
 		return
 	_publish(_query_voxel(origin, direction))
@@ -92,17 +98,25 @@ func _query_voxel(
 	origin: Vector3,
 	direction: Vector3
 ) -> InteractionHit:
-	var raw: VoxelRaycastResult = _voxel_tool.raycast(
+	var raw: VoxelRaycastResult = VoxelSpaceUtil.raycast_world(
+		_voxel_tool,
+		_terrain,
 		origin,
 		direction,
 		max_distance
 	)
 	if raw == null:
 		return InteractionHit.empty()
+	var world_point: Vector3 = VoxelSpaceUtil.raycast_hit_world_point(
+		_terrain,
+		origin,
+		direction,
+		raw
+	)
 	return InteractionHit.create(
-		origin + direction * raw.distance,
+		world_point,
 		-direction,
-		raw.distance,
+		origin.distance_to(world_point),
 		InteractionHit.KIND_VOXEL,
 		null,
 		StringName(),
@@ -254,6 +268,11 @@ func _target_metadata(
 					else 0.0
 				)
 				metadata["recipe_duration_s"] = duration_s
+			PistonPlacementUtil.enrich_interaction_metadata(
+				_session.world,
+				int(metadata["element_id"]),
+				metadata
+			)
 	return metadata
 
 

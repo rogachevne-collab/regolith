@@ -231,11 +231,15 @@ func _apply_terrain_carve(
 ) -> float:
 	if _gateway == null:
 		return 0.0
+	var terrain: Node3D = _gateway.get_node_or_null(_gateway.terrain_path)
 	var body: PhysicsBody3D = entry.get("striker_body")
 	var collider := ImpactResolver.collider_from_shape_index(
 		body,
 		int(entry.get("local_shape_index", 0))
 	)
+	var carve_direction := Vector3.DOWN
+	if body != null and body.linear_velocity.length_squared() > 0.01:
+		carve_direction = body.linear_velocity.normalized()
 	var points: PackedVector3Array = entry.get(
 		"contact_points",
 		PackedVector3Array()
@@ -259,12 +263,20 @@ func _apply_terrain_carve(
 					TerrainImpactCarver.MAX_RADIUS
 				)
 			)
-		op = TerrainImpactCarver.build_path_op(points, radii, strength)
+		op = TerrainImpactCarver.build_path_op(
+			points,
+			radii,
+			strength,
+			terrain,
+			carve_direction
+		)
 	else:
 		op = TerrainImpactCarver.build_sphere_op(
 			Vector3(entry.get("contact_world", Vector3.ZERO)),
 			collider,
-			strength
+			strength,
+			terrain,
+			carve_direction
 		)
 	return _gateway.apply_terrain_carve(op, volume_budget_m3)
 
@@ -313,11 +325,19 @@ func _contact_point_on_body(
 	if tool == null:
 		return origin
 	tool.channel = VoxelBuffer.CHANNEL_SDF
-	var hit: VoxelRaycastResult = tool.raycast(
+	var terrain: Node3D = _gateway.get_node_or_null(_gateway.terrain_path)
+	var hit: VoxelRaycastResult = VoxelSpaceUtil.raycast_world(
+		tool,
+		terrain,
 		origin + Vector3.UP * 0.25,
 		Vector3.DOWN,
 		4.0
 	)
 	if hit != null:
-		return hit.position
+		return VoxelSpaceUtil.raycast_hit_world_point(
+			terrain,
+			origin + Vector3.UP * 0.25,
+			Vector3.DOWN,
+			hit
+		)
 	return origin

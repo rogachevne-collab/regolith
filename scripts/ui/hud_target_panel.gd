@@ -284,10 +284,16 @@ func _process(_delta: float) -> void:
 	_metric_val.text = "%d%%" % int(round(_integrity_fraction(archetype_id, meta) * 100.0))
 	_metric_val.add_theme_color_override("font_color", status_color)
 	_refresh_store_view(archetype_id, meta)
+	if _refresh_actuator_info(meta, status):
+		return
 	_refresh_machine_info(archetype_id, meta, hit)
 
 
 func _status_summary(meta: Dictionary, status: StringName) -> String:
+	if meta.has("actuator_status"):
+		return HudTokens.status_label(
+			StringName(meta.get("actuator_status", &"idle"))
+		)
 	if status == &"port_disconnected" or status == &"cargo_disconnected":
 		return HudTokens.status_label(status)
 	if status == &"no_input":
@@ -326,6 +332,60 @@ func _refresh_store_view(archetype_id: String, meta: Dictionary) -> void:
 		_store_view.refresh()
 
 
+func _refresh_actuator_info(meta: Dictionary, status: StringName) -> bool:
+	if not meta.has("piston_joint_id"):
+		return false
+	_store_view.visible = false
+	_machine_block.visible = true
+	_machine_drill_info.visible = false
+	_set_machine_progress_visible(false)
+	var observed := float(meta.get("piston_observed_position_m", 0.0))
+	var target := float(meta.get("piston_target_position_m", observed))
+	var speed := float(meta.get("piston_speed_limit_mps", 0.0))
+	var powered := bool(meta.get("piston_powered", false))
+	var enabled := bool(meta.get("piston_motor_enabled", true))
+	var actuator_status := StringName(meta.get("actuator_status", status))
+	_metric_key.text = "ХОД"
+	_metric_val.text = "%.2f / %.2f М" % [observed, target]
+	_metric_val.add_theme_color_override(
+		"font_color",
+		HudTokens.color_for_status(actuator_status)
+	)
+	_status_val.text = _status_summary(meta, actuator_status)
+	_status_val.add_theme_color_override(
+		"font_color",
+		HudTokens.color_for_status(actuator_status)
+	)
+	_machine_power_val.get_parent().visible = true
+	if not enabled:
+		_machine_power_val.text = "ВЫКЛЮЧЕН"
+		_machine_power_val.add_theme_color_override(
+			"font_color",
+			HudTokens.COL_DIM
+		)
+	elif powered:
+		_machine_power_val.text = "ПИТАНИЕ ЕСТЬ"
+		_machine_power_val.add_theme_color_override(
+			"font_color",
+			HudTokens.COL_OK
+		)
+	else:
+		_machine_power_val.text = "НЕТ ПИТАНИЯ"
+		_machine_power_val.add_theme_color_override(
+			"font_color",
+			HudTokens.COL_WARNING
+		)
+	_machine_queue_box.visible = false
+	_machine_active_val.get_parent().visible = false
+	_machine_cargo_val.get_parent().visible = false
+	_machine_recipe_box.visible = false
+	_machine_hints.visible = true
+	_machine_hints.text = (
+		"СК %.2f М/С · [+] выдвиж · [-] втяж · Y стоп" % speed
+	)
+	return true
+
+
 func _refresh_machine_info(
 	archetype_id: String,
 	meta: Dictionary,
@@ -346,10 +406,7 @@ func _refresh_machine_info(
 		_machine_block.visible = false
 		_machine_drill_info.visible = true
 		_set_machine_progress_visible(false)
-		_machine_drill_info.text = (
-			"Головка: рабочая грань +X\n"
-			+ "E — %s"
-		) % ("ВЫКЛЮЧИТЬ" if enabled else "ВКЛЮЧИТЬ")
+		_machine_drill_info.text = "Головка: рабочая грань +X\nE — открыть инвентарь"
 		return
 	_machine_block.visible = true
 	_machine_drill_info.visible = false
@@ -397,14 +454,7 @@ func _refresh_machine_info(
 		_machine_cargo_val.text = _format_cargo_network(meta)
 		_machine_recipe_box.visible = true
 		_refresh_recipe_picker(archetype_id, next_recipe)
-		_machine_hints.text = (
-			"C — рецепт    R — очередь    E — питание\n"
-			+ (
-				"Shift+R — убрать из очереди"
-				if not queue.is_empty()
-				else " "
-			)
-		)
+		_machine_hints.text = "E — открыть инвентарь"
 	_refresh_machine_progress(meta, enabled, active)
 
 

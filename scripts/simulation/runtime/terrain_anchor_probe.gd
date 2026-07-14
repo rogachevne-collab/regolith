@@ -102,7 +102,7 @@ static func _point_overlaps_terrain(
 			):
 				return true
 	if voxel_tool != null:
-		return _voxel_supports_point(voxel_tool, world_point)
+		return _voxel_supports_point(voxel_tool, world_point, terrain)
 	return false
 
 
@@ -146,16 +146,23 @@ static func _is_terrain_collider(
 
 static func _voxel_supports_point(
 	voxel_tool: VoxelTool,
-	world_point: Vector3
+	world_point: Vector3,
+	terrain: VoxelTerrain = null
 ) -> bool:
-	var cell := Vector3i(
-		floori(world_point.x),
-		floori(world_point.y),
-		floori(world_point.z),
+	var cell: Vector3i = (
+		VoxelSpaceUtil.world_cell_from_point(terrain, world_point)
+		if terrain != null
+		else Vector3i(
+			floori(world_point.x),
+			floori(world_point.y),
+			floori(world_point.z)
+		)
 	)
 	if voxel_tool.get_voxel_f(cell) <= SUPPORT_EPSILON:
 		return true
-	var hit: VoxelRaycastResult = voxel_tool.raycast(
+	var hit: VoxelRaycastResult = VoxelSpaceUtil.raycast_world(
+		voxel_tool,
+		terrain,
 		world_point + Vector3.UP * 2.0,
 		Vector3.DOWN,
 		2.0 + SUPPORT_EPSILON

@@ -298,7 +298,7 @@ func _try_start_recipe(
 		element,
 		outputs
 	):
-		var buffer_capacity := IndustryArchetypeProfile.internal_buffer_capacity_kg(
+		var buffer_capacity := IndustryArchetypeProfile.internal_buffer_capacity_l(
 			element.archetype_id
 		)
 		_refund_reserved(element, machine.reserved_inputs, buffer_capacity)
@@ -346,7 +346,7 @@ func _try_reserve_inputs(
 	if not _buffer_has_inputs(element, inputs):
 		return false
 	var reserved: Dictionary = {}
-	var buffer_capacity := IndustryArchetypeProfile.internal_buffer_capacity_kg(
+	var buffer_capacity := IndustryArchetypeProfile.internal_buffer_capacity_l(
 		element.archetype_id
 	)
 	for resource_id: Variant in inputs.keys():
@@ -387,7 +387,7 @@ func _complete_job(
 	machine: IndustryMachineState
 ) -> void:
 	var outputs := RecipeCatalog.outputs(machine.active_recipe_id)
-	var buffer_capacity := IndustryArchetypeProfile.internal_buffer_capacity_kg(
+	var buffer_capacity := IndustryArchetypeProfile.internal_buffer_capacity_l(
 		element.archetype_id
 	)
 	for resource_id: Variant in outputs.keys():
@@ -418,7 +418,7 @@ func _cancel_active_job(
 	var machine := runtime.ensure_machine_state()
 	if machine.active_recipe_id.is_empty():
 		return false
-	var buffer_capacity := IndustryArchetypeProfile.internal_buffer_capacity_kg(
+	var buffer_capacity := IndustryArchetypeProfile.internal_buffer_capacity_l(
 		element.archetype_id
 	)
 	for resource_id: Variant in machine.reserved_inputs.keys():
@@ -469,7 +469,7 @@ func _evict_buffer_for_inputs(
 ) -> void:
 	if element == null or inputs.is_empty():
 		return
-	var buffer_capacity := IndustryArchetypeProfile.internal_buffer_capacity_kg(
+	var buffer_capacity := IndustryArchetypeProfile.internal_buffer_capacity_l(
 		element.archetype_id
 	)
 	for _attempt: int in range(128):
@@ -559,7 +559,7 @@ func _idle_reason_for_recipe(
 			return &"port_disconnected"
 		if not _connected_inputs_available(world, cargo_graph, element, inputs):
 			return &"no_input"
-		var buffer_capacity := IndustryArchetypeProfile.internal_buffer_capacity_kg(
+		var buffer_capacity := IndustryArchetypeProfile.internal_buffer_capacity_l(
 			element.archetype_id
 		)
 		if _buffer_needs_room_for_inputs(element, inputs, buffer_capacity):

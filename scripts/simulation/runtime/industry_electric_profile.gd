@@ -38,6 +38,10 @@ const _ARCHETYPE_DEFAULTS := {
 		"is_consumer": true,
 		"idle_w": 80.0,
 	},
+	"piston_base": {
+		"is_consumer": true,
+		"idle_w": 1500.0,
+	},
 }
 
 

@@ -28,6 +28,13 @@ func _run_tests() -> void:
 		_test_split_reconciles_ground_anchors,
 		_test_placement_anchors_every_touching_block,
 		_test_custom_archetype_snapshot_restore,
+		_test_unified_grid_edge_surface_joint,
+		_test_unified_grid_middle_surface_joint,
+		_test_unified_grid_mount_pad_policy,
+		_test_unified_grid_descriptor_cache,
+		_test_unified_grid_full_surface_contact_count,
+		_test_snapshot_canonical_joint_roundtrip,
+		_test_legacy_snapshot_version_rejected,
 		_test_malformed_snapshot_atomicity,
 		_test_archetype_conflict_and_allocator_continuity,
 	]
@@ -160,14 +167,21 @@ func _test_merge_a_wins_preserves_identity() -> bool:
 	b_element.build_progress = 0.3
 	b_element.integrity = 11.0
 	b_element.condition = 0.6
+	var connection := _merge_connection_ports(
+		world,
+		int(a.data["assembly_id"]),
+		int(b.data["assembly_id"]),
+		a_element.element_id,
+		b_element.element_id
+	)
 	var merge := _merge(
 		world,
 		a,
 		b,
 		a_element.element_id,
-		"structural_0_0_0_px",
+		connection["left_port_id"],
 		b_element.element_id,
-		"structural_0_0_0_nx"
+		connection["right_port_id"]
 	)
 	if not merge.is_ok() or merge.data["survivor_assembly_id"] != a.data["assembly_id"]:
 		return _fail("A-wins automatic merge failed")
@@ -204,14 +218,21 @@ func _test_merge_b_wins_fixed_endpoint_order() -> bool:
 	)
 	var a_id := int(a.data["element_ids"][0])
 	var b_id := int(b.data["element_ids"][0])
+	var connection := _merge_connection_ports(
+		world,
+		int(a.data["assembly_id"]),
+		int(b.data["assembly_id"]),
+		a_id,
+		b_id
+	)
 	var merge := _merge(
 		world,
 		a,
 		b,
 		a_id,
-		"structural_0_0_0_px",
+		connection["left_port_id"],
 		b_id,
-		"structural_0_0_0_nx"
+		connection["right_port_id"]
 	)
 	if not merge.is_ok() or merge.data["survivor_assembly_id"] != b.data["assembly_id"]:
 		return _fail("B-wins merge failed with fixed A/B endpoints")
@@ -244,14 +265,23 @@ func _test_rotated_frame_derivation() -> bool:
 		_single_blueprint(Slice01Archetypes.frame()),
 		b_frame
 	)
+	var a_id := int(a.data["element_ids"][0])
+	var b_id := int(b.data["element_ids"][0])
+	var connection := _merge_connection_ports(
+		world,
+		int(a.data["assembly_id"]),
+		int(b.data["assembly_id"]),
+		a_id,
+		b_id
+	)
 	var merge := _merge(
 		world,
 		a,
 		b,
-		int(a.data["element_ids"][0]),
-		"structural_0_0_0_px",
-		int(b.data["element_ids"][0]),
-		"structural_0_0_0_nx"
+		a_id,
+		connection["left_port_id"],
+		b_id,
+		connection["right_port_id"]
 	)
 	if not merge.is_ok():
 		return _fail("rotated/translated frame-derived merge failed")
@@ -386,14 +416,21 @@ func _test_dual_anchor_and_rejections() -> bool:
 		b_frame
 	)
 	var loser_anchor := _anchor_for(world, int(b.data["element_ids"][0]))
+	var connection := _merge_connection_ports(
+		world,
+		int(a.data["assembly_id"]),
+		int(b.data["assembly_id"]),
+		int(a.data["element_ids"][0]),
+		int(b.data["element_ids"][0])
+	)
 	var merge := _merge(
 		world,
 		a,
 		b,
 		int(a.data["element_ids"][0]),
-		"structural_0_0_0_px",
+		connection["left_port_id"],
 		int(b.data["element_ids"][0]),
-		"structural_0_0_0_nx"
+		connection["right_port_id"]
 	)
 	if not merge.is_ok() or not merge.data["removed_anchor_joint_ids"].has(loser_anchor):
 		return _fail("dual-anchor merge did not remove loser Anchor")
@@ -428,14 +465,21 @@ func _test_dual_anchor_and_rejections() -> bool:
 		_single_blueprint(Slice01Archetypes.frame()),
 		far_frame
 	)
+	var far_connection := _merge_connection_ports(
+		reject_world,
+		int(left.data["assembly_id"]),
+		int(far.data["assembly_id"]),
+		int(left.data["element_ids"][0]),
+		int(far.data["element_ids"][0])
+	)
 	var incompatible := _merge(
 		reject_world,
 		left,
 		far,
 		int(left.data["element_ids"][0]),
-		"structural_0_0_0_px",
+		far_connection.get("left_port_id", "structural_0_0_0_px"),
 		int(far.data["element_ids"][0]),
-		"structural_0_0_0_nx"
+		far_connection.get("right_port_id", "structural_0_0_0_nx")
 	)
 	if incompatible.reason != StructuralCommandResult.REASON_INCOMPATIBLE_CONNECTION:
 		return _fail("incompatible connection was not rejected")
@@ -482,6 +526,301 @@ func _test_custom_archetype_snapshot_restore() -> bool:
 		return _fail("snapshot canonical roundtrip changed semantics")
 	world.free()
 	restored.free()
+	return true
+
+
+func _test_unified_grid_edge_surface_joint() -> bool:
+	var world := SimulationWorld.new()
+	world.ensure_resource_store("player")
+	world.set_resource_amount("player", "construction_component", 100.0)
+	var large := _place_large_frame(world, Vector3i.ZERO, 0, -1)
+	if not large.is_ok():
+		world.free()
+		return _fail("large_frame ground placement failed: %s" % large.reason)
+	var assembly_id := int(large.data["assembly_id"])
+	var large_id := int(large.data["element_id"])
+	var place := PlaceElementCommand.new()
+	place.assembly_id = assembly_id
+	place.expected_assembly_revision = int(large.data["topology_revision"])
+	place.archetype = Slice01Archetypes.frame()
+	place.origin_cell = Vector3i(5, 0, 0)
+	place.orientation_index = 0
+	place.store_id = "player"
+	var placed := world.apply_structural_command_now(place)
+	if not placed.is_ok():
+		world.free()
+		return _fail("edge surface placement failed")
+	var joint_id := _joint_between(world, large_id, int(placed.data["element_id"]))
+	var joint := world.get_joint(joint_id)
+	if joint == null:
+		world.free()
+		return _fail("edge surface placement did not create rigid joint")
+	var canonical := GridSurfaceUtil.find_rigid_connection(
+		world.get_element(large_id),
+		world.get_element(int(placed.data["element_id"]))
+	)
+	if (
+		joint.port_a_id != canonical["left_port_id"]
+		or joint.port_b_id != canonical["right_port_id"]
+	):
+		world.free()
+		return _fail(
+			"edge joint stored non-canonical derived IDs: %s/%s expected %s/%s"
+			% [
+				joint.port_a_id,
+				joint.port_b_id,
+				canonical["left_port_id"],
+				canonical["right_port_id"],
+			]
+		)
+	if (
+		joint.port_a_id != "structural_4_0_0_px"
+		or joint.port_b_id != "structural_0_0_0_nx"
+	):
+		world.free()
+		return _fail("edge joint used center-only structural port IDs")
+	if GridSurfaceUtil.count_matching_contact_faces(
+		world.get_element(large_id),
+		world.get_element(int(placed.data["element_id"]))
+	) != 1:
+		world.free()
+		return _fail("edge placement should expose exactly one contact face")
+	world.free()
+	return true
+
+
+func _test_unified_grid_middle_surface_joint() -> bool:
+	var world := SimulationWorld.new()
+	world.ensure_resource_store("player")
+	world.set_resource_amount("player", "construction_component", 100.0)
+	var large := _place_large_frame(world, Vector3i.ZERO, 0, -1)
+	if not large.is_ok():
+		world.free()
+		return _fail("large_frame placement failed for middle joint")
+	var assembly_id := int(large.data["assembly_id"])
+	var large_id := int(large.data["element_id"])
+	var place := PlaceElementCommand.new()
+	place.assembly_id = assembly_id
+	place.expected_assembly_revision = int(large.data["topology_revision"])
+	place.archetype = Slice01Archetypes.frame()
+	place.origin_cell = Vector3i(5, 2, 0)
+	place.orientation_index = 0
+	place.store_id = "player"
+	var placed := world.apply_structural_command_now(place)
+	if not placed.is_ok():
+		world.free()
+		return _fail("middle surface placement failed")
+	var joint := world.get_joint(
+		_joint_between(world, large_id, int(placed.data["element_id"]))
+	)
+	if joint == null:
+		world.free()
+		return _fail("middle surface placement did not create rigid joint")
+	var canonical := GridSurfaceUtil.find_rigid_connection(
+		world.get_element(large_id),
+		world.get_element(int(placed.data["element_id"]))
+	)
+	if (
+		joint.port_a_id != canonical["left_port_id"]
+		or joint.port_b_id != canonical["right_port_id"]
+	):
+		world.free()
+		return _fail("middle joint stored non-canonical derived IDs")
+	if (
+		joint.port_a_id != "structural_4_2_0_px"
+		or joint.port_b_id != "structural_0_0_0_nx"
+	):
+		world.free()
+		return _fail("middle joint used unexpected derived port IDs")
+	world.free()
+	return true
+
+
+func _test_unified_grid_mount_pad_policy() -> bool:
+	var world := SimulationWorld.new()
+	world.ensure_resource_store("player")
+	world.set_resource_amount("player", "construction_component", 100.0)
+	var store := PlaceElementCommand.new()
+	store.assembly_id = 0
+	store.expected_assembly_revision = -1
+	store.archetype = Slice01Archetypes.cargo_store()
+	store.origin_cell = Vector3i.ZERO
+	store.orientation_index = 0
+	store.new_assembly_grid_frame = GridTransform.identity()
+	store.store_id = "player"
+	var store_result := world.apply_structural_command_now(store)
+	if not store_result.is_ok():
+		world.free()
+		return _fail("cargo_store placement failed")
+	var assembly_id := int(store_result.data["assembly_id"])
+	var allow := PlaceElementCommand.new()
+	allow.assembly_id = assembly_id
+	allow.expected_assembly_revision = int(store_result.data["topology_revision"])
+	allow.archetype = Slice01Archetypes.frame()
+	allow.origin_cell = Vector3i(-1, 0, 1)
+	allow.orientation_index = 0
+	allow.store_id = "player"
+	var allow_result := world.apply_structural_command_now(allow)
+	if not allow_result.is_ok():
+		world.free()
+		return _fail("mount-pad-aligned frame placement failed")
+	var deny := PlaceElementCommand.new()
+	deny.assembly_id = assembly_id
+	deny.expected_assembly_revision = int(allow_result.data["topology_revision"])
+	deny.archetype = Slice01Archetypes.frame()
+	deny.origin_cell = Vector3i(0, 0, 3)
+	deny.orientation_index = 0
+	deny.store_id = "player"
+	var deny_result := world.apply_structural_command_now(deny)
+	if deny_result.reason != StructuralCommandResult.REASON_INCOMPATIBLE_CONNECTION:
+		world.free()
+		return _fail("non-pad structural contact was not rejected")
+	world.free()
+	return true
+
+
+func _test_unified_grid_descriptor_cache() -> bool:
+	var archetype: ElementArchetype = Slice01Archetypes.large_frame()
+	GridSurfaceUtil.clear_descriptor_cache()
+	var first: Array = GridSurfaceUtil.get_surface_descriptors(archetype, 0)
+	var second: Array = GridSurfaceUtil.get_surface_descriptors(archetype, 0)
+	if first != second:
+		return _fail("surface descriptor cache did not reuse cached descriptors")
+	if first.is_empty():
+		return _fail("large_frame produced no surface descriptors")
+	GridSurfaceUtil.clear_descriptor_cache()
+	var rebuilt: Array = GridSurfaceUtil.get_surface_descriptors(archetype, 0)
+	if rebuilt.size() != first.size():
+		return _fail("descriptor cache rebuild changed surface count")
+	for index: int in range(first.size()):
+		if (
+			first[index].structural_id != rebuilt[index].structural_id
+			or first[index].local_cell != rebuilt[index].local_cell
+			or first[index].local_face != rebuilt[index].local_face
+		):
+			return _fail("descriptor cache rebuild changed surface content")
+	var left := _preview_element(archetype, Vector3i.ZERO, 0)
+	var right := _preview_element(
+		Slice01Archetypes.frame(),
+		Vector3i(5, 0, 0),
+		0
+	)
+	var first_count := GridSurfaceUtil.count_matching_contact_faces(left, right)
+	var second_count := GridSurfaceUtil.count_matching_contact_faces(left, right)
+	if first_count != 1 or second_count != 1:
+		return _fail("local-neighbor contact validation count mismatch")
+	return true
+
+
+func _test_unified_grid_full_surface_contact_count() -> bool:
+	var archetype: ElementArchetype = Slice01Archetypes.large_frame()
+	var left := _preview_element(archetype, Vector3i.ZERO, 0)
+	var right := _preview_element(archetype, Vector3i(5, 0, 0), 0)
+	var contact_count := GridSurfaceUtil.count_matching_contact_faces(left, right)
+	if contact_count != 25:
+		return _fail(
+			"full-surface contact count changed: expected 25, got %d"
+			% contact_count
+		)
+	var connection := GridSurfaceUtil.find_rigid_connection(left, right)
+	if (
+		connection.get("left_port_id", "") != "structural_4_0_0_px"
+		or connection.get("right_port_id", "") != "structural_0_0_0_nx"
+	):
+		return _fail("full-surface canonical connection changed")
+	return true
+
+
+func _test_snapshot_canonical_joint_roundtrip() -> bool:
+	var world := SimulationWorld.new()
+	world.ensure_resource_store("player")
+	world.set_resource_amount("player", "construction_component", 100.0)
+	var large := _place_large_frame(world, Vector3i.ZERO, 0, -1)
+	if not large.is_ok():
+		world.free()
+		return _fail("large_frame placement failed for snapshot roundtrip")
+	var assembly_id := int(large.data["assembly_id"])
+	var place := PlaceElementCommand.new()
+	place.assembly_id = assembly_id
+	place.expected_assembly_revision = int(large.data["topology_revision"])
+	place.archetype = Slice01Archetypes.frame()
+	place.origin_cell = Vector3i(5, 0, 0)
+	place.orientation_index = 0
+	place.store_id = "player"
+	if not world.apply_structural_command_now(place).is_ok():
+		world.free()
+		return _fail("edge frame placement failed for snapshot roundtrip")
+	var snapshot := world.capture_snapshot()
+	var restored: SimulationWorld = SimulationSnapshot.create_from_snapshot(
+		snapshot
+	)
+	if restored == null:
+		world.free()
+		return _fail("canonical joint snapshot failed restore")
+	if not SimulationSnapshot.semantic_equals(
+		snapshot,
+		restored.capture_snapshot()
+	):
+		world.free()
+		restored.free()
+		return _fail("canonical joint snapshot roundtrip changed semantics")
+	for row: Dictionary in snapshot["joints"]:
+		if int(row.get("kind", -1)) != SimulationJoint.Kind.RIGID:
+			continue
+		if not str(row.get("port_a_id", "")).begins_with("structural_"):
+			world.free()
+			restored.free()
+			return _fail("snapshot rigid joint missing derived structural port_a_id")
+		if not str(row.get("port_b_id", "")).begins_with("structural_"):
+			world.free()
+			restored.free()
+			return _fail("snapshot rigid joint missing derived structural port_b_id")
+	world.free()
+	restored.free()
+	return true
+
+
+func _place_large_frame(
+	world: SimulationWorld,
+	origin_cell: Vector3i,
+	assembly_id: int,
+	expected_revision: int
+) -> StructuralCommandResult:
+	var command := PlaceElementCommand.new()
+	command.assembly_id = assembly_id
+	command.expected_assembly_revision = expected_revision
+	command.archetype = Slice01Archetypes.large_frame()
+	command.origin_cell = origin_cell
+	command.orientation_index = 0
+	if assembly_id == 0:
+		command.new_assembly_grid_frame = GridTransform.identity()
+	command.store_id = "player"
+	return world.apply_structural_command_now(command)
+
+
+func _preview_element(
+	archetype: ElementArchetype,
+	origin_cell: Vector3i,
+	orientation_index: int
+) -> SimulationElement:
+	var element := SimulationElement.new()
+	element.archetype_id = archetype.archetype_id
+	element.bind_archetype(archetype)
+	element.origin_cell = origin_cell
+	element.orientation_index = orientation_index
+	return element
+
+
+func _test_legacy_snapshot_version_rejected() -> bool:
+	var world := SimulationWorld.new()
+	_spawn(world, FIXTURE, GridTransform.identity())
+	var snapshot := world.capture_snapshot()
+	world.free()
+	snapshot["version"] = 4
+	var restored: SimulationWorld = SimulationSnapshot.create_from_snapshot(snapshot)
+	if restored != null:
+		restored.free()
+		return _fail("legacy snapshot version 4 was accepted")
 	return true
 
 
@@ -707,6 +1046,70 @@ func _spawn(
 	command.blueprint = blueprint
 	command.grid_frame = frame
 	return world.apply_structural_command_now(command)
+
+
+func _merge_connection_ports(
+	world: SimulationWorld,
+	assembly_a_id: int,
+	assembly_b_id: int,
+	element_a_id: int,
+	element_b_id: int
+) -> Dictionary:
+	var assembly_a: SimulationAssembly = world.get_assembly_raw(assembly_a_id)
+	var assembly_b: SimulationAssembly = world.get_assembly_raw(assembly_b_id)
+	var element_a: SimulationElement = world.get_element(element_a_id)
+	var element_b: SimulationElement = world.get_element(element_b_id)
+	var elements_by_id: Dictionary = {}
+	for element: SimulationElement in world.list_elements():
+		elements_by_id[element.element_id] = element
+	var b_to_a := GridPoseUtil.b_to_a_from_grid_frames(
+		assembly_a.grid_frame,
+		assembly_b.grid_frame
+	)
+	var score_a := SurvivorPolicy.assembly_score(
+		assembly_a.assembly_id,
+		assembly_a.element_ids,
+		elements_by_id,
+		world.list_joints()
+	)
+	var score_b := SurvivorPolicy.assembly_score(
+		assembly_b.assembly_id,
+		assembly_b.element_ids,
+		elements_by_id,
+		world.list_joints()
+	)
+	var survivor_id := SurvivorPolicy.pick_survivor_assembly([score_a, score_b])
+	var connection_a := element_a
+	var connection_b := element_b
+	if survivor_id == assembly_a.assembly_id:
+		connection_b = _preview_element_in_frame(
+			element_b,
+			b_to_a.map_element_pose(
+				element_b.origin_cell,
+				element_b.orientation_index
+			)
+		)
+	else:
+		connection_a = _preview_element_in_frame(
+			element_a,
+			b_to_a.inverse().map_element_pose(
+				element_a.origin_cell,
+				element_a.orientation_index
+			)
+		)
+	return GridSurfaceUtil.find_rigid_connection(connection_a, connection_b)
+
+
+func _preview_element_in_frame(
+	source: SimulationElement,
+	pose: Dictionary
+) -> SimulationElement:
+	var preview := SimulationElement.new()
+	preview.archetype_id = source.archetype_id
+	preview.bind_archetype(source.get_archetype())
+	preview.origin_cell = pose["origin_cell"]
+	preview.orientation_index = int(pose["orientation_index"])
+	return preview
 
 
 func _merge(

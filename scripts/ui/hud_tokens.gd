@@ -57,6 +57,7 @@ const TOOL_CODES := {
 	"fabricator": "FAB",
 	"foundation": "FND",
 	"connect": "CON",
+	"piston_base": "PST",
 }
 
 ## Short Cyrillic chrome labels for construction archetypes shown in the Block
@@ -78,6 +79,8 @@ const ARCHETYPE_LABELS := {
 	"rover_frame": "БЛОК РОВЕРА",
 	"rover_wheel": "КОЛЕСО",
 	"runtime_custom": "СВОЙ БЛОК",
+	"piston_base": "ПОРШЕНЬ",
+	"piston_head": "ГОЛОВКА",
 }
 
 const STORE_LABELS := {
@@ -96,6 +99,10 @@ const RESOURCE_LABELS := {
 	"calcined_oxide": "ОКСИД",
 	"metal_ingot": "СЛИТОК",
 	"custom_component": "КОМПОНЕНТ",
+	"tool_hand_drill": "БУР",
+	"tool_welder": "СВАРКА",
+	"tool_grinder": "БОЛГАРКА",
+	"tool_connector": "СОЕДИНЕНИЕ",
 }
 
 const RECIPE_LABELS := {
@@ -104,6 +111,45 @@ const RECIPE_LABELS := {
 	"calcine_fines": "ОБЖИГ ФРАКЦИИ",
 	"reduce_oxide": "ВОССТАНОВЛЕНИЕ ОКСИДА",
 	"sinter_component": "СПЕКАНИЕ КОМПОНЕНТА",
+}
+
+## Short latin item codes for terminal grid icons (chrome only).
+const ITEM_CODES := {
+	"raw_regolith": "RGL",
+	"regolith_fines": "FNS",
+	"sintered_basalt": "BAS",
+	"calcined_oxide": "OXD",
+	"metal_ingot": "ING",
+	"construction_component": "CMP",
+	"tool_hand_drill": "DRL",
+	"tool_welder": "WLD",
+	"tool_grinder": "GRD",
+	"tool_connector": "CON",
+}
+
+## Category-tinted icon colors; stable per item_id via catalog category.
+const ITEM_CATEGORY_COLORS := {
+	"ore": Color(0.82, 0.58, 0.28),
+	"material": Color(0.36, 0.62, 0.78),
+	"ingot": COL_VALID,
+	"component": COL_OK,
+	"tool": COL_TEXT,
+	"consumable": COL_WARNING,
+	"bottle": COL_OK,
+}
+
+## Frozen per-item icon colors (category-derived fixtures).
+const ITEM_COLORS := {
+	"raw_regolith": ITEM_CATEGORY_COLORS["ore"],
+	"regolith_fines": ITEM_CATEGORY_COLORS["ore"],
+	"sintered_basalt": ITEM_CATEGORY_COLORS["material"],
+	"calcined_oxide": ITEM_CATEGORY_COLORS["material"],
+	"metal_ingot": ITEM_CATEGORY_COLORS["ingot"],
+	"construction_component": ITEM_CATEGORY_COLORS["component"],
+	"tool_hand_drill": ITEM_CATEGORY_COLORS["tool"],
+	"tool_welder": ITEM_CATEGORY_COLORS["tool"],
+	"tool_grinder": ITEM_CATEGORY_COLORS["tool"],
+	"tool_connector": ITEM_CATEGORY_COLORS["tool"],
 }
 
 
@@ -164,6 +210,14 @@ static func color_for_status(status: StringName) -> Color:
 			return COL_DIM
 		&"disabled":
 			return COL_DIM
+		&"moving":
+			return COL_OK
+		&"joint_limit":
+			return COL_WARNING
+		&"stuck", &"overloaded":
+			return COL_WARNING
+		&"idle":
+			return COL_DIM
 		_:
 			return COL_TEXT
 
@@ -200,6 +254,16 @@ static func status_label(status: StringName) -> String:
 			return "ОЧЕРЕДЬ ПОЛНА"
 		&"standby":
 			return "ПРОСТОЙ"
+		&"moving":
+			return "ДВИЖЕНИЕ"
+		&"joint_limit":
+			return "ПРЕДЕЛ"
+		&"stuck":
+			return "ЗАЕДАНИЕ"
+		&"overloaded":
+			return "ПЕРЕГРУЗ"
+		&"idle":
+			return "ПРОСТОЙ"
 		_:
 			return "—"
 
@@ -210,6 +274,53 @@ static func tool_code(id: String) -> String:
 	if id.is_empty():
 		return ""
 	return id.substr(0, 3).to_upper()
+
+
+static func item_code(item_id: String) -> String:
+	if ITEM_CODES.has(item_id):
+		return ITEM_CODES[item_id]
+	if item_id.is_empty():
+		return ""
+	return item_id.substr(0, 3).to_upper()
+
+
+static func item_color(item_id: String) -> Color:
+	if ITEM_COLORS.has(item_id):
+		return ITEM_COLORS[item_id]
+	var category := ResourceCatalog.category(item_id)
+	if ITEM_CATEGORY_COLORS.has(category):
+		return ITEM_CATEGORY_COLORS[category]
+	return COL_DIM
+
+
+## Colored plate with a short item code. API is bound to item_id so future PNG
+## art can replace the primitive without changing terminal transfer contracts.
+static func make_item_icon(item_id: String, size: float = SLOT_SIZE.x) -> Control:
+	var icon_size := Vector2(size, size)
+	var holder := Control.new()
+	holder.custom_minimum_size = icon_size
+	holder.size = icon_size
+	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var tint := ColorRect.new()
+	tint.color = Color(item_color(item_id), 0.28)
+	tint.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	tint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	holder.add_child(tint)
+
+	var code_label := Label.new()
+	code_label.text = item_code(item_id)
+	code_label.theme_type_variation = &"HudValue"
+	code_label.add_theme_color_override("font_color", item_color(item_id))
+	code_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	code_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	code_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	code_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	code_label.clip_text = true
+	code_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	holder.add_child(code_label)
+
+	return holder
 
 
 static func archetype_label(archetype_id: String, gateway_name: String = "") -> String:

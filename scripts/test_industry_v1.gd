@@ -4,19 +4,49 @@ extends Node
 ## Uses test-only fixtures; does not modify production archetypes or runtime.
 
 const EPSILON := 0.000001
-const PLAYER_CARRY_CAPACITY_KG := 80.0
+const PLAYER_CARRY_CAPACITY_L := 100.0
 const INDUSTRY_TICK_HZ := 1.0
 const INDUSTRY_SIMULATION_SCRIPT := preload(
 	"res://scripts/simulation/industry/industry_simulation.gd"
 )
 
-const RESOURCE_CATALOG: Dictionary = {
-	"raw_regolith": 2.0,
-	"regolith_fines": 1.5,
-	"sintered_basalt": 3.0,
-	"calcined_oxide": 1.2,
-	"metal_ingot": 4.0,
-	"construction_component": 2.5,
+const ITEM_CATALOG: Dictionary = {
+	"raw_regolith": {
+		"category": "ore",
+		"mass_per_unit_kg": 2.0,
+		"volume_per_unit_l": 2.5,
+		"unit": "bulk",
+	},
+	"regolith_fines": {
+		"category": "ore",
+		"mass_per_unit_kg": 1.5,
+		"volume_per_unit_l": 1.8,
+		"unit": "bulk",
+	},
+	"sintered_basalt": {
+		"category": "material",
+		"mass_per_unit_kg": 3.0,
+		"volume_per_unit_l": 1.5,
+		"unit": "bulk",
+	},
+	"calcined_oxide": {
+		"category": "material",
+		"mass_per_unit_kg": 1.2,
+		"volume_per_unit_l": 1.0,
+		"unit": "bulk",
+	},
+	"metal_ingot": {
+		"category": "ingot",
+		"mass_per_unit_kg": 4.0,
+		"volume_per_unit_l": 0.6,
+		"unit": "bulk",
+	},
+	"construction_component": {
+		"category": "component",
+		"mass_per_unit_kg": 2.5,
+		"volume_per_unit_l": 3.0,
+		"unit": "discrete",
+	},
 }
 
 const RECIPE_FIXTURES: Dictionary = {
@@ -66,6 +96,7 @@ func _run_tests() -> void:
 		_test_resource_catalog_contract,
 		_test_capacity_store_no_overflow,
 		_test_capacity_store_no_loss_on_reject,
+		_test_discrete_fractional_rejection,
 		_test_player_carry_capacity_fixture,
 		_test_mass_coupling_reference,
 		_test_recipe_fixture_chain,
@@ -80,6 +111,7 @@ func _run_tests() -> void:
 		_test_industry_simulation_tick_runtime,
 		_test_drill_mining_storage_full_runtime,
 		_test_hand_drill_loot_merge_runtime,
+		_test_terrain_excavation_contract,
 		_test_processor_pulls_from_connected_store,
 		_test_processor_pulls_from_stocked_far_store,
 		_test_integration_isru_scenario,
@@ -92,21 +124,31 @@ func _run_tests() -> void:
 
 
 func _test_resource_catalog_contract() -> bool:
-	for resource_id: String in RESOURCE_CATALOG.keys():
-		if not ResourceCatalog.has_resource(resource_id):
-			return _fail("ResourceCatalog missing %s" % resource_id)
+	for item_id: String in ITEM_CATALOG.keys():
+		if not ResourceCatalog.has_resource(item_id):
+			return _fail("ResourceCatalog missing %s" % item_id)
+		var fixture: Dictionary = ITEM_CATALOG[item_id]
+		if ResourceCatalog.category(item_id) != str(fixture["category"]):
+			return _fail("ResourceCatalog category mismatch for %s" % item_id)
 		if not is_equal_approx(
-			ResourceCatalog.mass_per_unit_kg(resource_id),
-			float(RESOURCE_CATALOG[resource_id])
+			ResourceCatalog.mass_per_unit_kg(item_id),
+			float(fixture["mass_per_unit_kg"])
 		):
-			return _fail(
-				"ResourceCatalog mass mismatch for %s" % resource_id
-			)
-		if RESOURCE_CATALOG[resource_id] <= 0.0:
-			return _fail("catalog mass must be positive for %s" % resource_id)
-	var fines_mass: float = _catalog_mass({"regolith_fines": 2.0})
-	if not is_equal_approx(fines_mass, 3.0):
-		return _fail("catalog mass sum expected 3.0 kg, got %.3f" % fines_mass)
+			return _fail("ResourceCatalog mass mismatch for %s" % item_id)
+		if not is_equal_approx(
+			ResourceCatalog.volume_per_unit_l(item_id),
+			float(fixture["volume_per_unit_l"])
+		):
+			return _fail("ResourceCatalog volume mismatch for %s" % item_id)
+		if ResourceCatalog.unit(item_id) != str(fixture["unit"]):
+			return _fail("ResourceCatalog unit mismatch for %s" % item_id)
+		if float(fixture["mass_per_unit_kg"]) <= 0.0:
+			return _fail("catalog mass must be positive for %s" % item_id)
+		if float(fixture["volume_per_unit_l"]) <= 0.0:
+			return _fail("catalog volume must be positive for %s" % item_id)
+	var fines_volume: float = _catalog_volume({"regolith_fines": 2.0})
+	if not is_equal_approx(fines_volume, 3.6):
+		return _fail("catalog volume sum expected 3.6 L, got %.3f" % fines_volume)
 	return true
 
 
@@ -114,26 +156,43 @@ func _test_capacity_store_no_overflow() -> bool:
 	var store := _capacity_store(6.0)
 	if not store.try_add("raw_regolith", 2.0):
 		return _fail("expected first add to succeed")
-	if not store.try_add("raw_regolith", 1.0):
+	if not store.try_add("raw_regolith", 0.4):
 		return _fail("expected second add within capacity to succeed")
-	if store.try_add("raw_regolith", 1.0):
+	if store.try_add("raw_regolith", 0.1):
 		return _fail("overflow add must be rejected")
-	if not is_equal_approx(store.total_mass_kg(), 6.0):
+	if not is_equal_approx(store.total_volume_l(), 6.0):
 		return _fail(
-			"store mass after rejected overflow expected 6.0, got %.3f"
-			% store.total_mass_kg()
+			"store volume after rejected overflow expected 6.0 L, got %.3f"
+			% store.total_volume_l()
 		)
 	return true
 
 
 func _test_capacity_store_no_loss_on_reject() -> bool:
-	var store := _capacity_store(4.0)
+	var store := _capacity_store(1.0)
 	store.try_add("metal_ingot", 1.0)
 	var before: float = store.inner.amount("metal_ingot")
 	if store.try_add("metal_ingot", 1.0):
 		return _fail("expected capacity rejection")
 	if not is_equal_approx(store.inner.amount("metal_ingot"), before):
 		return _fail("rejected add mutated store contents")
+	return true
+
+
+func _test_discrete_fractional_rejection() -> bool:
+	var world := SimulationWorld.new()
+	IndustryStoreService.ensure_player_store(world)
+	var store := world.get_resource_store("player")
+	if store == null:
+		world.free()
+		return _fail("player store missing")
+	if store.add("construction_component", 0.5):
+		world.free()
+		return _fail("fractional discrete add must reject")
+	if not store.add("construction_component", 1.0):
+		world.free()
+		return _fail("whole discrete add must succeed")
+	world.free()
 	return true
 
 
@@ -144,20 +203,29 @@ func _test_player_carry_capacity_fixture() -> bool:
 	if store == null:
 		world.free()
 		return _fail("player store missing")
-	if not store.add("construction_component", 24.0):
-		world.free()
-		return _fail("24 components should fit the construction pocket (60 kg)")
-	if store.add("construction_component", 1.0):
-		world.free()
-		return _fail("construction pocket must reject overflow")
-	if not store.add("raw_regolith", 20.0):
+	if not is_equal_approx(store.capacity_l, PLAYER_CARRY_CAPACITY_L):
 		world.free()
 		return _fail(
-			"20 raw_regolith should fit the material pocket alongside components"
+			"player store capacity expected %.1f L, got %.1f L"
+			% [PLAYER_CARRY_CAPACITY_L, store.capacity_l]
 		)
-	if store.add("raw_regolith", 1.0):
+	if not store.add("construction_component", 33.0):
 		world.free()
-		return _fail("material pocket must reject overflow")
+		return _fail("33 components should fit the single 100 L pool (99 L used)")
+	if store.add("construction_component", 1.0):
+		world.free()
+		return _fail("34 components must overflow the 100 L pool")
+	world.free()
+
+	world = SimulationWorld.new()
+	IndustryStoreService.ensure_player_store(world)
+	store = world.get_resource_store("player")
+	if not store.add("raw_regolith", 40.0):
+		world.free()
+		return _fail("40 raw_regolith should fill 100 L exactly")
+	if store.add("raw_regolith", 0.1):
+		world.free()
+		return _fail("player store must reject volume overflow")
 	world.free()
 	return true
 
@@ -387,6 +455,71 @@ func _test_hand_drill_loot_merge_runtime() -> bool:
 			% piles.size()
 		)
 	world.free()
+	return true
+
+
+func _test_terrain_excavation_contract() -> bool:
+	var service := TerrainExcavationService.new()
+	var empty := service.excavate(null, {"stamp_kind": &"sphere"})
+	if float(empty.get("removed_volume_m3", -1.0)) != 0.0:
+		return _fail("null voxel tool must return zero removed volume")
+
+	var invalid := service.excavate(
+		null,
+		{"stamp_kind": &"grow_sphere"}
+	)
+	if float(invalid.get("removed_volume_m3", -1.0)) != 0.0:
+		return _fail("invalid stamp kind must return zero removed volume")
+
+	var terrain := Node3D.new()
+	terrain.scale = Vector3(0.65, 0.65, 0.65)
+	var before := VoxelBuffer.new()
+	before.create(1, 1, 1)
+	before.set_voxel_f(-0.5, 0, 0, 0, VoxelBuffer.CHANNEL_SDF)
+	var after := VoxelBuffer.new()
+	after.create(1, 1, 1)
+	after.set_voxel_f(0.5, 0, 0, 0, VoxelBuffer.CHANNEL_SDF)
+	var removed_cells: float = service._removed_volume_m3(before, after)
+	if absf(removed_cells - 1.0) > 0.05:
+		return _fail(
+			"single-cell occupancy delta expected ~1.0, got %.6f" % removed_cells
+		)
+	var expected_m3: float = VoxelSpaceUtil.cell_volume_m3(terrain)
+	if absf(expected_m3 - 0.274625) > 0.0001:
+		return _fail(
+			"cell volume at scale 0.65 expected 0.274625, got %.6f" % expected_m3
+		)
+	var world_m3 := removed_cells * expected_m3
+	if absf(world_m3 - expected_m3) > 0.02:
+		return _fail(
+			"world m3 at scale 0.65 expected %.6f, got %.6f"
+			% [expected_m3, world_m3]
+		)
+
+	if service._removed_volume_m3(after, after) > EPSILON:
+		return _fail("repeat stamp over empty cells must measure zero delta")
+
+	var material := TerrainMaterialSource.new()
+	if not material.yield_for_removed_volume(0.0).is_empty():
+		return _fail("zero removed volume must yield nothing")
+	var yields := material.yield_for_removed_volume(
+		0.01,
+		IndustryArchetypeProfile.terrain_collectible_fraction()
+	)
+	if yields.is_empty():
+		return _fail("collectible fraction must still yield on positive volume")
+	var mass_kg := float(yields[0].get("mass_kg", 0.0))
+	var expected_mass := (
+		0.01
+		* TerrainMaterialSource.REGOLITH_DENSITY_KG_PER_M3
+		* IndustryArchetypeProfile.terrain_collectible_fraction()
+	)
+	if not is_equal_approx(mass_kg, expected_mass):
+		return _fail(
+			"collectible yield mass expected %.6f, got %.6f"
+			% [expected_mass, mass_kg]
+		)
+	terrain.free()
 	return true
 
 
@@ -854,7 +987,16 @@ func _run_drill_storage_full_scenario() -> bool:
 		world.free()
 		return _fail("drill did not credit raw_regolith with mocked carve")
 	_fill_store_to_capacity(world)
-	_run_industry_ticks(sim, 2.0)
+	var drill_element := world.get_element(drill_id)
+	var buffer_capacity_l := IndustryArchetypeProfile.internal_buffer_capacity_l(
+		drill_element.archetype_id
+	)
+	drill_element.industry_buffer.add(
+		"raw_regolith",
+		79.5,
+		buffer_capacity_l
+	)
+	_run_industry_ticks(sim, 1.0)
 	var reason := _read_functional_reason(world, drill_id)
 	if reason != &"storage_full":
 		sim.queue_free()
@@ -938,17 +1080,27 @@ func _assert_world_connect_network_rejects_cargo_ports() -> bool:
 	return await _assert_connect_network_rejects_cargo_ports()
 
 
-func _capacity_store(capacity_kg: float) -> RefCounted:
-	return IndustryV1CapacityStore.new(capacity_kg, RESOURCE_CATALOG)
+func _capacity_store(capacity_l: float) -> RefCounted:
+	return IndustryV1CapacityStore.new(capacity_l, ITEM_CATALOG)
 
 
 func _catalog_mass(amounts: Dictionary) -> float:
 	var total := 0.0
 	for resource_id: Variant in amounts.keys():
-		var mass_per_unit: float = float(
-			RESOURCE_CATALOG.get(str(resource_id), 0.0)
+		total += ResourceCatalog.resource_mass_kg(
+			str(resource_id),
+			float(amounts[resource_id])
 		)
-		total += float(amounts[resource_id]) * mass_per_unit
+	return total
+
+
+func _catalog_volume(amounts: Dictionary) -> float:
+	var total := 0.0
+	for resource_id: Variant in amounts.keys():
+		total += ResourceCatalog.resource_volume_l(
+			str(resource_id),
+			float(amounts[resource_id])
+		)
 	return total
 
 
@@ -1284,7 +1436,7 @@ func _integration_blueprint() -> Blueprint:
 
 
 func _dual_store_blueprint() -> Blueprint:
-	return BlueprintBaker.bake_from_placements(
+	var blueprint := BlueprintBaker.bake_from_placements(
 		"industry_v1_dual_store",
 		[
 			_placement(
@@ -1298,52 +1450,64 @@ func _dual_store_blueprint() -> Blueprint:
 				Vector3i(2, 0, 1)
 			),
 			_placement(
-				"drill_0",
-				Slice01Archetypes.stationary_drill(),
-				Vector3i.ZERO
-			),
-			_placement(
-				"pipe_corner",
-				Slice01Archetypes.load_required("cargo_pipe"),
-				Vector3i(0, 0, 2)
-			),
-			_placement(
-				"pipe_east",
-				Slice01Archetypes.load_required("cargo_pipe"),
-				Vector3i(1, 0, 2)
-			),
-			_placement(
 				"processor_0",
 				Slice01Archetypes.processor(),
 				Vector3i(0, 0, 3)
 			),
 			_placement(
-				"pipe_after_processor",
+				"pipe_1",
 				Slice01Archetypes.load_required("cargo_pipe"),
 				Vector3i(1, 0, 6)
 			),
 			_placement(
+				"pipe_2",
+				Slice01Archetypes.load_required("cargo_pipe"),
+				Vector3i(2, 0, 6)
+			),
+			_placement(
+				"pipe_3",
+				Slice01Archetypes.load_required("cargo_pipe"),
+				Vector3i(3, 0, 6)
+			),
+			_placement(
+				"pipe_4",
+				Slice01Archetypes.load_required("cargo_pipe"),
+				Vector3i(4, 0, 6)
+			),
+			_placement(
+				"pipe_5",
+				Slice01Archetypes.load_required("cargo_pipe"),
+				Vector3i(5, 0, 6)
+			),
+			_placement(
+				"pipe_6",
+				Slice01Archetypes.load_required("cargo_pipe"),
+				Vector3i(6, 0, 6)
+			),
+			_placement(
+				"pipe_7",
+				Slice01Archetypes.load_required("cargo_pipe"),
+				Vector3i(7, 0, 6)
+			),
+			_placement(
+				"pipe_8",
+				Slice01Archetypes.load_required("cargo_pipe"),
+				Vector3i(8, 0, 6)
+			),
+			_placement(
 				"store_near",
 				Slice01Archetypes.cargo_store(),
-				Vector3i(0, 0, 6)
-			),
-			_placement(
-				"fabricator_0",
-				Slice01Archetypes.fabricator(),
-				Vector3i(0, 0, 7)
-			),
-			_placement(
-				"pipe_after_fabricator",
-				Slice01Archetypes.load_required("cargo_pipe"),
-				Vector3i(1, 0, 10)
+				Vector3i(3, 0, 7)
 			),
 			_placement(
 				"store_0",
 				Slice01Archetypes.cargo_store(),
-				Vector3i(0, 0, 11)
+				Vector3i(7, 0, 7)
 			),
 		]
 	)
+	blueprint.allow_disconnected = true
+	return blueprint
 
 
 func _placement(
@@ -1544,6 +1708,8 @@ func _seed_integration_inputs(world: SimulationWorld) -> void:
 			world.get_element(fabricator_id),
 			{"calcined_oxide": 2.0, "metal_ingot": 2.0}
 		)
+		var runtime := world.ensure_industry_element_runtime(fabricator_id)
+		runtime.ensure_machine_state().queue.append("sinter_component")
 
 
 func _find_element_id_by_archetype(
@@ -1605,21 +1771,22 @@ class IndustryV1TestElement:
 class IndustryV1CapacityStore:
 	extends RefCounted
 
-	var capacity_kg: float = 0.0
+	var capacity_l: float = 0.0
 	var inner: SimulationResourceStore = SimulationResourceStore.new()
 	var _catalog: Dictionary = {}
 
 
 	func _init(capacity: float, catalog: Dictionary) -> void:
-		capacity_kg = capacity
+		capacity_l = capacity
 		_catalog = catalog
 
 
-	func total_mass_kg() -> float:
+	func total_volume_l() -> float:
 		var total := 0.0
 		for resource_id: String in inner.resource_ids():
+			var entry: Dictionary = _catalog.get(resource_id, {})
 			total += inner.amount(resource_id) * float(
-				_catalog.get(resource_id, 0.0)
+				entry.get("volume_per_unit_l", 0.0)
 			)
 		return total
 
@@ -1627,7 +1794,10 @@ class IndustryV1CapacityStore:
 	func try_add(resource_id: String, amount: float) -> bool:
 		if amount <= 0.0:
 			return false
-		var added_mass := amount * float(_catalog.get(resource_id, 0.0))
-		if total_mass_kg() + added_mass > capacity_kg + 0.000001:
+		if ResourceCatalog.rejects_fractional_amount(resource_id, amount):
+			return false
+		var entry: Dictionary = _catalog.get(resource_id, {})
+		var added_volume := amount * float(entry.get("volume_per_unit_l", 0.0))
+		if total_volume_l() + added_volume > capacity_l + 0.000001:
 			return false
 		return inner.add(resource_id, amount)

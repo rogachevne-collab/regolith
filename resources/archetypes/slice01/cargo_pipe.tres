@@ -13,41 +13,6 @@ amount = 1.0
 [sub_resource type="Resource" id="Collider"]
 script = ExtResource("2_col")
 
-[sub_resource type="Resource" id="Structural_px"]
-script = ExtResource("3_port")
-port_id = "structural_0_0_0_px"
-compatibility_tags = PackedStringArray("structural")
-
-[sub_resource type="Resource" id="Structural_nx"]
-script = ExtResource("3_port")
-port_id = "structural_0_0_0_nx"
-local_face = 1
-compatibility_tags = PackedStringArray("structural")
-
-[sub_resource type="Resource" id="Structural_py"]
-script = ExtResource("3_port")
-port_id = "structural_0_0_0_py"
-local_face = 2
-compatibility_tags = PackedStringArray("structural")
-
-[sub_resource type="Resource" id="Structural_ny"]
-script = ExtResource("3_port")
-port_id = "structural_0_0_0_ny"
-local_face = 3
-compatibility_tags = PackedStringArray("structural")
-
-[sub_resource type="Resource" id="Structural_pz"]
-script = ExtResource("3_port")
-port_id = "structural_0_0_0_pz"
-local_face = 4
-compatibility_tags = PackedStringArray("structural")
-
-[sub_resource type="Resource" id="Structural_nz"]
-script = ExtResource("3_port")
-port_id = "structural_0_0_0_nz"
-local_face = 5
-compatibility_tags = PackedStringArray("structural")
-
 [sub_resource type="Resource" id="Cargo_px"]
 script = ExtResource("3_port")
 port_id = "cargo_through_px"
@@ -95,6 +60,7 @@ archetype_id = "cargo_pipe"
 display_name = "Грузовая труба"
 roles = PackedStringArray("Frame")
 mass_kg = 30.0
+structural_surface_policy = 1
 colliders = Array[ExtResource("2_col")]([SubResource("Collider")])
-ports = Array[ExtResource("3_port")]([SubResource("Structural_px"), SubResource("Structural_nx"), SubResource("Structural_py"), SubResource("Structural_ny"), SubResource("Structural_pz"), SubResource("Structural_nz"), SubResource("Cargo_px"), SubResource("Cargo_nx"), SubResource("Cargo_py"), SubResource("Cargo_ny"), SubResource("Cargo_pz"), SubResource("Cargo_nz")])
+ports = Array[ExtResource("3_port")]([SubResource("Cargo_px"), SubResource("Cargo_nx"), SubResource("Cargo_py"), SubResource("Cargo_ny"), SubResource("Cargo_pz"), SubResource("Cargo_nz")])
 build_requirements = Array[ExtResource("1_bom")]([SubResource("Requirement")])

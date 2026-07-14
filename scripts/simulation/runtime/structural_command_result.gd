@@ -27,6 +27,8 @@ const REASON_NO_EFFECT := &"no_effect"
 const REASON_DUPLICATE_CONNECTION := &"duplicate_connection"
 const REASON_CABLE_TOO_LONG := &"cable_too_long"
 const REASON_ENDPOINT_NOT_WIREABLE := &"endpoint_not_wireable"
+const REASON_DRIVEN_JOINT_CYCLE := &"driven_joint_cycle"
+const REASON_MOVING_TARGET_NOT_SUPPORTED := &"moving_target_not_supported"
 
 var status: StringName = STATUS_FAILED
 var reason: StringName = REASON_INVALID_TARGET

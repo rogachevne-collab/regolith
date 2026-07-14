@@ -8,7 +8,7 @@ func _ready() -> void:
 func _run() -> void:
 	if not _test_distance_pair_across_assemblies():
 		return
-	if not _test_overlength_allowed():
+	if not _test_overlength_rejected():
 		return
 	if not _test_cargo_rejected():
 		return
@@ -100,10 +100,10 @@ func _test_distance_pair_across_assemblies() -> bool:
 	var distributor := world.get_element(distributor_id)
 	var assembly := world.get_assembly_raw(distributor.assembly_id)
 	var moved := assembly.motion.duplicate_state()
-	moved.transform.origin += Vector3(20.0, 0.0, 0.0)
+	moved.transform.origin += Vector3(2.0, 0.0, 0.0)
 	if not world.sync_assembly_motion(assembly.assembly_id, moved):
 		world.free()
-		return _fail("failed to move cable endpoint assembly")
+		return _fail("failed to move cable endpoint assembly within span limit")
 	world.get_industry_network().ensure_graph_current(world)
 	var stored_links := world.list_electric_links()
 	if stored_links.size() != 1:
@@ -112,12 +112,23 @@ func _test_distance_pair_across_assemblies() -> bool:
 	var moved_link_id := int(stored_links[0]["link_id"])
 	if not world.get_industry_network().is_link_active(world, moved_link_id):
 		world.free()
-		return _fail("cable must stay active after endpoint assembly moves")
+		return _fail("cable must stay active while span stays within 12 m")
+	moved.transform.origin += Vector3(20.0, 0.0, 0.0)
+	if not world.sync_assembly_motion(assembly.assembly_id, moved):
+		world.free()
+		return _fail("failed to overstretch cable endpoint assembly")
+	world.get_industry_network().ensure_graph_current(world)
+	if world.get_industry_network().is_link_active(world, moved_link_id):
+		world.free()
+		return _fail("overstretched cable must become dormant, not stay active")
+	if world.list_electric_links().size() != 1:
+		world.free()
+		return _fail("overstretched cable must stay stored until disconnect")
 	world.free()
 	return true
 
 
-func _test_overlength_allowed() -> bool:
+func _test_overlength_rejected() -> bool:
 	var world := SimulationWorld.new()
 	var source_spawn := _spawn_single_at(
 		world,
@@ -143,10 +154,10 @@ func _test_overlength_allowed() -> bool:
 		source_id,
 		distributor_id
 	)
-	if diagnosis.get("pair", {}).is_empty():
+	if StringName(diagnosis.get("reason", &"")) != &"cable_too_long":
 		world.free()
 		return _fail(
-			"long cable placement must expose a compatible pair, got %s"
+			"long cable placement must report cable_too_long, got %s"
 			% diagnosis.get("reason", &"")
 		)
 	var result := world.connect_network(
@@ -155,9 +166,14 @@ func _test_overlength_allowed() -> bool:
 		distributor_id,
 		"power_in"
 	)
-	if not result.is_ok():
+	if (
+		result.is_ok()
+		or result.reason != StructuralCommandResult.REASON_CABLE_TOO_LONG
+	):
 		world.free()
-		return _fail("authority must accept long electric cable: %s" % result.reason)
+		return _fail(
+			"authority must reject span over 12 m: %s" % result.reason
+		)
 	world.free()
 	return true
 
@@ -188,10 +204,15 @@ func _test_cargo_rejected() -> bool:
 	if (
 		result.is_ok()
 		or result.reason
-		!= StructuralCommandResult.REASON_INCOMPATIBLE_CONNECTION
+		not in [
+			StructuralCommandResult.REASON_INCOMPATIBLE_CONNECTION,
+			StructuralCommandResult.REASON_ENDPOINT_NOT_WIREABLE,
+		]
 	):
 		world.free()
-		return _fail("connect_network must reject cargo ports")
+		return _fail(
+			"connect_network must reject cargo ports, got %s" % result.reason
+		)
 	world.free()
 	return true
 

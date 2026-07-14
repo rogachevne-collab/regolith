@@ -6,7 +6,6 @@ const MIN_WARMUP_FRAMES := 30
 const STABLE_PHYSICS_FRAMES := 4
 const SPAWN_PROBE_TIMEOUT_MS := 30000
 const MAX_SPAWN_SETTLE_FRAMES := 180
-const STARTER_CONSTRUCTION_COMPONENTS := 24.0
 const AUTOSAVE_INTERVAL_S := 90.0
 
 @onready var _terrain: VoxelTerrain = $VoxelTerrain
@@ -17,6 +16,8 @@ const AUTOSAVE_INTERVAL_S := 90.0
 ## Debug overlay (coordinate readout + controls hint) is off by default; the
 ## production HUD replaces it. Flip in the inspector for engineering builds.
 @export var debug_overlay := false
+## Fills player cargo with a large playtest mix on every world entry (fresh or loaded).
+@export var playtest_cargo := true
 
 @onready var _loading: Label = $CanvasLayer/Loading
 @onready var _coordinates: Label = $CanvasLayer/Coordinates
@@ -35,6 +36,8 @@ var _save_load_attempted := false
 
 func _ready() -> void:
 	for archetype: ElementArchetype in Slice01Archetypes.load_all_required():
+		_session.world.get_archetype_registry().register(archetype)
+	for archetype: ElementArchetype in Slice01Archetypes.load_actuator_archetypes():
 		_session.world.get_archetype_registry().register(archetype)
 	_loading.visible = true
 	_coordinates.visible = debug_overlay
@@ -87,11 +90,8 @@ func _persist_world(force := false) -> void:
 
 
 func _begin_fresh_world(player_position: Vector3) -> void:
-	_session.world.set_resource_amount(
-		"player",
-		"construction_component",
-		STARTER_CONSTRUCTION_COMPONENTS
-	)
+	if not IndustryStoreService.seed_player_starter_resources(_session.world):
+		push_error("Fresh world player starter resources seed failed")
 	var base_origin := Vector3(
 		_base_spawn.global_position.x,
 		SKY_PROBE_Y,
@@ -103,20 +103,18 @@ func _begin_fresh_world(player_position: Vector3) -> void:
 	var base_z_plus_origin := base_origin + Vector3.BACK
 	var tool: VoxelTool = _terrain.get_voxel_tool()
 	tool.channel = VoxelBuffer.CHANNEL_SDF
-	var base_hit: VoxelRaycastResult = tool.raycast(
-		base_origin, Vector3.DOWN, 200.0
+	var base_hit: VoxelRaycastResult = _voxel_down_hit(base_origin, tool)
+	var base_x_minus_hit: VoxelRaycastResult = _voxel_down_hit(
+		base_x_minus_origin, tool
 	)
-	var base_x_minus_hit: VoxelRaycastResult = tool.raycast(
-		base_x_minus_origin, Vector3.DOWN, 200.0
+	var base_x_plus_hit: VoxelRaycastResult = _voxel_down_hit(
+		base_x_plus_origin, tool
 	)
-	var base_x_plus_hit: VoxelRaycastResult = tool.raycast(
-		base_x_plus_origin, Vector3.DOWN, 200.0
+	var base_z_minus_hit: VoxelRaycastResult = _voxel_down_hit(
+		base_z_minus_origin, tool
 	)
-	var base_z_minus_hit: VoxelRaycastResult = tool.raycast(
-		base_z_minus_origin, Vector3.DOWN, 200.0
-	)
-	var base_z_plus_hit: VoxelRaycastResult = tool.raycast(
-		base_z_plus_origin, Vector3.DOWN, 200.0
+	var base_z_plus_hit: VoxelRaycastResult = _voxel_down_hit(
+		base_z_plus_origin, tool
 	)
 	if (
 		base_hit == null
@@ -128,18 +126,25 @@ func _begin_fresh_world(player_position: Vector3) -> void:
 		push_error("Fresh world base spawn aborted: terrain raycast failed")
 		_finish_world_entry(player_position)
 		return
-	var base_ground: Vector3 = base_origin + Vector3.DOWN * base_hit.distance
+	var base_ground: Vector3 = (
+		base_origin
+		+ Vector3.DOWN * _voxel_down_world_distance(base_hit)
+	)
 	var base_x_minus_ground: Vector3 = (
-		base_x_minus_origin + Vector3.DOWN * base_x_minus_hit.distance
+		base_x_minus_origin
+		+ Vector3.DOWN * _voxel_down_world_distance(base_x_minus_hit)
 	)
 	var base_x_plus_ground: Vector3 = (
-		base_x_plus_origin + Vector3.DOWN * base_x_plus_hit.distance
+		base_x_plus_origin
+		+ Vector3.DOWN * _voxel_down_world_distance(base_x_plus_hit)
 	)
 	var base_z_minus_ground: Vector3 = (
-		base_z_minus_origin + Vector3.DOWN * base_z_minus_hit.distance
+		base_z_minus_origin
+		+ Vector3.DOWN * _voxel_down_world_distance(base_z_minus_hit)
 	)
 	var base_z_plus_ground: Vector3 = (
-		base_z_plus_origin + Vector3.DOWN * base_z_plus_hit.distance
+		base_z_plus_origin
+		+ Vector3.DOWN * _voxel_down_world_distance(base_z_plus_hit)
 	)
 	var base_basis := GridSpawnUtil.terrain_basis(
 		base_x_plus_ground - base_x_minus_ground,
@@ -178,6 +183,7 @@ func _finish_world_entry(player_position: Vector3) -> void:
 	_world_ready = true
 	_resync_player_camera()
 	_session.get_industry_simulation().bind_world(_session.world)
+	_apply_playtest_cargo_if_enabled()
 
 
 func _finish_loaded_world_entry(spawn_position: Vector3) -> void:
@@ -186,6 +192,14 @@ func _finish_loaded_world_entry(spawn_position: Vector3) -> void:
 	_loading.visible = false
 	_world_ready = true
 	_session.get_industry_simulation().bind_world(_session.world)
+	_apply_playtest_cargo_if_enabled()
+
+
+func _apply_playtest_cargo_if_enabled() -> void:
+	if not playtest_cargo or _session == null or _session.world == null:
+		return
+	if not IndustryStoreService.apply_playtest_cargo(_session.world):
+		push_error("Playtest cargo seed failed")
 
 
 func _resync_player_camera() -> void:
@@ -227,20 +241,21 @@ func _place_when_ground_exists() -> void:
 			await get_tree().process_frame
 			continue
 
-		var player_hit: VoxelRaycastResult = tool.raycast(
-			player_origin, Vector3.DOWN, 200.0)
-		var vehicle_hit: VoxelRaycastResult = tool.raycast(
-			vehicle_origin, Vector3.DOWN, 200.0)
-		var base_hit: VoxelRaycastResult = tool.raycast(
-			base_origin, Vector3.DOWN, 200.0)
-		var base_x_minus_hit: VoxelRaycastResult = tool.raycast(
-			base_x_minus_origin, Vector3.DOWN, 200.0)
-		var base_x_plus_hit: VoxelRaycastResult = tool.raycast(
-			base_x_plus_origin, Vector3.DOWN, 200.0)
-		var base_z_minus_hit: VoxelRaycastResult = tool.raycast(
-			base_z_minus_origin, Vector3.DOWN, 200.0)
-		var base_z_plus_hit: VoxelRaycastResult = tool.raycast(
-			base_z_plus_origin, Vector3.DOWN, 200.0)
+		var player_hit: VoxelRaycastResult = _voxel_down_hit(player_origin, tool)
+		var vehicle_hit: VoxelRaycastResult = _voxel_down_hit(vehicle_origin, tool)
+		var base_hit: VoxelRaycastResult = _voxel_down_hit(base_origin, tool)
+		var base_x_minus_hit: VoxelRaycastResult = _voxel_down_hit(
+			base_x_minus_origin, tool
+		)
+		var base_x_plus_hit: VoxelRaycastResult = _voxel_down_hit(
+			base_x_plus_origin, tool
+		)
+		var base_z_minus_hit: VoxelRaycastResult = _voxel_down_hit(
+			base_z_minus_origin, tool
+		)
+		var base_z_plus_hit: VoxelRaycastResult = _voxel_down_hit(
+			base_z_plus_origin, tool
+		)
 		if _spawn_wait_start_ms == 0:
 			_spawn_wait_start_ms = Time.get_ticks_msec()
 
@@ -256,7 +271,7 @@ func _place_when_ground_exists() -> void:
 		if surfaces_ready:
 			_launch_vehicle.global_position = (
 				vehicle_origin
-				+ Vector3.DOWN * vehicle_hit.distance
+				+ Vector3.DOWN * _voxel_down_world_distance(vehicle_hit)
 				+ Vector3.UP * 0.52
 			)
 			if WorldPersistence.has_save() and not _save_load_attempted:
@@ -290,7 +305,7 @@ func _place_when_ground_exists() -> void:
 				)
 				var player_surface_y: float = _resolve_surface_y(
 					_player_spawn_xz,
-					player_origin.y - player_hit.distance
+					player_origin.y - _voxel_down_world_distance(player_hit)
 				)
 				var fallback_spawn := Vector3(
 					_player_spawn_xz.x,
@@ -304,14 +319,19 @@ func _place_when_ground_exists() -> void:
 				Time.get_ticks_msec() - _spawn_wait_start_ms
 				>= SPAWN_PROBE_TIMEOUT_MS
 			)
-			if _probe_player_spawn_ready(player_hit.distance) or probe_timed_out:
+			if (
+				_probe_player_spawn_ready(
+					_voxel_down_world_distance(player_hit)
+				)
+				or probe_timed_out
+			):
 				if probe_timed_out and _stable_player < STABLE_PHYSICS_FRAMES:
 					push_warning(
 						"Spawn probe timed out; continuing with best effort."
 					)
 				var player_surface_y: float = _resolve_surface_y(
 					_player_spawn_xz,
-					player_origin.y - player_hit.distance
+					player_origin.y - _voxel_down_world_distance(player_hit)
 				)
 				var player_position := Vector3(
 					_player_spawn_xz.x,
@@ -392,11 +412,11 @@ func _resolve_saved_player_position(
 				return saved
 	var xz := _saved_world_spawn_xz()
 	var origin := Vector3(xz.x, SKY_PROBE_Y, xz.y)
-	var hit: VoxelRaycastResult = tool.raycast(origin, Vector3.DOWN, 200.0)
+	var hit: VoxelRaycastResult = _voxel_down_hit(origin, tool)
 	if hit != null:
 		return Vector3(
 			xz.x,
-			origin.y - hit.distance + SPAWN_CLEARANCE,
+			origin.y - _voxel_down_world_distance(hit) + SPAWN_CLEARANCE,
 			xz.y,
 		)
 	return Vector3(xz.x, _saved_world_spawn_y(), xz.y)
@@ -427,6 +447,20 @@ func _saved_world_spawn_xz() -> Vector2:
 	if count > 0:
 		return sum / float(count)
 	return _player_spawn_xz
+
+
+func _voxel_down_hit(origin: Vector3, tool: VoxelTool) -> VoxelRaycastResult:
+	return VoxelSpaceUtil.raycast_world(
+		tool,
+		_terrain,
+		origin,
+		Vector3.DOWN,
+		200.0
+	)
+
+
+func _voxel_down_world_distance(hit: VoxelRaycastResult) -> float:
+	return VoxelSpaceUtil.raycast_hit_world_distance(_terrain, hit)
 
 
 func _is_usable_saved_player_position(pos: Vector3) -> bool:

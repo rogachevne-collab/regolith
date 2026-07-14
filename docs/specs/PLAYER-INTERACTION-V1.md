@@ -50,9 +50,10 @@ R6 остаётся неизменным: controller addon и vendored third-par
 
 - `CharacterBody3D`, `MOTION_MODE_GROUNDED`, единицы СИ;
 - высота стоящего игрока — 1.8 м, ширина — 0.7 м;
-- capsule и cylinder сравниваются на Jolt в одинаковом benchmark;
-- итоговая shape выбирается по snagging, floor stability, step handling, head
-  clearance и regression PoC-3;
+- `CapsuleShape3D`, radius `0.30 m`, full height `1.8 m` (Godot `height`
+  includes both hemispheres);
+- step solver uses a minimum `0.12 m` raised forward probe so the rounded foot
+  clears a stair lip without relaxing the `0.30 m` height or wall guards;
 - collision margin фиксируется тестом и не используется для сокрытия penetration.
 
 ### Ground movement
@@ -110,8 +111,12 @@ Step solver использует motion tests `up → forward → down`; camera 
 - body владеет yaw, head target — pitch, camera visual rig не владеет gameplay
   transform;
 - physics target обновляется в `_physics_process`;
-- top-level camera в `_process` следует за
-  `get_global_transform_interpolated()` target;
+- top-level camera в `_process` следует за target transform **одним
+  источником** (position + basis из одного `global_transform`): yaw
+  применяется сразу в input, а смешение interpolated position с raw basis
+  давало rotation jitter на неровном voxel ground; при
+  `physics_interpolation_mode = OFF` у игрока используется
+  `global_transform`, не `get_global_transform_interpolated()`;
 - mouse delta применяется без зависимости от render FPS;
 - pitch ограничен, roll отсутствует без отдельного эффекта;
 - procedural bob/sway воздействует только на visual rig и имеет малую амплитуду;
@@ -217,7 +222,14 @@ Gameplay-код не читает физические keycode или mouse butt
 
 - цель `voxel` → `voxel_remove` через `CommandGateway`;
 - цель `simulation_element` → `DamageElementCommand` (меньший DPS, чем у болгарки);
-- cadence continuous action сохраняется (`interval = 0.05`, `max_range = 2.2`);
+- terrain request обрабатывает единый `TerrainExcavationService`; звук и VFX
+  подтверждают только непустой результат операции;
+- cadence continuous action сохраняется (`interval = 0.08`);
+- `max_range = 3.2` (`IndustryArchetypeProfile.hand_drill_reach_m`): луч прицела
+  стартует от глаз (~1.6–1.65 м над стопами), поэтому земля прямо под игроком
+  уже ~1.66 м, а под естественным взглядом вниз — дальше; reach перекрывает
+  eye-to-floor плюс рабочую глубину, чтобы бурение под ногами срабатывало
+  надёжно и продолжало доставать по мере углубления ямы (болгарка остаётся 2.2);
 - урон по блоку за tick: `DRILL_DPS * interval` (настраиваемая константа, v0: 5 integrity/s).
 
 ### Grinder command routing

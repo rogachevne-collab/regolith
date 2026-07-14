@@ -87,3 +87,21 @@ static func processor() -> ElementArchetype:
 
 static func fabricator() -> ElementArchetype:
 	return load_required("fabricator")
+
+
+static func piston_base() -> ElementArchetype:
+	return load_required("piston_base")
+
+
+static func piston_head() -> ElementArchetype:
+	return load_required("piston_head")
+
+
+static func load_actuator_archetypes() -> Array[ElementArchetype]:
+	var archetypes: Array[ElementArchetype] = []
+	for archetype_id: String in ["piston_base", "piston_head"]:
+		var archetype: ElementArchetype = load_required(archetype_id)
+		if archetype == null:
+			return []
+		archetypes.append(archetype)
+	return archetypes

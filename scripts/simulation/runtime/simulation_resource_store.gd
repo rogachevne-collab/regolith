@@ -7,8 +7,8 @@ const _SCRIPT := preload(
 )
 
 var store_id: String = ""
-## Mass limit for Industry v1; INF means uncoupled from capacity checks.
-var capacity_kg: float = INF
+## Volume limit for Industry v1; INF means uncoupled from capacity checks.
+var capacity_l: float = INF
 var _amounts: Dictionary = {}
 
 
@@ -17,31 +17,37 @@ func amount(resource_id: String) -> float:
 
 
 func can_remove(resource_id: String, requested: float) -> bool:
-	return (
-		not resource_id.is_empty()
-		and is_finite(requested)
-		and requested >= 0.0
-		and amount(resource_id) + EPSILON >= requested
-	)
+	if (
+		resource_id.is_empty()
+		or not is_finite(requested)
+		or requested < 0.0
+		or ResourceCatalog.rejects_fractional_amount(resource_id, requested)
+	):
+		return false
+	return amount(resource_id) + EPSILON >= requested
 
 
-func can_add(resource_id: String, added: float, capacity_limit_kg: float = INF) -> bool:
-	if resource_id.is_empty() or not is_finite(added) or added < 0.0:
+func can_add(
+	resource_id: String,
+	added: float,
+	capacity_limit_l: float = INF
+) -> bool:
+	if (
+		resource_id.is_empty()
+		or not is_finite(added)
+		or added < 0.0
+		or ResourceCatalog.rejects_fractional_amount(resource_id, added)
+	):
 		return false
 	if added <= EPSILON:
 		return true
-	if store_id == IndustryStoreService.PLAYER_STORE_ID:
-		return (
-			added
-			<= ResourceCatalog.max_addable_amount_player(self, resource_id)
-			+ EPSILON
-		)
-	if not is_finite(capacity_limit_kg) or capacity_limit_kg <= EPSILON:
+	var limit_l := _effective_capacity_l(capacity_limit_l)
+	if not is_finite(limit_l) or limit_l <= EPSILON:
 		return true
 	var max_addable := ResourceCatalog.max_addable_amount(
 		self,
 		resource_id,
-		capacity_limit_kg
+		limit_l
 	)
 	return added <= max_addable + EPSILON
 
@@ -49,9 +55,9 @@ func can_add(resource_id: String, added: float, capacity_limit_kg: float = INF) 
 func add(
 	resource_id: String,
 	added: float,
-	capacity_limit_kg: float = INF
+	capacity_limit_l: float = INF
 ) -> bool:
-	if not can_add(resource_id, added, capacity_limit_kg):
+	if not can_add(resource_id, added, capacity_limit_l):
 		return false
 	if added <= EPSILON:
 		return true
@@ -73,7 +79,12 @@ func remove(resource_id: String, requested: float) -> bool:
 
 
 func set_amount(resource_id: String, value: float) -> bool:
-	if resource_id.is_empty() or not is_finite(value) or value < 0.0:
+	if (
+		resource_id.is_empty()
+		or not is_finite(value)
+		or value < 0.0
+		or ResourceCatalog.rejects_fractional_amount(resource_id, value)
+	):
 		return false
 	if value <= EPSILON:
 		_amounts.erase(resource_id)
@@ -94,9 +105,13 @@ func mass_kg() -> float:
 	return ResourceCatalog.store_mass_kg(self)
 
 
-func is_storage_full(capacity_limit_kg: float = INF) -> bool:
-	var limit := capacity_kg if is_finite(capacity_kg) else capacity_limit_kg
-	return ResourceCatalog.is_storage_full(self, limit)
+func volume_l() -> float:
+	return ResourceCatalog.store_volume_l(self)
+
+
+func is_storage_full(capacity_limit_l: float = INF) -> bool:
+	var limit_l := _effective_capacity_l(capacity_limit_l)
+	return ResourceCatalog.is_storage_full(self, limit_l)
 
 
 func to_dict() -> Dictionary:
@@ -107,20 +122,26 @@ func to_dict() -> Dictionary:
 		"store_id": store_id,
 		"amounts": amounts,
 	}
-	if is_finite(capacity_kg):
-		row["capacity_kg"] = capacity_kg
+	if is_finite(capacity_l):
+		row["capacity_l"] = capacity_l
 	return row
 
 
 static func from_dict(data: Dictionary) -> SimulationResourceStore:
 	var store: SimulationResourceStore = _SCRIPT.new()
 	store.store_id = str(data.get("store_id", ""))
-	var capacity: Variant = data.get("capacity_kg", INF)
-	if is_finite(float(capacity)) and float(capacity) > 0.0:
-		store.capacity_kg = float(capacity)
+	var capacity_l_value: Variant = data.get("capacity_l", INF)
+	if is_finite(float(capacity_l_value)) and float(capacity_l_value) > 0.0:
+		store.capacity_l = float(capacity_l_value)
 	var amounts: Variant = data.get("amounts", {})
 	if amounts is Dictionary:
 		for resource_id: Variant in amounts.keys():
 			if not store.set_amount(str(resource_id), float(amounts[resource_id])):
 				return null
 	return store
+
+
+func _effective_capacity_l(capacity_limit_l: float) -> float:
+	if is_finite(capacity_l):
+		return capacity_l
+	return capacity_limit_l

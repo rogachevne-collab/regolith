@@ -21,7 +21,7 @@ func pull_inputs_for_recipe(
 	):
 		return
 	IndustryStoreService.sync_element_storage(world, element)
-	var buffer_capacity := IndustryArchetypeProfile.internal_buffer_capacity_kg(
+	var buffer_capacity := IndustryArchetypeProfile.internal_buffer_capacity_l(
 		element.archetype_id
 	)
 	for resource_id: Variant in inputs.keys():
@@ -68,7 +68,7 @@ func can_accept_outputs(
 	if element == null or outputs.is_empty():
 		return false
 	IndustryStoreService.sync_element_storage(world, element)
-	var buffer_capacity := IndustryArchetypeProfile.internal_buffer_capacity_kg(
+	var buffer_capacity := IndustryArchetypeProfile.internal_buffer_capacity_l(
 		element.archetype_id
 	)
 	for resource_id: Variant in outputs.keys():
@@ -92,7 +92,7 @@ func can_accept_outputs(
 			)
 			if store == null:
 				return false
-			var capacity := IndustryStoreService.capacity_kg_for_store(
+			var capacity := IndustryStoreService.capacity_l_for_store(
 				world,
 				store_id
 			)

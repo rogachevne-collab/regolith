@@ -4,13 +4,13 @@ extends Control
 ## underline), the build orientation (24 orientations) and the construction
 ## component counter. Input stays in ToolController; this never mutates it.
 ##
-## Slots double as drag-drop targets for the BlockPalette (Phase 4). Dropping an
-## archetype calls ToolController.assign_slot_archetype — a presentation/config
-## remap, not a simulation mutation; the construction command path is unchanged.
+## Slots double as drag-drop targets for the BlockPalette (Phase 4) and for
+## player-owned tool instances from the terminal grid. Block drops call
+## ToolController.assign_slot_archetype; tool drops bind an instance through the
+## authoritative player inventory registry.
 
 
-## A toolbar slot that accepts a dragged BlockPalette archetype. The drop is
-## delegated to the ToolController remap API; drill/weld slots refuse it.
+## A toolbar slot that accepts a compatible block archetype or tool instance.
 class DropSlot:
 	extends Panel
 
@@ -20,11 +20,28 @@ class DropSlot:
 	var highlight: ColorRect
 
 	func _can_drop_data(_at_position: Vector2, data: Variant) -> bool:
-		var accepts := (
-			tools != null
-			and data is Dictionary
+		var is_block := (
+			data is Dictionary
 			and String(data.get("kind", "")) == "hud_block"
+			and tools != null
 			and tools.toolbar_slot_accepts_block(page, slot_index)
+		)
+		var is_tool_instance := (
+			data is Dictionary
+			and String(data.get("kind", "")) == HudInventoryTransferUtil.PAYLOAD_KIND
+			and str(data.get("source_store_id", ""))
+				== IndustryStoreService.PLAYER_STORE_ID
+			and not str(data.get("instance_id", "")).is_empty()
+			and tools != null
+			and tools.toolbar_slot_accepts_tool_instance(
+				page,
+				slot_index,
+				str(data.get("instance_id", ""))
+			)
+		)
+		var accepts := (
+			is_block
+			or is_tool_instance
 		)
 		if highlight != null:
 			highlight.visible = accepts
@@ -34,11 +51,18 @@ class DropSlot:
 		if highlight != null:
 			highlight.visible = false
 		if tools != null and data is Dictionary:
-			tools.assign_slot_archetype(
-				page,
-				slot_index,
-				String(data.get("archetype_id", ""))
-			)
+			if String(data.get("kind", "")) == "hud_block":
+				tools.assign_slot_archetype(
+					page,
+					slot_index,
+					String(data.get("archetype_id", ""))
+				)
+			elif String(data.get("kind", "")) == HudInventoryTransferUtil.PAYLOAD_KIND:
+				tools.assign_slot_tool_instance(
+					page,
+					slot_index,
+					str(data.get("instance_id", ""))
+				)
 
 	func _notification(what: int) -> void:
 		if (

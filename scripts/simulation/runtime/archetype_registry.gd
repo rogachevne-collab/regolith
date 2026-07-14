@@ -77,8 +77,54 @@ static func fingerprint_of(archetype: ElementArchetype) -> String:
 		"mass_kg": archetype.mass_kg,
 		"footprint_cells": archetype.footprint_cells,
 		"max_integrity": archetype.max_integrity,
+		"structural_surface_policy": archetype.structural_surface_policy,
+		"structural_mount_pads": _mount_pad_rows(archetype.structural_mount_pads),
+		"piston_definition": _piston_definition_row(archetype.piston_definition),
+		"internal_archetype": archetype.internal_archetype,
 		"ports": ports,
 		"colliders": colliders,
 		"build_requirements": requirements,
 	}
 	return str(hash(JSON.stringify(schema)))
+
+
+static func _mount_pad_rows(
+	mount_pads: Array[StructuralMountPad]
+) -> Array[Dictionary]:
+	var rows: Array[Dictionary] = []
+	for pad: StructuralMountPad in mount_pads:
+		if pad == null:
+			continue
+		rows.append({
+			"cell": pad.local_cell,
+			"face": pad.local_face,
+		})
+	rows.sort_custom(
+		func(left: Dictionary, right: Dictionary) -> bool:
+			var left_cell: Vector3i = left["cell"]
+			var right_cell: Vector3i = right["cell"]
+			if left_cell != right_cell:
+				return left_cell < right_cell
+			return int(left["face"]) < int(right["face"])
+	)
+	return rows
+
+
+static func _piston_definition_row(
+	definition: PistonDefinition
+) -> Dictionary:
+	if definition == null:
+		return {}
+	return {
+		"head_archetype_id": definition.head_archetype_id,
+		"axis_face": definition.axis_face,
+		"retracted_offset_m": definition.retracted_offset_m,
+		"lower_limit_m": definition.lower_limit_m,
+		"upper_limit_m": definition.upper_limit_m,
+		"default_speed_limit_mps": definition.default_speed_limit_mps,
+		"force_limit_n": definition.force_limit_n,
+		"stiffness_n_per_m": definition.stiffness_n_per_m,
+		"damping_n_s_per_m": definition.damping_n_s_per_m,
+		"power_draw_w": definition.power_draw_w,
+		"overload_policy": definition.overload_policy,
+	}

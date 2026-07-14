@@ -147,25 +147,30 @@ func _rebuild_assembly(assembly_id: int) -> void:
 		var archetype := element.get_archetype()
 		if archetype == null:
 			continue
-		for port: PortDefinition in archetype.ports:
-			if not _is_structural_port(port):
-				continue
-			var world_point := _port_world_point(
-				element,
-				port,
-				assembly_transform
+		for descriptor: GridSurfaceUtil.SurfaceFaceDescriptor in (
+			GridSurfaceUtil.get_surface_descriptors(
+				archetype,
+				element.orientation_index
 			)
-			var port_direction := _element_port_direction(element, port)
-			var world_normal := (
-				assembly_transform.basis * Vector3(port_direction).normalized()
+		):
+			var port_direction := OrientationUtil.rotate_direction(
+				OrientationUtil.face_to_vector(descriptor.local_face),
+				element.orientation_index
 			)
 			_add_face({
 				"assembly_id": assembly_id,
 				"element_id": element.element_id,
-				"port_id": port.port_id,
-				"collider_local_cell": port.local_cell,
-				"world_point": world_point,
-				"world_normal": world_normal,
+				"port_id": descriptor.structural_id,
+				"collider_local_cell": descriptor.local_cell,
+				"world_point": _surface_face_world_point(
+					element,
+					descriptor,
+					assembly_transform
+				),
+				"world_normal": (
+					assembly_transform.basis
+					* Vector3(port_direction).normalized()
+				),
 			})
 
 
@@ -191,18 +196,24 @@ func _add_element_faces(assembly_id: int, element_id: int) -> void:
 	var archetype := element.get_archetype()
 	if archetype == null:
 		return
-	for port: PortDefinition in archetype.ports:
-		if not _is_structural_port(port):
-			continue
-		var port_direction := _element_port_direction(element, port)
+	for descriptor: GridSurfaceUtil.SurfaceFaceDescriptor in (
+		GridSurfaceUtil.get_surface_descriptors(
+			archetype,
+			element.orientation_index
+		)
+	):
+		var port_direction := OrientationUtil.rotate_direction(
+			OrientationUtil.face_to_vector(descriptor.local_face),
+			element.orientation_index
+		)
 		_add_face({
 			"assembly_id": assembly_id,
 			"element_id": element.element_id,
-			"port_id": port.port_id,
-			"collider_local_cell": port.local_cell,
-			"world_point": _port_world_point(
+			"port_id": descriptor.structural_id,
+			"collider_local_cell": descriptor.local_cell,
+			"world_point": _surface_face_world_point(
 				element,
-				port,
+				descriptor,
 				assembly.motion.transform
 			),
 			"world_normal": (
@@ -273,6 +284,30 @@ func _assembly_signature(assembly: SimulationAssembly) -> String:
 	]
 
 
+static func _surface_face_world_point(
+	element: SimulationElement,
+	descriptor: GridSurfaceUtil.SurfaceFaceDescriptor,
+	assembly_transform: Transform3D
+) -> Vector3:
+	var world_cell := (
+		element.origin_cell
+		+ OrientationUtil.rotate_cell(
+			descriptor.local_cell,
+			element.orientation_index
+		)
+	)
+	var world_dir := OrientationUtil.rotate_direction(
+		OrientationUtil.face_to_vector(descriptor.local_face),
+		element.orientation_index
+	)
+	var local_normal := Vector3(world_dir).normalized()
+	var local_center := (
+		GridMetric.cell_center_meters(world_cell)
+		+ local_normal * GridMetric.HALF_CELL_SIZE_M
+	)
+	return assembly_transform * local_center
+
+
 static func _port_world_point(
 	element: SimulationElement,
 	port: PortDefinition,
@@ -308,12 +343,4 @@ static func _element_port_direction(
 	return OrientationUtil.rotate_direction(
 		OrientationUtil.face_to_vector(port.local_face),
 		element.orientation_index
-	)
-
-
-static func _is_structural_port(port: PortDefinition) -> bool:
-	return (
-		port != null
-		and port.kind == PortDefinition.Kind.MECHANICAL
-		and port.compatibility_tags.has("structural")
 	)

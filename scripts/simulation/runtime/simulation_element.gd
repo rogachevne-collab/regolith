@@ -101,7 +101,7 @@ func set_industry_buffer(amounts: Dictionary) -> void:
 		if amount <= 0.000001:
 			continue
 		industry_buffer.remove(resource_id, INF)
-		var capacity := IndustryArchetypeProfile.internal_buffer_capacity_kg(
+		var capacity := IndustryArchetypeProfile.internal_buffer_capacity_l(
 			archetype_id
 		)
 		if capacity <= 0.0:
@@ -277,7 +277,10 @@ func to_dict() -> Dictionary:
 	if industry_functional_reason != &"ok":
 		row["industry_functional_reason"] = industry_functional_reason
 	if industry_buffer != null and not industry_buffer.resource_ids().is_empty():
-		row["industry_buffer"] = industry_buffer.to_dict()
+		var capacity_l := IndustryArchetypeProfile.internal_buffer_capacity_l(
+			archetype_id
+		)
+		row["industry_buffer"] = industry_buffer.to_dict(capacity_l)
 	return row
 
 

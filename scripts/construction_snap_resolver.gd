@@ -74,15 +74,11 @@ func resolve(params: Dictionary) -> Dictionary:
 			held_attach_pivot
 		)
 		var direct_command: PlaceElementCommand = direct_plan.get("command")
-		if (
-			bool(direct_plan.get("valid", false))
-			and direct_command != null
-			and direct_command.assembly_id != 0
-		):
+		if direct_command != null and direct_command.assembly_id != 0:
 			var direct_candidate := _make_candidate(
 				direct_hit,
 				direct_plan,
-				DIRECT_ELEMENT_SCORE,
+				DIRECT_ELEMENT_SCORE if bool(direct_plan.get("valid", false)) else 0.0,
 				&"direct_element"
 			)
 			_sticky_candidate_key = str(direct_candidate["key"])
@@ -91,6 +87,39 @@ func resolve(params: Dictionary) -> Dictionary:
 				"selected_index": 0,
 				"selected_target": direct_hit,
 				"selected_plan": direct_plan,
+				"sticky_key": _sticky_candidate_key,
+				"stats": last_stats.duplicate(true),
+			}
+
+	if (
+		manual_index < 0
+		and bool(direct_hit.get("valid", false))
+		and StringName(direct_hit.get("target_kind", &""))
+		== InteractionHit.KIND_VOXEL
+	):
+		last_stats["plans_validated"] = 1
+		var ground_plan := ConstructionPlacement.plan(
+			world,
+			direct_hit,
+			archetype,
+			orientation_index,
+			store_id,
+			held_ground_pivot,
+			held_attach_pivot
+		)
+		if bool(ground_plan.get("valid", false)):
+			var ground_candidate := _make_candidate(
+				direct_hit,
+				ground_plan,
+				DIRECT_ELEMENT_SCORE,
+				&"voxel_direct"
+			)
+			_sticky_candidate_key = str(ground_candidate["key"])
+			return {
+				"candidates": [ground_candidate],
+				"selected_index": 0,
+				"selected_target": direct_hit,
+				"selected_plan": ground_plan,
 				"sticky_key": _sticky_candidate_key,
 				"stats": last_stats.duplicate(true),
 			}
@@ -330,7 +359,10 @@ func _collect_face_candidates(
 	)
 
 	var validated: Array[Dictionary] = []
-	var validate_limit := mini(TOP_K_VALIDATE, ranked.size())
+	var validate_limit := mini(
+		_validate_limit_for(archetype),
+		ranked.size()
+	)
 	for index: int in range(validate_limit):
 		var entry: Dictionary = ranked[index]
 		var face: Dictionary = entry["face"]
@@ -358,15 +390,18 @@ func _collect_face_candidates(
 		if not bool(plan.get("valid", false)):
 			continue
 		var score := float(entry["score"])
-		if _has_compatible_connection(world, element, plan):
-			score += 5.0
+		var command: PlaceElementCommand = plan.get("command")
 		validated.append(
 			_make_candidate(
 				target,
 				plan,
 				score,
 				&"face_scan",
-				"%d|%s" % [element.element_id, str(face["port_id"])]
+				"%d|%s|%s" % [
+					element.element_id,
+					str(face["port_id"]),
+					command.origin_cell if command != null else Vector3i.ZERO,
+				]
 			)
 		)
 	validated.sort_custom(
@@ -374,6 +409,12 @@ func _collect_face_candidates(
 			return float(left["score"]) > float(right["score"])
 	)
 	return validated
+
+
+static func _validate_limit_for(archetype: ElementArchetype) -> int:
+	if archetype != null and archetype.footprint_cells.size() >= 64:
+		return 4
+	return TOP_K_VALIDATE
 
 
 func _legacy_rank_faces(
@@ -396,15 +437,18 @@ func _legacy_rank_faces(
 			var element_archetype := element.get_archetype()
 			if element_archetype == null:
 				continue
-			for port: PortDefinition in element_archetype.ports:
-				if not _is_structural_port(port):
-					continue
+			for descriptor: GridSurfaceUtil.SurfaceFaceDescriptor in (
+				GridSurfaceUtil.get_surface_descriptors(
+					element_archetype,
+					element.orientation_index
+				)
+			):
 				last_stats["faces_scanned"] = (
 					int(last_stats["faces_scanned"]) + 1
 				)
-				var world_point := ConstructionSnapFaceCache._port_world_point(
+				var world_point := ConstructionSnapFaceCache._surface_face_world_point(
 					element,
-					port,
+					descriptor,
 					assembly_transform
 				)
 				if not _is_in_corridor(
@@ -417,21 +461,20 @@ func _legacy_rank_faces(
 				last_stats["faces_corridor_pass"] = (
 					int(last_stats["faces_corridor_pass"]) + 1
 				)
+				var port_direction := OrientationUtil.rotate_direction(
+					OrientationUtil.face_to_vector(descriptor.local_face),
+					element.orientation_index
+				)
 				ranked.append({
 					"face": {
 						"assembly_id": assembly.assembly_id,
 						"element_id": element.element_id,
-						"port_id": port.port_id,
-						"collider_local_cell": port.local_cell,
+						"port_id": descriptor.structural_id,
+						"collider_local_cell": descriptor.local_cell,
 						"world_point": world_point,
 						"world_normal": (
 							assembly_transform.basis
-							* Vector3(
-								ConstructionSnapFaceCache._element_port_direction(
-									element,
-									port
-								)
-							).normalized()
+							* Vector3(port_direction).normalized()
 						),
 					},
 					"score": _score_geometric(
@@ -565,14 +608,6 @@ static func _target_from_face(
 			"snap_port_id": str(face["port_id"]),
 		}
 	).snapshot()
-
-
-static func _is_structural_port(port: PortDefinition) -> bool:
-	return (
-		port != null
-		and port.kind == PortDefinition.Kind.MECHANICAL
-		and port.compatibility_tags.has("structural")
-	)
 
 
 static func _assembly_has_anchor(

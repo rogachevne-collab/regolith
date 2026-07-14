@@ -33,8 +33,11 @@ var _attach_pivot_key := ""
 var _held_attach_pivot := Vector3(INF, INF, INF)
 var _held_attach_snap_context: Dictionary = {}
 var _selection_archetype_id := ""
+var _selection_footprint_cells := 1
 const _AIM_ORIGIN_STEP := 0.04
 const _AIM_DIRECTION_STEP := 0.02
+const _LARGE_AIM_ORIGIN_STEP := 0.12
+const _LARGE_AIM_DIRECTION_STEP := 0.06
 
 
 func _ready() -> void:
@@ -200,10 +203,11 @@ func _resolve_context_key(
 ) -> String:
 	var origin: Vector3 = aim["origin"]
 	var direction: Vector3 = aim["direction"]
+	var aim_step := _aim_quantize_step_for_selection()
 	return "%d|%s|%s|%s|%d|%s|%s|%s" % [
 		_gateway.snap_cache_generation(),
-		_quantize_vec3(origin, _AIM_ORIGIN_STEP),
-		_quantize_vec3(direction, _AIM_DIRECTION_STEP),
+		_quantize_vec3(origin, aim_step),
+		_quantize_vec3(direction, aim_step * 0.5),
 		_tools.selected_archetype_id,
 		_tools.selected_orientation_index,
 		StringName(direct_hit.get("target_id", &"")),
@@ -216,6 +220,12 @@ func _pivot_context_token(pivot: Vector3) -> String:
 	if not pivot.is_finite():
 		return "unset"
 	return str(_quantize_vec3(pivot, 0.05))
+
+
+func _aim_quantize_step_for_selection() -> float:
+	if _selection_footprint_cells >= 64:
+		return _LARGE_AIM_ORIGIN_STEP
+	return _AIM_ORIGIN_STEP
 
 
 static func _quantize_vec3(value: Vector3, step: float) -> Vector3:
@@ -531,6 +541,10 @@ func _on_selection_changed(
 		_attach_pivot_key = ""
 		_held_attach_pivot = Vector3(INF, INF, INF)
 		_selection_archetype_id = archetype_id
+		var archetype := Slice01Archetypes.load_required(archetype_id)
+		_selection_footprint_cells = (
+			archetype.footprint_cells.size() if archetype != null else 1
+		)
 	_gateway.reset_construction_snap()
 	call_deferred("_warm_archetype", archetype_id, orientation_index)
 	if not archetype_changed and _tools.active_tool == &"build":

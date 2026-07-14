@@ -6,6 +6,7 @@ const _SCRIPT := preload("res://scripts/simulation/runtime/simulation_joint.gd")
 enum Kind {
 	RIGID,
 	ANCHOR,
+	PISTON,
 }
 
 var joint_id: int = 0
@@ -15,6 +16,7 @@ var element_a_id: int = 0
 var port_a_id: String = ""
 var element_b_id: int = 0
 var port_b_id: String = ""
+var motor: SimulationMotorState
 
 
 static func rigid(
@@ -53,6 +55,25 @@ static func anchor(
 	return joint
 
 
+static func piston(
+	joint_id: int,
+	assembly_id: int,
+	base_element_id: int,
+	head_element_id: int,
+	definition: PistonDefinition
+) -> SimulationJoint:
+	var joint: SimulationJoint = _SCRIPT.new()
+	joint.joint_id = joint_id
+	joint.assembly_id = assembly_id
+	joint.kind = Kind.PISTON
+	joint.element_a_id = base_element_id
+	joint.port_a_id = SimulationMotorState.PISTON_DRIVE_PORT
+	joint.element_b_id = head_element_id
+	joint.port_b_id = SimulationMotorState.PISTON_CARRIAGE_PORT
+	joint.motor = SimulationMotorState.from_piston_definition(definition)
+	return joint
+
+
 func endpoint_ids() -> Array[int]:
 	if kind == Kind.ANCHOR:
 		return [element_a_id]
@@ -64,6 +85,13 @@ func involves_element(element_id: int) -> bool:
 
 
 func canonical_key() -> String:
+	if kind == Kind.PISTON:
+		return "%d|%s|%d|%s" % [
+			element_a_id,
+			port_a_id,
+			element_b_id,
+			port_b_id,
+		]
 	var left_element := mini(element_a_id, element_b_id)
 	var right_element := maxi(element_a_id, element_b_id)
 	var left_port := port_a_id
@@ -80,7 +108,7 @@ func canonical_key() -> String:
 
 
 func to_dict() -> Dictionary:
-	return {
+	var row := {
 		"joint_id": joint_id,
 		"assembly_id": assembly_id,
 		"kind": kind,
@@ -89,6 +117,9 @@ func to_dict() -> Dictionary:
 		"element_b_id": element_b_id,
 		"port_b_id": port_b_id,
 	}
+	if kind == Kind.PISTON and motor != null:
+		row["motor"] = motor.to_dict()
+	return row
 
 
 static func from_dict(data: Dictionary) -> SimulationJoint:
@@ -100,4 +131,8 @@ static func from_dict(data: Dictionary) -> SimulationJoint:
 	joint.port_a_id = str(data.get("port_a_id", ""))
 	joint.element_b_id = int(data.get("element_b_id", 0))
 	joint.port_b_id = str(data.get("port_b_id", ""))
+	if joint.kind == Kind.PISTON:
+		var motor_data: Variant = data.get("motor", {})
+		if motor_data is Dictionary:
+			joint.motor = SimulationMotorState.from_dict(motor_data)
 	return joint

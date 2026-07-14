@@ -33,10 +33,12 @@ Input / tick
 
 ### Входит
 
-- keyed `SimulationResourceStore` с **capacity** и **per-archetype** лимитами;
+- keyed `SimulationResourceStore` с объёмной `capacity_l` и per-archetype
+  лимитами;
 - internal buffers на элементах + отдельные stores у `cargo_store`;
 - cargo: **модули `cargo_pipe`** (Construction v1) + **auto-link** face-adjacent cargo-портов;
-- hybrid logistics: auto-transfer по cargo-графу + **ручной** pickup/deposit (player ↔ machine/store);
+- hybrid logistics: auto-transfer по cargo-графу + **ручной** перенос через
+  терминал-инвентарь (player ↔ machine/store);
 - electric: **ручные** `connect_network` wires + **3D wire mesh**;
 - `power_source`, **power_distributor**, **power_battery** archetypes;
 - power budget (SE on/off): supply vs draw, без замедления;
@@ -57,10 +59,130 @@ Input / tick
 - крафт кабеля/трубы как inventory item (link = edge + mesh; без расходуемого предмета);
 - conveyors с физическими предметами;
 - автоматическая доставка в player store с fabricator;
+- consumables и bottle use (аптечки, пополнение SuitState из баллонов);
 - строительство/Industry на движущейся Assembly;
 - fluid/gas/thermal/data Flow;
 - scripted tutorial для `no_power` / `storage_full`;
 - финальный art pass и полный баланс экономики.
+
+## Система предметов
+
+### `ItemType` catalog
+
+Единый `ItemCatalog` — authoritative fixture всех переносимых cargo/inventory
+типов. `ResourceCatalog` является временным именем реализации и не меняет
+доменный контракт. Каждый entry имеет:
+
+```text
+ItemType {
+  id
+  category              # ore | material | ingot | component | tool | consumable | bottle
+  mass_per_unit_kg
+  volume_per_unit_l
+  unit                  # bulk | discrete
+}
+```
+
+`mass_per_unit_kg` всегда участвует в mass coupling, `volume_per_unit_l` —
+в единственном ограничении вместимости. `amount` остаётся единицей recipe I/O,
+а не килограммами и не литрами.
+
+| `item_id` | category | unit | `mass_per_unit_kg` | `volume_per_unit_l` |
+|---|---|---|---:|---:|
+| `raw_regolith` | `ore` | `bulk` | 2.0 | 2.5 |
+| `regolith_fines` | `ore` | `bulk` | 1.5 | 1.8 |
+| `sintered_basalt` | `material` | `bulk` | 3.0 | 1.5 |
+| `calcined_oxide` | `material` | `bulk` | 1.2 | 1.0 |
+| `metal_ingot` | `ingot` | `bulk` | 4.0 | 0.6 |
+| `construction_component` | `component` | `discrete` | 2.5 | 3.0 |
+| `tool_hand_drill` | `tool` | `discrete` | 3.0 | 8.0 |
+| `tool_welder` | `tool` | `discrete` | 2.5 | 6.0 |
+| `tool_grinder` | `tool` | `discrete` | 2.8 | 7.0 |
+| `tool_connector` | `tool` | `discrete` | 1.5 | 4.0 |
+
+Значения — v1 fixtures, калибруемые playtest; менять их можно только вместе с
+балансом ёмкостей. Категории `consumable` и `bottle` зарезервированы, но их
+предметы и использование не входят в этот slice.
+
+### Player tool instances и hotbar
+
+Инструменты игрока — **уникальные discrete instances**, не stack count в
+`SimulationResourceStore`. Bulk-компоненты и руда остаются amount-based stacks;
+tools живут в `PlayerInventoryRegistry` (authoritative fixture рядом с player
+store) и участвуют в общем лимите `capacity_l` игрока через derived volume/mass.
+
+```text
+InventoryItemInstance {
+  instance_id            # stable string, e.g. starter_tool_drill
+  item_id                # tool_* из ItemCatalog
+}
+
+HotbarSlotRef {
+  page, slot             # toolbar page/slot index
+  instance_id              # ссылка на InventoryItemInstance; не дублирует item_id
+}
+```
+
+Контракт:
+
+- hotbar tool-слот хранит **только** `instance_id`; выбор слота резолвит
+  `item_id → active_tool` и отклоняется, если instance отсутствует у игрока;
+- удаление instance (terminal transfer out, authoritative remove) **очищает**
+  все hotbar refs на этот id; слот становится пустым, tool action блокируется;
+- один `instance_id` не может быть привязан к двум слотам одновременно; повтор
+  того же `item_id` требует отдельного instance (не stack);
+- transfer tool **из** player: команда несёт `instance_id`, instance удаляется,
+  destination получает stack `+1` того же `item_id` (cargo store model);
+- transfer tool **в** player: stack `-1` у source, создаётся **новый**
+  `instance_id` (не восстанавливает старый hotbar ref автоматически); один
+  terminal transfer создаёт ровно один instance, даже если source stack больше;
+- starter migration (fresh world / legacy snapshot без registry): детерминированные
+  ids `starter_tool_drill|welder|grinder|connector` и default hotbar bindings
+  page 0 slots `0,1,2,8` — см. `PlayerInventoryRegistry` fixture. Snapshot с
+  duplicate/stale refs нормализуется deterministically: slot keys сортируются,
+  первый валидный ref сохраняется, остальные очищаются;
+- terminal grid передаёт `instance_id` в drag payload только для player-owned
+  tool instance. Его можно перетащить на matching fixed tool-slot toolbar;
+  rebind очищает старый slot этого instance. Новые instance остаются unbound до
+  такого явного действия.
+
+Presentation (`ToolController`, terminal grid) не fabricates instances: toolbar
+binding идёт через authoritative `assign_player_hotbar_instance`. Consumables /
+bottle use — вне scope; см. § Границы.
+
+
+### Количество и квантование
+
+- `bulk` хранится и передаётся как finite `float >= 0`; добыча и recipes могут
+  выдавать дробное количество без округления.
+- `discrete` хранится и передаётся только как `int >= 0`. Любая попытка
+  authoritative add/remove/set с дробной частью отклоняется, без частичной
+  мутации.
+- Результат переноса всегда ограничивается доступным количеством и свободным
+  объёмом получателя; для `discrete` результат квантуется вниз до целого.
+- Нулевой результат — отказ команды (`storage_full` либо insufficient amount),
+  а не успешный пустой transfer.
+
+### Объём, масса и вместимость
+
+```text
+used_l       = Σ(amount[item_id] × volume_per_unit_l)
+mass_kg      = Σ(amount[item_id] × mass_per_unit_kg)
+max_addable  = (capacity_l - used_l) / volume_per_unit_l
+```
+
+`capacity_l` — единственный лимит Store/buffer. Масса не ограничивает перенос,
+но продолжает влиять на `element.mass_kg`. Все capacity checks выполняются
+атомарно до mutation; mixed item types допустимы, число visual slots не
+ограничено.
+
+| Владелец | `capacity_l` v1 |
+|---|---:|
+| player store | 100 |
+| `cargo_store` | 2,000 |
+| `stationary_drill` internal buffer | 200 |
+| `processor` internal buffer | 100 |
+| `fabricator` internal buffer | 100 |
 
 ## Ресурсы slice
 
@@ -73,37 +195,9 @@ Input / tick
 | `metal_ingot` | Восстановленный металл |
 | `construction_component` | Precision-деталь (стройка, сварка, industry BOM) |
 
-`ResourceType` в v1 — fixture `resources/industry/resource_catalog.gd` (или `.tres`
-array) с полями:
-
-```text
-ResourceCatalogEntry {
-  resource_id
-  display_name_key
-  mass_per_unit_kg    # authoritative для capacity и mass coupling
-}
-```
-
-Placeholder `mass_per_unit_kg` (калибровка в playtest):
-
-| `resource_id` | `mass_per_unit_kg` |
-|---|---:|
-| `raw_regolith` | 2.0 |
-| `regolith_fines` | 1.5 |
-| `sintered_basalt` | 3.0 |
-| `calcined_oxide` | 1.2 |
-| `metal_ingot` | 4.0 |
-| `construction_component` | 2.5 |
-
-**Capacity и mass coupling** считают только через catalog:
-
-```text
-store_mass_kg = Σ (amount[resource_id] × mass_per_unit_kg)
-element_content_mass_kg = Σ buffer/store amounts × mass_per_unit_kg
-```
-
-Recipe I/O остаётся в **штуках** (amount); mass — derived для лимитов и projection.
-Отдельный `.tres` catalog может появиться позже без смены команд.
+Каждый `resource_id` в recipes — `item_id` из § Система предметов. Recipe I/O
+остаётся в amount; volume и mass derived через ItemCatalog. Отдельный `.tres`
+catalog может появиться позже без смены команд.
 
 ## Dual-path ISRU
 
@@ -150,11 +244,10 @@ stub durations до playtest.
 
 | Владелец | Назначение |
 |---|---|
-| `store_id = "player"` | Карман скафандра: **два независимых лимита по mass_kg** — компоненты
-  (`construction_component`, 60 kg) и материалы (руда/промежуточные, 40 kg);
-  как inventory volume в SE, но упрощённо по категориям |
+| `store_id = "player"` | Единый карман скафандра: 100 L; предметы всех категорий
+  конкурируют за общий объём |
 | `store_id = "element:{id}"` | `cargo_store` — основной склад базы; **без лимита
-  на число типов ресурсов**, только `keyed_store_capacity_kg` (2000 kg) |
+  на число типов items**, только `capacity_l` (2,000 L) |
 | Internal buffer | `stationary_drill`, `processor`, `fabricator` — малые in/out буферы на `SimulationElement` |
 
 Internal buffer сериализуется в snapshot element state; keyed store — в
@@ -178,12 +271,12 @@ auto-adjacency (§ Cargo Flow); distant — цепочка **`cargo_pipe`** бл
 
 ### Capacity
 
-- каждый archetype с Store/buffer задаёт `storage_capacity_kg` (fixture);
-- смешанные resource_id в одном store **разрешены**;
-- `storage_full` когда Σ mass contents ≥ capacity;
-- player store: `player_construction_capacity_kg` (**60 kg**) +
-  `player_material_capacity_kg` (**40 kg**) — независимые карманы, как
-  «строительные блоки vs руда» в SE inventory volume.
+- каждый archetype с Store/buffer задаёт `capacity_l` (§ Система предметов);
+- смешанные `item_id` в одном store **разрешены**;
+- `storage_full` когда `used_l >= capacity_l`;
+- player store имеет один общий объём, без раздельных category pockets;
+- keyed store и buffer serialise `capacity_l`; старые snapshot поля
+  `capacity_kg` мигрируются в fixture capacity и далее не записываются.
 
 ### Mass coupling (v1)
 
@@ -234,11 +327,15 @@ Duplicate adjacent pair — одно ребро. Cargo edges **не** в snapsho
 
 Команда `TransferResourceCommand` через `WorldCommandGateway`:
 
-- pickup: machine buffer / `cargo_store` → `player` (до mass limit);
+- pickup: machine buffer / `cargo_store` → `player` (до volume limit);
 - deposit: `player` → `cargo_store` / drill buffer;
-- атомарная проверка capacity и mass до мутации.
+- атомарная проверка source amount, item quantization и destination volume до
+  мутации.
 
-Interaction: target panel prompt + hold/press на operational store/drill.
+Команда принимает `{from_store_id, to_store_id, item_id, requested_amount}` и
+возвращает фактически перенесённое `amount`; source и destination могут быть
+player store, keyed store или internal buffer. При full destination команда не
+удаляет source amount.
 
 ## Network links (electric wires)
 
@@ -426,19 +523,81 @@ those hooks do not define production yield semantics.
 - `power_in` (electric);
 - `cargo_out` (cargo) — добавить в archetype fixture.
 
-## Hand drill loot
+## Terrain excavation
 
-Hand drill (`ToolController` → `voxel_remove`) **не** credits player store напрямую
-целиком: сначала заполняет **material pocket** игрока (как SE hand drill →
-inventory), overflow → **world loot pile**.
+`TerrainExcavationService` — единственный владелец terrain edit для ручного,
+стационарного и будущих динамических буров. Каждый инструмент передаёт
+`ExcavationRequest` в **мировых метрах**; сервис конвертирует геометрию в
+локальные координаты `VoxelTerrain` через `VoxelSpaceUtil` (uniform scale узла
+= размер вокселя в метрах). Измеренный occupancy-delta умножается на
+`voxel_size³`, поэтому `ExcavationResult.removed_volume_m3` остаётся в
+**мировых** м³.
 
-- carve uses the same measured SDF occupancy delta as the stationary drill;
-- fixture carve radius `0.16 m`, interval `0.08 s`, max **6 kg** per stroke;
-- nearby piles merge up to **32 kg** within **0.7 m**;
-- while drilling, loot colliders do not steal the terrain raycast;
-- pickup через `TransferResourceCommand` или dedicated collect action в радиусе;
-- pile без pickup — persists в snapshot до collect или despawn timer (fixture);
-- aligns с IMPACT-DESTRUCTION «regolith не в void» без industry machine.
+### Voxel scale (v1)
+
+- `VoxelTerrain` в `main.tscn`: uniform scale **0.65** (официальный workaround
+  плагина; свойства `voxel_size` у узла нет).
+- `max_view_distance` terrain ≈ **200** локальных вокселей (≈128 м мира /
+  0.65); иначе плагин клампит `VoxelViewer` и блоки вокруг игрока не грузятся.
+- `VoxelViewer` игрока: `view_distance` ≈ **197** (128 м / 0.65).
+- Генератор height/noise задан в мировых метрах; вертикальный масштаб рельефа
+  не сжимается вместе с узлом.
+
+### Collectible fraction
+
+Явный параметр `IndustryArchetypeProfile.terrain_collectible_fraction`
+(дефолт **0.01**): доля **измеренной** вырезанной массы, которая становится
+`raw_regolith`; остальное — «пыль». Это игровой контракт темпа добычи, не
+post-factum cap. При edge-bite ~0.01–0.1 м³/тик, плотности 1500 кг/м³ и
+интервале 0.08 с ручной бур даёт целевой темп **~1–2 кг/с**. Стационарный бур
+использует тот же коэффициент.
+
+- Пустота, цель вне рабочей дальности и недоступный terrain возвращают пустой
+  результат: edit, yield и feedback отсутствуют.
+- Результат не зависит от числа кадров или повторного попадания в уже пустую
+  область. Инструменты не начисляют объём по геометрической формуле и не
+  ограничивают post-factum yield после более крупного edit.
+- В v1 `TerrainMaterialSource` преобразует подтверждённый объём ×
+  `terrain_collectible_fraction` в `raw_regolith`. Это отдельный интерфейс, а не
+  вывод из terrain shader; semantic material layers с voxel data, генерацией,
+  rendering и persistence — следующая работа.
+- `InteractionQuery` получает terrain contact из SDF, поэтому удерживаемый бур
+  продолжает работать без движения курсора, даже пока physics collider
+  перестраивается.
+
+### Hand drill carving recipe
+
+Ручной бур (радиус **0.65 м**, bite **0.18 м**, `sdf_scale` **0.8**):
+
+1. Каждый принятый тик: `do_sphere` с центром, сдвинутым **вглубь** на
+   `radius - bite`, чтобы врезалась только кромка (upstream VoxelTool Note 4).
+2. Между тиками при смещении прицела: `do_path` sweep от предыдущего bite-center
+   к текущему (непрерывный канал).
+3. `grow_sphere` не используется.
+
+Yield из результата сначала передаётся в player resource store; остаток
+создаёт world loot pile в **точке контакта на поверхности** (aim hit), не в
+центре carve. Презентация — `RigidBody3D` (Jolt): pile падает и скатывается
+по terrain под лунной гравитацией; осевшая поза **write-back** в
+`WorldLootPile.position` через `WorldLootProjection` →
+`SimulationWorld.sync_world_loot_position`. Коллайдер pile — **layer 8**;
+`collision_mask` pile = terrain (1) + loot (8). Игрок **не** коллайдится с
+лутом (`collision_mask` игрока = terrain + bodies, без layer 8); прицел
+(`InteractionQuery`, mask 13) и pickup по-прежнему бьют layer 8. Terrain
+принимает контакт с loot (`VoxelTerrain.collision_mask |= 8` при bind
+проекции). Merge когда **collision-сферы касаются** (радиус от массы pile,
+`hand_drill_loot_collision_radius_m`, + contact epsilon); cap
+`hand_drill_loot_pile_max_mass_kg`. При spawn — overlap-check; после
+скатывания — `RigidBody3D.body_entered` → `try_merge_world_loot_piles`.
+Политика pile — контракт `SimulationWorld`, не часть carve.
+
+### Stationary drill
+
+Stationary drill строит тот же request от своей ориентированной рабочей головки.
+Перед edit он проверяет, что его buffer может принять верхнюю границу результата;
+при backpressure terrain не меняется. После непустого результата yield идёт во
+внутренний buffer и обычный cargo push. Пустая reachable область даёт
+`no_terrain_contact`; дальнейшая проходка требует будущего механического feed.
 
 ## Processor / Fabricator runtime
 
@@ -511,14 +670,16 @@ HUD локализация — `docs/specs/HUD-UI-01.md` (расширить `hu
 
 | Field | Содержание |
 |---|---|
-| `resource_stores[]` | keyed stores + amounts |
+| `resource_stores[]` | keyed stores + `amounts` + `capacity_l` |
 | `electric_links[]` | `{ link_id, element_a, port_a, element_b, port_b }` |
 | `industry_network_revision` | int |
-| element `industry_buffer` | internal buffer amounts per element |
+| element `industry_buffer` | internal buffer amounts + `capacity_l` per element |
 | element `industry_machine` | queue, progress, enabled |
-| `world_loot_piles[]` | `{ pile_id, position, resource_id, amount_kg, despawn_at_s }` |
+| `world_loot_piles[]` | `{ pile_id, position, item_id, amount, despawn_at_s }` |
 
-`WorldLootPile` authoritative; presentation spawns/decspawn visual at pile add/remove.
+`WorldLootPile` authoritative (id, resource, mass, despawn); position
+синхронизируется из физической проекции. Presentation spawns/updates/removes
+`RigidBody3D` at pile add/merge/remove.
 
 ## Commands (Industry)
 
@@ -532,6 +693,7 @@ Typed GDScript classes:
 | `transfer_resource` / `TransferResourceCommand` | manual pickup/deposit (не structural) |
 | `set_machine_enabled` / `SetMachineEnabledCommand` | toggle machine |
 | `enqueue_recipe` / `EnqueueRecipeCommand` | optional explicit queue |
+| `dequeue_recipe` / `DequeueRecipeCommand` | remove queued recipe |
 
 `connect_network` / `disconnect_network` — structural queue через `SimulationWorld`
 (как place/weld); increment `industry_network_revision` on success.
@@ -542,7 +704,7 @@ Voxel carve от stationary drill — `WorldCommandGateway` internal op (как
 ## Presentation / UX
 
 - **Target info:** functional + construction reasons;
-- **StoreView:** отдельное окно на targeted `cargo_store` (HUD-UI-01);
+- **StoreView:** terminal-инвентарь на targeted store/buffer (§ Terminal inventory);
 - **Connect tool:** electric wires only;
 - **Port markers:** electric (gold) and cargo (cyan) face decals in build/connect
   modes and on targeted industry blocks; compatible in-range electric endpoints
@@ -551,6 +713,46 @@ Voxel carve от stationary drill — `WorldCommandGateway` internal op (как
 - **Wire mesh:** visible for `electric_links[]` only;
 - **VFX/SFX:** minimal operational feedback (drill spin, processor hum) — declarative
   `.tscn` in `scenes/vfx/` where applicable (R4).
+
+### Terminal inventory
+
+Terminal — единственный presentation слой ручного cargo transfer. Он читает
+authoritative snapshot и отправляет только typed gateway commands; виджет не
+владеет amounts и не рассчитывает итоговую вместимость.
+
+```text
+StoreSnapshot {
+  store_id, title
+  entries: [{ item_id, amount, category, discrete, instance_id? }]
+  used_l, capacity_l, mass_kg
+  is_machine
+  machine: { enabled, recipe_id, recipes[], progress, status } | null
+}
+```
+
+- Окно, открытое на target, показывает player store слева и target
+  store/internal buffer справа. `toggle_inventory` (`I`) открывает solo-вариант
+  только с player store.
+- `interact` (`E`) на operational element с Store/buffer открывает terminal;
+  повторный `E`, `I` или release mouse закрывает его. Пока terminal открыт,
+  gameplay input paused/handled. Loot-pile `E` collect сохраняется; мировые
+  E-toggle machine и R-enqueue отсутствуют.
+- Каждая ненулевая item запись отображается одной растущей visual grid-cell:
+  item icon/code и badge количества. Нет slot limit, stack limit или второго
+  стека того же `item_id`.
+- Панель всегда показывает `Volume used_l / capacity_l` и derived `Mass
+  mass_kg`. Volume bar отражает лимит, mass — информационное значение.
+- Drag переносит весь стек. Shift-drag переносит половину: для `bulk` —
+  половину amount; для `discrete` — `max(1, floor(amount / 2))`. Double-click
+  отправляет перенос всего стека в другую открытую панель.
+- Drop строит `TransferResourceCommand`; UI обновляется только по completion /
+  новому snapshot. Нулевой transfer показывает feedback и не меняет grid.
+- Для machine target правая панель дополнительно показывает `enabled`, рецепт,
+  очередь, progress и status. Кнопки вызывают `set_machine_enabled`,
+  `enqueue_recipe` и dequeue counterpart; они не используют world controls.
+
+Первый набор item icons — цветная плашка с коротким кодом. Его API привязан к
+`item_id`, чтобы будущая PNG-графика не меняла terminal или transfer contract.
 
 ## Acceptance
 
@@ -565,10 +767,13 @@ Industry v1 закрыт, когда:
    reachable terrain, credits raw from measured removed volume, stops before carve
    on `storage_full`, auto-pushes **по pipe graph** when connected; manual pickup works.
 4. Hand drill spawns loot pile; collect → player or store.
-5. Player store weight-limited; deposit/pickup atomic.
+5. Player store and every industry buffer/store are volume-limited; bulk amount
+   remains fractional, discrete amount remains integral, and deposit/pickup is
+   atomic.
 6. Element mass reflects buffer contents (headless assert on drill fill).
 7. Machine toggle, queue, freeze on power loss, full refund on cancel.
-8. HUD shows industry reasons without debug overlay.
+8. Terminal shows player/target grids, Volume and Mass; drag, Shift-drag and
+   double-click obey transfer rules, and machine controls work from the terminal.
 9. `scenes/test_industry_v1.tscn` prints `INDUSTRY-V1: PASS`; строка в
    `tests/run_tests.sh`.
 10. Existing PoC + construction tests green.

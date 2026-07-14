@@ -4,9 +4,9 @@
 [ext_resource type="Script" path="res://scripts/locomotion_probe.gd" id="2_probe"]
 [ext_resource type="Script" path="res://scripts/support_frame.gd" id="3_support"]
 
-[sub_resource type="CylinderShape3D" id="CylinderShape_probe"]
+[sub_resource type="CapsuleShape3D" id="CapsuleShape_probe"]
 height = 1.8
-radius = 0.35
+radius = 0.3
 
 [node name="CharacterControllerTest" type="Node3D"]
 script = ExtResource("1_test")
@@ -17,7 +17,7 @@ collision_mask = 3
 script = ExtResource("2_probe")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="LocomotionProbe"]
-shape = SubResource("CylinderShape_probe")
+shape = SubResource("CapsuleShape_probe")
 
 [node name="SupportFrame" type="Node" parent="LocomotionProbe"]
 script = ExtResource("3_support")

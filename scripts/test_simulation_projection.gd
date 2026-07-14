@@ -1,6 +1,14 @@
 extends Node
 
 
+const PISTON_BASE := preload(
+	"res://resources/archetypes/slice01/piston_base.tres"
+)
+const PISTON_HEAD := preload(
+	"res://resources/archetypes/slice01/piston_head.tres"
+)
+
+
 func _ready() -> void:
 	call_deferred("_run")
 
@@ -23,6 +31,8 @@ func _run() -> void:
 	if not await _test_merge_momentum_and_cleanup():
 		return
 	if not await _test_dual_anchor_merge():
+		return
+	if not await _test_piston_multibody_projection():
 		return
 	print("KERNEL-PROJECTION-V0: PASS")
 	get_tree().quit(0)
@@ -461,15 +471,24 @@ func _test_merge_momentum_and_cleanup() -> bool:
 	body_b.linear_velocity = Vector3(0.0, -1.0, 0.0)
 	body_a.angular_velocity = Vector3.ZERO
 	body_b.angular_velocity = Vector3.ZERO
+	var connection := _canonical_connection_ports(
+		world,
+		int(a.data["assembly_id"]),
+		int(b.data["assembly_id"]),
+		int(a.data["element_ids"][0]),
+		int(b.data["element_ids"][0])
+	)
+	if connection.is_empty():
+		return _fail("dynamic merge could not resolve canonical ports")
 	var command: MergeAssembliesCommand = (
 		SimulationMergeGateway.merge_command(
 			world,
-			a_id,
-			b_id,
+			int(a.data["assembly_id"]),
+			int(b.data["assembly_id"]),
 			int(a.data["element_ids"][0]),
-			"structural_0_0_0_px",
+			connection["left_port_id"],
 			int(b.data["element_ids"][0]),
-			"structural_0_0_0_nx"
+			connection["right_port_id"]
 		)
 	)
 	var old_loser: PhysicsBody3D = body_b
@@ -523,15 +542,24 @@ func _test_dual_anchor_merge() -> bool:
 		_single_blueprint(Slice01Archetypes.foundation()),
 		b_frame
 	)
+	var connection := _canonical_connection_ports(
+		world,
+		int(a.data["assembly_id"]),
+		int(b.data["assembly_id"]),
+		int(a.data["element_ids"][0]),
+		int(b.data["element_ids"][0])
+	)
+	if connection.is_empty():
+		return _fail("dual-anchor merge could not resolve canonical ports")
 	var command: MergeAssembliesCommand = (
 		SimulationMergeGateway.merge_command(
 			world,
 			int(a.data["assembly_id"]),
 			int(b.data["assembly_id"]),
 			int(a.data["element_ids"][0]),
-			"structural_0_0_0_px",
+			connection["left_port_id"],
 			int(b.data["element_ids"][0]),
-			"structural_0_0_0_nx"
+			connection["right_port_id"]
 		)
 	)
 	var merge: StructuralCommandResult = (
@@ -548,6 +576,143 @@ func _test_dual_anchor_merge() -> bool:
 	await get_tree().process_frame
 	_free_fixture(fixture)
 	return true
+
+
+func _test_piston_multibody_projection() -> bool:
+	var fixture: Dictionary = _new_fixture()
+	var world: SimulationWorld = fixture["world"]
+	var projection: SimulationPhysicsProjection = fixture["projection"]
+	world.ensure_resource_store("player")
+	world.set_resource_amount("player", "construction_component", 100.0)
+	world.get_archetype_registry().register(PISTON_HEAD)
+	var foundation := _spawn(
+		world,
+		_single_blueprint(Slice01Archetypes.foundation()),
+		GridTransform.identity()
+	)
+	if not foundation.is_ok():
+		return _fail("piston projection foundation failed")
+	var assembly_id := int(foundation.data["assembly_id"])
+	var frame := _place_frame_for_piston(
+		world,
+		assembly_id,
+		Vector3i(4, 0, 0),
+		foundation
+	)
+	if not frame.is_ok():
+		return _fail("piston projection frame failed")
+	var piston := _place_piston_for_projection(
+		world,
+		assembly_id,
+		Vector3i(5, 0, 0),
+		frame
+	)
+	if not piston.is_ok():
+		return _fail("piston projection placement failed")
+	var base_id := int(piston.data["element_id"])
+	var head_id := int(piston.data["head_element_id"])
+	var runtime := world.ensure_industry_element_runtime(base_id)
+	runtime.machine_enabled = true
+	runtime.powered = true
+	_weld_piston_element(world, base_id)
+	_weld_piston_element(world, head_id)
+
+	var compiled := BodyGroupCompiler.compile(
+		world.get_assembly_raw(assembly_id).element_ids,
+		_elements_by_id(world, assembly_id),
+		_joints_for_assembly(world, assembly_id)
+	)
+	if not bool(compiled.get("valid", false)) or compiled["groups"].size() != 2:
+		return _fail("piston projection body groups invalid")
+	var root_group := int(compiled.get("root_group_id", 0))
+	var head_group := int(
+		(compiled["element_to_group"] as Dictionary).get(head_id, 0)
+	)
+	var root_body := projection.get_group_physics_body(assembly_id, root_group)
+	var head_body := projection.get_group_physics_body(assembly_id, head_group)
+	if not root_body is StaticBody3D or not head_body is RigidBody3D:
+		return _fail("piston projection did not create static/dynamic groups")
+	if projection.list_piston_constraint_records(assembly_id).is_empty():
+		return _fail("piston projection missing slider constraint")
+
+	var command := SetActuatorTargetCommand.new()
+	command.joint_id = int(piston.data["piston_joint_id"])
+	command.mode = SimulationMotorState.ControlMode.POSITION
+	command.target_position_m = 1.0
+	world.apply_set_actuator_target(command)
+	(head_body as RigidBody3D).gravity_scale = 0.0
+	var start_extension := world.get_joint(command.joint_id).motor.observed_position_m
+	for _i: int in range(120):
+		await get_tree().physics_frame
+	var end_extension := world.get_joint(command.joint_id).motor.observed_position_m
+	if end_extension <= start_extension + 0.05:
+		return _fail(
+			"piston projection did not extend head: %.3f -> %.3f"
+			% [start_extension, end_extension]
+		)
+	_free_fixture(fixture)
+	return true
+
+
+func _elements_by_id(world: SimulationWorld, assembly_id: int) -> Dictionary:
+	var elements_by_id: Dictionary = {}
+	for element: SimulationElement in world.list_elements():
+		if element.assembly_id == assembly_id:
+			elements_by_id[element.element_id] = element
+	return elements_by_id
+
+
+func _joints_for_assembly(
+	world: SimulationWorld,
+	assembly_id: int
+) -> Array[SimulationJoint]:
+	var joints: Array[SimulationJoint] = []
+	for joint: SimulationJoint in world.list_joints():
+		if joint.assembly_id == assembly_id:
+			joints.append(joint)
+	return joints
+
+
+func _place_frame_for_piston(
+	world: SimulationWorld,
+	assembly_id: int,
+	origin_cell: Vector3i,
+	prior: StructuralCommandResult
+) -> StructuralCommandResult:
+	var place := PlaceElementCommand.new()
+	place.assembly_id = assembly_id
+	place.expected_assembly_revision = int(prior.data["topology_revision"])
+	place.archetype = Slice01Archetypes.frame()
+	place.origin_cell = origin_cell
+	place.orientation_index = 0
+	place.store_id = "player"
+	return world.apply_structural_command_now(place)
+
+
+func _place_piston_for_projection(
+	world: SimulationWorld,
+	assembly_id: int,
+	origin_cell: Vector3i,
+	prior: StructuralCommandResult
+) -> StructuralCommandResult:
+	var place := PlaceElementCommand.new()
+	place.assembly_id = assembly_id
+	place.expected_assembly_revision = int(prior.data["topology_revision"])
+	place.archetype = PISTON_BASE
+	place.origin_cell = origin_cell
+	place.orientation_index = 0
+	place.store_id = "player"
+	return world.apply_structural_command_now(place)
+
+
+func _weld_piston_element(world: SimulationWorld, element_id: int) -> void:
+	var element := world.get_element(element_id)
+	var weld := WeldElementCommand.new()
+	weld.element_id = element_id
+	weld.expected_state_revision = element.state_revision
+	weld.max_material_amount = 100.0
+	weld.store_id = "player"
+	world.apply_structural_command_now(weld)
 
 
 func _new_fixture() -> Dictionary:
@@ -586,14 +751,23 @@ func _gateway_merge(
 	a: StructuralCommandResult,
 	b: StructuralCommandResult
 ) -> MergeAssembliesCommand:
+	var connection := _canonical_connection_ports(
+		world,
+		int(a.data["assembly_id"]),
+		int(b.data["assembly_id"]),
+		int(a.data["element_ids"][0]),
+		int(b.data["element_ids"][0])
+	)
+	if connection.is_empty():
+		return null
 	return SimulationMergeGateway.merge_command(
 		world,
 		int(a.data["assembly_id"]),
 		int(b.data["assembly_id"]),
 		int(a.data["element_ids"][0]),
-		"structural_0_0_0_px",
+		connection["left_port_id"],
 		int(b.data["element_ids"][0]),
-		"structural_0_0_0_nx"
+		connection["right_port_id"]
 	)
 
 
@@ -602,6 +776,13 @@ func _raw_merge(
 	a: StructuralCommandResult,
 	b: StructuralCommandResult
 ) -> MergeAssembliesCommand:
+	var connection := _canonical_connection_ports(
+		world,
+		int(a.data["assembly_id"]),
+		int(b.data["assembly_id"]),
+		int(a.data["element_ids"][0]),
+		int(b.data["element_ids"][0])
+	)
 	var command := MergeAssembliesCommand.new()
 	command.assembly_a_id = int(a.data["assembly_id"])
 	command.assembly_b_id = int(b.data["assembly_id"])
@@ -612,10 +793,81 @@ func _raw_merge(
 		command.assembly_b_id
 	).topology_revision
 	command.element_a_id = int(a.data["element_ids"][0])
-	command.port_a_id = "structural_0_0_0_px"
+	command.port_a_id = str(connection.get("left_port_id", "structural_0_0_0_px"))
 	command.element_b_id = int(b.data["element_ids"][0])
-	command.port_b_id = "structural_0_0_0_nx"
+	command.port_b_id = str(connection.get("right_port_id", "structural_0_0_0_nx"))
 	return command
+
+
+func _canonical_connection_ports(
+	world: SimulationWorld,
+	assembly_a_id: int,
+	assembly_b_id: int,
+	element_a_id: int,
+	element_b_id: int
+) -> Dictionary:
+	var assembly_a: SimulationAssembly = world.get_assembly_raw(assembly_a_id)
+	var assembly_b: SimulationAssembly = world.get_assembly_raw(assembly_b_id)
+	var element_a: SimulationElement = world.get_element(element_a_id)
+	var element_b: SimulationElement = world.get_element(element_b_id)
+	if (
+		assembly_a == null
+		or assembly_b == null
+		or element_a == null
+		or element_b == null
+	):
+		return {}
+	var elements_by_id: Dictionary = {}
+	for element: SimulationElement in world.list_elements():
+		elements_by_id[element.element_id] = element
+	var score_a := SurvivorPolicy.assembly_score(
+		assembly_a.assembly_id,
+		assembly_a.element_ids,
+		elements_by_id,
+		world.list_joints()
+	)
+	var score_b := SurvivorPolicy.assembly_score(
+		assembly_b.assembly_id,
+		assembly_b.element_ids,
+		elements_by_id,
+		world.list_joints()
+	)
+	var survivor_id := SurvivorPolicy.pick_survivor_assembly([score_a, score_b])
+	var b_to_a := GridPoseUtil.b_to_a_from_grid_frames(
+		assembly_a.grid_frame,
+		assembly_b.grid_frame
+	)
+	var connection_a := element_a
+	var connection_b := element_b
+	if survivor_id == assembly_a.assembly_id:
+		connection_b = _preview_element_in_frame(
+			element_b,
+			b_to_a.map_element_pose(
+				element_b.origin_cell,
+				element_b.orientation_index
+			)
+		)
+	else:
+		connection_a = _preview_element_in_frame(
+			element_a,
+			b_to_a.inverse().map_element_pose(
+				element_a.origin_cell,
+				element_a.orientation_index
+			)
+		)
+	return GridSurfaceUtil.find_rigid_connection(connection_a, connection_b)
+
+
+func _preview_element_in_frame(
+	source: SimulationElement,
+	pose: Dictionary
+) -> SimulationElement:
+	var preview := SimulationElement.new()
+	preview.archetype_id = source.archetype_id
+	preview.bind_archetype(source.get_archetype())
+	preview.origin_cell = pose["origin_cell"]
+	preview.orientation_index = int(pose["orientation_index"])
+	return preview
 
 
 func _topology_signature(world: SimulationWorld) -> Dictionary:

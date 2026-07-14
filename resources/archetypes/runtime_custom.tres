@@ -2,22 +2,10 @@
 
 [ext_resource type="Script" path="res://scripts/simulation/resources/build_requirement.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/simulation/resources/collider_definition.gd" id="2"]
-[ext_resource type="Script" path="res://scripts/simulation/resources/port_definition.gd" id="3"]
 [ext_resource type="Script" path="res://scripts/simulation/resources/element_archetype.gd" id="4"]
 
 [sub_resource type="Resource" id="Collider"]
 script = ExtResource("2")
-
-[sub_resource type="Resource" id="PortPosX"]
-script = ExtResource("3")
-port_id = "custom_px"
-compatibility_tags = PackedStringArray("structural")
-
-[sub_resource type="Resource" id="PortNegX"]
-script = ExtResource("3")
-port_id = "custom_nx"
-local_face = 1
-compatibility_tags = PackedStringArray("structural")
 
 [sub_resource type="Resource" id="Requirement"]
 script = ExtResource("1")
@@ -30,7 +18,7 @@ archetype_id = "runtime_custom"
 display_name = "Свой блок"
 roles = PackedStringArray("Frame")
 mass_kg = 12.0
+structural_surface_policy = 1
 colliders = Array[ExtResource("2")]([SubResource("Collider")])
 max_integrity = 25.0
-ports = Array[ExtResource("3")]([SubResource("PortPosX"), SubResource("PortNegX")])
 build_requirements = Array[ExtResource("1")]([SubResource("Requirement")])

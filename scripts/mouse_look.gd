@@ -33,7 +33,10 @@ func _unhandled_input(event: InputEvent) -> void:
 func _process(_delta: float) -> void:
 	if _target == null:
 		return
-	var target_transform := _target.get_global_transform_interpolated()
+	# Yaw is applied immediately in _unhandled_input; use one transform source
+	# so camera position and heading stay in sync (mixed interpolated/raw
+	# sources caused visible rotation jitter on uneven voxel ground).
+	var target_transform := _target.global_transform
 	if (
 		_last_target_position != Vector3.ZERO
 		and target_transform.origin.distance_to(_last_target_position)
@@ -41,9 +44,10 @@ func _process(_delta: float) -> void:
 	):
 		reset_physics_interpolation()
 	_last_target_position = target_transform.origin
+	var target_basis := target_transform.basis.orthonormalized()
 	global_transform = _camera_transform(
 		target_transform.origin,
-		_target.global_transform.basis.orthonormalized()
+		target_basis
 	)
 
 

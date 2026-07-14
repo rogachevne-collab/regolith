@@ -305,12 +305,50 @@ static func snap_origin_without_pivot(
 	snap_dir: Vector3i,
 	orientation_index: int
 ) -> Vector3i:
-	return _snap_origin_without_pivot(
+	return snap_origin_for_target_cell(
 		archetype,
 		target_port_cell,
 		snap_dir,
 		orientation_index
 	)
+
+
+## Single deterministic origin for the ray-selected target surface cell.
+## One O(F) pass over placing-block faces; no candidate enumeration.
+static func snap_origin_for_target_cell(
+	archetype: ElementArchetype,
+	target_port_cell: Vector3i,
+	snap_dir: Vector3i,
+	orientation_index: int
+) -> Vector3i:
+	if archetype == null:
+		return target_port_cell + snap_dir
+	var contact_cell := target_port_cell + snap_dir
+	var required_dir: Vector3i = -snap_dir
+	var best_origin := contact_cell
+	var has_origin := false
+	for descriptor: GridSurfaceUtil.SurfaceFaceDescriptor in (
+		GridSurfaceUtil.get_surface_descriptors(archetype, orientation_index)
+	):
+		var world_dir: Vector3i = OrientationUtil.rotate_direction(
+			OrientationUtil.face_to_vector(descriptor.local_face),
+			orientation_index
+		)
+		if world_dir != required_dir:
+			continue
+		var origin := (
+			contact_cell
+			- OrientationUtil.rotate_cell(
+				descriptor.local_cell,
+				orientation_index
+			)
+		)
+		if not has_origin or origin < best_origin:
+			best_origin = origin
+			has_origin = true
+	if has_origin:
+		return best_origin
+	return contact_cell
 
 
 ## Origin that keeps the orientation-0 footprint pivot fixed while rotating.
@@ -358,55 +396,108 @@ static func origin_cell_for_adjacent_snap(
 	)
 
 
-static func _snap_origin_without_pivot(
+static func snap_origin_candidates(
 	archetype: ElementArchetype,
 	target_port_cell: Vector3i,
 	snap_dir: Vector3i,
 	orientation_index: int
-) -> Vector3i:
-	var snap_port := _find_adjacent_snap_port(
-		archetype,
-		snap_dir,
-		orientation_index
-	)
-	if snap_port == null:
-		return target_port_cell + snap_dir
-	return (
-		target_port_cell
-		+ snap_dir
-		- OrientationUtil.rotate_cell(snap_port.local_cell, orientation_index)
-	)
-
-
-static func _find_adjacent_snap_port(
-	archetype: ElementArchetype,
-	snap_dir: Vector3i,
-	orientation_index: int
-) -> PortDefinition:
+) -> Array[Vector3i]:
 	if archetype == null:
-		return null
+		return [target_port_cell + snap_dir]
 	var required_dir: Vector3i = -snap_dir
-	var best_port: PortDefinition = null
-	var best_cell_length := 999999
-	for port: PortDefinition in archetype.ports:
-		if not _is_structural_port(port):
-			continue
+	var origins: Array[Vector3i] = []
+	var seen: Dictionary = {}
+	for descriptor: GridSurfaceUtil.SurfaceFaceDescriptor in (
+		GridSurfaceUtil.get_surface_descriptors(archetype, orientation_index)
+	):
 		var world_dir: Vector3i = OrientationUtil.rotate_direction(
-			OrientationUtil.face_to_vector(port.local_face),
+			OrientationUtil.face_to_vector(descriptor.local_face),
 			orientation_index
 		)
 		if world_dir != required_dir:
 			continue
-		var cell_length: int = port.local_cell.length_squared()
-		if cell_length < best_cell_length:
-			best_cell_length = cell_length
-			best_port = port
-	return best_port
-
-
-static func _is_structural_port(port: PortDefinition) -> bool:
-	return (
-		port != null
-		and port.kind == PortDefinition.Kind.MECHANICAL
-		and port.compatibility_tags.has("structural")
+		var origin := (
+			target_port_cell
+			+ snap_dir
+			- OrientationUtil.rotate_cell(
+				descriptor.local_cell,
+				orientation_index
+			)
+		)
+		if seen.has(origin):
+			continue
+		seen[origin] = true
+		origins.append(origin)
+	if origins.is_empty():
+		return [target_port_cell + snap_dir]
+	origins.sort_custom(
+		func(left: Vector3i, right: Vector3i) -> bool:
+			if left != right:
+				return left < right
+			return false
 	)
+	return origins
+
+
+static func target_face_center_local(
+	target_port_cell: Vector3i,
+	snap_dir: Vector3i
+) -> Vector3:
+	return (
+		GridMetric.cell_center_meters(target_port_cell)
+		+ Vector3(snap_dir) * GridMetric.HALF_CELL_SIZE_M
+	)
+
+
+static func contact_face_center_for_origin(
+	origin_cell: Vector3i,
+	archetype: ElementArchetype,
+	snap_dir: Vector3i,
+	orientation_index: int
+) -> Vector3:
+	var required_dir: Vector3i = -snap_dir
+	var best_center := Vector3.ZERO
+	var best_cell_length := 999999
+	var best_descriptor_id := ""
+	var found := false
+	for descriptor: GridSurfaceUtil.SurfaceFaceDescriptor in (
+		GridSurfaceUtil.get_surface_descriptors(archetype, orientation_index)
+	):
+		var world_dir: Vector3i = OrientationUtil.rotate_direction(
+			OrientationUtil.face_to_vector(descriptor.local_face),
+			orientation_index
+		)
+		if world_dir != required_dir:
+			continue
+		var world_cell := (
+			origin_cell
+			+ OrientationUtil.rotate_cell(
+				descriptor.local_cell,
+				orientation_index
+			)
+		)
+		var center := (
+			GridMetric.cell_center_meters(world_cell)
+			+ Vector3(required_dir) * GridMetric.HALF_CELL_SIZE_M
+		)
+		var cell_length: int = descriptor.local_cell.length_squared()
+		if (
+			not found
+			or cell_length < best_cell_length
+			or (
+				cell_length == best_cell_length
+				and (
+					best_descriptor_id.is_empty()
+					or descriptor.structural_id < best_descriptor_id
+				)
+			)
+		):
+			found = true
+			best_cell_length = cell_length
+			best_descriptor_id = descriptor.structural_id
+			best_center = center
+	if found:
+		return best_center
+	return GridMetric.cell_center_meters(origin_cell)
+
+

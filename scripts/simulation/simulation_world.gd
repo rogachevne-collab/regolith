@@ -6,6 +6,7 @@ signal structural_command_completed(
 	command_id: int,
 	result: StructuralCommandResult
 )
+signal player_inventory_changed()
 
 var _allocator := SimulationIdAllocator.new()
 var _archetypes := ArchetypeRegistry.new()
@@ -14,6 +15,8 @@ var _elements: Dictionary = {}
 var _joints: Dictionary = {}
 var _redirects: Dictionary = {}
 var _resource_stores: Dictionary = {}
+var _player_inventory: PlayerInventoryRegistry
+var _player_inventory_revision := 0
 var _industry_network := IndustryNetworkState.create_default()
 var _industry_elements: Dictionary = {}
 var _cargo_graph := CargoGraph.new()
@@ -75,6 +78,38 @@ func list_resource_stores() -> Array[SimulationResourceStore]:
 
 func get_resource_store(store_id: String) -> SimulationResourceStore:
 	return _resource_stores.get(store_id) as SimulationResourceStore
+
+
+func get_player_inventory() -> PlayerInventoryRegistry:
+	return _player_inventory
+
+
+func get_player_inventory_revision() -> int:
+	return _player_inventory_revision
+
+
+func ensure_player_inventory() -> PlayerInventoryRegistry:
+	if _player_inventory == null:
+		_player_inventory = PlayerInventoryRegistry.new()
+		_player_inventory.seed_starter_tools(false)
+	return _player_inventory
+
+
+func assign_player_hotbar_instance(
+	page: int,
+	slot: int,
+	instance_id: String
+) -> bool:
+	var registry := ensure_player_inventory()
+	if registry == null or not registry.set_hotbar_ref(page, slot, instance_id):
+		return false
+	_bump_player_inventory_revision()
+	return true
+
+
+func _bump_player_inventory_revision() -> void:
+	_player_inventory_revision += 1
+	emit_signal("player_inventory_changed")
 
 
 func get_industry_network() -> IndustryNetworkState:
@@ -166,7 +201,10 @@ func disconnect_network(
 
 func apply_transfer_resource(command: TransferResourceCommand) -> Dictionary:
 	var service := CargoTransferService.new()
-	return service.transfer_resource_command(self, command)
+	var result := service.transfer_resource_command(self, command)
+	if StringName(result.get("reason", &"")) == &"ok":
+		_bump_player_inventory_revision()
+	return result
 
 
 func apply_set_machine_enabled(
@@ -178,6 +216,41 @@ func apply_set_machine_enabled(
 	return (_industry_runner as IndustrySimulation).apply_set_machine_enabled(
 		command
 	)
+
+
+func apply_set_actuator_target(
+	command: SetActuatorTargetCommand
+) -> Dictionary:
+	return ActuatorSimulationService.apply_set_actuator_target(self, command)
+
+
+func sync_actuator_observation(
+	joint_id: int,
+	position_m: float,
+	velocity_mps: float,
+	applied_force_n: float,
+	force_saturated: bool = false
+) -> void:
+	var joint := get_joint(joint_id)
+	if joint == null:
+		return
+	ActuatorSimulationService.sync_observation(
+		joint,
+		position_m,
+		velocity_mps,
+		applied_force_n,
+		force_saturated
+	)
+	ActuatorSimulationService.tick_joint(self, joint, 0.0)
+
+
+func tick_actuators(delta_s: float) -> void:
+	if delta_s <= 0.0:
+		return
+	for joint: SimulationJoint in list_joints():
+		if joint.kind != SimulationJoint.Kind.PISTON:
+			continue
+		ActuatorSimulationService.tick_joint(self, joint, delta_s)
 
 
 func apply_enqueue_recipe(command: EnqueueRecipeCommand) -> Dictionary:
@@ -217,11 +290,10 @@ func add_world_loot_pile(
 ) -> WorldLootPile:
 	if resource_id.is_empty() or amount_kg <= 0.000001:
 		return null
-	var merge_radius := IndustryArchetypeProfile.hand_drill_loot_merge_radius_m()
 	var existing := _find_mergeable_loot_pile(
 		position,
 		resource_id,
-		merge_radius
+		amount_kg
 	)
 	if existing != null:
 		var max_mass := IndustryArchetypeProfile.hand_drill_loot_pile_max_mass_kg()
@@ -246,17 +318,22 @@ func add_world_loot_pile(
 func _find_mergeable_loot_pile(
 	position: Vector3,
 	resource_id: String,
-	radius_m: float
+	amount_kg: float
 ) -> WorldLootPile:
 	var best: WorldLootPile = null
-	var best_dist_sq := radius_m * radius_m
+	var best_dist_sq := INF
 	for pile_variant: Variant in _world_loot_piles.values():
 		var pile := pile_variant as WorldLootPile
 		if pile == null or pile.resource_id != resource_id:
 			continue
-		var dist_sq := position.distance_squared_to(pile.position)
-		if dist_sq > radius_m * radius_m:
+		if not IndustryArchetypeProfile.hand_drill_loot_spheres_overlap(
+			position,
+			amount_kg,
+			pile.position,
+			pile.amount_kg
+		):
 			continue
+		var dist_sq := position.distance_squared_to(pile.position)
 		if best == null or dist_sq < best_dist_sq:
 			best = pile
 			best_dist_sq = dist_sq
@@ -277,6 +354,55 @@ func _merge_loot_pile(
 	return target
 
 
+func sync_world_loot_position(pile_id: int, position: Vector3) -> bool:
+	var pile := _world_loot_piles.get(pile_id) as WorldLootPile
+	if pile == null:
+		return false
+	pile.position = position
+	return true
+
+
+func try_merge_world_loot_piles(pile_id_a: int, pile_id_b: int) -> bool:
+	if pile_id_a == pile_id_b:
+		return false
+	var survivor_id := mini(pile_id_a, pile_id_b)
+	var victim_id := maxi(pile_id_a, pile_id_b)
+	var survivor: WorldLootPile = _world_loot_piles.get(survivor_id)
+	var victim: WorldLootPile = _world_loot_piles.get(victim_id)
+	if survivor == null or victim == null:
+		return false
+	if survivor.resource_id != victim.resource_id:
+		return false
+	if not IndustryArchetypeProfile.hand_drill_loot_spheres_overlap(
+		survivor.position,
+		survivor.amount_kg,
+		victim.position,
+		victim.amount_kg
+	):
+		return false
+	var max_mass := IndustryArchetypeProfile.hand_drill_loot_pile_max_mass_kg()
+	if survivor.amount_kg + victim.amount_kg > max_mass + 0.000001:
+		return false
+	_merge_loot_pile(survivor, victim.position, victim.amount_kg)
+	_world_loot_piles.erase(victim_id)
+	return true
+
+
+func merge_nearby_world_loot_piles() -> bool:
+	var pile_ids: Array = _world_loot_piles.keys()
+	pile_ids.sort()
+	var changed := false
+	for i: int in range(pile_ids.size()):
+		var survivor_id := int(pile_ids[i])
+		if not _world_loot_piles.has(survivor_id):
+			continue
+		for j: int in range(i + 1, pile_ids.size()):
+			var victim_id := int(pile_ids[j])
+			if try_merge_world_loot_piles(survivor_id, victim_id):
+				changed = true
+	return changed
+
+
 func remove_world_loot_pile(pile_id: int) -> bool:
 	if not _world_loot_piles.has(pile_id):
 		return false
@@ -295,7 +421,7 @@ func collect_world_loot_pile(
 	var unit_mass := ResourceCatalog.mass_per_unit_kg(pile.resource_id)
 	if unit_mass <= 0.000001 or pile.amount_kg <= 0.000001:
 		return {"status": &"failed", "reason": &"no_input", "amount": 0.0}
-	var capacity := IndustryStoreService.capacity_kg_for_store(self, to_store_id)
+	var capacity := IndustryStoreService.capacity_l_for_store(self, to_store_id)
 	var available_units := pile.amount_kg / unit_mass
 	var amount := minf(
 		available_units,
@@ -369,7 +495,7 @@ func ensure_resource_store(store_id: String) -> SimulationResourceStore:
 	var store := SimulationResourceStore.new()
 	store.store_id = store_id
 	if store_id == IndustryStoreService.PLAYER_STORE_ID:
-		store.capacity_kg = IndustryArchetypeProfile.player_carry_capacity_kg()
+		store.capacity_l = IndustryArchetypeProfile.player_carry_capacity_l()
 	_resource_stores[store_id] = store
 	return store
 
@@ -490,6 +616,8 @@ func restore_snapshot(snapshot: Dictionary, emit_event := true) -> bool:
 	_joints = restored._joints
 	_redirects = restored._redirects
 	_resource_stores = restored._resource_stores
+	_player_inventory = restored._player_inventory
+	_player_inventory_revision = restored._player_inventory_revision
 	_industry_network = restored._industry_network
 	_industry_elements = restored._industry_elements
 	_world_loot_piles = restored._world_loot_piles
@@ -641,6 +769,8 @@ func preview_place_element(
 func _place_element(
 	command: PlaceElementCommand
 ) -> StructuralCommandResult:
+	if PistonPlacementUtil.is_piston_archetype(command.archetype):
+		return _place_piston_element(command)
 	var validation := _validate_place_element(command)
 	if not validation.is_ok():
 		return validation
@@ -750,11 +880,14 @@ func _place_element(
 func _validate_place_element(
 	command: PlaceElementCommand
 ) -> StructuralCommandResult:
+	if PistonPlacementUtil.is_piston_archetype(command.archetype):
+		return _validate_piston_place_element(command)
 	var archetype := command.archetype
 	if (
 		archetype == null
 		or archetype.archetype_id.is_empty()
 		or archetype.resource_path.is_empty()
+		or archetype.internal_archetype
 		or command.orientation_index < 0
 		or command.orientation_index >= OrientationUtil.ORIENTATION_COUNT
 		or archetype.build_requirements.is_empty()
@@ -860,9 +993,8 @@ func _validate_place_element(
 				return StructuralCommandResult.failed(
 					StructuralCommandResult.REASON_OVERLAP
 				)
-		# A rigid edge requires the two ports to sit in face-adjacent cells, so
-		# only elements occupying a neighbour of the preview footprint can ever
-		# connect. Gather those instead of scanning the whole assembly.
+		# A rigid edge requires adjacent derived structural surface faces, so only
+		# elements occupying a neighbour of the preview footprint can ever connect.
 		var neighbour_ids := _neighbour_element_ids(preview_cells, occupancy)
 		for existing_id: int in neighbour_ids:
 			var existing := get_element(existing_id)
@@ -881,6 +1013,13 @@ func _validate_place_element(
 			return StructuralCommandResult.failed(
 				StructuralCommandResult.REASON_INCOMPATIBLE_CONNECTION
 			)
+		var bridge_error := _validate_new_rigid_connections(
+			assembly.assembly_id,
+			preview,
+			connections
+		)
+		if bridge_error != null:
+			return bridge_error
 
 	return StructuralCommandResult.ok({
 		"placement_resource_id": first_requirement.resource_id,
@@ -888,6 +1027,388 @@ func _validate_place_element(
 		"connections": connections,
 		"build_progress": preview.build_progress,
 	})
+
+
+func _validate_piston_place_element(
+	command: PlaceElementCommand
+) -> StructuralCommandResult:
+	var base_archetype := command.archetype
+	if (
+		base_archetype == null
+		or base_archetype.piston_definition == null
+		or base_archetype.internal_archetype
+	):
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INVALID_TARGET
+		)
+	var head_archetype := _archetypes.get_archetype(
+		base_archetype.piston_definition.head_archetype_id
+	)
+	for error_text: String in PistonPlacementUtil.validate_piston_archetype(
+		base_archetype,
+		head_archetype,
+		_archetypes
+	):
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INVALID_TARGET,
+			{"detail": error_text}
+		)
+	var archetype_validation := _validate_construction_archetype(
+		base_archetype,
+		command.orientation_index
+	)
+	if not archetype_validation.is_ok():
+		return archetype_validation
+	if head_archetype == null:
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INVALID_TARGET,
+			{"detail": &"missing_head_archetype"}
+		)
+	if not _archetypes.register(head_archetype):
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_ARCHETYPE_CONFLICT
+		)
+	var first_requirement: BuildRequirement = base_archetype.build_requirements[0]
+	if first_requirement == null or first_requirement.resource_id.is_empty():
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INVALID_TARGET
+		)
+	var placement_amount := minf(first_requirement.amount, 1.0)
+	var store := get_resource_store(command.store_id)
+	if store == null or not store.can_remove(
+		first_requirement.resource_id,
+		placement_amount
+	):
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INSUFFICIENT_MATERIAL
+		)
+	var previews := PistonPlacementUtil.preview_elements(
+		command,
+		head_archetype,
+		first_requirement.resource_id,
+		placement_amount
+	)
+	var base_preview: SimulationElement = previews["base"]
+	var head_preview: SimulationElement = previews["head"]
+	if RuntimeConnectivity.elements_have_rigid_connection(
+		base_preview,
+		head_preview
+	):
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INVALID_TARGET,
+			{"detail": &"piston_home_rigid_conflict"}
+		)
+
+	var base_connections: Array[Dictionary] = []
+	var head_connections: Array[Dictionary] = []
+	if command.assembly_id == 0:
+		if (
+			command.new_assembly_grid_frame == null
+			or not command.new_assembly_grid_frame.is_valid()
+		):
+			return StructuralCommandResult.failed(
+				StructuralCommandResult.REASON_INVALID_TRANSFORM
+			)
+		if RuntimeConnectivity.ground_anchor_port_id(base_preview).is_empty():
+			return StructuralCommandResult.failed(
+				StructuralCommandResult.REASON_ANCHOR_REQUIRED
+			)
+	else:
+		var assembly := get_assembly_raw(command.assembly_id)
+		if assembly == null or assembly.tombstoned:
+			return StructuralCommandResult.failed(
+				StructuralCommandResult.REASON_INVALID_REFERENCE
+			)
+		if not _assembly_has_anchor(assembly.assembly_id):
+			return StructuralCommandResult.failed(
+				StructuralCommandResult.REASON_INVALID_TARGET,
+				{"detail": &"mobile_construction_not_supported"}
+			)
+		if assembly.topology_revision != command.expected_assembly_revision:
+			return StructuralCommandResult.failed(
+				StructuralCommandResult.REASON_STALE_REVISION
+			)
+		var occupancy := _assembly_occupancy_index(assembly)
+		for preview: SimulationElement in [base_preview, head_preview]:
+			for cell: Vector3i in preview.occupied_cells():
+				if occupancy.has(cell):
+					return StructuralCommandResult.failed(
+						StructuralCommandResult.REASON_OVERLAP
+					)
+		base_connections = PistonPlacementUtil.collect_rigid_connections(
+			self,
+			assembly.assembly_id,
+			base_preview,
+			[-2]
+		)
+		head_connections = PistonPlacementUtil.collect_rigid_connections(
+			self,
+			assembly.assembly_id,
+			head_preview,
+			[-1]
+		)
+		if base_connections.is_empty():
+			return StructuralCommandResult.failed(
+				StructuralCommandResult.REASON_INCOMPATIBLE_CONNECTION
+			)
+		for connections: Array in [base_connections, head_connections]:
+			var bridge_error := _validate_new_rigid_connections(
+				assembly.assembly_id,
+				base_preview,
+				connections
+			)
+			if bridge_error != null:
+				return bridge_error
+		var moving_error := _validate_piston_head_construction_target(
+			head_connections
+		)
+		if moving_error != null:
+			return moving_error
+
+	return StructuralCommandResult.ok({
+		"placement_resource_id": first_requirement.resource_id,
+		"placement_resource_amount": placement_amount,
+		"base_connections": base_connections,
+		"head_connections": head_connections,
+		"head_archetype": head_archetype,
+		"build_progress": base_preview.build_progress,
+	})
+
+
+func _place_piston_element(
+	command: PlaceElementCommand
+) -> StructuralCommandResult:
+	var validation := _validate_piston_place_element(command)
+	if not validation.is_ok():
+		return validation
+	var store := get_resource_store(command.store_id)
+	var resource_id := str(validation.data["placement_resource_id"])
+	var resource_amount := float(validation.data["placement_resource_amount"])
+	if not store.remove(resource_id, resource_amount):
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INSUFFICIENT_MATERIAL
+		)
+	if not _archetypes.register(command.archetype):
+		store.add(resource_id, resource_amount)
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_ARCHETYPE_CONFLICT
+		)
+	var head_archetype: ElementArchetype = validation.data["head_archetype"]
+	if not _archetypes.register(head_archetype):
+		store.add(resource_id, resource_amount)
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_ARCHETYPE_CONFLICT
+		)
+
+	var assembly: SimulationAssembly
+	var new_assembly := command.assembly_id == 0
+	if new_assembly:
+		assembly = SimulationAssembly.new()
+		assembly.assembly_id = _allocator.allocate_assembly_id()
+		assembly.grid_frame = command.new_assembly_grid_frame.duplicate_transform()
+		assembly.motion = (
+			command.initial_motion.duplicate_state()
+			if command.initial_motion != null
+			else AssemblyMotionState.from_grid_frame(assembly.grid_frame)
+		)
+	else:
+		assembly = get_assembly_raw(command.assembly_id)
+
+	var base_element_id := _allocator.allocate_element_id()
+	var head_element_id := _allocator.allocate_element_id()
+	var base_element := SimulationElement.frame(
+		base_element_id,
+		assembly.assembly_id,
+		command.archetype,
+		command.origin_cell,
+		command.orientation_index,
+		{resource_id: resource_amount}
+	)
+	var head_origin := PistonPlacementUtil.head_origin_cell(
+		command.origin_cell,
+		command.orientation_index,
+		command.archetype.piston_definition
+	)
+	var head_element := SimulationElement.frame(
+		head_element_id,
+		assembly.assembly_id,
+		head_archetype,
+		head_origin,
+		command.orientation_index,
+		{}
+	)
+	head_element.apply_placement_integrity()
+	head_element.condition = base_element.condition
+
+	var joint_ids: Array[int] = []
+	var piston_joint_id := _allocator.allocate_joint_id()
+	var piston_joint := SimulationJoint.piston(
+		piston_joint_id,
+		assembly.assembly_id,
+		base_element_id,
+		head_element_id,
+		command.archetype.piston_definition
+	)
+	_joints[piston_joint_id] = piston_joint
+	joint_ids.append(piston_joint_id)
+
+	if new_assembly:
+		var allocate_joint := func() -> int:
+			return _allocator.allocate_joint_id()
+		for joint: SimulationJoint in (
+			RuntimeConnectivity.materialize_ground_start_anchors(
+				assembly.assembly_id,
+				[base_element],
+				allocate_joint
+			)
+		):
+			_joints[joint.joint_id] = joint
+			joint_ids.append(joint.joint_id)
+		base_element.terrain_contact = true
+		_assemblies[assembly.assembly_id] = assembly
+	else:
+		for connection_variant: Variant in validation.data["base_connections"]:
+			var connection: Dictionary = connection_variant
+			var joint_id := _allocator.allocate_joint_id()
+			_joints[joint_id] = SimulationJoint.rigid(
+				joint_id,
+				assembly.assembly_id,
+				int(connection["existing_element_id"]),
+				str(connection["existing_port_id"]),
+				base_element_id,
+				str(connection["new_port_id"])
+			)
+			joint_ids.append(joint_id)
+		for connection_variant: Variant in validation.data["head_connections"]:
+			var connection: Dictionary = connection_variant
+			var joint_id := _allocator.allocate_joint_id()
+			_joints[joint_id] = SimulationJoint.rigid(
+				joint_id,
+				assembly.assembly_id,
+				int(connection["existing_element_id"]),
+				str(connection["existing_port_id"]),
+				head_element_id,
+				str(connection["new_port_id"])
+			)
+			joint_ids.append(joint_id)
+
+	_elements[base_element_id] = base_element
+	_elements[head_element_id] = head_element
+	assembly.element_ids.append(base_element_id)
+	assembly.element_ids.append(head_element_id)
+	assembly.element_ids.sort()
+	if not new_assembly:
+		_record_placement_terrain_contact(assembly, base_element, joint_ids)
+	assembly.bump_revision()
+	_notify_topology_changed()
+	joint_ids.sort()
+	var event_kind := &"assembly_spawned" if new_assembly else &"assembly_changed"
+	_emit_structural_event({
+		"kind": event_kind,
+		"command_id": command.command_id,
+		"assembly_id": assembly.assembly_id,
+		"topology_revision": assembly.topology_revision,
+		"element_ids": assembly.element_ids.duplicate(),
+		"placed_element_id": base_element_id,
+		"placed_head_element_id": head_element_id,
+		"piston_joint_id": piston_joint_id,
+		"joint_ids": joint_ids,
+	})
+	return StructuralCommandResult.ok({
+		"command_id": command.command_id,
+		"assembly_id": assembly.assembly_id,
+		"topology_revision": assembly.topology_revision,
+		"element_id": base_element_id,
+		"head_element_id": head_element_id,
+		"piston_joint_id": piston_joint_id,
+		"state_revision": base_element.state_revision,
+		"build_progress": base_element.build_progress,
+		"joint_ids": joint_ids,
+		"resource_id": resource_id,
+		"resource_remaining": store.amount(resource_id),
+	})
+
+
+func _validate_new_rigid_connections(
+	assembly_id: int,
+	_preview: SimulationElement,
+	connections: Array[Dictionary]
+) -> StructuralCommandResult:
+	if connections.is_empty():
+		return null
+	var assembly := get_assembly_raw(assembly_id)
+	if assembly == null:
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INVALID_REFERENCE
+		)
+	var compiled := BodyGroupCompiler.compile(
+		assembly.element_ids,
+		_elements,
+		_joints_for_assembly(assembly_id)
+	)
+	if not bool(compiled.get("valid", false)):
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INVALID_TARGET,
+			{"detail": compiled.get("reason", &"invalid_body_groups")}
+		)
+	var touched_groups: Dictionary = {}
+	for connection_variant: Variant in connections:
+		var connection: Dictionary = connection_variant
+		var existing_id := int(connection["existing_element_id"])
+		var group_id := int(
+			(compiled["element_to_group"] as Dictionary).get(existing_id, 0)
+		)
+		if group_id <= 0:
+			continue
+		touched_groups[group_id] = true
+	if touched_groups.size() <= 1:
+		return null
+	for spec_variant: Variant in compiled["piston_specs"]:
+		var spec: Dictionary = spec_variant
+		var left := int(spec["base_group_id"])
+		var right := int(spec["head_group_id"])
+		if touched_groups.has(left) and touched_groups.has(right):
+			return StructuralCommandResult.failed(
+				StructuralCommandResult.REASON_DRIVEN_JOINT_CYCLE
+			)
+	return null
+
+
+func _validate_piston_head_construction_target(
+	head_connections: Array[Dictionary]
+) -> StructuralCommandResult:
+	if head_connections.is_empty():
+		return null
+	for connection_variant: Variant in head_connections:
+		var connection: Dictionary = connection_variant
+		var existing := get_element(int(connection["existing_element_id"]))
+		if existing == null:
+			continue
+		for joint: SimulationJoint in _joints_for_assembly(existing.assembly_id):
+			if joint.kind != SimulationJoint.Kind.PISTON:
+				continue
+			if (
+				joint.element_b_id != existing.element_id
+				and joint.element_a_id != existing.element_id
+			):
+				continue
+			if joint.motor == null:
+				continue
+			if not is_equal_approx(
+				joint.motor.observed_position_m,
+				joint.motor.lower_limit_m
+			):
+				return StructuralCommandResult.failed(
+					StructuralCommandResult.REASON_MOVING_TARGET_NOT_SUPPORTED
+				)
+			if (
+				absf(joint.motor.observed_velocity_mps)
+				> SimulationMotorState.OVERLOAD_VELOCITY_MPS
+			):
+				return StructuralCommandResult.failed(
+					StructuralCommandResult.REASON_MOVING_TARGET_NOT_SUPPORTED
+				)
+	return null
 
 
 func _validate_construction_archetype(
@@ -981,6 +1502,17 @@ func _weld_element(
 			command.max_material_amount,
 			deficit / integrity_per_component
 		)
+		if ResourceCatalog.is_discrete("construction_component"):
+			material_amount = ceilf(material_amount - 0.000001)
+		if material_amount <= 0.000001:
+			return StructuralCommandResult.failed(
+				StructuralCommandResult.REASON_INSUFFICIENT_MATERIAL,
+				{
+					"resource_id": "construction_component",
+					"required": material_amount,
+					"available": store.amount("construction_component"),
+				}
+			)
 		if not store.can_remove("construction_component", material_amount):
 			return StructuralCommandResult.failed(
 				StructuralCommandResult.REASON_INSUFFICIENT_MATERIAL,
@@ -1018,7 +1550,12 @@ func _weld_element(
 			+ float(transfer["amount"])
 		)
 	for resource_id: Variant in totals.keys():
-		if not store.can_remove(str(resource_id), float(totals[resource_id])):
+		var amount := float(totals[resource_id])
+		if ResourceCatalog.is_discrete(str(resource_id)):
+			amount = floorf(amount + 0.000001)
+		if amount <= 0.000001:
+			continue
+		if not store.can_remove(str(resource_id), amount):
 			return StructuralCommandResult.failed(
 				StructuralCommandResult.REASON_INSUFFICIENT_MATERIAL,
 				{
@@ -1028,7 +1565,12 @@ func _weld_element(
 				}
 			)
 	for resource_id: Variant in totals.keys():
-		store.remove(str(resource_id), float(totals[resource_id]))
+		var amount := float(totals[resource_id])
+		if ResourceCatalog.is_discrete(str(resource_id)):
+			amount = floorf(amount + 0.000001)
+		if amount <= 0.000001:
+			continue
+		store.remove(str(resource_id), amount)
 	for transfer: Dictionary in transfers:
 		element.install_material(
 			str(transfer["resource_id"]),
@@ -1111,6 +1653,17 @@ func _repair_element(
 		command.max_material_amount,
 		deficit / integrity_per_component
 	)
+	if ResourceCatalog.is_discrete("construction_component"):
+		material_amount = ceilf(material_amount - 0.000001)
+	if material_amount <= 0.000001:
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INSUFFICIENT_MATERIAL,
+			{
+				"resource_id": "construction_component",
+				"required": material_amount,
+				"available": 0.0,
+			}
+		)
 	var store := get_resource_store(command.store_id)
 	if (
 		store == null
@@ -1200,7 +1753,7 @@ func _remove_element_from_topology(
 	var components: Array[Array] = []
 	var survivor_index := 0
 	if not remaining_elements.is_empty():
-		components = RuntimeConnectivity.connected_components(
+		components = RuntimeConnectivity.mechanical_connected_components(
 			remaining_elements,
 			_elements,
 			remaining_joints
@@ -1346,7 +1899,7 @@ func _break_rigid_joint(
 
 	var remaining_joints := _joints_for_assembly(assembly.assembly_id)
 	remaining_joints.erase(joint)
-	var components := RuntimeConnectivity.connected_components(
+	var components := RuntimeConnectivity.mechanical_connected_components(
 		assembly.element_ids.duplicate(),
 		_elements,
 		remaining_joints
@@ -1746,6 +2299,10 @@ func _register_redirect(from_id: int, to_id: int) -> void:
 
 func _register_resource_store(store: SimulationResourceStore) -> void:
 	_resource_stores[store.store_id] = store
+
+
+func _register_player_inventory(registry: PlayerInventoryRegistry) -> void:
+	_player_inventory = registry
 
 
 func _joints_for_assembly(assembly_id: int) -> Array[SimulationJoint]:

@@ -1,0 +1,187 @@
+class_name BodyGroupCompiler
+extends RefCounted
+
+const MAX_DRIVEN_JOINTS_ON_PATH := 4
+
+
+static func compile(
+	element_ids: Array[int],
+	elements_by_id: Dictionary,
+	joints: Array[SimulationJoint]
+) -> Dictionary:
+	var rigid_components := RuntimeConnectivity.rigid_connected_components(
+		element_ids,
+		elements_by_id,
+		joints
+	)
+	var groups: Dictionary = {}
+	var element_to_group: Dictionary = {}
+	for component: Array in rigid_components:
+		var group_id := _component_group_id(component)
+		groups[group_id] = component.duplicate()
+		for element_id: int in component:
+			element_to_group[element_id] = group_id
+
+	var piston_specs: Array[Dictionary] = []
+	for joint: SimulationJoint in joints:
+		if joint.kind != SimulationJoint.Kind.PISTON:
+			continue
+		var base_group := int(element_to_group.get(joint.element_a_id, 0))
+		var head_group := int(element_to_group.get(joint.element_b_id, 0))
+		if base_group <= 0 or head_group <= 0 or base_group == head_group:
+			return {"valid": false, "reason": &"invalid_piston_groups"}
+		piston_specs.append({
+			"joint_id": joint.joint_id,
+			"base_element_id": joint.element_a_id,
+			"head_element_id": joint.element_b_id,
+			"base_group_id": base_group,
+			"head_group_id": head_group,
+		})
+
+	var root_group_id := _pick_root_group_id(
+		groups,
+		element_ids,
+		elements_by_id,
+		joints
+	)
+	if groups.size() > 1 and root_group_id <= 0:
+		return {"valid": false, "reason": &"ambiguous_root_group"}
+
+	var cycle := _validate_acyclic_piston_graph(piston_specs)
+	if not bool(cycle.get("valid", false)):
+		return cycle
+
+	return {
+		"valid": true,
+		"groups": groups,
+		"element_to_group": element_to_group,
+		"root_group_id": root_group_id,
+		"piston_specs": piston_specs,
+	}
+
+
+static func would_rigid_bridge_piston_groups(
+	element_a_id: int,
+	element_b_id: int,
+	element_ids: Array[int],
+	elements_by_id: Dictionary,
+	joints: Array[SimulationJoint]
+) -> bool:
+	var compiled := compile(element_ids, elements_by_id, joints)
+	if not bool(compiled.get("valid", false)):
+		return true
+	var element_to_group: Dictionary = compiled["element_to_group"]
+	var group_a := int(element_to_group.get(element_a_id, 0))
+	var group_b := int(element_to_group.get(element_b_id, 0))
+	if group_a <= 0 or group_b <= 0 or group_a == group_b:
+		return false
+	for spec: Dictionary in compiled["piston_specs"]:
+		var left := int(spec["base_group_id"])
+		var right := int(spec["head_group_id"])
+		if (
+			(group_a == left and group_b == right)
+			or (group_a == right and group_b == left)
+		):
+			return true
+	return false
+
+
+static func _pick_root_group_id(
+	groups: Dictionary,
+	element_ids: Array[int],
+	elements_by_id: Dictionary,
+	joints: Array[SimulationJoint]
+) -> int:
+	var anchored_groups: Dictionary = {}
+	for joint: SimulationJoint in joints:
+		if joint.kind != SimulationJoint.Kind.ANCHOR:
+			continue
+		var group_id := _group_for_element(
+			joint.element_a_id,
+			groups
+		)
+		if group_id > 0:
+			anchored_groups[group_id] = true
+	var anchored_ids: Array[int] = _sorted_int_keys(anchored_groups)
+	if anchored_ids.size() > 1:
+		return -1
+	if anchored_ids.size() == 1:
+		return anchored_ids[0]
+	if groups.is_empty():
+		return 0
+	return int(_sorted_int_keys(groups).min())
+
+
+static func _group_for_element(element_id: int, groups: Dictionary) -> int:
+	for group_id_variant: Variant in groups.keys():
+		var group_id := int(group_id_variant)
+		var members: Array = groups[group_id]
+		if members.has(element_id):
+			return group_id
+	return 0
+
+
+static func _component_group_id(component: Array) -> int:
+	var ids: Array[int] = []
+	for element_id_variant: Variant in component:
+		ids.append(int(element_id_variant))
+	ids.sort()
+	return ids[0] if not ids.is_empty() else 0
+
+
+static func _validate_acyclic_piston_graph(
+	piston_specs: Array[Dictionary]
+) -> Dictionary:
+	if piston_specs.is_empty():
+		return {"valid": true}
+	var adjacency: Dictionary = {}
+	for spec: Dictionary in piston_specs:
+		var left := int(spec["base_group_id"])
+		var right := int(spec["head_group_id"])
+		if not adjacency.has(left):
+			adjacency[left] = {}
+		if not adjacency.has(right):
+			adjacency[right] = {}
+		adjacency[left][right] = true
+		adjacency[right][left] = true
+
+	var visited: Dictionary = {}
+	for start_id: int in _sorted_int_keys(adjacency):
+		if visited.has(start_id):
+			continue
+		if not _dfs_piston_graph_acyclic(start_id, -1, adjacency, visited):
+			return {"valid": false, "reason": &"driven_joint_cycle"}
+	return {"valid": true}
+
+
+static func _dfs_piston_graph_acyclic(
+	node_id: int,
+	parent_id: int,
+	adjacency: Dictionary,
+	visited: Dictionary
+) -> bool:
+	visited[node_id] = true
+	var neighbors: Array = adjacency.get(node_id, {}).keys()
+	neighbors.sort()
+	for neighbor_variant: Variant in neighbors:
+		var neighbor_id := int(neighbor_variant)
+		if neighbor_id == parent_id:
+			continue
+		if visited.has(neighbor_id):
+			return false
+		if not _dfs_piston_graph_acyclic(
+			neighbor_id,
+			node_id,
+			adjacency,
+			visited
+		):
+			return false
+	return true
+
+
+static func _sorted_int_keys(values: Dictionary) -> Array[int]:
+	var keys: Array[int] = []
+	for key: Variant in values.keys():
+		keys.append(int(key))
+	keys.sort()
+	return keys

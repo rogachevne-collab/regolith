@@ -14,6 +14,29 @@ static func is_transfer_target(element: SimulationElement) -> bool:
 	)
 
 
+static func terminal_store_id_for_hit(
+	hit: InteractionHit,
+	gateway: WorldCommandGateway
+) -> String:
+	if (
+		hit == null
+		or not hit.valid
+		or hit.target_kind != InteractionHit.KIND_SIMULATION_ELEMENT
+		or hit.distance > 4.0
+		or gateway == null
+	):
+		return ""
+	var session := gateway.get_node_or_null(
+		gateway.simulation_session_path
+	) as SimulationSession
+	if session == null:
+		return ""
+	var element := session.world.get_element(int(hit.metadata.get("element_id", 0)))
+	if not is_transfer_target(element):
+		return ""
+	return element_store_id(element)
+
+
 static func element_store_id(element: SimulationElement) -> String:
 	if element == null:
 		return ""

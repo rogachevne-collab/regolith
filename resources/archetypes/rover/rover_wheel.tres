@@ -2,8 +2,8 @@
 
 [ext_resource type="Script" uid="uid://c2p36g85wqkru" path="res://scripts/simulation/resources/build_requirement.gd" id="1_req"]
 [ext_resource type="Script" uid="uid://b6d2jhfw581hb" path="res://scripts/simulation/resources/collider_definition.gd" id="2_col"]
-[ext_resource type="Script" uid="uid://c4hgnuqnf2up8" path="res://scripts/simulation/resources/port_definition.gd" id="3_port"]
 [ext_resource type="Script" uid="uid://bxidpb3tep3ih" path="res://scripts/simulation/resources/element_archetype.gd" id="4_arch"]
+[ext_resource type="Script" uid="uid://bfuxth8e6lccw" path="res://scripts/simulation/resources/structural_mount_pad.gd" id="5_pad"]
 
 [sub_resource type="Resource" id="Requirement"]
 script = ExtResource("1_req")
@@ -14,16 +14,12 @@ script = ExtResource("2_col")
 size = Vector3(0.4, 0.3, 0.4)
 offset_in_cell = Vector3(0.25, 0.25, 0.25)
 
-[sub_resource type="Resource" id="PortPx"]
-script = ExtResource("3_port")
-port_id = "structural_px"
-compatibility_tags = PackedStringArray("structural")
+[sub_resource type="Resource" id="Mount_px"]
+script = ExtResource("5_pad")
 
-[sub_resource type="Resource" id="PortNx"]
-script = ExtResource("3_port")
-port_id = "structural_nx"
+[sub_resource type="Resource" id="Mount_nx"]
+script = ExtResource("5_pad")
 local_face = 1
-compatibility_tags = PackedStringArray("structural")
 
 [resource]
 script = ExtResource("4_arch")
@@ -31,6 +27,7 @@ archetype_id = "rover_wheel"
 display_name = "Колесо ровера"
 roles = PackedStringArray("Support")
 mass_kg = 15.0
+structural_surface_policy = 2
+structural_mount_pads = Array[ExtResource("5_pad")]([SubResource("Mount_px"), SubResource("Mount_nx")])
 colliders = Array[ExtResource("2_col")]([SubResource("Collider")])
-ports = Array[ExtResource("3_port")]([SubResource("PortPx"), SubResource("PortNx")])
 build_requirements = Array[ExtResource("1_req")]([SubResource("Requirement")])

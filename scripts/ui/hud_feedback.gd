@@ -73,13 +73,8 @@ func _prompt_for(hit: InteractionHit) -> String:
 			return "E — собрать %s" % HudTokens.resource_label(
 				str(hit.metadata.get("resource_id", ""))
 			)
-		if _is_recipe_machine(hit):
-			return ""
-		if (
-			hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
-			and _is_industry_transfer_target(hit)
-		):
-			return "E — забрать / положить груз"
+		if _is_terminal_target(hit):
+			return "E — открыть инвентарь"
 	if _tools.active_tool == &"drill":
 		return ""
 	if _tools.active_tool == &"connect":
@@ -145,25 +140,8 @@ func _prompt_for(hit: InteractionHit) -> String:
 	return ""
 
 
-func _is_recipe_machine(hit: InteractionHit) -> bool:
-	if hit.target_kind != InteractionHit.KIND_SIMULATION_ELEMENT:
-		return false
-	return str(hit.metadata.get("archetype_id", "")) in [
-		"processor",
-		"fabricator",
-	]
-
-
-func _is_industry_transfer_target(hit: InteractionHit) -> bool:
-	if _gateway == null:
-		return false
-	var session := _gateway.get_node_or_null(
-		_gateway.simulation_session_path
-	) as SimulationSession
-	if session == null:
-		return false
-	var element := session.world.get_element(int(hit.metadata.get("element_id", 0)))
-	return IndustryTransferUtil.is_transfer_target(element)
+func _is_terminal_target(hit: InteractionHit) -> bool:
+	return not IndustryTransferUtil.terminal_store_id_for_hit(hit, _gateway).is_empty()
 
 
 func _on_command_completed(

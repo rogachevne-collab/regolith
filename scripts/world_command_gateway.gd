@@ -33,6 +33,9 @@ var _snap_resolver := ConstructionSnapResolver.new()
 var _resolve_result_cache_key: String = ""
 var _resolve_result_cache: Dictionary = {}
 var _snap_event_bound := false
+var _excavation := TerrainExcavationService.new()
+var _material_source := TerrainMaterialSource.new()
+var _hand_drill_last_bite_center: Variant = null
 
 
 func _ready() -> void:
@@ -43,6 +46,9 @@ func _ready() -> void:
 	_voxel_tool.channel = VoxelBuffer.CHANNEL_SDF
 	for archetype_id: String in ToolController.CONSTRUCTION_ARCHETYPES:
 		_get_archetype(archetype_id)
+	var piston_head := Slice01Archetypes.piston_head()
+	if piston_head != null:
+		_archetype_cache["piston_head"] = piston_head
 	_snap_resolver.bind_cache(_snap_face_cache)
 	call_deferred("_bind_snap_cache_events")
 	call_deferred("_bind_terrain_contact_probe")
@@ -89,9 +95,11 @@ func _flush() -> void:
 	while not _queue.is_empty():
 		var command: Dictionary = _queue.pop_front()
 		var command_id: int = command["id"]
+		var result := _execute(command)
+		result["command_kind"] = command.get("kind", StringName())
 		command_completed.emit(
 			command_id,
-			_execute(command)
+			result
 		)
 
 
@@ -131,6 +139,8 @@ func _execute(command: Dictionary) -> Dictionary:
 			return _dequeue_recipe(command, target)
 		&"collect_world_loot":
 			return _collect_world_loot(command)
+		&"set_actuator_target":
+			return _set_actuator_target(command, target)
 		_:
 			return _result(&"invalid_target")
 
@@ -156,58 +166,112 @@ func _remove_voxel(
 	var direction := Vector3(
 		metadata.get("aim_direction", Vector3.FORWARD)
 	).normalized()
-	var center := Vector3(target["point"]) - direction * radius * 0.25
-	var removed_m3 := _remove_sphere_measured(
-		center,
-		radius,
-		IndustryArchetypeProfile.hand_drill_carve_volume_budget_m3()
+	var contact_point := Vector3(target["point"])
+	var bite_center := contact_point - direction * (
+		radius - IndustryArchetypeProfile.hand_drill_bite_depth_m()
 	)
+	var sdf_scale := IndustryArchetypeProfile.hand_drill_sdf_scale()
+	var total_removed_m3 := 0.0
+	if (
+		_hand_drill_last_bite_center is Vector3
+		and bite_center.distance_squared_to(_hand_drill_last_bite_center) > 0.0001
+	):
+		var sweep := _excavation.excavate(
+			_voxel_tool,
+			{
+				"stamp_kind": &"path",
+				"terrain": _terrain,
+				"points": PackedVector3Array([
+					_hand_drill_last_bite_center,
+					bite_center,
+				]),
+				"radii": PackedFloat32Array([radius, radius]),
+				"sdf_scale": sdf_scale,
+			}
+		)
+		total_removed_m3 += float(sweep["removed_volume_m3"])
+	var excavation := _excavation.excavate(
+		_voxel_tool,
+		{
+			"stamp_kind": &"sphere",
+			"terrain": _terrain,
+			"center": bite_center,
+			"radius": radius,
+			"sdf_scale": sdf_scale,
+		}
+	)
+	total_removed_m3 += float(excavation["removed_volume_m3"])
+	if total_removed_m3 > 0.000001:
+		_hand_drill_last_bite_center = bite_center
+	else:
+		_hand_drill_last_bite_center = null
+	var removed_m3 := total_removed_m3
 	if removed_m3 > 0.000001:
-		_credit_hand_drill_yield(center, removed_m3)
-	return _result(&"ok", {"point": target["point"]})
+		_route_hand_drill_yield(
+			contact_point,
+			_material_source.yield_for_removed_volume(
+				removed_m3,
+				IndustryArchetypeProfile.terrain_collectible_fraction()
+			)
+		)
+	return _result(
+		StringName(excavation["status"]),
+		{
+			"point": target["point"],
+			"removed_volume_m3": removed_m3,
+		}
+	)
 
 
-func _credit_hand_drill_yield(center: Vector3, removed_volume_m3: float) -> void:
+func _route_hand_drill_yield(
+	center: Vector3,
+	yields: Array[Dictionary]
+) -> void:
 	if _session == null or _session.world == null:
-		return
-	if removed_volume_m3 <= 0.000001:
-		return
-	var mass_kg := IndustryArchetypeProfile.raw_mass_kg_from_volume_m3(
-		removed_volume_m3
-	)
-	mass_kg = minf(
-		mass_kg,
-		IndustryArchetypeProfile.hand_drill_max_loot_mass_kg_per_tick()
-	)
-	if mass_kg <= 0.000001:
-		return
-	var unit_mass := ResourceCatalog.mass_per_unit_kg("raw_regolith")
-	if unit_mass <= 0.000001:
 		return
 	var store := _session.world.get_resource_store(
 		IndustryStoreService.PLAYER_STORE_ID
 	)
-	if store != null:
-		var max_units := ResourceCatalog.max_addable_amount_player(
-			store,
-			"raw_regolith"
-		)
-		var credited_units := minf(mass_kg / unit_mass, max_units)
-		if credited_units > 0.000001:
-			store.add("raw_regolith", credited_units)
-			mass_kg = maxf(mass_kg - credited_units * unit_mass, 0.0)
-	if mass_kg <= 0.000001:
-		return
-	_session.world.add_world_loot_pile(center, "raw_regolith", mass_kg)
+	for yield_entry: Dictionary in yields:
+		var resource_id := String(yield_entry.get("resource_id", ""))
+		var remaining_mass_kg := float(yield_entry.get("mass_kg", 0.0))
+		var unit_mass := ResourceCatalog.mass_per_unit_kg(resource_id)
+		if resource_id.is_empty() or remaining_mass_kg <= 0.000001:
+			continue
+		if store != null and unit_mass > 0.000001:
+			var max_units := ResourceCatalog.max_addable_amount_player(
+				store,
+				resource_id
+			)
+			var credited_units := minf(
+				remaining_mass_kg / unit_mass,
+				max_units
+			)
+			if credited_units > 0.000001:
+				store.add(resource_id, credited_units)
+				remaining_mass_kg = maxf(
+					remaining_mass_kg - credited_units * unit_mass,
+					0.0
+				)
+		if remaining_mass_kg > 0.000001:
+			_session.world.add_world_loot_pile(
+				center,
+				resource_id,
+				remaining_mass_kg
+			)
 
 
 func apply_terrain_carve(
 	op: Dictionary,
-	volume_budget_m3: float = INF
+	_volume_budget_m3: float = INF
 ) -> float:
-	if _voxel_tool == null or op.is_empty():
-		return 0.0
-	return TerrainImpactCarver.apply(_voxel_tool, op, volume_budget_m3)
+	var request := op.duplicate(true)
+	request["terrain"] = _terrain
+	if not request.has("sdf_scale"):
+		request["sdf_scale"] = TerrainExcavationService.DEFAULT_SDF_SCALE
+	return float(
+		_excavation.excavate(_voxel_tool, request).get("removed_volume_m3", 0.0)
+	)
 
 
 func stationary_drill_has_terrain_contact(element_id: int) -> bool:
@@ -221,7 +285,18 @@ func carve_stationary_drill(element_id: int) -> float:
 	var radius := IndustryArchetypeProfile.drill_carve_radius_m()
 	var direction: Vector3 = contact["direction"]
 	var center: Vector3 = contact["point"] + direction * radius * 0.55
-	return _remove_sphere_measured(center, radius)
+	return float(
+		_excavation.excavate(
+			_voxel_tool,
+			{
+				"stamp_kind": &"sphere",
+				"terrain": _terrain,
+				"center": center,
+				"radius": radius,
+				"sdf_scale": IndustryArchetypeProfile.hand_drill_sdf_scale(),
+			}
+		).get("removed_volume_m3", 0.0)
+	)
 
 
 func _stationary_drill_contact(element_id: int) -> Dictionary:
@@ -251,15 +326,15 @@ func _stationary_drill_contact(element_id: int) -> Dictionary:
 		* IndustryArchetypeProfile.drill_head_offset_m()
 	)
 	var head := assembly.motion.transform * local_head
-	var head_cell := Vector3i(
-		floori(head.x),
-		floori(head.y),
-		floori(head.z)
-	)
-	if _sdf_occupancy(_voxel_tool.get_voxel_f(head_cell)) > 0.0:
+	var head_cell: Vector3i = VoxelSpaceUtil.world_cell_from_point(_terrain, head)
+	if TerrainExcavationService.sdf_occupancy(
+		_voxel_tool.get_voxel_f(head_cell)
+	) > 0.0:
 		return {"point": head, "direction": direction}
 	var probe_start := head - direction * 0.08
-	var hit: VoxelRaycastResult = _voxel_tool.raycast(
+	var hit: VoxelRaycastResult = VoxelSpaceUtil.raycast_world(
+		_voxel_tool,
+		_terrain,
 		probe_start,
 		direction,
 		IndustryArchetypeProfile.drill_contact_reach_m() + 0.08
@@ -267,54 +342,14 @@ func _stationary_drill_contact(element_id: int) -> Dictionary:
 	if hit == null:
 		return {}
 	return {
-		"point": probe_start + direction * hit.distance,
+		"point": VoxelSpaceUtil.raycast_hit_world_point(
+			_terrain,
+			probe_start,
+			direction,
+			hit
+		),
 		"direction": direction,
 	}
-
-
-func _remove_sphere_measured(
-	center: Vector3,
-	radius: float,
-	volume_budget_m3: float = -1.0
-) -> float:
-	# Voxel Tools does not return a removed-volume result. Measure the authored
-	# SDF lattice before and after the edit, and credit only positive occupancy
-	# delta. This can under-count sub-voxel detail but cannot mint default yield.
-	var margin := radius + 1.0
-	var min_cell := Vector3i(
-		floori(center.x - margin),
-		floori(center.y - margin),
-		floori(center.z - margin)
-	)
-	var max_cell := Vector3i(
-		ceili(center.x + margin),
-		ceili(center.y + margin),
-		ceili(center.z + margin)
-	)
-	var before: Dictionary = {}
-	for x: int in range(min_cell.x, max_cell.x + 1):
-		for y: int in range(min_cell.y, max_cell.y + 1):
-			for z: int in range(min_cell.z, max_cell.z + 1):
-				var cell := Vector3i(x, y, z)
-				before[cell] = _sdf_occupancy(_voxel_tool.get_voxel_f(cell))
-	_voxel_tool.channel = VoxelBuffer.CHANNEL_SDF
-	_voxel_tool.mode = VoxelTool.MODE_REMOVE
-	_voxel_tool.sdf_strength = 1.0
-	_voxel_tool.do_sphere(center, radius)
-	var removed_m3 := 0.0
-	for cell: Vector3i in before:
-		var after := _sdf_occupancy(_voxel_tool.get_voxel_f(cell))
-		removed_m3 += maxf(float(before[cell]) - after, 0.0)
-	var budget := (
-		volume_budget_m3
-		if volume_budget_m3 > 0.0
-		else IndustryArchetypeProfile.drill_carve_volume_budget_m3()
-	)
-	return minf(removed_m3, budget)
-
-
-func _sdf_occupancy(sdf: float) -> float:
-	return clampf(0.5 - sdf, 0.0, 1.0)
 
 
 func get_voxel_tool() -> VoxelTool:
@@ -500,10 +535,11 @@ func _resolve_cache_key(params: Dictionary) -> String:
 	).normalized()
 	var direct_hit: Dictionary = params.get("direct_hit", {})
 	var target_id := StringName(direct_hit.get("target_id", &""))
+	var aim_step := _aim_quantize_step_for_id(str(params.get("archetype_id", "frame")))
 	return "%d|%s|%s|%s|%d|%s|%s|%s|%s" % [
 		_snap_face_cache.generation,
-		_quantize_vec3(ray_origin, 0.04),
-		_quantize_vec3(ray_direction, 0.02),
+		_quantize_vec3(ray_origin, aim_step),
+		_quantize_vec3(ray_direction, aim_step * 0.5),
 		params.get("archetype_id", "frame"),
 		int(params.get("orientation_index", 0)),
 		target_id,
@@ -530,6 +566,13 @@ static func _pivot_cache_token(value: Variant) -> String:
 	return str(_quantize_vec3(pivot, 0.05))
 
 
+func _aim_quantize_step_for_id(archetype_id: String) -> float:
+	var archetype := _get_archetype(archetype_id)
+	if archetype != null and archetype.footprint_cells.size() >= 64:
+		return 0.12
+	return 0.04
+
+
 func construction_resource_amount() -> float:
 	if _session == null:
 		return 0.0
@@ -547,6 +590,37 @@ func resource_store(store_id: String) -> SimulationResourceStore:
 	if _session == null:
 		return null
 	return _session.world.get_resource_store(store_id)
+
+
+## Authoritative terminal inventory snapshot (INDUSTRY-V1 § Terminal inventory).
+## Resolves player store, keyed element stores, and internal buffers. Unknown or
+## unresolved ids return `{"valid": false, "reason": ...}` without mutating state.
+func store_snapshot(store_id: String) -> Dictionary:
+	if _session == null or _session.world == null:
+		return StoreSnapshotBuilder.failure(&"not_ready")
+	return StoreSnapshotBuilder.build(_session.world, store_id)
+
+
+func player_inventory() -> PlayerInventoryRegistry:
+	if _session == null or _session.world == null:
+		return null
+	return _session.world.ensure_player_inventory()
+
+
+func player_inventory_revision() -> int:
+	if _session == null or _session.world == null:
+		return 0
+	return _session.world.get_player_inventory_revision()
+
+
+func assign_player_hotbar_instance(
+	page: int,
+	slot: int,
+	instance_id: String
+) -> bool:
+	if _session == null or _session.world == null:
+		return false
+	return _session.world.assign_player_hotbar_instance(page, slot, instance_id)
 
 
 func archetype_display_name(archetype_id: String) -> String:
@@ -761,7 +835,9 @@ func _seat_ground_plan(plan: Dictionary) -> Dictionary:
 	var center := footprint.position + footprint.size * 0.5
 	var lowest_surface := INF
 	for sample: Vector2 in _GROUND_SEAT_SAMPLES:
-		var hit: VoxelRaycastResult = _voxel_tool.raycast(
+		var hit: VoxelRaycastResult = VoxelSpaceUtil.raycast_world(
+			_voxel_tool,
+			_terrain,
 			Vector3(
 				center.x + sample.x * footprint.size.x,
 				probe_from_y,
@@ -772,7 +848,11 @@ func _seat_ground_plan(plan: Dictionary) -> Dictionary:
 		)
 		if hit == null:
 			continue
-		lowest_surface = minf(lowest_surface, probe_from_y - hit.distance)
+		lowest_surface = minf(
+			lowest_surface,
+			probe_from_y
+			- VoxelSpaceUtil.raycast_hit_world_distance(_terrain, hit)
+		)
 	if is_inf(lowest_surface):
 		return plan
 	var delta_y := (lowest_surface - GROUND_SEAT_EMBED) - bottom_y
@@ -936,6 +1016,7 @@ func _transfer_resource(
 	transfer.to_store_id = str(parameters.get("to_store_id", ""))
 	transfer.resource_id = str(parameters.get("resource_id", ""))
 	transfer.amount = float(parameters.get("amount", 0.0))
+	transfer.instance_id = str(parameters.get("instance_id", ""))
 	return apply_transfer_resource(transfer)
 
 
@@ -1001,6 +1082,47 @@ func _dequeue_recipe(
 	return _result(
 		StringName(result.get("reason", &"invalid_target")),
 		{"element_id": dequeue.element_id}
+	)
+
+
+func _set_actuator_target(
+	command: Dictionary,
+	target: Dictionary
+) -> Dictionary:
+	if _session == null:
+		return _result(&"not_ready")
+	var parameters: Dictionary = command.get("parameters", {})
+	var metadata: Dictionary = target.get("metadata", {})
+	var actuator := SetActuatorTargetCommand.new()
+	actuator.joint_id = int(
+		parameters.get(
+			"joint_id",
+			metadata.get("piston_joint_id", 0)
+		)
+	)
+	actuator.mode = int(
+		parameters.get(
+			"mode",
+			SimulationMotorState.ControlMode.STOP
+		)
+	)
+	actuator.target_position_m = float(
+		parameters.get("target_position_m", 0.0)
+	)
+	actuator.target_velocity_mps = float(
+		parameters.get("target_velocity_mps", 0.0)
+	)
+	actuator.speed_limit_mps = float(
+		parameters.get("speed_limit_mps", -1.0)
+	)
+	actuator.enabled = bool(parameters.get("enabled", true))
+	var result := _session.apply_set_actuator_target(actuator)
+	return _result(
+		StringName(result.get("reason", &"invalid_target")),
+		{
+			"joint_id": actuator.joint_id,
+			"status_name": result.get("status_name", &""),
+		}
 	)
 
 
