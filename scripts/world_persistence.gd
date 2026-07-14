@@ -62,7 +62,12 @@ static func restore_snapshot_data(
 	if world == null or simulation.is_empty():
 		return false
 	if not world.restore_snapshot(simulation, false):
-		push_warning("WorldPersistence: snapshot restore rejected")
+		var detail := SimulationSnapshot.last_validate_error
+		if detail.is_empty():
+			detail = "unknown"
+		push_warning(
+			"WorldPersistence: snapshot restore rejected (%s)" % detail
+		)
 		return false
 	return true
 
@@ -153,11 +158,27 @@ static func _is_usable_save_position(pos: Vector3) -> bool:
 	return true
 
 
+static func backup_rejected_save() -> String:
+	return _backup_save_with_suffix("rejected")
+
+
 static func _backup_corrupt_save() -> void:
+	_backup_save_with_suffix("corrupt")
+
+
+static func _backup_save_with_suffix(suffix: String) -> String:
 	if not FileAccess.file_exists(SAVE_PATH):
-		return
-	var backup_path := "%s.corrupt.%d" % [
+		return ""
+	var backup_path := "%s.%s.%d" % [
 		SAVE_PATH,
+		suffix,
 		int(Time.get_unix_time_from_system()),
 	]
-	DirAccess.rename_absolute(SAVE_PATH, backup_path)
+	var rename_error := DirAccess.rename_absolute(SAVE_PATH, backup_path)
+	if rename_error != OK:
+		push_warning(
+			"WorldPersistence: failed to backup save (%s)"
+			% error_string(rename_error)
+		)
+		return ""
+	return backup_path

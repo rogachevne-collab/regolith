@@ -46,6 +46,36 @@ func definition_rows() -> Array[Dictionary]:
 
 
 static func fingerprint_of(archetype: ElementArchetype) -> String:
+	return _fingerprint_from_schema(archetype, false)
+
+
+static func legacy_fingerprint_of(archetype: ElementArchetype) -> String:
+	return _fingerprint_from_schema(archetype, true)
+
+
+static func save_fingerprint_compatible(
+	archetype: ElementArchetype,
+	expected_fingerprint: String,
+	expected_resource_path: String
+) -> bool:
+	if expected_fingerprint.is_empty():
+		return false
+	if fingerprint_of(archetype) == expected_fingerprint:
+		return true
+	if legacy_fingerprint_of(archetype) == expected_fingerprint:
+		return true
+	# Pre-structural saves stored a hash that included piston motor tuning.
+	# Tolerate that drift when the same resource still validates structurally.
+	return (
+		archetype.resource_path == expected_resource_path
+		and BlueprintValidator.validate_archetype(archetype).ok
+	)
+
+
+static func _fingerprint_from_schema(
+	archetype: ElementArchetype,
+	include_piston_tuning: bool
+) -> String:
 	var ports: Array[Dictionary] = []
 	for port: PortDefinition in archetype.ports:
 		ports.append({
@@ -79,7 +109,10 @@ static func fingerprint_of(archetype: ElementArchetype) -> String:
 		"max_integrity": archetype.max_integrity,
 		"structural_surface_policy": archetype.structural_surface_policy,
 		"structural_mount_pads": _mount_pad_rows(archetype.structural_mount_pads),
-		"piston_definition": _piston_definition_row(archetype.piston_definition),
+		"piston_definition": _piston_definition_row(
+			archetype.piston_definition,
+			include_piston_tuning
+		),
 		"internal_archetype": archetype.internal_archetype,
 		"ports": ports,
 		"colliders": colliders,
@@ -111,20 +144,25 @@ static func _mount_pad_rows(
 
 
 static func _piston_definition_row(
-	definition: PistonDefinition
+	definition: PistonDefinition,
+	include_tuning: bool
 ) -> Dictionary:
 	if definition == null:
 		return {}
-	return {
+	var row := {
 		"head_archetype_id": definition.head_archetype_id,
 		"axis_face": definition.axis_face,
 		"retracted_offset_m": definition.retracted_offset_m,
 		"lower_limit_m": definition.lower_limit_m,
 		"upper_limit_m": definition.upper_limit_m,
-		"default_speed_limit_mps": definition.default_speed_limit_mps,
-		"force_limit_n": definition.force_limit_n,
-		"stiffness_n_per_m": definition.stiffness_n_per_m,
-		"damping_n_s_per_m": definition.damping_n_s_per_m,
 		"power_draw_w": definition.power_draw_w,
 		"overload_policy": definition.overload_policy,
 	}
+	if include_tuning:
+		row["default_speed_limit_mps"] = definition.default_speed_limit_mps
+		row["extend_velocity_mps"] = definition.extend_velocity_mps
+		row["retract_velocity_mps"] = definition.retract_velocity_mps
+		row["force_limit_n"] = definition.force_limit_n
+		row["stiffness_n_per_m"] = definition.stiffness_n_per_m
+		row["damping_n_s_per_m"] = definition.damping_n_s_per_m
+	return row

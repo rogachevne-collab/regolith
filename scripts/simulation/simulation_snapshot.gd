@@ -91,14 +91,26 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 			return false
 		archetype_ids[archetype_id] = true
 		var archetype := load(resource_path) as ElementArchetype
-		if (
-			archetype == null
-			or archetype.archetype_id != archetype_id
-			or not BlueprintValidator.validate_archetype(archetype).ok
-			or ArchetypeRegistry.fingerprint_of(archetype) != expected_fingerprint
-			or not registry.register(archetype)
+		if archetype == null or archetype.archetype_id != archetype_id:
+			return _reject("archetype_load:%s" % archetype_id)
+		if not BlueprintValidator.validate_archetype(archetype).ok:
+			return _reject("archetype_invalid:%s" % archetype_id)
+		if not ArchetypeRegistry.save_fingerprint_compatible(
+			archetype,
+			expected_fingerprint,
+			resource_path
 		):
-			return false
+			return _reject(
+				"fingerprint_incompatible:%s expected=%s structural=%s legacy=%s"
+				% [
+					archetype_id,
+					expected_fingerprint,
+					ArchetypeRegistry.fingerprint_of(archetype),
+					ArchetypeRegistry.legacy_fingerprint_of(archetype),
+				]
+			)
+		if not registry.register(archetype):
+			return _reject("archetype_conflict:%s" % archetype_id)
 
 	var assembly_ids: Dictionary = {}
 	var active_assembly_ids: Dictionary = {}

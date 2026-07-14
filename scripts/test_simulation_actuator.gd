@@ -20,6 +20,7 @@ func _run_tests() -> void:
 		_test_piston_atomic_placement,
 		_test_body_group_compiler,
 		_test_snapshot_v6_roundtrip,
+		_test_piston_snapshot_tuning_migration,
 		_test_set_actuator_target,
 		_test_overload_status,
 		_test_dismantle_splits_carriage,
@@ -243,6 +244,52 @@ func _test_snapshot_v6_roundtrip() -> bool:
 		restored.free()
 		world.free()
 		return _fail("piston snapshot semantics changed on roundtrip")
+	restored.free()
+	world.free()
+	return true
+
+
+func _test_piston_snapshot_tuning_migration() -> bool:
+	var world := SimulationWorld.new()
+	world.ensure_resource_store("player")
+	world.set_resource_amount("player", "construction_component", 100.0)
+	world.get_archetype_registry().register(PISTON_HEAD)
+	var foundation := _spawn(
+		world,
+		_single_blueprint(Slice01Archetypes.foundation()),
+		GridTransform.identity()
+	)
+	var assembly_id := int(foundation.data["assembly_id"])
+	var frame := _place_frame(world, assembly_id, Vector3i(4, 0, 0), foundation)
+	if not frame.is_ok():
+		world.free()
+		return _fail("frame setup failed for tuning migration")
+	var piston := _place_piston(world, assembly_id, Vector3i(5, 0, 0), frame)
+	if not piston.is_ok():
+		world.free()
+		return _fail("piston setup failed for tuning migration")
+
+	var snapshot := world.capture_snapshot()
+	var legacy_fingerprint := ArchetypeRegistry.legacy_fingerprint_of(PISTON_BASE)
+	for row_variant: Variant in snapshot.get("archetypes", []):
+		if not row_variant is Dictionary:
+			continue
+		var row: Dictionary = row_variant
+		if str(row.get("archetype_id", "")) != "piston_base":
+			continue
+		row["fingerprint"] = legacy_fingerprint
+
+	var definition := PISTON_BASE.piston_definition
+	var original_speed := definition.default_speed_limit_mps
+	definition.default_speed_limit_mps = 0.77
+	var restored: SimulationWorld = SimulationSnapshot.create_from_snapshot(snapshot)
+	definition.default_speed_limit_mps = original_speed
+	if restored == null:
+		world.free()
+		return _fail(
+			"tuning migration restore failed: %s"
+			% SimulationSnapshot.last_validate_error
+		)
 	restored.free()
 	world.free()
 	return true

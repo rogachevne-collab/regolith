@@ -198,9 +198,19 @@ func _place_when_ground_exists() -> void:
 					await _finish_loaded_world_entry(spawn_position)
 					call_deferred("_finalize_loaded_world_after_entry")
 					return
-				push_warning(
-					"Save rejected or corrupt; starting a fresh world."
-				)
+				var rejected_backup := WorldPersistence.backup_rejected_save()
+				if rejected_backup.is_empty():
+					push_warning(
+						"Save rejected or corrupt; starting a fresh world."
+					)
+				else:
+					push_warning(
+						(
+							"Save rejected or corrupt; backed up to %s; "
+							+ "starting a fresh world."
+						)
+						% rejected_backup
+					)
 				var fallback_spawn := _spawn_position_from_voxel_hit(
 					_player_spawn_xz,
 					player_origin,
