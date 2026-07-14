@@ -510,22 +510,34 @@ Role `Tool`, archetype `stationary_drill`.
 
 ### Behavior (tick, enabled, operational, powered)
 
-1. probe physical voxel-terrain contact/proximity from the visible working head
-   along its oriented local `+X` working face;
-2. without contact: no carve, no credit, reason `no_terrain_contact`;
-3. before mutation, atomically check buffer/outbound capacity against the maximum
-   carve budget; `storage_full` stops before voxel edit (no loss);
-4. voxel carve in front of that head (reuse `VoxelTool.MODE_REMOVE` sphere/stamp);
+1. probe voxel-terrain contact from the visible working tip (`+X`, offset
+   `drill_head_offset_m` = 1.45 m from footprint pivot, matching
+   `stationary_drill_visual.tscn`) along the oriented working face; tip pose
+   uses the element's projected physics body (required for piston carriage);
+   contact ray reach `drill_contact_reach_m` = 1.4 m beyond the tip;
+   **physics terrain collider first**, SDF samples along the working axis,
+   backward physics ray at the tip, then SDF raycast fallback;
+2. without contact: no carve, no credit, reason `no_terrain_contact` (rotor spin
+   may continue while enabled, powered, and operational — see below);
+3. carve runs even when the internal buffer or outbound cargo path cannot accept
+   more output; excess yield is discarded, status reports `storage_full` while
+   mining continues;
+4. voxel carve at the working tip (reuse `VoxelTool.MODE_REMOVE` sphere/stamp;
+   radius `drill_carve_radius_m` = 1.25 m; center offset factor 0.2 along +X
+   from contact so the bite stays at the tip face);
 5. measure removed SDF voxel volume from the actual edit and credit
    `raw_regolith` mass ∝ measured volume (`kg_per_m3`); production never substitutes
-   a default production volume;
+   a default production volume; credit only what fits in the buffer;
 6. deposit into the internal buffer and auto-push into the cargo graph;
 7. a fixed-grid drill excavates only terrain within head reach. Once that reachable
    local volume is empty it reports `no_terrain_contact`; continuous advance needs a
    future mechanical feed/piston and is outside v1;
-8. buffer full **или** нет outbound cargo capacity → **stop mining**, reason
-   `storage_full` (без silent loss; согласовано с cargo backpressure);
-9. без power / disabled / incomplete → stop + reason.
+8. buffer full or blocked outbound → status `storage_full`, carving continues;
+9. без power / disabled / incomplete → stop mining + reason; rotor spin and
+   operation VFX follow **enabled ∧ powered ∧ operational**, independent of
+   `no_terrain_contact`;
+10. `SetMachineEnabledCommand` applies to `stationary_drill` (terminal toggle and
+    HUD readout); disabled drills do not mine or spin.
 
 Headless acceptance may inject deterministic contact-probe and carve-result hooks;
 those hooks do not define production yield semantics.

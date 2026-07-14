@@ -125,6 +125,36 @@ static func _physics_overlaps_terrain(
 	return false
 
 
+## Physics ray along `direction` that hits voxel terrain only (layer 1 default).
+## Returns the engine ray hit dict or `{}` when nothing terrain-like is struck.
+static func raycast_terrain(
+	space_state: PhysicsDirectSpaceState3D,
+	terrain: VoxelTerrain,
+	from: Vector3,
+	direction: Vector3,
+	max_distance: float,
+	collision_mask: int = 1
+) -> Dictionary:
+	if space_state == null or max_distance <= 0.000001:
+		return {}
+	if direction.length_squared() <= 0.000001:
+		return {}
+	var dir := direction.normalized()
+	var query := PhysicsRayQueryParameters3D.create(
+		from,
+		from + dir * max_distance
+	)
+	query.collision_mask = collision_mask
+	query.collide_with_areas = false
+	query.collide_with_bodies = true
+	var hit: Dictionary = space_state.intersect_ray(query)
+	if hit.is_empty():
+		return {}
+	if not _is_terrain_collider(hit.get("collider"), terrain):
+		return {}
+	return hit
+
+
 static func _is_terrain_collider(
 	collider: Variant,
 	terrain: VoxelTerrain

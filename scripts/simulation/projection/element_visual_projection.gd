@@ -59,12 +59,26 @@ func _process(delta: float) -> void:
 		if element == null:
 			_drill_rotors.erase(element_id)
 			continue
-		var running := element.industry_status_reason() == &"ok"
+		var running := _stationary_drill_spinning(element)
 		var operation_vfx := rotor.get_node_or_null("OperationVfx") as Node3D
 		if operation_vfx != null:
 			operation_vfx.visible = running
 		if running:
 			rotor.rotate_x(DRILL_SPIN_SPEED * delta)
+
+
+func _stationary_drill_spinning(element: SimulationElement) -> bool:
+	if element == null or not element.is_operational():
+		return false
+	var runtime := _world.ensure_industry_element_runtime(element.element_id)
+	if not runtime.machine_enabled:
+		return false
+	if (
+		IndustryArchetypeProfile.drill_requires_power()
+		and not runtime.powered
+	):
+		return false
+	return true
 
 
 func _on_structural_event(event: Dictionary) -> void:
@@ -97,7 +111,7 @@ func _update_element_visual(element_id: int) -> void:
 	var element := _world.get_element(element_id)
 	if element == null:
 		return
-	var body := _physics_projection.get_physics_body(element.assembly_id)
+	var body := _body_for_element(element_id)
 	if body == null:
 		return
 	var prefix := "%s%d_" % [VISUAL_PREFIX, element_id]
@@ -108,21 +122,19 @@ func _update_element_visual(element_id: int) -> void:
 
 
 func _rebuild_assembly(assembly_id: int) -> void:
-	var body := _physics_projection.get_physics_body(assembly_id)
 	var assembly := _world.get_assembly_raw(assembly_id)
-	if body == null or assembly == null or assembly.tombstoned:
+	var root_body := _physics_projection.get_physics_body(assembly_id)
+	if assembly == null or assembly.tombstoned or root_body == null:
 		_clear_known_body(assembly_id)
 		return
-	var previous_variant: Variant = _known_bodies.get(assembly_id)
-	if is_instance_valid(previous_variant):
-		var previous := previous_variant as PhysicsBody3D
-		if previous != body:
-			_clear_visuals(previous, assembly_id)
-	_clear_visuals(body, assembly_id)
-	_known_bodies[assembly_id] = body
+	_clear_assembly_visuals(assembly_id)
+	_known_bodies[assembly_id] = root_body
 	for element_id: int in assembly.element_ids:
 		var element := _world.get_element(element_id)
 		if element == null:
+			continue
+		var body := _body_for_element(element_id)
+		if body == null:
 			continue
 		var archetype := element.get_archetype()
 		if archetype == null or archetype.colliders.is_empty():
@@ -186,10 +198,40 @@ func _clear_visuals(body: PhysicsBody3D, assembly_id: int = 0) -> void:
 
 
 func _clear_known_body(assembly_id: int) -> void:
-	var body_variant: Variant = _known_bodies.get(assembly_id)
-	if is_instance_valid(body_variant):
-		_clear_visuals(body_variant as PhysicsBody3D, assembly_id)
+	_clear_assembly_visuals(assembly_id)
 	_known_bodies.erase(assembly_id)
+
+
+func _body_for_element(element_id: int) -> PhysicsBody3D:
+	if _physics_projection == null or element_id <= 0:
+		return null
+	var record := _physics_projection.get_element_projection(element_id)
+	if not record.is_empty():
+		return record.get("body") as PhysicsBody3D
+	if _world == null:
+		return null
+	var element := _world.get_element(element_id)
+	if element == null:
+		return null
+	return _physics_projection.get_physics_body(element.assembly_id)
+
+
+func _clear_assembly_visuals(assembly_id: int) -> void:
+	if _world == null or _physics_projection == null:
+		return
+	var assembly := _world.get_assembly_raw(assembly_id)
+	if assembly == null:
+		return
+	var cleared: Dictionary = {}
+	for element_id: int in assembly.element_ids:
+		var body := _body_for_element(element_id)
+		if body == null:
+			continue
+		var body_id := body.get_instance_id()
+		if cleared.has(body_id):
+			continue
+		_clear_visuals(body, assembly_id)
+		cleared[body_id] = true
 
 
 func _material_for(element: SimulationElement) -> StandardMaterial3D:

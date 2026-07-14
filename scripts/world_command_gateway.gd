@@ -282,7 +282,12 @@ func carve_stationary_drill(element_id: int) -> float:
 		return 0.0
 	var radius := IndustryArchetypeProfile.drill_carve_radius_m()
 	var direction: Vector3 = contact["direction"]
-	var center: Vector3 = contact["point"] + direction * radius * 0.55
+	var center: Vector3 = (
+		contact["point"]
+		+ direction
+		* radius
+		* IndustryArchetypeProfile.drill_carve_center_offset_factor()
+	)
 	return float(
 		_excavation.excavate(
 			_voxel_tool,
@@ -303,8 +308,8 @@ func _stationary_drill_contact(element_id: int) -> Dictionary:
 	var element := _session.world.get_element(element_id)
 	if element == null or element.archetype_id != "stationary_drill":
 		return {}
-	var assembly := _session.world.get_assembly_raw(element.assembly_id)
-	if assembly == null:
+	var working_frame := _stationary_drill_working_frame(element)
+	if working_frame == Transform3D.IDENTITY:
 		return {}
 	# The authored working face is local +X. Presentation uses the same axis.
 	var local_direction := OrientationUtil.rotate_direction(
@@ -312,9 +317,9 @@ func _stationary_drill_contact(element_id: int) -> Dictionary:
 		element.orientation_index
 	)
 	var direction := (
-		assembly.motion.transform.basis * Vector3(local_direction)
+		working_frame.basis * Vector3(local_direction)
 	).normalized()
-	var local_head := (
+	var local_tip := (
 		GridPoseUtil.oriented_footprint_pivot(
 			element.get_archetype(),
 			element.origin_cell,
@@ -323,19 +328,42 @@ func _stationary_drill_contact(element_id: int) -> Dictionary:
 		+ Vector3(local_direction)
 		* IndustryArchetypeProfile.drill_head_offset_m()
 	)
-	var head := assembly.motion.transform * local_head
-	var head_cell: Vector3i = VoxelSpaceUtil.world_cell_from_point(_terrain, head)
-	if TerrainExcavationService.sdf_occupancy(
-		_voxel_tool.get_voxel_f(head_cell)
-	) > 0.0:
-		return {"point": head, "direction": direction}
-	var probe_start := head - direction * 0.08
+	var tip := working_frame * local_tip
+	var sdf_hit := _stationary_drill_sdf_contact_along_axis(tip, direction)
+	if not sdf_hit.is_empty():
+		return sdf_hit
+	var probe_start := tip - direction * 0.08
+	var reach := IndustryArchetypeProfile.drill_contact_reach_m() + 0.08
+	var physics_hit := TerrainAnchorProbe.raycast_terrain(
+		_physics_space_state(),
+		_terrain,
+		probe_start,
+		direction,
+		reach
+	)
+	if not physics_hit.is_empty():
+		return {
+			"point": physics_hit["position"],
+			"direction": direction,
+		}
+	var back_hit := TerrainAnchorProbe.raycast_terrain(
+		_physics_space_state(),
+		_terrain,
+		tip,
+		-direction,
+		0.35
+	)
+	if not back_hit.is_empty():
+		return {
+			"point": back_hit["position"],
+			"direction": direction,
+		}
 	var hit: VoxelRaycastResult = VoxelSpaceUtil.raycast_world(
 		_voxel_tool,
 		_terrain,
 		probe_start,
 		direction,
-		IndustryArchetypeProfile.drill_contact_reach_m() + 0.08
+		reach
 	)
 	if hit == null:
 		return {}
@@ -348,6 +376,48 @@ func _stationary_drill_contact(element_id: int) -> Dictionary:
 		),
 		"direction": direction,
 	}
+
+
+func _stationary_drill_working_frame(element: SimulationElement) -> Transform3D:
+	var body := _stationary_drill_physics_body(element)
+	if body != null:
+		return body.global_transform
+	var assembly := _session.world.get_assembly_raw(element.assembly_id)
+	if assembly == null:
+		return Transform3D.IDENTITY
+	return assembly.motion.transform
+
+
+func _stationary_drill_physics_body(
+	element: SimulationElement
+) -> PhysicsBody3D:
+	if _session == null or _session.projection == null:
+		return null
+	var record: Dictionary = _session.projection.get_element_projection(
+		element.element_id
+	)
+	return record.get("body") as PhysicsBody3D
+
+
+func _stationary_drill_sdf_contact_along_axis(
+	tip: Vector3,
+	direction: Vector3
+) -> Dictionary:
+	var axis := direction.normalized()
+	for along_m: float in [0.0, -0.12, -0.25, 0.12, 0.25]:
+		var sample := tip + axis * along_m
+		var sample_cell: Vector3i = VoxelSpaceUtil.world_cell_from_point(
+			_terrain,
+			sample
+		)
+		if (
+			TerrainExcavationService.sdf_occupancy(
+				_voxel_tool.get_voxel_f(sample_cell)
+			)
+			> 0.0
+		):
+			return {"point": sample, "direction": direction}
+	return {}
 
 
 func get_voxel_tool() -> VoxelTool:

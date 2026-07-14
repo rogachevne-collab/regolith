@@ -76,6 +76,12 @@ func apply_transfer_command(
 func apply_set_machine_enabled(command: SetMachineEnabledCommand) -> Dictionary:
 	if _world == null:
 		return {"status": &"failed", "reason": &"not_ready"}
+	var element := _world.get_element(command.element_id)
+	if element != null and (
+		element.archetype_id == "stationary_drill"
+		or element.archetype_id.begins_with("test_stationary_drill")
+	):
+		return _drill_service.apply_set_machine_enabled(_world, command)
 	_cargo_graph = _world.ensure_cargo_graph_current()
 	return _recipe_runner.apply_set_machine_enabled(
 		_world,

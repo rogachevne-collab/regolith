@@ -110,6 +110,7 @@ func _run_tests() -> void:
 		_test_electric_cable_waypoints_polyline,
 		_test_industry_simulation_tick_runtime,
 		_test_drill_mining_storage_full_runtime,
+		_test_stationary_drill_set_machine_enabled,
 		_test_hand_drill_loot_merge_runtime,
 		_test_terrain_excavation_contract,
 		_test_processor_pulls_from_connected_store,
@@ -996,14 +997,79 @@ func _run_drill_storage_full_scenario() -> bool:
 		79.5,
 		buffer_capacity_l
 	)
+	var carve_count_before := int(carve_calls["count"])
 	_run_industry_ticks(sim, 1.0)
 	var reason := _read_functional_reason(world, drill_id)
+	if int(carve_calls["count"]) <= carve_count_before:
+		sim.queue_free()
+		world.free()
+		return _fail(
+			"drill must keep carving when storage is full, carve calls %d -> %d"
+			% [carve_count_before, int(carve_calls["count"])]
+		)
 	if reason != &"storage_full":
 		sim.queue_free()
 		world.free()
 		return _fail(
 			"drill expected storage_full when outbound blocked, got %s" % str(reason)
 		)
+	sim.queue_free()
+	world.free()
+	return true
+
+
+func _test_stationary_drill_set_machine_enabled() -> bool:
+	var world := SimulationWorld.new()
+	var blueprint := _cargo_line_blueprint()
+	var spawn := _spawn(world, blueprint, GridTransform.identity())
+	if not spawn.is_ok():
+		world.free()
+		return _fail("drill enable spawn failed: %s" % spawn.reason)
+	var sim: IndustrySimulation = INDUSTRY_SIMULATION_SCRIPT.new()
+	add_child(sim)
+	sim.bind_world(world)
+	var drill_id := _find_element_id_by_archetype(world, "stationary_drill")
+	if drill_id < 0:
+		sim.queue_free()
+		world.free()
+		return _fail("drill element missing for enable toggle test")
+	var disable := SetMachineEnabledCommand.new()
+	disable.element_id = drill_id
+	disable.enabled = false
+	var disable_result := sim.apply_set_machine_enabled(disable)
+	if StringName(disable_result.get("reason", &"")) != &"ok":
+		sim.queue_free()
+		world.free()
+		return _fail(
+			"drill disable expected ok, got %s" % str(disable_result.get("reason", ""))
+		)
+	var runtime := world.ensure_industry_element_runtime(drill_id)
+	if runtime.machine_enabled:
+		sim.queue_free()
+		world.free()
+		return _fail("drill runtime must be disabled after toggle")
+	var drill := world.get_element(drill_id)
+	if drill.industry_status_reason() != &"disabled":
+		sim.queue_free()
+		world.free()
+		return _fail(
+			"disabled drill expected functional reason disabled, got %s"
+			% str(drill.industry_status_reason())
+		)
+	var enable := SetMachineEnabledCommand.new()
+	enable.element_id = drill_id
+	enable.enabled = true
+	var enable_result := sim.apply_set_machine_enabled(enable)
+	if StringName(enable_result.get("reason", &"")) != &"ok":
+		sim.queue_free()
+		world.free()
+		return _fail(
+			"drill enable expected ok, got %s" % str(enable_result.get("reason", ""))
+		)
+	if not runtime.machine_enabled:
+		sim.queue_free()
+		world.free()
+		return _fail("drill runtime must be enabled after toggle")
 	sim.queue_free()
 	world.free()
 	return true

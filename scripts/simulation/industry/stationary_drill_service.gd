@@ -23,6 +23,22 @@ func set_drill_terrain_hooks(
 	_drill_carve = carve
 
 
+func apply_set_machine_enabled(
+	world: SimulationWorld,
+	command: SetMachineEnabledCommand
+) -> Dictionary:
+	if command == null or command.element_id <= 0:
+		return _command_result(&"invalid_target")
+	var element := world.get_element(command.element_id)
+	if element == null or not _is_stationary_drill(element):
+		return _command_result(&"invalid_target")
+	var runtime := world.ensure_industry_element_runtime(element.element_id)
+	runtime.machine_enabled = command.enabled
+	element.industry_functional_reason = &"disabled" if not command.enabled else &"ok"
+	element.bump_state_revision()
+	return _command_result(&"ok")
+
+
 func tick(
 	world: SimulationWorld,
 	cargo_graph: CargoGraph,
@@ -67,12 +83,6 @@ func _tick_drill(
 	if not _has_terrain_contact(element.element_id):
 		element.industry_functional_reason = &"no_terrain_contact"
 		return
-	var maximum_yield := _raw_amount_from_volume(
-		IndustryArchetypeProfile.drill_max_request_volume_m3()
-	)
-	if not _can_accept_yield(world, cargo_graph, element, maximum_yield):
-		element.industry_functional_reason = &"storage_full"
-		return
 
 	var carved_volume := _carve_volume(element.element_id)
 	if carved_volume <= EPSILON:
@@ -80,12 +90,14 @@ func _tick_drill(
 		return
 
 	var credited := _credit_raw_regolith(world, element, carved_volume)
-	if credited <= EPSILON:
-		element.industry_functional_reason = &"ok"
-		return
-
 	_push_drill_buffer(world, cargo_graph, transfer_service, element)
-	element.industry_functional_reason = &"ok"
+	if credited <= EPSILON and _buffer_has_no_room_for_carve(
+		element,
+		carved_volume
+	):
+		element.industry_functional_reason = &"storage_full"
+	else:
+		element.industry_functional_reason = &"ok"
 	element.bump_state_revision()
 
 
@@ -130,25 +142,30 @@ func _credit_raw_regolith(
 	var capacity := IndustryArchetypeProfile.internal_buffer_capacity_l(
 		element.archetype_id
 	)
-	if not element.industry_buffer.can_add("raw_regolith", amount, capacity):
+	var max_addable := element.industry_buffer.max_addable_amount(
+		"raw_regolith",
+		capacity
+	)
+	var credited := minf(amount, max_addable)
+	if credited <= EPSILON:
 		return 0.0
-	element.industry_buffer.add("raw_regolith", amount, capacity)
-	return amount
+	element.industry_buffer.add("raw_regolith", credited, capacity)
+	return credited
 
 
-func _can_accept_yield(
-	_world: SimulationWorld,
-	_cargo_graph: CargoGraph,
+func _buffer_has_no_room_for_carve(
 	element: SimulationElement,
-	amount: float
+	volume_m3: float
 ) -> bool:
+	var amount := _raw_amount_from_volume(volume_m3)
+	if amount <= EPSILON:
+		return false
 	var capacity := IndustryArchetypeProfile.internal_buffer_capacity_l(
 		element.archetype_id
 	)
-	return element.industry_buffer.can_add(
-		"raw_regolith",
-		amount,
-		capacity
+	return (
+		element.industry_buffer.max_addable_amount("raw_regolith", capacity)
+		<= EPSILON
 	)
 
 
@@ -166,3 +183,17 @@ func _push_drill_buffer(
 		element,
 		PackedStringArray(["raw_regolith"])
 	)
+
+
+func _is_stationary_drill(element: SimulationElement) -> bool:
+	return (
+		element.archetype_id == "stationary_drill"
+		or element.archetype_id.begins_with("test_stationary_drill")
+	)
+
+
+func _command_result(reason: StringName) -> Dictionary:
+	return {
+		"status": &"ok" if reason == &"ok" else &"failed",
+		"reason": reason,
+	}

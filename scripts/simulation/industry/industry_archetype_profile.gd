@@ -37,9 +37,19 @@ const DEFAULT_RECIPES: Dictionary = {
 	"fabricator": "reduce_oxide",
 }
 
-const DRILL_CARVE_RADIUS_M := 0.31
-const DRILL_HEAD_OFFSET_M := 0.92
-const DRILL_CONTACT_REACH_M := 0.72
+## Stationary drill main body edge (2×2×2 footprint cells × 0.5 m cell; collider
+## size 1×1×1 m in `stationary_drill.tres`). Working radius and contact reach are
+## at least this large so the bite zone matches the housing scale.
+const DRILL_BODY_SIZE_M := 1.0
+const DRILL_CARVE_RADIUS_M := 1.25
+## Working-tip offset along oriented local +X from footprint pivot. Must match
+## `WorkingTip` in `scenes/presentation/stationary_drill_visual.tscn`
+## (OperationalRotor 0.55 + tip 0.9).
+const DRILL_HEAD_OFFSET_M := 1.45
+const DRILL_CONTACT_REACH_M := 1.4
+## Carve sphere center offset from contact point along the working face (+X).
+## Lower values keep the bite at the tip instead of carving ahead of it.
+const DRILL_CARVE_CENTER_OFFSET_FACTOR := 0.2
 const DRILL_REQUIRES_POWER := true
 
 const HAND_DRILL_CARVE_RADIUS_M := 0.65
@@ -97,6 +107,10 @@ static func drill_carve_radius_m() -> float:
 	return DRILL_CARVE_RADIUS_M
 
 
+static func drill_body_size_m() -> float:
+	return DRILL_BODY_SIZE_M
+
+
 static func drill_max_request_volume_m3() -> float:
 	return TerrainExcavationService.sphere_volume_m3(
 		DRILL_CARVE_RADIUS_M
@@ -109,6 +123,10 @@ static func drill_head_offset_m() -> float:
 
 static func drill_contact_reach_m() -> float:
 	return DRILL_CONTACT_REACH_M
+
+
+static func drill_carve_center_offset_factor() -> float:
+	return DRILL_CARVE_CENTER_OFFSET_FACTOR
 
 
 static func drill_requires_power() -> bool:
