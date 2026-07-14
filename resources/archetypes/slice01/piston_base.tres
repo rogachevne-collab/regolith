@@ -22,6 +22,8 @@ default_speed_limit_mps = 0.1
 extend_velocity_mps = 0.15
 retract_velocity_mps = 0.25
 force_limit_n = 30000.0
+max_velocity_mps = 5.0
+max_force_limit_n = 100000.0
 stiffness_n_per_m = 0.0
 damping_n_s_per_m = 4000.0
 

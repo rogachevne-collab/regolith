@@ -847,6 +847,8 @@ func _tick_piston_actuators(delta: float) -> void:
 				_world,
 				record.get("carriage_element_ids", [])
 			)
+			if head_body is RigidBody3D:
+				head_mass = maxf((head_body as RigidBody3D).mass, head_mass)
 			var gravity := Vector3(
 				0.0,
 				-float(
@@ -869,6 +871,12 @@ func _tick_piston_actuators(delta: float) -> void:
 			)
 			var force_n := float(force_result.get("force_n", 0.0))
 			var saturated := bool(force_result.get("saturated", false))
+			var constraint: Generic6DOFJoint3D = record.get("constraint")
+			if constraint != null:
+				PistonProjectionUtil.configure_slider_joint(
+					constraint,
+					sim_joint.motor
+				)
 			sim_joint.motor.applied_force_n = absf(force_n)
 			sim_joint.motor.force_saturated = saturated
 			var axis_dir := axis_world.normalized()

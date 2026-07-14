@@ -263,6 +263,32 @@ SetActuatorTargetCommand {
 - неизвестный, broken или неоперационный joint возвращает typed failure и не
   меняет state.
 
+`configure_actuator` — frequent last-write-wins command для runtime tuning
+поршня (как terminal в Space Engineers):
+
+```text
+ConfigureActuatorCommand {
+  joint_id
+  extend_velocity_mps    # optional, -1 = unchanged
+  retract_velocity_mps   # optional
+  force_limit_n          # optional
+  lower_limit_m          # optional, snap 0.1 m
+  upper_limit_m          # optional, snap 0.1 m
+}
+```
+
+Семантика:
+
+- каждое поле опционально; непереданные значения (`< 0`) не меняются;
+- velocity clamp в `[0, max_velocity_mps]` из `PistonDefinition`;
+- force clamp в `[1, max_force_limit_n]`;
+- travel limits clamp в authored `[lower_limit_m, upper_limit_m]` archetype;
+- `upper_limit_m <= lower_limit_m` → `invalid_reference`;
+- physics projection пересинхронизирует `Generic6DOFJoint3D` limits каждый tick;
+- **E** на прицеленном поршне открывает центральную панель настроек с видимым
+  курсором; угловая панель цели — только readout;
+- HUD target panel показывает текущие значения и подсказку `E — настройки`.
+
 Motor никогда не пишет body transform, linear velocity или joint position
 напрямую.
 
@@ -319,13 +345,16 @@ stop mode:
 
 force =
   clamp(
-    carriage_mass * clamp((desired_velocity - observed_velocity) / response_time,
-                          -force_limit / carriage_mass, +force_limit / carriage_mass)
-    + axial_load_hold(carriage_mass, axis, gravity),
+    carriage_mass * (desired_velocity - observed_velocity) / response_time
+    + axial_load_hold(carriage_mass, axis, gravity)
+    + damping_n_s_per_m * observed_velocity,
     -force_limit,
     +force_limit
   )
 ```
+
+`desired_velocity` предварительно ограничивается бюджетом силы:
+`(force_limit - hold) / (damping + mass / response_time)`.
 
 `carriage_mass` — сумма `total_mass_kg` всех элементов head body group (бур,
 каркас на голове). `axial_load_hold` компенсирует вес каретки вдоль оси при

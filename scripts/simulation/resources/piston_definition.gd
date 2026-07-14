@@ -10,6 +10,8 @@ extends Resource
 @export var extend_velocity_mps: float = 0.25
 @export var retract_velocity_mps: float = 0.25
 @export var force_limit_n: float = 5000.0
+@export var max_velocity_mps: float = 5.0
+@export var max_force_limit_n: float = 100000.0
 @export var stiffness_n_per_m: float = 8000.0
 @export var damping_n_s_per_m: float = 400.0
 @export var power_draw_w: float = 1500.0
@@ -68,6 +70,8 @@ func validate_base_archetype(base_archetype: ElementArchetype) -> Array[String]:
 		or extend_velocity_mps < 0.0
 		or retract_velocity_mps < 0.0
 		or force_limit_n <= 0.0
+		or max_velocity_mps <= 0.0
+		or max_force_limit_n <= 0.0
 		or stiffness_n_per_m < 0.0
 		or damping_n_s_per_m < 0.0
 		or power_draw_w < 0.0

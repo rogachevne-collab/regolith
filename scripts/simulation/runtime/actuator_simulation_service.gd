@@ -53,6 +53,103 @@ static func apply_set_actuator_target(
 	}
 
 
+static func apply_configure_actuator(
+	world: SimulationWorld,
+	command: ConfigureActuatorCommand
+) -> Dictionary:
+	if world == null or command == null:
+		return {"status": &"failed", "reason": &"not_ready"}
+	var joint := world.get_joint(command.joint_id)
+	if joint == null or joint.kind != SimulationJoint.Kind.PISTON:
+		return {"status": &"failed", "reason": &"invalid_reference"}
+	if joint.motor == null:
+		return {"status": &"failed", "reason": &"invalid_reference"}
+	var base_element := world.get_element(joint.element_a_id)
+	if base_element == null or not base_element.is_operational():
+		return {
+			"status": &"failed",
+			"reason": &"element_incomplete",
+			"joint_id": joint.joint_id,
+		}
+	var definition := _piston_definition_for_element(base_element)
+	if definition == null:
+		return {"status": &"failed", "reason": &"invalid_reference"}
+
+	var motor := joint.motor
+	if command.extend_velocity_mps >= 0.0:
+		motor.extend_velocity_mps = clampf(
+			command.extend_velocity_mps,
+			0.0,
+			definition.max_velocity_mps
+		)
+	if command.retract_velocity_mps >= 0.0:
+		motor.retract_velocity_mps = clampf(
+			command.retract_velocity_mps,
+			0.0,
+			definition.max_velocity_mps
+		)
+	if (
+		command.extend_velocity_mps >= 0.0
+		or command.retract_velocity_mps >= 0.0
+	):
+		motor.speed_limit_mps = maxf(
+			motor.extend_velocity_mps,
+			motor.retract_velocity_mps
+		)
+	if command.force_limit_n >= 0.0:
+		motor.force_limit_n = clampf(
+			command.force_limit_n,
+			100.0,
+			definition.max_force_limit_n
+		)
+	var lower_limit := motor.lower_limit_m
+	var upper_limit := motor.upper_limit_m
+	if command.lower_limit_m >= 0.0:
+		lower_limit = clampf(
+			_snapped_limit_m(command.lower_limit_m),
+			definition.lower_limit_m,
+			definition.upper_limit_m
+		)
+	if command.upper_limit_m >= 0.0:
+		upper_limit = clampf(
+			_snapped_limit_m(command.upper_limit_m),
+			definition.lower_limit_m,
+			definition.upper_limit_m
+		)
+	if upper_limit <= lower_limit + 0.0001:
+		return {"status": &"failed", "reason": &"invalid_reference"}
+	motor.lower_limit_m = lower_limit
+	motor.upper_limit_m = upper_limit
+	motor.target_position_m = motor.clamp_target_position()
+	motor.target_velocity_mps = motor.clamp_target_velocity()
+	motor.observed_position_m = motor.clamp_observed_position()
+	if motor.status in [
+		SimulationMotorState.Status.STUCK,
+		SimulationMotorState.Status.OVERLOADED,
+	]:
+		motor.status = SimulationMotorState.Status.IDLE
+	_update_joint_status(world, joint)
+	return {
+		"status": &"ok",
+		"reason": &"ok",
+		"joint_id": joint.joint_id,
+		"status_name": _status_name(joint.motor.status),
+	}
+
+
+static func _piston_definition_for_element(
+	element: SimulationElement
+) -> PistonDefinition:
+	var archetype := element.get_archetype()
+	if archetype == null:
+		return null
+	return archetype.piston_definition
+
+
+static func _snapped_limit_m(value_m: float) -> float:
+	return snappedf(value_m, 0.1)
+
+
 static func sync_observation(
 	joint: SimulationJoint,
 	position_m: float,

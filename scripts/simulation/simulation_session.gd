@@ -59,6 +59,10 @@ func apply_set_actuator_target(command: SetActuatorTargetCommand) -> Dictionary:
 	return world.apply_set_actuator_target(command)
 
 
+func apply_configure_actuator(command: ConfigureActuatorCommand) -> Dictionary:
+	return world.apply_configure_actuator(command)
+
+
 func _bind_impact_service() -> void:
 	var gateway: WorldCommandGateway = null
 	if not gateway_path.is_empty():

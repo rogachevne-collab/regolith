@@ -224,6 +224,12 @@ func apply_set_actuator_target(
 	return ActuatorSimulationService.apply_set_actuator_target(self, command)
 
 
+func apply_configure_actuator(
+	command: ConfigureActuatorCommand
+) -> Dictionary:
+	return ActuatorSimulationService.apply_configure_actuator(self, command)
+
+
 func sync_actuator_observation(
 	joint_id: int,
 	position_m: float,

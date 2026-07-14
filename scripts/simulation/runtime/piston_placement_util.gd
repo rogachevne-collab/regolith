@@ -137,6 +137,7 @@ static func enrich_interaction_metadata(
 	metadata["piston_target_position_m"] = _display_target_position_m(motor)
 	metadata["piston_lower_limit_m"] = motor.lower_limit_m
 	metadata["piston_upper_limit_m"] = motor.upper_limit_m
+	metadata["piston_force_limit_n"] = motor.force_limit_n
 	metadata["piston_speed_limit_mps"] = motor.speed_limit_mps
 	metadata["piston_extend_velocity_mps"] = motor.extend_velocity_mps
 	metadata["piston_retract_velocity_mps"] = motor.retract_velocity_mps
@@ -146,6 +147,15 @@ static func enrich_interaction_metadata(
 		joint.element_a_id
 	)
 	metadata["piston_motor_enabled"] = motor.enabled
+	var base_element := world.get_element(joint.element_a_id)
+	if base_element != null:
+		var archetype := base_element.get_archetype()
+		if archetype != null and archetype.piston_definition != null:
+			var definition := archetype.piston_definition
+			metadata["piston_authored_lower_limit_m"] = definition.lower_limit_m
+			metadata["piston_authored_upper_limit_m"] = definition.upper_limit_m
+			metadata["piston_max_velocity_mps"] = definition.max_velocity_mps
+			metadata["piston_max_force_limit_n"] = definition.max_force_limit_n
 	var actuator_status := ActuatorSimulationService.status_name_for_motor(motor)
 	metadata["actuator_status"] = actuator_status
 	if StringName(metadata.get("status_reason", &"ok")) in [&"ok", &"standby"]:

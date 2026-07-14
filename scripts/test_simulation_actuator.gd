@@ -19,9 +19,12 @@ func _run_tests() -> void:
 	var tests: Array[Callable] = [
 		_test_piston_atomic_placement,
 		_test_body_group_compiler,
+		_test_piston_dual_anchor_root_group,
 		_test_snapshot_v6_roundtrip,
 		_test_piston_snapshot_tuning_migration,
 		_test_set_actuator_target,
+		_test_configure_actuator,
+		_test_force_limit_caps_velocity,
 		_test_overload_status,
 		_test_dismantle_splits_carriage,
 		_test_bridge_rejection,
@@ -165,6 +168,77 @@ func _test_body_group_compiler() -> bool:
 	if head_group <= 0 or head_group != platform_group:
 		world.free()
 		return _fail("head branch did not share carriage body group")
+	world.free()
+	return true
+
+
+func _test_piston_dual_anchor_root_group() -> bool:
+	var world := SimulationWorld.new()
+	world.ensure_resource_store("player")
+	world.set_resource_amount("player", "construction_component", 100.0)
+	world.get_archetype_registry().register(PISTON_HEAD)
+	var foundation := _spawn(
+		world,
+		_single_blueprint(Slice01Archetypes.foundation()),
+		GridTransform.identity()
+	)
+	var assembly_id := int(foundation.data["assembly_id"])
+	var frame := _place_frame(world, assembly_id, Vector3i(4, 0, 0), foundation)
+	if not frame.is_ok():
+		world.free()
+		return _fail("dual anchor frame setup failed")
+	var piston := _place_piston(world, assembly_id, Vector3i(5, 0, 0), frame)
+	if not piston.is_ok():
+		world.free()
+		return _fail("dual anchor piston setup failed")
+	var head_id := int(piston.data["head_element_id"])
+	var base_id := int(piston.data["element_id"])
+
+	var assembly := world.get_assembly_raw(assembly_id)
+	var elements_by_id: Dictionary = {}
+	for element: SimulationElement in world.list_elements():
+		if element.assembly_id == assembly_id:
+			elements_by_id[element.element_id] = element
+	var assembly_joints: Array[SimulationJoint] = []
+	for joint: SimulationJoint in world.list_joints():
+		if joint.assembly_id == assembly_id:
+			assembly_joints.append(joint)
+	assembly_joints.append(
+		SimulationJoint.anchor(
+			99991,
+			assembly_id,
+			base_id,
+			"structural_0_0_0_ny"
+		)
+	)
+	assembly_joints.append(
+		SimulationJoint.anchor(
+			99992,
+			assembly_id,
+			head_id,
+			"structural_1_0_1_px"
+		)
+	)
+	var compiled := BodyGroupCompiler.compile(
+		assembly.element_ids,
+		elements_by_id,
+		assembly_joints
+	)
+	if not bool(compiled.get("valid", false)):
+		world.free()
+		return _fail(
+			"dual anchor compile failed: %s" % str(compiled.get("reason", ""))
+		)
+	var root_group := int(compiled.get("root_group_id", 0))
+	var base_group := int(
+		(compiled["element_to_group"] as Dictionary).get(
+			base_id,
+			0
+		)
+	)
+	if root_group != base_group:
+		world.free()
+		return _fail("expected piston base group to be motion root")
 	world.free()
 	return true
 
@@ -335,6 +409,96 @@ func _test_set_actuator_target() -> bool:
 		world.free()
 		return _fail("actuator target not applied")
 	world.free()
+	return true
+
+
+func _test_configure_actuator() -> bool:
+	var world := SimulationWorld.new()
+	world.ensure_resource_store("player")
+	world.set_resource_amount("player", "construction_component", 100.0)
+	var archetypes := {"base": PISTON_BASE, "head": PISTON_HEAD}
+	world.get_archetype_registry().register(archetypes["head"])
+	var foundation := _spawn(
+		world,
+		_single_blueprint(Slice01Archetypes.foundation()),
+		GridTransform.identity()
+	)
+	var assembly_id := int(foundation.data["assembly_id"])
+	var frame := _place_frame(world, assembly_id, Vector3i(4, 0, 0), foundation)
+	if not frame.is_ok():
+		world.free()
+		return _fail("frame setup failed")
+	var piston := _place_piston(world, assembly_id, Vector3i(5, 0, 0), frame)
+	var base_id := int(piston.data["element_id"])
+	var runtime := world.ensure_industry_element_runtime(base_id)
+	runtime.machine_enabled = true
+	runtime.powered = true
+	_weld_element(world, base_id)
+	_weld_element(world, int(piston.data["head_element_id"]))
+
+	var joint_id := int(piston.data["piston_joint_id"])
+	var configure := ConfigureActuatorCommand.new()
+	configure.joint_id = joint_id
+	configure.extend_velocity_mps = 1.0
+	configure.retract_velocity_mps = 0.5
+	configure.force_limit_n = 45000.0
+	configure.lower_limit_m = 0.2
+	configure.upper_limit_m = 1.4
+	var result := world.apply_configure_actuator(configure)
+	if StringName(result.get("status", &"")) != &"ok":
+		world.free()
+		return _fail("configure_actuator failed")
+	var joint := world.get_joint(joint_id)
+	if (
+		not is_equal_approx(joint.motor.extend_velocity_mps, 1.0)
+		or not is_equal_approx(joint.motor.retract_velocity_mps, 0.5)
+		or not is_equal_approx(joint.motor.force_limit_n, 45000.0)
+		or not is_equal_approx(joint.motor.lower_limit_m, 0.2)
+		or not is_equal_approx(joint.motor.upper_limit_m, 1.4)
+	):
+		world.free()
+		return _fail("configure_actuator values not applied")
+
+	var invalid := ConfigureActuatorCommand.new()
+	invalid.joint_id = joint_id
+	invalid.lower_limit_m = 1.5
+	invalid.upper_limit_m = 1.2
+	var invalid_result := world.apply_configure_actuator(invalid)
+	if StringName(invalid_result.get("status", &"")) == &"ok":
+		world.free()
+		return _fail("expected configure_actuator to reject inverted limits")
+	world.free()
+	return true
+
+
+func _test_force_limit_caps_velocity() -> bool:
+	var motor := SimulationMotorState.from_piston_definition(
+		PISTON_BASE.piston_definition
+	)
+	motor.control_mode = SimulationMotorState.ControlMode.VELOCITY
+	motor.target_velocity_mps = 0.15
+	motor.force_limit_n = 1000.0
+	var gravity := Vector3(0.0, -1.62, 0.0)
+	var low := PistonProjectionUtil.effective_desired_axial_velocity_mps(
+		motor,
+		200.0,
+		Vector3.UP,
+		gravity
+	)
+	motor.force_limit_n = 42000.0
+	var high := PistonProjectionUtil.effective_desired_axial_velocity_mps(
+		motor,
+		200.0,
+		Vector3.UP,
+		gravity
+	)
+	if low >= high - 0.001:
+		return _fail(
+			"force limit did not reduce desired velocity: low=%.4f high=%.4f"
+			% [low, high]
+		)
+	if low <= 0.0:
+		return _fail("low force limit should still allow some motion")
 	return true
 
 

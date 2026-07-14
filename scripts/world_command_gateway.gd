@@ -139,6 +139,8 @@ func _execute(command: Dictionary) -> Dictionary:
 			return _collect_world_loot(command)
 		&"set_actuator_target":
 			return _set_actuator_target(command, target)
+		&"configure_actuator":
+			return _configure_actuator(command, target)
 		_:
 			return _result(&"invalid_target")
 
@@ -1207,6 +1209,40 @@ func _set_actuator_target(
 		StringName(result.get("reason", &"invalid_target")),
 		{
 			"joint_id": actuator.joint_id,
+			"status_name": result.get("status_name", &""),
+		}
+	)
+
+
+func _configure_actuator(
+	command: Dictionary,
+	target: Dictionary
+) -> Dictionary:
+	if _session == null:
+		return _result(&"not_ready")
+	var parameters: Dictionary = command.get("parameters", {})
+	var metadata: Dictionary = target.get("metadata", {})
+	var configure := ConfigureActuatorCommand.new()
+	configure.joint_id = int(
+		parameters.get(
+			"joint_id",
+			metadata.get("piston_joint_id", 0)
+		)
+	)
+	configure.extend_velocity_mps = float(
+		parameters.get("extend_velocity_mps", -1.0)
+	)
+	configure.retract_velocity_mps = float(
+		parameters.get("retract_velocity_mps", -1.0)
+	)
+	configure.force_limit_n = float(parameters.get("force_limit_n", -1.0))
+	configure.lower_limit_m = float(parameters.get("lower_limit_m", -1.0))
+	configure.upper_limit_m = float(parameters.get("upper_limit_m", -1.0))
+	var result := _session.apply_configure_actuator(configure)
+	return _result(
+		StringName(result.get("reason", &"invalid_target")),
+		{
+			"joint_id": configure.joint_id,
 			"status_name": result.get("status_name", &""),
 		}
 	)
