@@ -26,6 +26,11 @@ Standalone Godot 4.5+ проект: voxel terrain (Voxel Tools 1.6x), Jolt physi
   `bootstrap.gd`); не телепортировать игрока на y=0 до готовности коллизии.
 - **R6** — внешние зависимости: только Voxel Tools (MIT); macOS binaries в git,
   остальные платформы — bootstrap из README.
+- **R7** — задачи с voxel terrain / SDF / `VoxelTool` / scale / collider /
+  streaming: сначала `docs/cheatsheets/voxel-tools.md` и § *Voxel scale* в
+  `docs/specs/INDUSTRY-V1.md`, затем **официальная дока** и **GitHub issues**
+  плагина (Zylann). Не выводить API координат из кода проекта; верифицировать
+  aim/spawn/бур в запущенной игре.
 
 Если задача «удобнее» решается нарушением инварианта — остановись и спроси человека.
 
@@ -51,6 +56,7 @@ Standalone Godot 4.5+ проект: voxel terrain (Voxel Tools 1.6x), Jolt physi
 | изменение поведения / новый PoC | обновить спеку в `docs/specs/` или `PHYSICAL-LANGUAGE.md` |
 | правка `.gdshader` | `./run.sh --headless res://scenes/main.tscn` без ошибок компиляции |
 | правка VFX `.tscn` | проверка в игре + соответствие `docs/cheatsheets/vfx-*.md` |
+| voxel terrain / SDF / raycast / scale | `docs/cheatsheets/voxel-tools.md` + сверка с докой плагина; проверка в игре (spawn, aim, drill) |
 | новая GDExtension-зависимость | строка в README (bootstrap) + лицензия |
 | перед «готово»/коммитом | полный `./tests/run_tests.sh` один раз |
 

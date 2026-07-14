@@ -1,0 +1,25 @@
+---
+description: Voxel Tools — сверка с докой плагина перед правками terrain/SDF
+globs:
+  - "scripts/**/voxel*.gd"
+  - "scripts/**/terrain*.gd"
+  - "scripts/bootstrap.gd"
+  - "scripts/interaction_query.gd"
+  - "scripts/bench_voxel_scale.gd"
+  - "scenes/main.tscn"
+  - "scenes/bench_voxel_scale.tscn"
+alwaysApply: false
+---
+# Voxel Tools
+
+Перед правками terrain / SDF / `VoxelTool` / scale / collider / streaming:
+
+1. **`docs/cheatsheets/voxel-tools.md`** — проектный контракт + ссылки.
+2. **`docs/specs/INDUSTRY-V1.md`** § *Voxel scale (v1)* — зафиксированное поведение.
+3. **Официальная дока** и **GitHub issues** `zylann/godot_voxel` для API и scale —
+   не выводи контракт координат из кода проекта или интуиции Godot.
+
+Ключевое: `VoxelTool.raycast` — **world space**; SDF edits — **local** через
+`VoxelSpaceUtil.world_to_local`. При scale ≠ 1 aim на terrain — physics collider.
+
+Верификация: запущенная игра (spawn, прицел, бур, construction preview), не только тест.
