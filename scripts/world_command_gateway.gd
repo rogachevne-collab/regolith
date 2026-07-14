@@ -894,6 +894,8 @@ func _connect_failure_reason(reason: StringName) -> StringName:
 			return &"incompatible_connection"
 		StructuralCommandResult.REASON_CABLE_TOO_LONG:
 			return &"cable_too_long"
+		StructuralCommandResult.REASON_ENDPOINT_NOT_WIREABLE:
+			return &"endpoint_not_wireable"
 		StructuralCommandResult.REASON_ELEMENT_INCOMPLETE:
 			return &"element_incomplete"
 		StructuralCommandResult.REASON_ELEMENT_BROKEN:

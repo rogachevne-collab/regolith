@@ -26,6 +26,7 @@ const REASON_NO_GROUND_CONTACT := &"no_ground_contact"
 const REASON_NO_EFFECT := &"no_effect"
 const REASON_DUPLICATE_CONNECTION := &"duplicate_connection"
 const REASON_CABLE_TOO_LONG := &"cable_too_long"
+const REASON_ENDPOINT_NOT_WIREABLE := &"endpoint_not_wireable"
 
 var status: StringName = STATUS_FAILED
 var reason: StringName = REASON_INVALID_TARGET

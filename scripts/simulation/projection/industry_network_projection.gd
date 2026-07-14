@@ -4,20 +4,24 @@ extends Node3D
 ## Cargo pipes render as placed element geometry only (INDUSTRY-V1 § Wire presentation).
 
 const WIRE_MESH_PREFIX := "IndustryWire_"
-const WIRE_RADIUS := 0.045
+const WIRE_RADIUS := 0.022
 ## Aim-collider radius: fatter than the visual so the grinder can target a wire.
 const WIRE_AIM_RADIUS := 0.09
 ## Physics layer 4 — interaction-ray only; nothing moves or collides on it.
 const WIRE_COLLISION_LAYER := 8
-## Decorative sag per polyline span (fraction of span length, capped).
-const WIRE_SAG_FRACTION := 0.06
-const WIRE_SAG_MAX_M := 0.4
+## Decorative sag per polyline span (fraction of span length, capped). Kept
+## shallow so floor/wall runs pinned by скобы do not sink into the surface.
+const WIRE_SAG_FRACTION := 0.04
+const WIRE_SAG_MAX_M := 0.15
 const WIRE_SAG_SUBDIVISIONS := 4
-const WIRE_COLOR := Color(0.92, 0.74, 0.18, 1.0)
-const WIRE_EMISSION := Color(0.55, 0.42, 0.08, 1.0)
+## Tube extrusion along the smoothed spline: sample spacing and ring detail.
+const TUBE_BAKE_INTERVAL_M := 0.3
+const TUBE_RING_SEGMENTS := 6
+## Black insulated cable with a slight sheen.
+const WIRE_COLOR := Color(0.07, 0.07, 0.08, 1.0)
 ## Dormant wire (endpoint damaged/incomplete or cable overstretched): the link
-## persists in state and keeps rendering, dimmed, until the condition clears.
-const WIRE_DORMANT_COLOR := Color(0.38, 0.34, 0.24, 1.0)
+## persists in state and keeps rendering, faded, until the condition clears.
+const WIRE_DORMANT_COLOR := Color(0.46, 0.44, 0.4, 1.0)
 
 var _world: SimulationWorld
 var _physics_projection: SimulationPhysicsProjection
@@ -26,6 +30,8 @@ var _wire_material: StandardMaterial3D
 var _wire_dormant_material: StandardMaterial3D
 var _cached_network_revision := -1
 var _event_bound := false
+## link_id → last sampled tube path; skips remeshing static cables.
+var _tube_path_cache: Dictionary = {}
 
 
 func bind(
@@ -55,6 +61,7 @@ func rebuild_all() -> void:
 		return
 	for child: Node in _links_root.get_children():
 		child.queue_free()
+	_tube_path_cache.clear()
 	for link: IndustryElectricLink in _world.get_industry_network().list_links():
 		var wire := _make_wire_body(link)
 		if wire != null:
@@ -120,40 +127,151 @@ func _update_wire_body(
 		return
 	body.visible = true
 	var display := _display_points(points)
-	var segment_count := display.size() - 1
-	_ensure_wire_segments(body, segment_count)
-	_set_segments_disabled(body, false)
-	var material := (
+	# The visual is ONE smooth tube mesh extruded along a Catmull-Rom spline
+	# through the routed points; invisible capsules only serve the aim ray.
+	var path := _smooth_polyline(display)
+	_update_wire_colliders(body, display)
+	var mesh_instance := _ensure_tube_mesh_instance(body)
+	mesh_instance.material_override = (
 		_wire_material
 		if IndustryElectricPortUtil.link_still_valid(_world, link)
 		else _wire_dormant_material
 	)
+	if _tube_path_changed(link.link_id, path):
+		mesh_instance.mesh = _build_tube_mesh(path)
+		_tube_path_cache[link.link_id] = path
+
+
+## Rebuild the tube only when the sampled path actually moved (anchors follow
+## their assemblies; скобы are world-pinned and static).
+func _tube_path_changed(link_id: int, path: PackedVector3Array) -> bool:
+	var cached: PackedVector3Array = _tube_path_cache.get(
+		link_id,
+		PackedVector3Array()
+	)
+	if cached.size() != path.size():
+		return true
+	for index: int in range(path.size()):
+		if cached[index].distance_squared_to(path[index]) > 0.000025:
+			return true
+	return false
+
+
+func _ensure_tube_mesh_instance(body: StaticBody3D) -> MeshInstance3D:
+	var mesh_instance := body.get_node_or_null("Tube") as MeshInstance3D
+	if mesh_instance == null:
+		mesh_instance = MeshInstance3D.new()
+		mesh_instance.name = "Tube"
+		mesh_instance.top_level = true
+		mesh_instance.global_transform = Transform3D.IDENTITY
+		body.add_child(mesh_instance)
+	return mesh_instance
+
+
+## Catmull-Rom smoothing through the routed points: скобы stay interpolated
+## (the cable still touches every mount), corners round off naturally.
+func _smooth_polyline(points: PackedVector3Array) -> PackedVector3Array:
+	if points.size() <= 2:
+		return points
+	var curve := Curve3D.new()
+	curve.bake_interval = TUBE_BAKE_INTERVAL_M
+	for point: Vector3 in points:
+		curve.add_point(point)
+	for index: int in range(points.size()):
+		var previous := points[maxi(index - 1, 0)]
+		var next := points[mini(index + 1, points.size() - 1)]
+		var tangent := (next - previous) / 6.0
+		curve.set_point_in(index, -tangent)
+		curve.set_point_out(index, tangent)
+	var baked := curve.get_baked_points()
+	return baked if baked.size() >= 2 else points
+
+
+## Single continuous tube (ring extrusion with parallel-transport frames, so
+## the section never twists through bends).
+func _build_tube_mesh(path: PackedVector3Array) -> ArrayMesh:
+	var surface := SurfaceTool.new()
+	surface.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var rings: Array[PackedVector3Array] = []
+	var ring_normals: Array[PackedVector3Array] = []
+	var normal := Vector3.UP
+	var first_tangent := (path[1] - path[0]).normalized()
+	if absf(first_tangent.dot(normal)) > 0.95:
+		normal = Vector3.RIGHT
+	for index: int in range(path.size()):
+		var previous := path[maxi(index - 1, 0)]
+		var next := path[mini(index + 1, path.size() - 1)]
+		var tangent := next - previous
+		if tangent.length_squared() < 0.0000001:
+			tangent = first_tangent
+		tangent = tangent.normalized()
+		normal = (normal - tangent * normal.dot(tangent))
+		if normal.length_squared() < 0.0001:
+			normal = tangent.cross(Vector3.UP)
+			if normal.length_squared() < 0.0001:
+				normal = tangent.cross(Vector3.RIGHT)
+		normal = normal.normalized()
+		var binormal := tangent.cross(normal).normalized()
+		var ring := PackedVector3Array()
+		var normals := PackedVector3Array()
+		for segment: int in range(TUBE_RING_SEGMENTS):
+			var angle := TAU * float(segment) / float(TUBE_RING_SEGMENTS)
+			var offset := normal * cos(angle) + binormal * sin(angle)
+			ring.append(path[index] + offset * WIRE_RADIUS)
+			normals.append(offset)
+		rings.append(ring)
+		ring_normals.append(normals)
+	for ring_index: int in range(rings.size() - 1):
+		for segment: int in range(TUBE_RING_SEGMENTS):
+			var next_segment := (segment + 1) % TUBE_RING_SEGMENTS
+			var a := rings[ring_index][segment]
+			var b := rings[ring_index][next_segment]
+			var c := rings[ring_index + 1][next_segment]
+			var d := rings[ring_index + 1][segment]
+			var na := ring_normals[ring_index][segment]
+			var nb := ring_normals[ring_index][next_segment]
+			var nc := ring_normals[ring_index + 1][next_segment]
+			var nd := ring_normals[ring_index + 1][segment]
+			surface.set_normal(na)
+			surface.add_vertex(a)
+			surface.set_normal(nb)
+			surface.add_vertex(b)
+			surface.set_normal(nc)
+			surface.add_vertex(c)
+			surface.set_normal(na)
+			surface.add_vertex(a)
+			surface.set_normal(nc)
+			surface.add_vertex(c)
+			surface.set_normal(nd)
+			surface.add_vertex(d)
+	return surface.commit()
+
+
+## Invisible aim capsules along the un-smoothed display polyline — enough for
+## the grinder ray, no need to hug the spline exactly.
+func _update_wire_colliders(
+	body: StaticBody3D,
+	path: PackedVector3Array
+) -> void:
+	var segment_count := path.size() - 1
+	_ensure_wire_segments(body, segment_count)
 	for index: int in range(segment_count):
-		var start := display[index]
-		var end := display[index + 1]
+		var start := path[index]
+		var end := path[index + 1]
 		var delta := end - start
 		var length := delta.length()
-		var mesh_instance := body.get_node("Mesh%d" % index) as MeshInstance3D
 		var collision := body.get_node("Col%d" % index) as CollisionShape3D
 		if length <= 0.01:
-			mesh_instance.visible = false
 			collision.disabled = true
 			continue
-		mesh_instance.visible = true
 		collision.disabled = false
-		mesh_instance.material_override = material
-		var cylinder := mesh_instance.mesh as CylinderMesh
-		if cylinder != null:
-			cylinder.height = length
 		var capsule := collision.shape as CapsuleShape3D
 		if capsule != null:
 			capsule.height = maxf(length, WIRE_AIM_RADIUS * 2.1)
-		var transform := Transform3D(
+		collision.global_transform = Transform3D(
 			_wire_basis(delta / length),
 			(start + end) * 0.5
 		)
-		mesh_instance.global_transform = transform
-		collision.global_transform = transform
 
 
 ## Authoritative polyline: anchor_a → link.waypoints → anchor_b.
@@ -214,24 +332,13 @@ func _display_points(points: PackedVector3Array) -> PackedVector3Array:
 
 func _ensure_wire_segments(body: StaticBody3D, count: int) -> void:
 	var current := 0
-	while body.get_node_or_null("Mesh%d" % current) != null:
+	while body.get_node_or_null("Col%d" % current) != null:
 		current += 1
 	if current == count:
 		return
 	for index: int in range(count, current):
-		body.get_node("Mesh%d" % index).queue_free()
 		body.get_node("Col%d" % index).queue_free()
 	for index: int in range(current, count):
-		var mesh_instance := MeshInstance3D.new()
-		mesh_instance.name = "Mesh%d" % index
-		var cylinder := CylinderMesh.new()
-		cylinder.top_radius = WIRE_RADIUS
-		cylinder.bottom_radius = WIRE_RADIUS
-		cylinder.radial_segments = 8
-		cylinder.rings = 1
-		mesh_instance.mesh = cylinder
-		mesh_instance.material_override = _wire_material
-		body.add_child(mesh_instance)
 		var collision := CollisionShape3D.new()
 		collision.name = "Col%d" % index
 		var capsule := CapsuleShape3D.new()
@@ -259,17 +366,14 @@ func _wire_basis(direction: Vector3) -> Basis:
 func _create_wire_material() -> StandardMaterial3D:
 	var material := StandardMaterial3D.new()
 	material.albedo_color = WIRE_COLOR
-	material.emission_enabled = true
-	material.emission = WIRE_EMISSION
-	material.emission_energy_multiplier = 0.35
-	material.metallic = 0.85
-	material.roughness = 0.35
+	material.metallic = 0.3
+	material.roughness = 0.5
 	return material
 
 
 func _create_dormant_material() -> StandardMaterial3D:
 	var material := StandardMaterial3D.new()
 	material.albedo_color = WIRE_DORMANT_COLOR
-	material.metallic = 0.6
-	material.roughness = 0.6
+	material.metallic = 0.1
+	material.roughness = 0.8
 	return material

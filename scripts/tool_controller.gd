@@ -12,6 +12,9 @@ signal construction_selection_changed(
 	orientation_index: int
 )
 signal active_tool_changed(active_tool: StringName)
+## Presentation-only rejection of a connect-tool click (скоба сквозь стену,
+## финальный пролёт перекрыт) — HUD shows the toast, no command is issued.
+signal connect_rejected(reason: StringName)
 ## Emitted when a toolbar slot is remapped at runtime (BlockPalette drag-drop).
 ## Presentation state only — the layout override does not touch the const
 ## TOOLBAR_PAGES nor the way construction commands are issued.
@@ -141,6 +144,11 @@ const CONNECT_RANGE := 4.0
 const CONNECT_MAX_WAYPOINTS := 16
 ## Lift the скоба slightly off the clicked surface so the wire does not z-fight.
 const CONNECT_WAYPOINT_SURFACE_OFFSET := 0.06
+## Obstruction ray endpoints are pulled inward so a span pinned to a surface
+## does not report that surface (or the clicked target block) as a blocker.
+const CONNECT_SPAN_CLEARANCE_MARGIN := 0.12
+## Terrain + bodies; wires themselves (layer 4) never block routing.
+const CONNECT_OBSTRUCTION_MASK := 3
 
 
 func _ready() -> void:
@@ -701,14 +709,17 @@ func _handle_connect_click(hit: InteractionHit) -> void:
 		if element_id <= 0:
 			return
 		if _connect_pending_element_id <= 0:
-			if _target_has_electric_port(hit):
+			if _target_is_wireable(hit):
 				_connect_pending_element_id = element_id
 				_connect_waypoints = PackedVector3Array()
 			return
 		if element_id == _connect_pending_element_id:
 			return
-		if not _target_has_electric_port(hit):
+		if not _target_is_wireable(hit):
 			_append_connect_waypoint(hit)
+			return
+		if _span_blocked(_connect_route_tail(hit.point), hit.point):
+			connect_rejected.emit(&"cable_obstructed")
 			return
 		command_requested.emit({
 			"kind": &"connect_network",
@@ -733,9 +744,73 @@ func _handle_connect_click(hit: InteractionHit) -> void:
 func _append_connect_waypoint(hit: InteractionHit) -> void:
 	if _connect_waypoints.size() >= CONNECT_MAX_WAYPOINTS:
 		return
-	_connect_waypoints.append(
-		hit.point + hit.normal * CONNECT_WAYPOINT_SURFACE_OFFSET
+	var waypoint := hit.point + hit.normal * CONNECT_WAYPOINT_SURFACE_OFFSET
+	if _span_blocked(_connect_route_tail(waypoint), waypoint):
+		connect_rejected.emit(&"cable_obstructed")
+		return
+	_connect_waypoints.append(waypoint)
+
+
+## Last routed point: the final скоба, or the pending element's nearest
+## electric port anchor when no скобы are placed yet.
+func _connect_route_tail(reference: Vector3) -> Vector3:
+	if not _connect_waypoints.is_empty():
+		return _connect_waypoints[_connect_waypoints.size() - 1]
+	return connect_anchor_position(reference)
+
+
+## Nearest electric port anchor of the pending element to `reference`; the
+## ghost preview and obstruction checks both start the route here. Falls back
+## to the element position when no anchor resolves.
+func connect_anchor_position(reference: Vector3) -> Vector3:
+	var world := _simulation_world()
+	if world == null or _connect_pending_element_id <= 0:
+		return Vector3(INF, INF, INF)
+	var element := world.get_element(_connect_pending_element_id)
+	if element == null:
+		return Vector3(INF, INF, INF)
+	var best := Vector3(INF, INF, INF)
+	var best_distance := INF
+	for port: PortDefinition in IndustryElectricPortUtil.list_electric_ports(
+		element
+	):
+		var anchor := IndustryElectricPortUtil.port_anchor_world_position(
+			world,
+			element,
+			port.port_id
+		)
+		var distance := anchor.distance_to(reference)
+		if distance < best_distance:
+			best_distance = distance
+			best = anchor
+	if best.is_finite():
+		return best
+	return IndustryElectricBudget.element_world_position(world, element)
+
+
+## A routed span must not pass through terrain or bodies. Endpoints are pulled
+## inward so surfaces the span is pinned to do not self-report as blockers.
+func _span_blocked(from: Vector3, to: Vector3) -> bool:
+	if not from.is_finite() or not to.is_finite():
+		return false
+	var span := to - from
+	var length := span.length()
+	if length <= CONNECT_SPAN_CLEARANCE_MARGIN * 2.0:
+		return false
+	var direction := span / length
+	var query := PhysicsRayQueryParameters3D.create(
+		from + direction * CONNECT_SPAN_CLEARANCE_MARGIN,
+		to - direction * CONNECT_SPAN_CLEARANCE_MARGIN
 	)
+	query.collision_mask = CONNECT_OBSTRUCTION_MASK
+	query.collide_with_areas = false
+	query.collide_with_bodies = true
+	var player := get_parent()
+	if player is CollisionObject3D:
+		query.exclude = [(player as CollisionObject3D).get_rid()]
+	return not _query.get_world_3d().direct_space_state.intersect_ray(
+		query
+	).is_empty()
 
 
 func _undo_connect_waypoint() -> void:
@@ -745,26 +820,26 @@ func _undo_connect_waypoint() -> void:
 	_connect_pending_element_id = 0
 
 
-func _target_has_electric_port(hit: InteractionHit) -> bool:
-	if _gateway == null:
+## Only power infrastructure (source / distributor / battery) accepts wires;
+## everything else — including machines — is a routing surface for скобы.
+func _target_is_wireable(hit: InteractionHit) -> bool:
+	var world := _simulation_world()
+	if world == null:
 		return false
+	return IndustryElectricPortUtil.is_wireable_element(
+		world.get_element(int(hit.metadata.get("element_id", 0)))
+	)
+
+
+func _simulation_world() -> SimulationWorld:
+	if _gateway == null:
+		return null
 	var session := _gateway.get_node_or_null(
 		_gateway.simulation_session_path
 	) as SimulationSession
 	if session == null:
-		return false
-	var element := session.world.get_element(
-		int(hit.metadata.get("element_id", 0))
-	)
-	if element == null:
-		return false
-	var archetype := element.get_archetype()
-	if archetype == null:
-		return false
-	for port: PortDefinition in archetype.ports:
-		if port.kind == PortDefinition.Kind.ELECTRIC:
-			return true
-	return false
+		return null
+	return session.world
 
 
 func connect_pending_element_id() -> int:

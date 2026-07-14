@@ -260,9 +260,14 @@ ElectricLink {
 1. оба parent elements **operational**;
 2. оба порта `Kind.ELECTRIC`, direction-compatible output → input
    (bidirectional допускается явно);
-3. длина кабеля **не ограничена** v1; длина =
-   world-space **polyline** port anchor → `waypoints[]` → port anchor
-   (скобы свободной протяжки); без waypoints — прямая между anchors;
+3. лимит **12 m** (`max_cable_length_m`, placeholder v1) применяется к
+   **каждому пролёту** polyline port anchor → `waypoints[]` → port anchor:
+   суммарная длина не ограничена, но скоба нужна минимум каждые 12 m;
+   кабель без waypoints (межгридовая «пуповина») — один пролёт, т.е.
+   обычные 12 m;
+3a. оба endpoint — **энергоинфраструктура** (source / distributor / battery),
+   иначе `endpoint_not_wireable`; consumers к проводам не подключаются —
+   их питает distributor radius;
 4. face adjacency и взаимная ориентация портов **не требуются**;
 5. endpoints могут принадлежать разным Assembly; electric link не создаёт Joint,
    не объединяет topology и не вызывает mechanical merge;
@@ -278,20 +283,21 @@ Player UX: wire рендерится с interaction-only коллайдером
 Временные условия НЕ удаляют link из `electric_links[]`:
 
 - endpoint не operational (повреждён, недостроен) → link **dormant**;
+- world-space длина кабеля превысила `max_cable_length_m`
+  (endpoint на другой Assembly уехал) → link **dormant**;
 - dormant link выпадает из electric graph (не проводит) и **оживает
-  автоматически**, когда endpoint снова operational — повторный
-  `connect_network` не требуется;
+  автоматически**, когда условие снято (ремонт endpoint, возврат в радиус
+  длины) — повторный `connect_network` не требуется;
 - presentation: dormant wire рендерится приглушённым (без emission);
 - удаление из state — только `disconnect_network` или исчезновение endpoint
   element из мира (destroy/dismantle).
 
 ### Anti-garland (electric)
 
-Generator cluster состоит из direction-compatible supply links: generator
+Generator cluster состоит только из direction-compatible supply links: generator
 outputs могут сходиться на distributor/battery input, а battery/distributor output
-может продолжать supply graph. Consumer (`power_in`) может быть подключён в
-cable-chain индивидуальным wire — но не является pass-through (нет `power_out`),
-поэтому гирлянда consumer→consumer невозможна по направлениям портов.
+может продолжать supply graph. Consumers в cable-chain не включаются
+(`endpoint_not_wireable`).
 
 ### Anti-garland (cargo)
 
@@ -307,19 +313,26 @@ cable-chain индивидуальным wire — но не является pas
 
 ### Player UX (connect tool — electric only)
 
-1. Mode **connect**; первый клик — блок с электропортом; финальный клик —
-   второй блок с электропортом → wire.
+1. Mode **connect**; первый клик — энергоблок (source/distributor/battery);
+   финальный клик — второй энергоблок → wire. Клик по машине/consumer —
+   не endpoint, а обычная поверхность для скобы.
 2. **Свободная протяжка (скобы):** между первым и финальным кликом клики по
-   поверхностям (terrain, блоки без электропортов) добавляют world-space
-   **waypoints** — кабель идёт по полу/стенам/потолку как проложил игрок.
-   ПКМ — убрать последнюю скобу; ПКМ без скоб — отменить протяжку.
-   Waypoints прибиты к миру и не следуют за движущимися Assembly
-   (межгридовый кабель — прямая «пуповина» без скоб).
-3. Ghost polyline (`CableRoutingPreview`) рисует протяжку от pending блока
-   через скобы до прицела.
-4. **Cargo:** connect tool **не используется** — только placement `cargo_pipe` blocks.
-6. Wire presentation: полилиния со скобами и лёгким провисанием на span;
-   grinder по любому сегменту срезает кабель.
+   поверхностям (terrain, любые блоки без wireable-портов) добавляют
+   world-space **waypoints** — кабель идёт по полу/стенам/потолку как
+   проложил игрок. Лимит 12 m — **на пролёт**: длинная трасса требует скобу
+   минимум каждые 12 m. ПКМ — убрать последнюю скобу; ПКМ без скоб —
+   отменить протяжку. Waypoints прибиты к миру и не следуют за движущимися
+   Assembly (межгридовый кабель — прямая «пуповина» без скоб, один пролёт).
+3. **Преграды:** каждый новый пролёт проверяется raycast'ом при клике —
+   скоба или финальное подключение сквозь terrain/объекты отклоняются
+   (toast «Провод упирается в препятствие»). Проверка выполняется на
+   клике (presentation-слой); ядро line-of-sight не хранит.
+4. Ghost polyline (`CableRoutingPreview`) рисует протяжку от **ближайшего
+   электропорта** pending блока через скобы до прицела.
+5. **Cargo:** connect tool **не используется** — только placement `cargo_pipe` blocks.
+6. Overlength (по пролёту): HUD toast «Пролёт кабеля длиннее 12 м — нужна скоба».
+7. Wire presentation: тонкий чёрный кабель (spline tube — изгибы гладкие),
+   лёгкое провисание на span; grinder по любому сегменту срезает кабель.
 
 ## Electric Flow
 
@@ -336,20 +349,20 @@ cable-chain индивидуальным wire — но не является pas
 
 - `power_source.output_w`: fixture placeholder **2000 W**;
 - `power_distributor.supply_radius_m`: fixture placeholder **12 m**;
-- manual electric wires соединяют source/generator cluster,
-  `power_distributor`, optional `power_battery` **и consumers** (`power_in`):
-  явный wire до машины — валидное питание без distributor;
-- stationary drill / processor / fabricator не являются wire pass-through
-  (нет `power_out`); unwired consumers питает supplied distributor
-  **пространственно в радиусе**.
+- `max_cable_length_m`: fixture/runtime placeholder **12 m**;
+- manual electric wires соединяют **только** энергоинфраструктуру:
+  source/generator cluster, `power_distributor`, optional `power_battery`;
+- stationary drill / processor / fabricator к проводам не подключаются
+  (`endpoint_not_wireable`): consumers питает supplied distributor
+  **пространственно в радиусе** — одна модель питания машин.
 
 ### Electric graph
 
-Electric subgraph = `electric_links[]` (manual wires). Component **supplied**,
-если содержит enabled operational source или battery; distributor для supply
-не обязателен. Wired consumer в supplied component питается по кабелю.
-Unwired consumers питает supplied distributor wireless/radius distribution
-внутри `supply_radius_m`. См. § Network links.
+Electric subgraph = `electric_links[]` (manual wires между supply nodes).
+Component **supplied**, если содержит enabled operational source или battery
+(component без distributor может, например, заряжать свои батареи).
+Consumers в graph не входят: их питает supplied distributor wireless/radius
+distribution внутри `supply_radius_m`. См. § Network links.
 
 ### Power budget (SE on/off)
 
@@ -358,7 +371,7 @@ Unwired consumers питает supplied distributor wireless/radius distribution
 1. `supply_w` = Σ `power_source.output_w` (enabled, operational) + battery discharge
    (если подключена);
 2. `demand_w` = Σ `idle_w` + active recipe `power_w` для enabled operational consumers
-   компонента: **wired в component** + unwired **в радиусе distributor** компонента;
+   **в радиусе distributor** компонента;
 3. если `supply_w >= demand_w` → consumers ON; иначе OFF → `no_power`;
 4. consumer **вне `supply_radius_m`** distributor → `outside_power_radius` (не
    `no_power`);
@@ -369,15 +382,12 @@ Unwired consumers питает supplied distributor wireless/radius distribution
 ### Distributor radius
 
 - `power_distributor` задаёт `supply_radius_m` (fixture placeholder **12 m**);
-- **wired consumer** (индивидуальный wire в supplied component) питается по
-  кабелю, радиус не участвует; wired в **не**-supplied component → radius
-  fallback, иначе `no_power`;
-- unwired consumer внутри радиуса supplied distributor получает питание
-  spatially;
-- unwired consumer вне радиуса от **любого supplied** operational enabled
+- consumer внутри радиуса supplied distributor получает питание spatially —
+  это **единственный** путь питания машин (провода к consumers запрещены);
+- consumer вне радиуса от **любого supplied** operational enabled
   distributor → `outside_power_radius` (HUD → «ВНЕ ЗОНЫ»);
 - если supplied networks отсутствуют вовсе → `port_disconnected`;
-- consumer запитан, но `supply_w < demand_w` → `no_power`.
+- consumer в радиусе, но `supply_w < demand_w` → `no_power`.
 
 ### Machine enable
 

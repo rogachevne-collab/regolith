@@ -8,11 +8,9 @@ const MAX_AIM_DISTANCE := 4.0
 
 @export var query_path: NodePath = NodePath("../InteractionQuery")
 @export var tool_controller_path: NodePath = NodePath("../ToolController")
-@export var gateway_path: NodePath = NodePath("../../WorldCommandGateway")
 
 var _query: InteractionQuery
 var _tools: ToolController
-var _gateway: WorldCommandGateway
 var _mesh: ImmediateMesh
 var _material: StandardMaterial3D
 
@@ -22,7 +20,6 @@ func _ready() -> void:
 	global_transform = Transform3D.IDENTITY
 	_query = get_node(query_path)
 	_tools = get_node(tool_controller_path)
-	_gateway = get_node_or_null(gateway_path) as WorldCommandGateway
 	_mesh = ImmediateMesh.new()
 	var mesh_instance := MeshInstance3D.new()
 	mesh_instance.mesh = _mesh
@@ -42,19 +39,23 @@ func _process(_delta: float) -> void:
 	var pending_id := _tools.connect_pending_element_id()
 	if pending_id <= 0:
 		return
-	var world := _simulation_world()
-	if world == null:
-		return
-	var element := world.get_element(pending_id)
-	if element == null:
+	var waypoints := _tools.connect_waypoints()
+	var hit := _query.current_hit
+	var aim_valid := hit.valid and hit.distance <= MAX_AIM_DISTANCE
+	# The route starts at the pending element's electric port nearest to the
+	# next routed point — not at the element pivot.
+	var anchor_reference := (
+		waypoints[0]
+		if not waypoints.is_empty()
+		else (hit.point if aim_valid else global_position)
+	)
+	var anchor := _tools.connect_anchor_position(anchor_reference)
+	if not anchor.is_finite():
 		return
 	var points := PackedVector3Array()
-	points.append(
-		IndustryElectricBudget.element_world_position(world, element)
-	)
-	points.append_array(_tools.connect_waypoints())
-	var hit := _query.current_hit
-	if hit.valid and hit.distance <= MAX_AIM_DISTANCE:
+	points.append(anchor)
+	points.append_array(waypoints)
+	if aim_valid:
 		points.append(hit.point)
 	if points.size() < 2:
 		return
@@ -62,14 +63,3 @@ func _process(_delta: float) -> void:
 	for point: Vector3 in points:
 		_mesh.surface_add_vertex(point)
 	_mesh.surface_end()
-
-
-func _simulation_world() -> SimulationWorld:
-	if _gateway == null:
-		return null
-	var session := _gateway.get_node_or_null(
-		_gateway.simulation_session_path
-	) as SimulationSession
-	if session == null:
-		return null
-	return session.world
