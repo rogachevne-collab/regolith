@@ -31,6 +31,14 @@ Standalone Godot 4.5+ проект: voxel terrain (Voxel Tools 1.6x), Jolt physi
   `docs/specs/INDUSTRY-V1.md`, затем **официальная дока** и **GitHub issues**
   плагина (Zylann). Не выводить API координат из кода проекта; верифицировать
   aim/spawn/бур в запущенной игре.
+- **R8** — задачи с физикой / Jolt / `RigidBody3D` / joints / constraints /
+  physics projection / simulation boundary: сначала `docs/PHYSICAL-LANGUAGE.md`
+  («Граница владения») и релевантная PoC-спека (`docs/specs/`), затем
+  **официальная дока Godot** ([Using Jolt Physics](https://docs.godotengine.org/en/stable/tutorials/physics/using_jolt_physics.html),
+  [Physics introduction](https://docs.godotengine.org/en/stable/tutorials/physics/physics_introduction.html))
+  и **веб-поиск** по конкретному поведению (встроенный Jolt-модуль Godot 4.4+,
+  не legacy extension `godot-jolt`; при необходимости — [JoltPhysics](https://jrouwe.github.io/JoltPhysics/),
+  GitHub issues Godot/Jolt). Не выводить семантику движка из кода проекта.
 
 Если задача «удобнее» решается нарушением инварианта — остановись и спроси человека.
 
@@ -57,6 +65,7 @@ Standalone Godot 4.5+ проект: voxel terrain (Voxel Tools 1.6x), Jolt physi
 | правка `.gdshader` | `./run.sh --headless res://scenes/main.tscn` без ошибок компиляции |
 | правка VFX `.tscn` | проверка в игре + соответствие `docs/cheatsheets/vfx-*.md` |
 | voxel terrain / SDF / raycast / scale | `docs/cheatsheets/voxel-tools.md` + сверка с докой плагина; проверка в игре (spawn, aim, drill) |
+| физика / Jolt / projection / constraints | `PHYSICAL-LANGUAGE.md` («Граница владения») + релевантная спека; сверка с [докой Godot Jolt](https://docs.godotengine.org/en/stable/tutorials/physics/using_jolt_physics.html) и веб-поиском |
 | новая GDExtension-зависимость | строка в README (bootstrap) + лицензия |
 | перед «готово»/коммитом | полный `./tests/run_tests.sh` один раз |
 
