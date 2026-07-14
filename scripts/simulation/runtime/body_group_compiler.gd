@@ -103,13 +103,21 @@ static func _pick_root_group_id(
 		if group_id > 0:
 			anchored_groups[group_id] = true
 	var anchored_ids: Array[int] = _sorted_int_keys(anchored_groups)
-	if anchored_ids.size() > 1:
-		return -1
+	if anchored_ids.is_empty():
+		if groups.is_empty():
+			return 0
+		return int(_sorted_int_keys(groups).min())
 	if anchored_ids.size() == 1:
 		return anchored_ids[0]
-	if groups.is_empty():
-		return 0
-	return int(_sorted_int_keys(groups).min())
+	# Carriage groups can pick up terrain anchors while the base group is also
+	# anchored. Prefer the piston-base rigid group as the motion root.
+	for joint: SimulationJoint in joints:
+		if joint.kind != SimulationJoint.Kind.PISTON:
+			continue
+		var base_group := _group_for_element(joint.element_a_id, groups)
+		if base_group > 0 and anchored_groups.has(base_group):
+			return base_group
+	return anchored_ids[0]
 
 
 static func _group_for_element(element_id: int, groups: Dictionary) -> int:
