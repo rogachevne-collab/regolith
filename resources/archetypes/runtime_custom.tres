@@ -1,16 +1,17 @@
-[gd_resource type="Resource" script_class="ElementArchetype" load_steps=5 format=3]
+[gd_resource type="Resource" script_class="ElementArchetype" format=3 uid="uid://bkl5b3t65obfi"]
 
-[ext_resource type="Script" path="res://scripts/simulation/resources/build_requirement.gd" id="1"]
-[ext_resource type="Script" path="res://scripts/simulation/resources/collider_definition.gd" id="2"]
-[ext_resource type="Script" path="res://scripts/simulation/resources/element_archetype.gd" id="4"]
-
-[sub_resource type="Resource" id="Collider"]
-script = ExtResource("2")
+[ext_resource type="Script" uid="uid://c2p36g85wqkru" path="res://scripts/simulation/resources/build_requirement.gd" id="1"]
+[ext_resource type="Script" uid="uid://b6d2jhfw581hb" path="res://scripts/simulation/resources/collider_definition.gd" id="2"]
+[ext_resource type="Script" uid="uid://c4hgnuqnf2up8" path="res://scripts/simulation/resources/port_definition.gd" id="3_ucx5u"]
+[ext_resource type="Script" uid="uid://bxidpb3tep3ih" path="res://scripts/simulation/resources/element_archetype.gd" id="4"]
+[ext_resource type="Script" uid="uid://bfuxth8e6lccw" path="res://scripts/simulation/resources/structural_mount_pad.gd" id="5_jb87h"]
 
 [sub_resource type="Resource" id="Requirement"]
 script = ExtResource("1")
 resource_id = "custom_component"
-amount = 1.0
+
+[sub_resource type="Resource" id="Collider"]
+script = ExtResource("2")
 
 [resource]
 script = ExtResource("4")
@@ -18,7 +19,7 @@ archetype_id = "runtime_custom"
 display_name = "Свой блок"
 roles = PackedStringArray("Frame")
 mass_kg = 12.0
-structural_surface_policy = 1
 colliders = Array[ExtResource("2")]([SubResource("Collider")])
 max_integrity = 25.0
+structural_surface_policy = 1
 build_requirements = Array[ExtResource("1")]([SubResource("Requirement")])

@@ -2,7 +2,9 @@
 
 [ext_resource type="Script" uid="uid://c2p36g85wqkru" path="res://scripts/simulation/resources/build_requirement.gd" id="1_bqi76"]
 [ext_resource type="Script" uid="uid://b6d2jhfw581hb" path="res://scripts/simulation/resources/collider_definition.gd" id="2_qif3d"]
+[ext_resource type="Script" uid="uid://c4hgnuqnf2up8" path="res://scripts/simulation/resources/port_definition.gd" id="3_qif3d"]
 [ext_resource type="Script" uid="uid://bxidpb3tep3ih" path="res://scripts/simulation/resources/element_archetype.gd" id="4_jb1nm"]
+[ext_resource type="Script" uid="uid://bfuxth8e6lccw" path="res://scripts/simulation/resources/structural_mount_pad.gd" id="5_pd2qn"]
 
 [sub_resource type="Resource" id="Resource_coyyg"]
 script = ExtResource("1_bqi76")
@@ -25,6 +27,6 @@ display_name = "Балка"
 roles = PackedStringArray("Frame")
 mass_kg = 100.0
 footprint_cells = Array[Vector3i]([Vector3i(0, 0, 0), Vector3i(1, 0, 0), Vector3i(2, 0, 0), Vector3i(3, 0, 0)])
-structural_surface_policy = 1
 colliders = Array[ExtResource("2_qif3d")]([SubResource("Resource_da4iy"), SubResource("Resource_kh08h")])
+structural_surface_policy = 1
 build_requirements = Array[ExtResource("1_bqi76")]([SubResource("Resource_coyyg")])

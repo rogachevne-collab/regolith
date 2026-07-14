@@ -16,6 +16,22 @@ script = ExtResource("2_tkxy8")
 size = Vector3(1.5, 1.5, 1.5)
 offset_in_cell = Vector3(0.75, 0.75, 0.75)
 
+[sub_resource type="Resource" id="Resource_f2hpt"]
+script = ExtResource("3_y34lf")
+port_id = "cargo_in"
+kind = 7
+local_cell = Vector3i(1, 2, 1)
+local_face = 2
+compatibility_tags = PackedStringArray("cargo")
+
+[sub_resource type="Resource" id="Resource_cargo_io_nz"]
+script = ExtResource("3_y34lf")
+port_id = "cargo_io_nz"
+kind = 7
+local_cell = Vector3i(1, 0, 0)
+local_face = 5
+compatibility_tags = PackedStringArray("cargo")
+
 [sub_resource type="Resource" id="Mount_px"]
 script = ExtResource("5_pad")
 local_cell = Vector3i(2, 0, 1)
@@ -45,22 +61,6 @@ script = ExtResource("5_pad")
 local_cell = Vector3i(1, 0, 0)
 local_face = 5
 
-[sub_resource type="Resource" id="Resource_f2hpt"]
-script = ExtResource("3_y34lf")
-port_id = "cargo_in"
-kind = 7
-local_cell = Vector3i(1, 2, 1)
-local_face = 2
-compatibility_tags = PackedStringArray("cargo")
-
-[sub_resource type="Resource" id="Resource_cargo_io_nz"]
-script = ExtResource("3_y34lf")
-port_id = "cargo_io_nz"
-kind = 7
-local_cell = Vector3i(1, 0, 0)
-local_face = 5
-compatibility_tags = PackedStringArray("cargo")
-
 [resource]
 script = ExtResource("4_dde6h")
 archetype_id = "cargo_store"
@@ -68,8 +68,8 @@ display_name = "Грузовой склад"
 roles = PackedStringArray("CargoHold")
 mass_kg = 90.0
 footprint_cells = Array[Vector3i]([Vector3i(0, 0, 0), Vector3i(0, 0, 1), Vector3i(0, 0, 2), Vector3i(0, 1, 0), Vector3i(0, 1, 1), Vector3i(0, 1, 2), Vector3i(0, 2, 0), Vector3i(0, 2, 1), Vector3i(0, 2, 2), Vector3i(1, 0, 0), Vector3i(1, 0, 1), Vector3i(1, 0, 2), Vector3i(1, 1, 0), Vector3i(1, 1, 1), Vector3i(1, 1, 2), Vector3i(1, 2, 0), Vector3i(1, 2, 1), Vector3i(1, 2, 2), Vector3i(2, 0, 0), Vector3i(2, 0, 1), Vector3i(2, 0, 2), Vector3i(2, 1, 0), Vector3i(2, 1, 1), Vector3i(2, 1, 2), Vector3i(2, 2, 0), Vector3i(2, 2, 1), Vector3i(2, 2, 2)])
-structural_surface_policy = 2
-structural_mount_pads = Array[ExtResource("5_pad")]([SubResource("Mount_px"), SubResource("Mount_nx"), SubResource("Mount_py"), SubResource("Mount_ny"), SubResource("Mount_pz"), SubResource("Mount_nz")])
 colliders = Array[ExtResource("2_tkxy8")]([SubResource("Resource_kjr4j")])
 ports = Array[ExtResource("3_y34lf")]([SubResource("Resource_f2hpt"), SubResource("Resource_cargo_io_nz")])
+structural_surface_policy = 2
+structural_mount_pads = Array[ExtResource("5_pad")]([SubResource("Mount_px"), SubResource("Mount_nx"), SubResource("Mount_py"), SubResource("Mount_ny"), SubResource("Mount_pz"), SubResource("Mount_nz")])
 build_requirements = Array[ExtResource("1_vn13f")]([SubResource("Resource_4orsx")])

@@ -16,6 +16,14 @@ script = ExtResource("2_4eu8i")
 size = Vector3(1.5, 1.5, 1.5)
 offset_in_cell = Vector3(0.75, 0.75, 0.75)
 
+[sub_resource type="Resource" id="Resource_t788f"]
+script = ExtResource("3_goxuj")
+port_id = "power_out"
+kind = 1
+local_cell = Vector3i(1, 1, 2)
+local_face = 4
+compatibility_tags = PackedStringArray("electric")
+
 [sub_resource type="Resource" id="Mount_px"]
 script = ExtResource("5_pad")
 local_cell = Vector3i(2, 0, 1)
@@ -45,14 +53,6 @@ script = ExtResource("5_pad")
 local_cell = Vector3i(1, 1, 0)
 local_face = 5
 
-[sub_resource type="Resource" id="Resource_t788f"]
-script = ExtResource("3_goxuj")
-port_id = "power_out"
-kind = 1
-local_cell = Vector3i(1, 1, 2)
-local_face = 4
-compatibility_tags = PackedStringArray("electric")
-
 [resource]
 script = ExtResource("4_7fdws")
 archetype_id = "power_source"
@@ -60,8 +60,8 @@ display_name = "Источник питания"
 roles = PackedStringArray("Source")
 mass_kg = 120.0
 footprint_cells = Array[Vector3i]([Vector3i(0, 0, 0), Vector3i(0, 0, 1), Vector3i(0, 0, 2), Vector3i(0, 1, 0), Vector3i(0, 1, 1), Vector3i(0, 1, 2), Vector3i(0, 2, 0), Vector3i(0, 2, 1), Vector3i(0, 2, 2), Vector3i(1, 0, 0), Vector3i(1, 0, 1), Vector3i(1, 0, 2), Vector3i(1, 1, 0), Vector3i(1, 1, 1), Vector3i(1, 1, 2), Vector3i(1, 2, 0), Vector3i(1, 2, 1), Vector3i(1, 2, 2), Vector3i(2, 0, 0), Vector3i(2, 0, 1), Vector3i(2, 0, 2), Vector3i(2, 1, 0), Vector3i(2, 1, 1), Vector3i(2, 1, 2), Vector3i(2, 2, 0), Vector3i(2, 2, 1), Vector3i(2, 2, 2)])
-structural_surface_policy = 2
-structural_mount_pads = Array[ExtResource("5_pad")]([SubResource("Mount_px"), SubResource("Mount_nx"), SubResource("Mount_py"), SubResource("Mount_ny"), SubResource("Mount_pz"), SubResource("Mount_nz")])
 colliders = Array[ExtResource("2_4eu8i")]([SubResource("Resource_dquup")])
 ports = Array[ExtResource("3_goxuj")]([SubResource("Resource_t788f")])
+structural_surface_policy = 2
+structural_mount_pads = Array[ExtResource("5_pad")]([SubResource("Mount_px"), SubResource("Mount_nx"), SubResource("Mount_py"), SubResource("Mount_ny"), SubResource("Mount_pz"), SubResource("Mount_nz")])
 build_requirements = Array[ExtResource("1_6gdnq")]([SubResource("Resource_oj805")])
