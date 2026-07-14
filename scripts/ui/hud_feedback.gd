@@ -23,6 +23,8 @@ func setup(ctx: Dictionary) -> void:
 	_player = ctx.get("player")
 	if _gateway != null:
 		_gateway.command_completed.connect(_on_command_completed)
+	if _tools != null:
+		_tools.connect_rejected.connect(_on_connect_rejected)
 
 
 func _ready() -> void:
@@ -93,8 +95,8 @@ func _prompt_for(hit: InteractionHit) -> String:
 			hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
 			and hit.distance <= 4.0
 		):
-			return "ЛКМ — начать провод от блока с электропортом"
-		return "ЛКМ — электрический провод: блок → скобы → блок"
+			return "ЛКМ — начать провод от энергоблока"
+		return "ЛКМ — провод: энергоблок → скобы → энергоблок"
 	if _tools.active_tool == &"grinder":
 		if (
 			hit.target_kind == InteractionHit.KIND_ELECTRIC_CABLE
@@ -181,6 +183,12 @@ func _on_command_completed(
 	_result_left = 1.2
 
 
+func _on_connect_rejected(reason: StringName) -> void:
+	_result.text = _reason_text(reason)
+	_result.add_theme_color_override("font_color", HudTokens.COL_CRITICAL)
+	_result_left = 1.2
+
+
 func _suppress_success_feedback() -> bool:
 	var action := _tools.active_action
 	if action == &"tool_primary" and (
@@ -223,7 +231,11 @@ func _reason_text(reason: StringName) -> String:
 		&"no_electric_ports":
 			return "У блока нет электропортов"
 		&"cable_too_long":
-			return "Кабель длиннее 12 м"
+			return "Пролёт кабеля длиннее 12 м — нужна скоба"
+		&"endpoint_not_wireable":
+			return "Провод — только между генераторами, распределителями и батареями"
+		&"cable_obstructed":
+			return "Провод упирается в препятствие"
 		&"storage_full":
 			return "Склад полон"
 		&"no_input":

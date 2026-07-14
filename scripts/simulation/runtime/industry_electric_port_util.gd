@@ -1,6 +1,11 @@
 class_name IndustryElectricPortUtil
 extends RefCounted
 
+## Maximum length of a single cable SPAN: between the port anchor and the
+## first скоба, between consecutive скобы, and from the last скоба to the far
+## port anchor. Total routed length is unbounded — long runs just need a скоба
+## at least every MAX_CABLE_LENGTH_M. A cable without waypoints (inter-grid
+## umbilical) is a single span, so it keeps the plain 12 m rule.
 const MAX_CABLE_LENGTH_M := 12.0
 
 enum Direction {
@@ -76,6 +81,11 @@ static func diagnose_electric_pair(
 	var element_b := world.get_element(element_b_id)
 	if element_a == null or element_b == null:
 		return {"pair": {}, "reason": &"invalid_target"}
+	if (
+		not is_wireable_element(element_a)
+		or not is_wireable_element(element_b)
+	):
+		return {"pair": {}, "reason": &"endpoint_not_wireable"}
 	var ports_a := list_electric_ports(element_a)
 	var ports_b := list_electric_ports(element_b)
 	if not requested_port_a_id.is_empty():
@@ -91,13 +101,15 @@ static func diagnose_electric_pair(
 	if ports_a.is_empty() or ports_b.is_empty():
 		return {"pair": {}, "reason": &"no_electric_ports"}
 	var compatible_direction_found := false
-	var shortest_distance := INF
+	var shortest_span := INF
+	var best_pair: Dictionary = {}
+	var best_span := INF
 	for port_a: PortDefinition in ports_a:
 		for port_b: PortDefinition in ports_b:
 			if not electric_directions_compatible(port_a, port_b):
 				continue
 			compatible_direction_found = true
-			var distance_m := cable_distance_m(
+			var span_m := cable_max_span_m(
 				world,
 				element_a,
 				port_a,
@@ -105,25 +117,29 @@ static func diagnose_electric_pair(
 				port_b,
 				waypoints
 			)
-			shortest_distance = minf(shortest_distance, distance_m)
-			if distance_m > MAX_CABLE_LENGTH_M + 0.000001:
+			shortest_span = minf(shortest_span, span_m)
+			if span_m > MAX_CABLE_LENGTH_M + 0.000001:
 				continue
-			return {
-				"pair": {
+			if span_m < best_span:
+				best_span = span_m
+				best_pair = {
 					"element_a_id": element_a_id,
 					"port_a_id": port_a.port_id,
 					"element_b_id": element_b_id,
 					"port_b_id": port_b.port_id,
-				},
-				"reason": &"ok",
-				"distance_m": distance_m,
-				"max_distance_m": MAX_CABLE_LENGTH_M,
-			}
+				}
+	if not best_pair.is_empty():
+		return {
+			"pair": best_pair,
+			"reason": &"ok",
+			"distance_m": best_span,
+			"max_distance_m": MAX_CABLE_LENGTH_M,
+		}
 	if compatible_direction_found:
 		return {
 			"pair": {},
 			"reason": &"cable_too_long",
-			"distance_m": shortest_distance,
+			"distance_m": shortest_span,
 			"max_distance_m": MAX_CABLE_LENGTH_M,
 		}
 	return {"pair": {}, "reason": &"incompatible_connection"}
@@ -198,6 +214,8 @@ static func electric_directions_compatible(
 	)
 
 
+## Total routed length (anchor → скобы → anchor). Informational only; the
+## connect limit applies per span via cable_max_span_m.
 static func cable_distance_m(
 	world: SimulationWorld,
 	element_a: SimulationElement,
@@ -216,6 +234,40 @@ static func cable_distance_m(
 		length += previous.distance_to(waypoint)
 		previous = waypoint
 	return length + previous.distance_to(anchor_b)
+
+
+## Longest single span of the routed polyline — the metric the cable length
+## limit applies to.
+static func cable_max_span_m(
+	world: SimulationWorld,
+	element_a: SimulationElement,
+	port_a: PortDefinition,
+	element_b: SimulationElement,
+	port_b: PortDefinition,
+	waypoints: PackedVector3Array = PackedVector3Array()
+) -> float:
+	var anchor_a := port_anchor_world_position(world, element_a, port_a.port_id)
+	var anchor_b := port_anchor_world_position(world, element_b, port_b.port_id)
+	if waypoints.is_empty():
+		return anchor_a.distance_to(anchor_b)
+	var max_span := 0.0
+	var previous := anchor_a
+	for waypoint: Vector3 in waypoints:
+		max_span = maxf(max_span, previous.distance_to(waypoint))
+		previous = waypoint
+	return maxf(max_span, previous.distance_to(anchor_b))
+
+
+## Only power infrastructure accepts manual wires; machines are powered by
+## distributor radius. Keeps one mental model: провода — это магистраль.
+static func is_wireable_element(element: SimulationElement) -> bool:
+	if element == null:
+		return false
+	return (
+		IndustryElectricProfile.is_power_source(element)
+		or IndustryElectricProfile.is_distributor(element)
+		or IndustryElectricProfile.is_battery(element)
+	)
 
 
 static func ports_are_face_adjacent(
@@ -286,6 +338,13 @@ static func validate_connect_endpoints(
 			)
 			else StructuralCommandResult.REASON_ELEMENT_BROKEN
 		)
+	if (
+		not is_wireable_element(element_a)
+		or not is_wireable_element(element_b)
+	):
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_ENDPOINT_NOT_WIREABLE
+		)
 	var port_a := find_port(element_a, port_a_id)
 	var port_b := find_port(element_b, port_b_id)
 	if port_a == null or port_b == null:
@@ -300,7 +359,7 @@ static func validate_connect_endpoints(
 		return StructuralCommandResult.failed(
 			StructuralCommandResult.REASON_INCOMPATIBLE_CONNECTION
 		)
-	var distance_m := cable_distance_m(
+	var span_m := cable_max_span_m(
 		world,
 		element_a,
 		port_a,
@@ -308,11 +367,11 @@ static func validate_connect_endpoints(
 		port_b,
 		waypoints
 	)
-	if distance_m > MAX_CABLE_LENGTH_M + 0.000001:
+	if span_m > MAX_CABLE_LENGTH_M + 0.000001:
 		return StructuralCommandResult.failed(
 			StructuralCommandResult.REASON_CABLE_TOO_LONG,
 			{
-				"distance_m": distance_m,
+				"distance_m": span_m,
 				"max_distance_m": MAX_CABLE_LENGTH_M,
 			}
 		)
@@ -323,7 +382,7 @@ static func validate_connect_endpoints(
 		"port_b_id": port_b_id,
 		"assembly_a_id": element_a.assembly_id,
 		"assembly_b_id": element_b.assembly_id,
-		"distance_m": distance_m,
+		"distance_m": span_m,
 		"max_distance_m": MAX_CABLE_LENGTH_M,
 	})
 
@@ -367,7 +426,7 @@ static func link_still_valid(
 	):
 		return false
 	return (
-		cable_distance_m(
+		cable_max_span_m(
 			world,
 			element_a,
 			port_a,

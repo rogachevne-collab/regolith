@@ -74,7 +74,7 @@ func _run_tests() -> void:
 		_test_cargo_connect_network_absent_or_rejects_cargo,
 		_test_electric_connect_network_runtime,
 		_test_electric_link_dormancy_survives_damage_repair,
-		_test_electric_direct_consumer_cable,
+		_test_electric_consumer_wire_rejected,
 		_test_electric_cable_waypoints_polyline,
 		_test_industry_simulation_tick_runtime,
 		_test_drill_mining_storage_full_runtime,
@@ -256,8 +256,8 @@ func _test_electric_link_dormancy_survives_damage_repair() -> bool:
 	return await _run_electric_link_dormancy_scenario()
 
 
-func _test_electric_direct_consumer_cable() -> bool:
-	return await _run_electric_direct_consumer_scenario()
+func _test_electric_consumer_wire_rejected() -> bool:
+	return await _run_electric_consumer_wire_rejected_scenario()
 
 
 func _test_electric_cable_waypoints_polyline() -> bool:
@@ -288,18 +288,19 @@ func _run_electric_wire_scenario() -> bool:
 	var distributor_id := int(mapping["distributor_0"])
 	var consumer_id := int(mapping["processor_0"])
 	var outside_id := int(mapping["fabricator_outside"])
-	var overlength := world.connect_network(
+	var consumer_wire := world.connect_network(
 		source_id,
 		"power_out",
 		outside_id,
 		"power_in"
 	)
 	if (
-		overlength.is_ok()
-		or overlength.reason != StructuralCommandResult.REASON_CABLE_TOO_LONG
+		consumer_wire.is_ok()
+		or consumer_wire.reason
+		!= StructuralCommandResult.REASON_ENDPOINT_NOT_WIREABLE
 	):
 		world.free()
-		return _fail("overlength electric cable must be rejected")
+		return _fail("wire into a consumer must be rejected as not wireable")
 	var source_link := world.connect_network(
 		source_id,
 		"power_out",
@@ -351,9 +352,10 @@ func _run_electric_wire_scenario() -> bool:
 	return true
 
 
-## Freeform routing: cable length limit applies to the routed polyline
-## (anchor → скобы → anchor), waypoints persist on the stored link, and a
-## detour that exceeds max length is rejected at connect time.
+## Freeform routing: the cable length limit applies to each SPAN of the
+## routed polyline (между скобами), not to the total. A single span longer
+## than the limit is rejected; a long zigzag with short spans is accepted,
+## and waypoints persist on the stored link in order.
 func _run_electric_waypoints_scenario() -> bool:
 	var world := SimulationWorld.new()
 	var spawn := _spawn(
@@ -367,24 +369,25 @@ func _run_electric_waypoints_scenario() -> bool:
 	var mapping: Dictionary = spawn.data["local_to_element_id"]
 	var source_id := int(mapping["source_0"])
 	var distributor_id := int(mapping["distributor_0"])
-	var long_detour := PackedVector3Array([Vector3(1.5, 30.0, 0.0)])
+	var long_span := PackedVector3Array([Vector3(1.5, 30.0, 0.0)])
 	var rejected := world.connect_network(
 		source_id,
 		"power_out",
 		distributor_id,
 		"power_in",
 		-1,
-		long_detour
+		long_span
 	)
 	if (
 		rejected.is_ok()
 		or rejected.reason != StructuralCommandResult.REASON_CABLE_TOO_LONG
 	):
 		world.free()
-		return _fail("overlength routed polyline must be rejected")
+		return _fail("routed span over the limit must be rejected")
+	# Total ≈ 20 m > 12 m, but every span stays under 12 m → accepted.
 	var detour := PackedVector3Array([
-		Vector3(1.2, 1.4, 0.8),
-		Vector3(2.1, 1.4, -0.6),
+		Vector3(1.5, 1.0, 5.0),
+		Vector3(2.5, 1.0, -5.0),
 	])
 	var routed := world.connect_network(
 		source_id,
@@ -418,10 +421,10 @@ func _run_electric_waypoints_scenario() -> bool:
 	return true
 
 
-## A cable wired straight from a source into a consumer's power_in must supply
-## power without any distributor. The distributor radius stays an unwired-only
-## convenience; a wire is an explicit connection and always wins.
-func _run_electric_direct_consumer_scenario() -> bool:
+## Wires connect only power infrastructure (source / distributor / battery).
+## A cable into a consumer's power_in is rejected with endpoint_not_wireable
+## and nothing is stored; machines are powered by distributor radius alone.
+func _run_electric_consumer_wire_rejected_scenario() -> bool:
 	var world := SimulationWorld.new()
 	var spawn := _spawn(
 		world,
@@ -430,45 +433,37 @@ func _run_electric_direct_consumer_scenario() -> bool:
 	)
 	if not spawn.is_ok():
 		world.free()
-		return _fail("direct cable scenario spawn failed: %s" % spawn.reason)
+		return _fail("consumer wire scenario spawn failed: %s" % spawn.reason)
 	var mapping: Dictionary = spawn.data["local_to_element_id"]
 	var source_id := int(mapping["source_0"])
 	var consumer_id := int(mapping["processor_0"])
-	var outside_id := int(mapping["fabricator_outside"])
-	var direct_link := world.connect_network(
+	var rejected := world.connect_network(
 		source_id,
 		"power_out",
 		consumer_id,
 		"power_in"
 	)
-	if not direct_link.is_ok():
+	if (
+		rejected.is_ok()
+		or rejected.reason
+		!= StructuralCommandResult.REASON_ENDPOINT_NOT_WIREABLE
+	):
 		world.free()
 		return _fail(
-			"direct source-to-consumer cable rejected: %s" % direct_link.reason
+			"consumer wire expected endpoint_not_wireable, got %s"
+			% str(rejected.reason)
 		)
-	IndustryElectricBudget.apply_tick(world, 1.0)
-	var consumer_runtime := world.get_industry_element_runtime(consumer_id)
-	var outside_runtime := world.get_industry_element_runtime(outside_id)
-	if consumer_runtime == null or not consumer_runtime.powered:
+	if not world.list_electric_links().is_empty():
 		world.free()
-		return _fail("wired consumer must be powered without a distributor")
-	if outside_runtime == null or outside_runtime.powered:
+		return _fail("rejected consumer wire must not be stored")
+	var battery_pair := IndustryElectricPortUtil.diagnose_electric_pair(
+		world,
+		source_id,
+		consumer_id
+	)
+	if StringName(battery_pair.get("reason", &"")) != &"endpoint_not_wireable":
 		world.free()
-		return _fail("unwired consumer without distributor must stay unpowered")
-	if outside_runtime.power_reason != &"outside_power_radius":
-		world.free()
-		return _fail(
-			"unwired consumer expected outside_power_radius, got %s"
-			% str(outside_runtime.power_reason)
-		)
-	world.ensure_industry_element_runtime(source_id).machine_enabled = false
-	IndustryElectricBudget.apply_tick(world, 1.0)
-	if consumer_runtime.powered or consumer_runtime.power_reason != &"no_power":
-		world.free()
-		return _fail(
-			"wired consumer on dead component expected no_power, got %s"
-			% str(consumer_runtime.power_reason)
-		)
+		return _fail("diagnose must flag consumer endpoints as not wireable")
 	world.free()
 	return true
 

@@ -17,40 +17,19 @@ static func apply_tick(world: SimulationWorld, dt: float) -> void:
 		):
 			consumers.append(element)
 
-	var component_networks: Array[Dictionary] = []
-	var network_index_by_element: Dictionary = {}
+	var supplied_networks: Array[Dictionary] = []
 	for component: Array in graph.components():
 		var component_network := _build_component_network(world, component)
-		component_networks.append(component_network)
-		for element_id_variant: Variant in component:
-			network_index_by_element[int(element_id_variant)] = (
-				component_networks.size() - 1
-			)
-
-	var supplied_networks: Array[Dictionary] = []
-	for component_network: Dictionary in component_networks:
 		if bool(component_network["supplied"]):
 			supplied_networks.append(component_network)
 
+	# Consumers never enter the cable graph (wires connect only power
+	# infrastructure); they are powered spatially by a supplied distributor.
 	for consumer: SimulationElement in consumers:
 		var runtime := world.ensure_industry_element_runtime(consumer.element_id)
 		if not runtime.machine_enabled:
 			_set_consumer_power(world, consumer, false, &"disabled")
 			continue
-		# An explicit cable into a supplied component powers the consumer
-		# directly — no distributor radius required for wired machines.
-		var wired_index := int(
-			network_index_by_element.get(consumer.element_id, -1)
-		)
-		if (
-			wired_index >= 0
-			and bool(component_networks[wired_index]["supplied"])
-		):
-			(component_networks[wired_index]["consumers"] as Array).append(
-				consumer
-			)
-			continue
-		# Unwired (or wired into a dead component): distributor radius rule.
 		var radius_index := _nearest_covering_network(
 			world,
 			consumer,
@@ -61,17 +40,13 @@ static func apply_tick(world: SimulationWorld, dt: float) -> void:
 				consumer
 			)
 			continue
-		if wired_index >= 0:
-			_set_consumer_power(world, consumer, false, &"no_power")
-			continue
 		if supplied_networks.is_empty():
 			_set_consumer_power(world, consumer, false, &"port_disconnected")
 			continue
 		_set_consumer_power(world, consumer, false, &"outside_power_radius")
 
-	for component_network: Dictionary in component_networks:
-		if bool(component_network["supplied"]):
-			_solve_supplied_network(world, component_network, dt)
+	for supplied_network: Dictionary in supplied_networks:
+		_solve_supplied_network(world, supplied_network, dt)
 
 
 static func element_world_position(

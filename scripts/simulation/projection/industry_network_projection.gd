@@ -4,20 +4,21 @@ extends Node3D
 ## Cargo pipes render as placed element geometry only (INDUSTRY-V1 § Wire presentation).
 
 const WIRE_MESH_PREFIX := "IndustryWire_"
-const WIRE_RADIUS := 0.045
+const WIRE_RADIUS := 0.022
 ## Aim-collider radius: fatter than the visual so the grinder can target a wire.
 const WIRE_AIM_RADIUS := 0.09
 ## Physics layer 4 — interaction-ray only; nothing moves or collides on it.
 const WIRE_COLLISION_LAYER := 8
-## Decorative sag per polyline span (fraction of span length, capped).
-const WIRE_SAG_FRACTION := 0.06
-const WIRE_SAG_MAX_M := 0.4
+## Decorative sag per polyline span (fraction of span length, capped). Kept
+## shallow so floor/wall runs pinned by скобы do not sink into the surface.
+const WIRE_SAG_FRACTION := 0.04
+const WIRE_SAG_MAX_M := 0.15
 const WIRE_SAG_SUBDIVISIONS := 4
-const WIRE_COLOR := Color(0.92, 0.74, 0.18, 1.0)
-const WIRE_EMISSION := Color(0.55, 0.42, 0.08, 1.0)
+## Black insulated cable with a slight sheen.
+const WIRE_COLOR := Color(0.07, 0.07, 0.08, 1.0)
 ## Dormant wire (endpoint damaged/incomplete or cable overstretched): the link
-## persists in state and keeps rendering, dimmed, until the condition clears.
-const WIRE_DORMANT_COLOR := Color(0.38, 0.34, 0.24, 1.0)
+## persists in state and keeps rendering, faded, until the condition clears.
+const WIRE_DORMANT_COLOR := Color(0.46, 0.44, 0.4, 1.0)
 
 var _world: SimulationWorld
 var _physics_projection: SimulationPhysicsProjection
@@ -144,9 +145,11 @@ func _update_wire_body(
 		mesh_instance.visible = true
 		collision.disabled = false
 		mesh_instance.material_override = material
-		var cylinder := mesh_instance.mesh as CylinderMesh
-		if cylinder != null:
-			cylinder.height = length
+		# Capsule ends overlap into neighbouring segments, so bends read as one
+		# continuous cable instead of tearing between straight pieces.
+		var capsule_mesh := mesh_instance.mesh as CapsuleMesh
+		if capsule_mesh != null:
+			capsule_mesh.height = length + WIRE_RADIUS * 2.0
 		var capsule := collision.shape as CapsuleShape3D
 		if capsule != null:
 			capsule.height = maxf(length, WIRE_AIM_RADIUS * 2.1)
@@ -226,12 +229,11 @@ func _ensure_wire_segments(body: StaticBody3D, count: int) -> void:
 	for index: int in range(current, count):
 		var mesh_instance := MeshInstance3D.new()
 		mesh_instance.name = "Mesh%d" % index
-		var cylinder := CylinderMesh.new()
-		cylinder.top_radius = WIRE_RADIUS
-		cylinder.bottom_radius = WIRE_RADIUS
-		cylinder.radial_segments = 8
-		cylinder.rings = 1
-		mesh_instance.mesh = cylinder
+		var capsule_mesh := CapsuleMesh.new()
+		capsule_mesh.radius = WIRE_RADIUS
+		capsule_mesh.radial_segments = 8
+		capsule_mesh.rings = 2
+		mesh_instance.mesh = capsule_mesh
 		mesh_instance.material_override = _wire_material
 		body.add_child(mesh_instance)
 		var collision := CollisionShape3D.new()
@@ -261,17 +263,14 @@ func _wire_basis(direction: Vector3) -> Basis:
 func _create_wire_material() -> StandardMaterial3D:
 	var material := StandardMaterial3D.new()
 	material.albedo_color = WIRE_COLOR
-	material.emission_enabled = true
-	material.emission = WIRE_EMISSION
-	material.emission_energy_multiplier = 0.35
-	material.metallic = 0.85
-	material.roughness = 0.35
+	material.metallic = 0.3
+	material.roughness = 0.5
 	return material
 
 
 func _create_dormant_material() -> StandardMaterial3D:
 	var material := StandardMaterial3D.new()
 	material.albedo_color = WIRE_DORMANT_COLOR
-	material.metallic = 0.6
-	material.roughness = 0.6
+	material.metallic = 0.1
+	material.roughness = 0.8
 	return material
