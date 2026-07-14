@@ -1,7 +1,10 @@
 class_name PistonProjectionUtil
 extends RefCounted
 
-const POSITION_RESPONSE_SCALE := 2.0
+const POSITION_ARRIVE_EPSILON_M := 0.005
+const STOP_BRAKE_DAMPING_SCALE := 3.0
+const VELOCITY_RESPONSE_TIME_S := 0.15
+const MIN_CARRIAGE_MASS_KG := 0.001
 
 
 static func build_collision_shapes_for_elements(
@@ -29,6 +32,16 @@ static func dry_mass_for_elements(world, element_ids: Array[int]) -> float:
 		if element != null:
 			total += element.total_mass_kg(world)
 	return total
+
+
+static func carriage_mass_kg(
+	world: SimulationWorld,
+	carriage_element_ids: Array
+) -> float:
+	var element_ids: Array[int] = []
+	for element_id_variant: Variant in carriage_element_ids:
+		element_ids.append(int(element_id_variant))
+	return maxf(dry_mass_for_elements(world, element_ids), MIN_CARRIAGE_MASS_KG)
 
 
 static func center_of_mass_local_for_records(
@@ -126,33 +139,82 @@ static func measure_axial_state(
 	}
 
 
+static func desired_axial_velocity_mps(motor: SimulationMotorState) -> float:
+	match motor.control_mode:
+		SimulationMotorState.ControlMode.POSITION:
+			var error := motor.position_error()
+			if absf(error) <= POSITION_ARRIVE_EPSILON_M:
+				return 0.0
+			var direction := signf(error)
+			return direction * motor.velocity_limit_for_sign(direction)
+		SimulationMotorState.ControlMode.VELOCITY:
+			return motor.clamp_target_velocity()
+	return 0.0
+
+
+static func axial_load_hold_force_n(
+	carriage_mass_kg: float,
+	axis_world: Vector3,
+	gravity: Vector3
+) -> float:
+	if carriage_mass_kg <= 0.0 or axis_world.length_squared() <= 0.000001:
+		return 0.0
+	return -carriage_mass_kg * gravity.dot(axis_world.normalized())
+
+
 static func compute_motor_force_scalar(
 	motor: SimulationMotorState,
 	observed_velocity_mps: float,
-	powered: bool
+	powered: bool,
+	carriage_mass_kg: float = 0.0,
+	axis_world: Vector3 = Vector3.ZERO,
+	gravity: Vector3 = Vector3.ZERO
 ) -> Dictionary:
 	if motor == null or not powered or not motor.enabled:
 		return {"force_n": 0.0, "saturated": false}
 	if motor.status == SimulationMotorState.Status.OVERLOADED:
 		return {"force_n": 0.0, "saturated": false}
 	var desired_velocity_mps := 0.0
-	match motor.control_mode:
-		SimulationMotorState.ControlMode.POSITION:
-			var response_gain := POSITION_RESPONSE_SCALE
-			desired_velocity_mps = clampf(
-				motor.position_error() * response_gain,
-				-motor.speed_limit_mps,
-				motor.speed_limit_mps
-			)
-		SimulationMotorState.ControlMode.VELOCITY:
-			desired_velocity_mps = motor.clamp_target_velocity()
-		_:
-			return {"force_n": 0.0, "saturated": false}
-	var force_n := (
-		motor.stiffness_n_per_m * motor.position_error()
-		+ motor.damping_n_s_per_m
-		* (desired_velocity_mps - observed_velocity_mps)
+	if motor.control_mode == SimulationMotorState.ControlMode.STOP:
+		desired_velocity_mps = 0.0
+	else:
+		desired_velocity_mps = desired_axial_velocity_mps(motor)
+	var velocity_result: Dictionary = _compute_velocity_tracking_force(
+		motor,
+		observed_velocity_mps,
+		desired_velocity_mps,
+		carriage_mass_kg,
+		motor.control_mode == SimulationMotorState.ControlMode.STOP
 	)
+	var force_n := float(velocity_result.get("force_n", 0.0))
+	force_n += axial_load_hold_force_n(carriage_mass_kg, axis_world, gravity)
+	var saturated := absf(force_n) >= motor.force_limit_n - 0.001
+	force_n = clampf(force_n, -motor.force_limit_n, motor.force_limit_n)
+	return {
+		"force_n": force_n,
+		"saturated": saturated or bool(velocity_result.get("saturated", false)),
+	}
+
+
+static func _compute_velocity_tracking_force(
+	motor: SimulationMotorState,
+	observed_velocity_mps: float,
+	desired_velocity_mps: float,
+	carriage_mass_kg: float,
+	brake_hold: bool
+) -> Dictionary:
+	var effective_mass := maxf(carriage_mass_kg, MIN_CARRIAGE_MASS_KG)
+	var velocity_error := desired_velocity_mps - observed_velocity_mps
+	var response_time := VELOCITY_RESPONSE_TIME_S
+	if brake_hold:
+		response_time /= STOP_BRAKE_DAMPING_SCALE
+	var max_accel := motor.force_limit_n / effective_mass
+	var desired_accel := clampf(
+		velocity_error / maxf(response_time, 0.0001),
+		-max_accel,
+		max_accel
+	)
+	var force_n := effective_mass * desired_accel
 	var saturated := absf(force_n) >= motor.force_limit_n - 0.001
 	force_n = clampf(force_n, -motor.force_limit_n, motor.force_limit_n)
 	return {"force_n": force_n, "saturated": saturated}

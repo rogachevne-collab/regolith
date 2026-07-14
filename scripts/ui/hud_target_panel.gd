@@ -341,7 +341,9 @@ func _refresh_actuator_info(meta: Dictionary, status: StringName) -> bool:
 	_set_machine_progress_visible(false)
 	var observed := float(meta.get("piston_observed_position_m", 0.0))
 	var target := float(meta.get("piston_target_position_m", observed))
-	var speed := float(meta.get("piston_speed_limit_mps", 0.0))
+	var extend_speed := float(meta.get("piston_extend_velocity_mps", 0.0))
+	var retract_speed := float(meta.get("piston_retract_velocity_mps", 0.0))
+	var target_velocity := float(meta.get("piston_target_velocity_mps", 0.0))
 	var powered := bool(meta.get("piston_powered", false))
 	var enabled := bool(meta.get("piston_motor_enabled", true))
 	var actuator_status := StringName(meta.get("actuator_status", status))
@@ -381,8 +383,14 @@ func _refresh_actuator_info(meta: Dictionary, status: StringName) -> bool:
 	_machine_recipe_box.visible = false
 	_machine_hints.visible = true
 	_machine_hints.text = (
-		"СК %.2f М/С · [+] выдвиж · [-] втяж · Y стоп" % speed
+		"ВЫД %.2f · ВТЯ %.2f М/С · [+] выдв · [-] втяг · Y стоп"
+		% [extend_speed, retract_speed]
 	)
+	if absf(target_velocity) > 0.0001:
+		_status_val.text = (
+			"%s · %.2f М/С"
+			% [_status_summary(meta, actuator_status), target_velocity]
+		)
 	return true
 
 

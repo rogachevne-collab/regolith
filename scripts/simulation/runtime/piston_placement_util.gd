@@ -138,6 +138,9 @@ static func enrich_interaction_metadata(
 	metadata["piston_lower_limit_m"] = motor.lower_limit_m
 	metadata["piston_upper_limit_m"] = motor.upper_limit_m
 	metadata["piston_speed_limit_mps"] = motor.speed_limit_mps
+	metadata["piston_extend_velocity_mps"] = motor.extend_velocity_mps
+	metadata["piston_retract_velocity_mps"] = motor.retract_velocity_mps
+	metadata["piston_target_velocity_mps"] = motor.clamp_target_velocity()
 	metadata["piston_powered"] = PistonProjectionUtil.is_piston_powered(
 		world,
 		joint.element_a_id
@@ -154,7 +157,9 @@ static func _display_target_position_m(motor: SimulationMotorState) -> float:
 		SimulationMotorState.ControlMode.POSITION:
 			return motor.clamp_target_position()
 		SimulationMotorState.ControlMode.VELOCITY:
-			return motor.observed_position_m
+			if motor.clamp_target_velocity() >= 0.0:
+				return motor.upper_limit_m
+			return motor.lower_limit_m
 	return motor.observed_position_m
 
 

@@ -1130,16 +1130,17 @@ func _try_actuator_extend(hit: InteractionHit) -> bool:
 	var joint_id := int(hit.metadata.get("piston_joint_id", 0))
 	if joint_id <= 0:
 		return false
+	var extend_velocity := float(
+		hit.metadata.get("piston_extend_velocity_mps", 0.25)
+	)
 	command_requested.emit({
 		"kind": &"set_actuator_target",
 		"source": get_parent(),
 		"target": hit.snapshot(),
 		"parameters": {
 			"joint_id": joint_id,
-			"mode": SimulationMotorState.ControlMode.POSITION,
-			"target_position_m": float(
-				hit.metadata.get("piston_upper_limit_m", 0.0)
-			),
+			"mode": SimulationMotorState.ControlMode.VELOCITY,
+			"target_velocity_mps": extend_velocity,
 			"enabled": true,
 		},
 	})
@@ -1152,16 +1153,17 @@ func _try_actuator_retract(hit: InteractionHit) -> bool:
 	var joint_id := int(hit.metadata.get("piston_joint_id", 0))
 	if joint_id <= 0:
 		return false
+	var retract_velocity := float(
+		hit.metadata.get("piston_retract_velocity_mps", 0.25)
+	)
 	command_requested.emit({
 		"kind": &"set_actuator_target",
 		"source": get_parent(),
 		"target": hit.snapshot(),
 		"parameters": {
 			"joint_id": joint_id,
-			"mode": SimulationMotorState.ControlMode.POSITION,
-			"target_position_m": float(
-				hit.metadata.get("piston_lower_limit_m", 0.0)
-			),
+			"mode": SimulationMotorState.ControlMode.VELOCITY,
+			"target_velocity_mps": -retract_velocity,
 			"enabled": true,
 		},
 	})

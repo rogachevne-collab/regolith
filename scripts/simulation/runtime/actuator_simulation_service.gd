@@ -26,6 +26,8 @@ static func apply_set_actuator_target(
 	motor.control_mode = command.mode
 	if command.speed_limit_mps >= 0.0:
 		motor.speed_limit_mps = command.speed_limit_mps
+		motor.extend_velocity_mps = command.speed_limit_mps
+		motor.retract_velocity_mps = command.speed_limit_mps
 	match command.mode:
 		SimulationMotorState.ControlMode.POSITION:
 			motor.target_position_m = command.target_position_m
@@ -109,13 +111,14 @@ static func _update_joint_status(
 		return
 	if motor.status == SimulationMotorState.Status.OVERLOADED:
 		return
-	if motor.status == SimulationMotorState.Status.STUCK:
-		return
 
-	var error := absf(motor.position_error())
+	var position_progress_m := absf(
+		motor.observed_position_m - motor.status_reference_position_m
+	)
 	var moving := (
 		absf(motor.observed_velocity_mps)
 		> SimulationMotorState.OVERLOAD_VELOCITY_MPS
+		or position_progress_m > SimulationMotorState.STATUS_POSITION_PROGRESS_M
 	)
 	var pushing_outward := _pushing_outward(motor)
 	if (
@@ -143,13 +146,20 @@ static func _update_joint_status(
 
 	var tracking := (
 		motor.control_mode == SimulationMotorState.ControlMode.POSITION
-		and error > SimulationMotorState.OVERLOAD_ERROR_M
+		and absf(motor.position_error()) > SimulationMotorState.OVERLOAD_ERROR_M
 	) or (
 		motor.control_mode == SimulationMotorState.ControlMode.VELOCITY
 		and absf(motor.target_velocity_mps) > 0.0001
 	)
 	if tracking and not moving:
-		if motor.force_saturated:
+		var pushing_hard := (
+			motor.applied_force_n >= motor.force_limit_n * 0.6
+		)
+		var low_effort := (
+			motor.applied_force_n
+			< motor.force_limit_n * SimulationMotorState.STUCK_FORCE_FRACTION
+		)
+		if motor.force_saturated or pushing_hard:
 			motor.saturation_time_s += delta_s
 			motor.stuck_time_s = 0.0
 			if motor.saturation_time_s >= SimulationMotorState.OVERLOAD_SATURATION_S:
@@ -158,12 +168,16 @@ static func _update_joint_status(
 				motor.target_position_m = motor.observed_position_m
 				motor.target_velocity_mps = 0.0
 				return
-		else:
+		elif low_effort:
 			motor.stuck_time_s += delta_s
 			motor.saturation_time_s = 0.0
 			if motor.stuck_time_s >= SimulationMotorState.STUCK_SATURATION_S:
 				motor.status = SimulationMotorState.Status.STUCK
 				return
+		else:
+			motor.saturation_time_s = 0.0
+			motor.stuck_time_s = 0.0
+			motor.status = SimulationMotorState.Status.MOVING
 	else:
 		if motor.status != SimulationMotorState.Status.OVERLOADED:
 			motor.saturation_time_s = 0.0
@@ -176,6 +190,8 @@ static func _update_joint_status(
 			motor.status = SimulationMotorState.Status.IDLE
 	else:
 		motor.status = SimulationMotorState.Status.IDLE
+
+	motor.status_reference_position_m = motor.observed_position_m
 
 
 static func _pushing_outward(motor: SimulationMotorState) -> bool:

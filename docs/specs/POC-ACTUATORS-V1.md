@@ -91,6 +91,8 @@ PistonDefinition {
   lower_limit_m
   upper_limit_m
   default_speed_limit_mps
+  extend_velocity_mps
+  retract_velocity_mps
   force_limit_n
   stiffness_n_per_m
   damping_n_s_per_m
@@ -109,7 +111,7 @@ Validator отклоняет definition, если:
 - limits не удовлетворяют
   `0 <= lower_limit_m < upper_limit_m`;
 - retracted offset лежит вне limits;
-- speed, force, stiffness, damping или power draw отрицательны;
+- extend/retract velocity, force, stiffness, damping или power draw отрицательны;
 - overload policy отличается от `stop`;
 - у base нет ровно одного internal mechanical port `piston_drive`;
 - у head нет сопряжённого internal port `piston_carriage`;
@@ -249,11 +251,14 @@ SetActuatorTargetCommand {
 
 Семантика:
 
-- `position`: target clamp в `[lower_limit, upper_limit]`; знак velocity
-  выбирается по position error;
+- `position`: target clamp в `[lower_limit, upper_limit]`; движение с
+  постоянной скоростью `extend_velocity_mps` / `retract_velocity_mps` по знаку
+  error до arrive epsilon;
 - `velocity`: target velocity clamp в
-  `[-speed_limit, +speed_limit]`; движение останавливается на travel limit;
-- `stop`: target velocity 0, удержание текущей observed position;
+  `[-retract_velocity_mps, +extend_velocity_mps]`; primary gameplay mode
+  (клик `+` / `-` задаёт signed velocity как в Space Engineers); останавливается
+  на travel limit или по `Y`;
+- `stop`: target velocity 0, усиленное торможение по оси;
 - `enabled = false`: motor force 0, constraint и limits остаются;
 - неизвестный, broken или неоперационный joint возвращает typed failure и не
   меняет state.
@@ -298,23 +303,39 @@ Dynamic head position не меняет topology electric graph. Electric wire
 
 ### Motor
 
-Motor — force-limited spring/damper controller вдоль свободной оси:
+Motor — force-limited velocity tracker вдоль свободной оси (модель Space Engineers:
+signed velocity, без пружины):
 
 ```text
-position mode:
-  desired_velocity = clamp(position_error * response_gain, speed_limit)
+velocity mode (primary gameplay):
+  desired_velocity = clamp(target_velocity, -retract_velocity, +extend_velocity)
 
-velocity mode:
-  desired_velocity = target_velocity
+position mode (API / MoveToPosition):
+  desired_velocity = sign(error) * velocity_limit_for_sign(error)
+  stop when |error| <= arrive_epsilon
+
+stop mode:
+  desired_velocity = 0
 
 force =
   clamp(
-    stiffness * position_error
-    + damping * (desired_velocity - observed_velocity),
+    carriage_mass * clamp((desired_velocity - observed_velocity) / response_time,
+                          -force_limit / carriage_mass, +force_limit / carriage_mass)
+    + axial_load_hold(carriage_mass, axis, gravity),
     -force_limit,
     +force_limit
   )
 ```
+
+`carriage_mass` — сумма `total_mass_kg` всех элементов head body group (бур,
+каркас на голове). `axial_load_hold` компенсирует вес каретки вдоль оси при
+включённом motor (SE: piston не пассивный). Без питания hold не применяется.
+При `applied_force >= 0.6 * force_limit` без движения статус `overloaded`, не
+`stuck`.
+
+`stiffness_n_per_m` остаётся в схеме для совместимости сейвов, но в projection
+не участвует. Положительная velocity выдвигает, отрицательная втягивает,
+ноль — стоп с усиленным торможением.
 
 Для dynamic base сила применяется к base и head равными противоположными
 значениями в joint anchors. Для static base — только к head. Constraint solver
@@ -356,10 +377,12 @@ Definitions:
 
 - `joint_limit`: command продолжает вести наружу, position находится в пределах
   `0.005 m` от соответствующего limit;
-- `stuck`: commanded error больше `0.02 m`, axial speed меньше `0.01 m/s`, но
-  force ещё не насыщена, в течение `0.5 s`;
-- `overloaded`: commanded error больше `0.02 m`, axial speed меньше
-  `0.01 m/s`, motor force насыщена не менее `0.5 s`;
+- `stuck`: tracking, нет осевого прогресса (speed и delta position ниже порога),
+  applied force ниже `10%` force limit, в течение `0.5 s`;
+- `overloaded`: tracking, нет осевого прогресса, motor force насыщена или выше
+  `60%` force limit не менее `0.5 s`;
+- `moving`: осевой speed выше `0.003 m/s` **или** заметный прогресс position
+  между тиками;
 - saturation timer сбрасывается при stop, reverse, power loss или когда error /
   velocity выходят из overload predicates.
 

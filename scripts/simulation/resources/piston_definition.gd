@@ -7,6 +7,8 @@ extends Resource
 @export var lower_limit_m: float = 0.0
 @export var upper_limit_m: float = 2.0
 @export var default_speed_limit_mps: float = 0.25
+@export var extend_velocity_mps: float = 0.25
+@export var retract_velocity_mps: float = 0.25
 @export var force_limit_n: float = 5000.0
 @export var stiffness_n_per_m: float = 8000.0
 @export var damping_n_s_per_m: float = 400.0
@@ -63,6 +65,8 @@ func validate_base_archetype(base_archetype: ElementArchetype) -> Array[String]:
 		errors.append("retracted offset outside travel limits")
 	if (
 		default_speed_limit_mps < 0.0
+		or extend_velocity_mps < 0.0
+		or retract_velocity_mps < 0.0
 		or force_limit_n <= 0.0
 		or stiffness_n_per_m < 0.0
 		or damping_n_s_per_m < 0.0

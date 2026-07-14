@@ -9,7 +9,9 @@ const PISTON_DRIVE_PORT := "piston_drive"
 const PISTON_CARRIAGE_PORT := "piston_carriage"
 
 const OVERLOAD_ERROR_M := 0.02
-const OVERLOAD_VELOCITY_MPS := 0.01
+const OVERLOAD_VELOCITY_MPS := 0.003
+const STATUS_POSITION_PROGRESS_M := 0.00003
+const STUCK_FORCE_FRACTION := 0.1
 const LIMIT_EPSILON_M := 0.005
 const OVERLOAD_SATURATION_S := 0.5
 const STUCK_SATURATION_S := 0.5
@@ -38,6 +40,8 @@ var control_mode: ControlMode = ControlMode.STOP
 var target_position_m: float = 0.0
 var target_velocity_mps: float = 0.0
 var speed_limit_mps: float = 0.25
+var extend_velocity_mps: float = 0.25
+var retract_velocity_mps: float = 0.25
 var force_limit_n: float = 5000.0
 var lower_limit_m: float = 0.0
 var upper_limit_m: float = 2.0
@@ -54,13 +58,22 @@ var status: Status = Status.IDLE
 var saturation_time_s: float = 0.0
 var stuck_time_s: float = 0.0
 var force_saturated: bool = false
+var status_reference_position_m: float = 0.0
 
 
 static func from_piston_definition(definition: PistonDefinition) -> SimulationMotorState:
 	var motor: SimulationMotorState = _SCRIPT.new()
 	motor.target_position_m = definition.retracted_offset_m
 	motor.observed_position_m = definition.retracted_offset_m
-	motor.speed_limit_mps = definition.default_speed_limit_mps
+	motor.status_reference_position_m = definition.retracted_offset_m
+	var extend_v := definition.extend_velocity_mps
+	var retract_v := definition.retract_velocity_mps
+	if extend_v <= 0.0 and retract_v <= 0.0:
+		extend_v = definition.default_speed_limit_mps
+		retract_v = definition.default_speed_limit_mps
+	motor.extend_velocity_mps = extend_v
+	motor.retract_velocity_mps = retract_v
+	motor.speed_limit_mps = maxf(extend_v, retract_v)
 	motor.force_limit_n = definition.force_limit_n
 	motor.lower_limit_m = definition.lower_limit_m
 	motor.upper_limit_m = definition.upper_limit_m
@@ -75,8 +88,14 @@ func clamp_target_position() -> float:
 	return clampf(target_position_m, lower_limit_m, upper_limit_m)
 
 
+func velocity_limit_for_sign(sign: float) -> float:
+	return extend_velocity_mps if sign >= 0.0 else retract_velocity_mps
+
+
 func clamp_target_velocity() -> float:
-	return clampf(target_velocity_mps, -speed_limit_mps, speed_limit_mps)
+	if target_velocity_mps >= 0.0:
+		return clampf(target_velocity_mps, 0.0, extend_velocity_mps)
+	return clampf(target_velocity_mps, -retract_velocity_mps, 0.0)
 
 
 func clamp_observed_position() -> float:
@@ -101,6 +120,8 @@ func to_dict() -> Dictionary:
 		"target_position_m": target_position_m,
 		"target_velocity_mps": target_velocity_mps,
 		"speed_limit_mps": speed_limit_mps,
+		"extend_velocity_mps": extend_velocity_mps,
+		"retract_velocity_mps": retract_velocity_mps,
 		"force_limit_n": force_limit_n,
 		"lower_limit_m": lower_limit_m,
 		"upper_limit_m": upper_limit_m,
@@ -116,6 +137,7 @@ func to_dict() -> Dictionary:
 		"saturation_time_s": saturation_time_s,
 		"stuck_time_s": stuck_time_s,
 		"force_saturated": force_saturated,
+		"status_reference_position_m": status_reference_position_m,
 	}
 
 
@@ -125,6 +147,12 @@ static func from_dict(data: Dictionary) -> SimulationMotorState:
 	motor.target_position_m = float(data.get("target_position_m", 0.0))
 	motor.target_velocity_mps = float(data.get("target_velocity_mps", 0.0))
 	motor.speed_limit_mps = float(data.get("speed_limit_mps", 0.25))
+	motor.extend_velocity_mps = float(
+		data.get("extend_velocity_mps", motor.speed_limit_mps)
+	)
+	motor.retract_velocity_mps = float(
+		data.get("retract_velocity_mps", motor.speed_limit_mps)
+	)
 	motor.force_limit_n = float(data.get("force_limit_n", 5000.0))
 	motor.lower_limit_m = float(data.get("lower_limit_m", 0.0))
 	motor.upper_limit_m = float(data.get("upper_limit_m", 2.0))
@@ -144,6 +172,9 @@ static func from_dict(data: Dictionary) -> SimulationMotorState:
 	motor.saturation_time_s = float(data.get("saturation_time_s", 0.0))
 	motor.stuck_time_s = float(data.get("stuck_time_s", 0.0))
 	motor.force_saturated = bool(data.get("force_saturated", false))
+	motor.status_reference_position_m = float(
+		data.get("status_reference_position_m", motor.observed_position_m)
+	)
 	motor.observed_position_m = motor.clamp_observed_position()
 	return motor
 

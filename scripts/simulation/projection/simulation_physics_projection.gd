@@ -556,6 +556,10 @@ func _project_assembly_multibody(
 		else assembly.motion
 	)
 	var groups_map: Dictionary = {}
+	var carriage_group_ids: Dictionary = {}
+	for spec_variant: Variant in compiled.get("piston_specs", []):
+		if spec_variant is Dictionary:
+			carriage_group_ids[int(spec_variant.get("head_group_id", 0))] = true
 	for group_id: int in _sorted_int_keys(groups):
 		var members: Array = groups[group_id]
 		var element_ids: Array[int] = []
@@ -563,6 +567,7 @@ func _project_assembly_multibody(
 			element_ids.append(int(member_variant))
 		var is_root := group_id == root_group_id
 		var is_static := is_root and _world.assembly_has_anchor(assembly_id)
+		var is_carriage := carriage_group_ids.has(group_id)
 		var body := _create_group_body(assembly_id, group_id, is_static)
 		var records: Array[Dictionary] = (
 			PistonProjectionUtil.build_collision_shapes_for_elements(
@@ -605,8 +610,11 @@ func _project_assembly_multibody(
 				rigid.angular_velocity = seed_motion.angular_velocity
 				rigid.sleeping = seed_motion.sleeping
 				rigid.freeze = false
-				if _impact_service != null:
+				# Jolt ignores apply_central_force when custom_integrator is on.
+				if _impact_service != null and not is_carriage:
 					_impact_service.configure_rigid_body(rigid)
+				elif is_carriage:
+					rigid.custom_integrator = false
 		add_child(body)
 		_apply_collision_profile(assembly_id, body)
 		_apply_body_groups(assembly_id, body)
@@ -695,6 +703,10 @@ func _project_assembly_multibody(
 			"base_anchor_local": base_anchor,
 			"head_anchor_local": head_anchor,
 			"axis_local": axis_local,
+			"carriage_element_ids": groups.get(
+				int(spec.get("head_group_id", 0)),
+				[]
+			),
 		})
 	_piston_constraints[assembly_id] = piston_records
 	var motion: AssemblyMotionState = seed_motion.duplicate_state()
@@ -831,11 +843,28 @@ func _tick_piston_actuators(delta: float) -> void:
 				_world,
 				sim_joint.element_a_id
 			)
+			var head_mass := PistonProjectionUtil.carriage_mass_kg(
+				_world,
+				record.get("carriage_element_ids", [])
+			)
+			var gravity := Vector3(
+				0.0,
+				-float(
+					ProjectSettings.get_setting(
+						"physics/3d/default_gravity",
+						9.8
+					)
+				),
+				0.0
+			)
 			var force_result: Dictionary = (
 				PistonProjectionUtil.compute_motor_force_scalar(
 					sim_joint.motor,
 					float(measured.get("relative_velocity_mps", 0.0)),
-					powered
+					powered,
+					head_mass,
+					axis_world,
+					gravity
 				)
 			)
 			var force_n := float(force_result.get("force_n", 0.0))
