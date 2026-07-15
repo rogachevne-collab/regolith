@@ -93,7 +93,21 @@ electric budget, что у Industry v1.
 
 ## Archetypes
 
-Все новые модули — footprint `1×1×1` в общей grid 0.5 m, кладутся в
+Все новые модули кладутся в общую grid **0.5 m** (аналог **small grid** Space
+Engineers). Footprint — multi-cell, как у production-блоков; один box-collider
+может покрывать несколько cells (`CONSTRUCTION-V1` § «Масштаб production
+archetypes»).
+
+| `archetype_id` | SE-аналог (small grid) | Footprint cells | Физический габарит |
+|---|---|---:|---:|
+| `rover_frame` | Light Armor Block | 1×1×1 | 0.5×0.5×0.5 m |
+| `wheel_suspension` | Suspension strut | 1×2×1 | 0.5×1×0.5 m |
+| `drive_wheel` | Wheel | 1×1×1 | 0.5×0.5×0.5 m |
+| `cockpit` | Cockpit / control seat | 3×2×2 | 1.5×1×1 m |
+| `power_battery_small` | Battery | 2×3×2 | 1×1.5×1 m |
+| `power_distributor_small` | Power hub cube | 2×2×2 | 1×1×1 m |
+
+Кладутся в
 `resources/archetypes/slice01/` (ограничение
 `WorldCommandGateway._get_archetype()` — player construction грузит только
 `Slice01Archetypes`).
