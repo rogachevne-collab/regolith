@@ -26,6 +26,7 @@ func _run_tests() -> void:
 		_test_subgrid_immunity_ignores_same_assembly,
 		_test_sustained_actuator_carves_terrain,
 		_test_sustained_actuator_damages_striker,
+		_test_kinetic_loot_threshold,
 	]
 	for test: Callable in tests:
 		if not bool(await test.call()):
@@ -189,6 +190,62 @@ func _test_sustained_actuator_damages_striker() -> bool:
 	_free_fixture(fixture)
 	if integrity_after >= integrity_before:
 		return _fail("sustained-scale impulse did not damage striker")
+	return true
+
+
+func _test_kinetic_loot_threshold() -> bool:
+	var fixture := await _new_fixture()
+	var spawn := _spawn_single(fixture.world)
+	if not spawn.is_ok():
+		_free_fixture(fixture)
+		return _fail("loot spawn failed")
+	var element_id := int(spawn.data["element_ids"][0])
+	var body: RigidBody3D = fixture.projection.get_physics_body(
+		int(spawn.data["assembly_id"])
+	) as RigidBody3D
+	if body == null:
+		_free_fixture(fixture)
+		return _fail("loot body missing")
+	var weak_entry := {
+		"batch_key": "loot_weak",
+		"striker_element_id": element_id,
+		"striker_body": body,
+		"local_shape_index": 0,
+		"partner": fixture.terrain,
+		"impulse_length": 8.0,
+		"contact_world": Vector3(0.5, 0.0, 0.5),
+		"contact_points": PackedVector3Array([Vector3(0.5, 0.0, 0.5)]),
+		"contact_impulses": PackedFloat32Array([8.0]),
+	}
+	fixture.impact_service.apply_entry_for_test(weak_entry)
+	if not fixture.world.list_world_loot_piles().is_empty():
+		_free_fixture(fixture)
+		return _fail("sub-threshold impact dropped loot")
+	var strong_entry := weak_entry.duplicate(true)
+	strong_entry["batch_key"] = "loot_strong"
+	strong_entry["impulse_length"] = 36.0
+	strong_entry["contact_world"] = Vector3(3.5, 0.0, 3.5)
+	strong_entry["striker_body"] = body
+	strong_entry["partner"] = fixture.terrain
+	var carved: float = fixture.impact_service.apply_entry_for_test(
+		strong_entry
+	)
+	var piles: Array[Dictionary] = fixture.world.list_world_loot_piles()
+	_free_fixture(fixture)
+	if carved <= 0.0:
+		return _fail("loot impact carved nothing")
+	if piles.is_empty():
+		return _fail("above-threshold impact dropped no loot")
+	var mass := float(piles[0].get("amount_kg", 0.0))
+	var expected := (
+		carved
+		* TerrainMaterialSource.REGOLITH_DENSITY_KG_PER_M3
+		* ImpactResolver.KINETIC_COLLECTIBLE_FRACTION
+	)
+	if absf(mass - expected) > expected * 0.05 + 0.001:
+		return _fail(
+			"loot mass %.2f != expected %.2f" % [mass, expected]
+		)
 	return true
 
 

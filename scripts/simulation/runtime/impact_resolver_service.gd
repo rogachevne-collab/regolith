@@ -21,6 +21,7 @@ var _cooldown_until: Dictionary = {}
 var _tracked_bodies: Dictionary = {}
 var _pre_step_velocity: Dictionary = {}
 var _last_sustained_contact: Dictionary = {}
+var _material_source := TerrainMaterialSource.new()
 var last_terrain_carve_m3: float = 0.0
 
 
@@ -490,8 +491,32 @@ func _apply_entry(
 		and ImpactResolver.is_world_surface_partner(partner)
 	):
 		used_volume = _apply_terrain_carve(entry, strength, volume_budget_m3)
+		if used_volume > 0.0 and ImpactResolver.is_terrain_partner(partner):
+			_drop_kinetic_loot(entry, impulse_length, used_volume)
 	_apply_element_damage(striker_element_id, impulse_length)
 	return used_volume
+
+
+## V2-4: strong-enough impacts leave part of the carved regolith as a
+## world loot pile at the crater; weak taps carve but yield nothing.
+func _drop_kinetic_loot(
+	entry: Dictionary,
+	impulse_length: float,
+	carved_m3: float
+) -> void:
+	if _world == null or impulse_length < ImpactResolver.I_LOOT:
+		return
+	var yields := _material_source.yield_for_removed_volume(
+		carved_m3,
+		ImpactResolver.KINETIC_COLLECTIBLE_FRACTION
+	)
+	var contact_world := Vector3(entry.get("contact_world", Vector3.ZERO))
+	for yield_entry: Dictionary in yields:
+		_world.add_world_loot_pile(
+			contact_world,
+			String(yield_entry.get("resource_id", "")),
+			float(yield_entry.get("mass_kg", 0.0))
+		)
 
 
 func _apply_terrain_carve(

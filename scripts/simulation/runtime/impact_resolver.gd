@@ -5,6 +5,12 @@ const I_MIN := 4.0
 const I_REF := 24.0
 const K_DAMAGE := 0.35
 const V_MAX_M3 := 2.0
+## Kinetic loot threshold: below this impulse a carve yields nothing, so
+## junk taps cannot be farmed (V2-4).
+const I_LOOT := 12.0
+## Impacts scatter regolith — collection efficiency is well below the
+## drill's 1.0. Balance knob.
+const KINETIC_COLLECTIBLE_FRACTION := 0.35
 
 
 static func impulse_strength(impulse_length: float) -> float:
