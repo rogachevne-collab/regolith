@@ -13,6 +13,8 @@ var _gateway: WorldCommandGateway
 var _frame_batch: Dictionary = {}
 var _flush_scheduled := false
 var _cooldown_until: Dictionary = {}
+var _tracked_bodies: Dictionary = {}
+var _pre_step_velocity: Dictionary = {}
 var last_terrain_carve_m3: float = 0.0
 
 
@@ -29,7 +31,32 @@ func unbind() -> void:
 	_gateway = null
 	_frame_batch.clear()
 	_cooldown_until.clear()
+	_tracked_bodies.clear()
+	_pre_step_velocity.clear()
 	_flush_scheduled = false
+
+
+## Contact signals fire after the physics step, when the collision has
+## already been resolved and linear_velocity is post-impact. Cache each
+## monitored body's velocity before the step so J_fallback sees the
+## incoming velocity (known Godot contact-signal pitfall).
+func _physics_process(_delta: float) -> void:
+	var stale: Array = []
+	for body_id: int in _tracked_bodies:
+		var body: RigidBody3D = _tracked_bodies[body_id]
+		if body == null or not is_instance_valid(body) or not body.is_inside_tree():
+			stale.append(body_id)
+			continue
+		_pre_step_velocity[body_id] = body.linear_velocity
+	for body_id: int in stale:
+		_tracked_bodies.erase(body_id)
+		_pre_step_velocity.erase(body_id)
+
+
+func pre_step_velocity(body: RigidBody3D) -> Vector3:
+	if body == null:
+		return Vector3.ZERO
+	return _pre_step_velocity.get(body.get_instance_id(), body.linear_velocity)
 
 
 func configure_rigid_body(body: RigidBody3D) -> void:
@@ -45,9 +72,15 @@ func configure_impact_body(
 	body.contact_monitor = true
 	body.max_contacts_reported = 8
 	body.continuous_cd = true
-	body.custom_integrator = mode == ImpactBodyMode.FULL
+	# Never enable custom_integrator: the Jolt module silently drops
+	# apply_force/apply_central_force/apply_torque and skips gravity and
+	# damping for such bodies (jolt_body_3d.cpp), which breaks piston and
+	# wheel forces. Contact impulses are step-time estimates delivered to
+	# _integrate_forces regardless of this flag.
+	body.custom_integrator = false
 	body.set_meta("impact_monitoring", true)
 	body.set_meta("impact_body_mode", mode)
+	_tracked_bodies[body.get_instance_id()] = body
 	body.body_shape_entered.connect(
 		func(
 			body_rid: RID,
@@ -124,10 +157,8 @@ func _on_body_shape_entered(
 ) -> void:
 	if body == null or body.freeze or other_body == null:
 		return
-	# FULL bodies use custom_integrator; integrate_contacts owns terrain + assembly.
-	if body.custom_integrator:
-		return
-	if not ImpactResolver.is_world_surface_partner(other_body):
+	var is_world_surface := ImpactResolver.is_world_surface_partner(other_body)
+	if not is_world_surface and not ImpactResolver.is_assembly_partner(other_body):
 		return
 	var assembly_id := int(body.get_meta("assembly_id", 0))
 	if assembly_id <= 0:
@@ -142,16 +173,26 @@ func _on_body_shape_entered(
 	)
 	if striker_element_id <= 0:
 		return
-	var contact_world := _contact_point_on_body(body, local_shape_index)
+	var inbound_velocity := pre_step_velocity(body)
+	var contact_world := _contact_point_on_body(
+		body,
+		local_shape_index,
+		inbound_velocity
+	)
 	var contact_normal := _contact_normal_toward_partner(
 		body,
 		contact_world,
-		other_body
+		other_body,
+		inbound_velocity
 	)
+	var partner_velocity := Vector3.ZERO
+	if other_body is RigidBody3D:
+		partner_velocity = pre_step_velocity(other_body as RigidBody3D)
 	var impulse_length := ImpactResolver.fallback_impulse_length(
 		body,
 		other_body,
-		contact_normal
+		contact_normal,
+		inbound_velocity - partner_velocity
 	)
 	if impulse_length < ImpactResolver.I_MIN:
 		return
@@ -171,6 +212,8 @@ func _on_body_shape_entered(
 		"partner": other_body,
 		"impulse_length": impulse_length,
 		"contact_world": contact_world,
+		"contact_normal": contact_normal,
+		"inbound_velocity": inbound_velocity,
 		"contact_points": PackedVector3Array([contact_world]),
 		"contact_impulses": PackedFloat32Array([impulse_length]),
 	})
@@ -210,6 +253,11 @@ func integrate_contacts(
 			partner = _terrain_partner()
 		if partner == null:
 			continue
+		if (
+			not ImpactResolver.is_world_surface_partner(partner)
+			and not ImpactResolver.is_assembly_partner(partner)
+		):
+			continue
 		if ImpactResolver.same_assembly_subgrid(assembly_id, partner):
 			continue
 		var partner_key := ImpactResolver.partner_key_from_object(partner)
@@ -223,47 +271,52 @@ func integrate_contacts(
 		var contact_world := body.to_global(
 			state.get_contact_local_position(contact_index)
 		)
-		var effective_impulse := impulse_length
-		if ImpactResolver.is_world_surface_partner(partner):
-			effective_impulse = maxf(
-				effective_impulse,
-				ImpactResolver.fallback_impulse_length(
-					body,
-					partner,
-					world_normal
-				)
+		# Contact velocities are captured pre-solve by the Jolt contact
+		# listener; body.linear_velocity here is already post-impact.
+		var contact_relative_velocity := (
+			state.get_contact_local_velocity_at_position(contact_index)
+			- state.get_contact_collider_velocity_at_position(contact_index)
+		)
+		var inbound_velocity := pre_step_velocity(body)
+		var effective_impulse := maxf(
+			impulse_length,
+			ImpactResolver.fallback_impulse_length(
+				body,
+				partner,
+				world_normal,
+				contact_relative_velocity
 			)
+		)
 		if effective_impulse < ImpactResolver.I_MIN:
 			continue
-		var entry: Dictionary = _frame_batch.get(batch_key, {})
-		if entry.is_empty():
-			entry = {
-				"batch_key": batch_key,
-				"striker_element_id": striker_element_id,
-				"striker_body": body,
-				"local_shape_index": local_shape_index,
-				"partner": partner,
-				"impulse_length": effective_impulse,
-				"contact_world": contact_world,
-				"contact_normal": world_normal,
-				"inbound_velocity": body.linear_velocity,
-				"contact_points": PackedVector3Array(),
-				"contact_impulses": PackedFloat32Array(),
-			}
-		else:
-			if effective_impulse >= float(entry.get("impulse_length", 0.0)):
-				entry["impulse_length"] = effective_impulse
-				entry["contact_world"] = contact_world
-				entry["contact_normal"] = world_normal
-				entry["inbound_velocity"] = body.linear_velocity
-		_queue_entry(entry)
+		_queue_entry({
+			"batch_key": batch_key,
+			"striker_element_id": striker_element_id,
+			"striker_body": body,
+			"local_shape_index": local_shape_index,
+			"partner": partner,
+			"impulse_length": effective_impulse,
+			"contact_world": contact_world,
+			"contact_normal": world_normal,
+			"inbound_velocity": inbound_velocity,
+			"contact_points": PackedVector3Array(),
+			"contact_impulses": PackedFloat32Array(),
+		})
 
 
+## Entries from different J sources (contact estimate, fallback, sustained)
+## may target the same pair in one frame — spec combines them by max.
 func _queue_entry(entry: Dictionary) -> void:
 	var batch_key := str(entry.get("batch_key", ""))
 	if batch_key.is_empty():
 		return
-	_frame_batch[batch_key] = entry
+	var existing: Dictionary = _frame_batch.get(batch_key, {})
+	if (
+		existing.is_empty()
+		or float(entry.get("impulse_length", 0.0))
+		>= float(existing.get("impulse_length", 0.0))
+	):
+		_frame_batch[batch_key] = existing.merged(entry, true)
 	if not _flush_scheduled:
 		_flush_scheduled = true
 		call_deferred("_flush_batch")
@@ -314,9 +367,12 @@ func _flush_batch() -> void:
 	var volume_budget := ImpactResolver.V_MAX_M3
 	for key: Variant in sorted_keys:
 		var entry: Dictionary = batch[key]
-		volume_budget -= _apply_entry(entry, volume_budget)
-		if volume_budget <= 0.0:
-			break
+		# Exhausted carve budget only stops terrain edits; element damage
+		# from remaining entries must still land.
+		volume_budget = maxf(
+			volume_budget - _apply_entry(entry, volume_budget),
+			0.0
+		)
 
 
 func _apply_entry(
@@ -343,7 +399,10 @@ func _apply_entry(
 	if not batch_key.is_empty():
 		_cooldown_until[batch_key] = Time.get_ticks_msec() + COOLDOWN_MS
 	var used_volume := 0.0
-	if ImpactResolver.is_world_surface_partner(partner):
+	if (
+		volume_budget_m3 > 0.0
+		and ImpactResolver.is_world_surface_partner(partner)
+	):
 		used_volume = _apply_terrain_carve(entry, strength, volume_budget_m3)
 	_apply_element_damage(striker_element_id, impulse_length)
 	return used_volume
@@ -384,16 +443,17 @@ func _apply_terrain_carve(
 
 
 func _terrain_carve_direction(entry: Dictionary) -> Vector3:
+	var inbound: Vector3 = entry.get("inbound_velocity", Vector3.ZERO)
 	var normal: Vector3 = entry.get("contact_normal", Vector3.ZERO)
 	if normal.length_squared() > 0.000001:
 		normal = normal.normalized()
-		# Jolt may report ground normal as up or down — always dig into the surface.
-		if normal.y > 0.2:
-			return -normal
-		if normal.y < -0.2:
-			return normal
-	var inbound: Vector3 = entry.get("inbound_velocity", Vector3.ZERO)
-	if inbound.y < -0.5:
+		# Jolt normal sign depends on manifold ordering — orient the dig
+		# into the surface: along the inbound motion when we have it,
+		# otherwise downward.
+		if inbound.length_squared() > 0.01:
+			return -normal if normal.dot(inbound) < 0.0 else normal
+		return -normal if normal.y > 0.0 else normal
+	if inbound.length_squared() > 0.25:
 		return inbound.normalized()
 	return Vector3.DOWN
 
@@ -461,24 +521,53 @@ func _terrain_partner() -> Object:
 func _contact_normal_toward_partner(
 	body: RigidBody3D,
 	contact_world: Vector3,
-	partner: Object
+	partner: Object,
+	inbound_velocity: Vector3 = Vector3.ZERO
 ) -> Vector3:
 	if body == null:
 		return Vector3.UP
+	if ImpactResolver.is_world_surface_partner(partner):
+		return _world_surface_normal(body, contact_world, inbound_velocity)
+	# Assembly partner: approximate with the direction between mass centers.
 	var partner_point := contact_world
 	if partner is Node3D:
 		partner_point = (partner as Node3D).global_position
 	var toward_partner := partner_point - body.global_position
-	if toward_partner.length_squared() <= 0.000001:
-		if body.linear_velocity.length_squared() > 0.01:
-			return -body.linear_velocity.normalized()
-		return Vector3.UP
-	return toward_partner.normalized()
+	if toward_partner.length_squared() > 0.000001:
+		return toward_partner.normalized()
+	if inbound_velocity.length_squared() > 0.01:
+		return inbound_velocity.normalized()
+	return Vector3.UP
+
+
+## Physics raycast along the motion direction to recover the actual surface
+## normal; the terrain node's origin says nothing about the contact plane.
+func _world_surface_normal(
+	body: RigidBody3D,
+	contact_world: Vector3,
+	inbound_velocity: Vector3
+) -> Vector3:
+	var ray_dir := Vector3.DOWN
+	if inbound_velocity.length_squared() > 0.01:
+		ray_dir = inbound_velocity.normalized()
+	var space_state := body.get_world_3d().direct_space_state
+	if space_state != null:
+		var query := PhysicsRayQueryParameters3D.create(
+			contact_world - ray_dir * 0.5,
+			contact_world + ray_dir * 0.5
+		)
+		query.exclude = [body.get_rid()]
+		query.collide_with_areas = false
+		var hit: Dictionary = space_state.intersect_ray(query)
+		if not hit.is_empty():
+			return Vector3(hit["normal"]).normalized()
+	return Vector3.UP
 
 
 func _contact_point_on_body(
 	body: RigidBody3D,
-	local_shape_index: int
+	local_shape_index: int,
+	inbound_velocity: Vector3 = Vector3.ZERO
 ) -> Vector3:
 	var collider := ImpactResolver.collider_from_shape_index(
 		body,
@@ -494,9 +583,14 @@ func _contact_point_on_body(
 		return origin
 	tool.channel = VoxelBuffer.CHANNEL_SDF
 	var terrain: Node3D = _gateway.get_node_or_null(_gateway.terrain_path)
+	# Probe along the motion direction — the surface we hit lies ahead of
+	# the collider, not behind it.
 	var ray_dir := Vector3.DOWN
-	if body.linear_velocity.length_squared() > 0.01:
-		ray_dir = -body.linear_velocity.normalized()
+	var motion := inbound_velocity
+	if motion == Vector3.ZERO:
+		motion = body.linear_velocity
+	if motion.length_squared() > 0.01:
+		ray_dir = motion.normalized()
 	var ray_origin := origin - ray_dir * 0.25
 	var hit: VoxelRaycastResult = VoxelSpaceUtil.raycast_world(
 		tool,

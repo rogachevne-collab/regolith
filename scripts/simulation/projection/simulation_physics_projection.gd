@@ -635,7 +635,8 @@ func _project_assembly_multibody(
 				rigid.angular_velocity = seed_motion.angular_velocity
 				rigid.sleeping = seed_motion.sleeping
 				rigid.freeze = false
-				# Jolt ignores apply_central_force when custom_integrator is on.
+				# Impact bodies never enable custom_integrator (Jolt would
+				# drop piston forces); carriage keeps the signal-based mode.
 				if _impact_service != null:
 					var impact_mode := (
 						ImpactResolverService.ImpactBodyMode.MONITOR_ONLY
@@ -986,12 +987,17 @@ func _emit_piston_sustained_kinetic(
 	)
 	if striker_element_id <= 0:
 		return
+	var striker_shape_index := maxi(
+		ImpactResolver.shape_index_for_element(head_body, striker_element_id),
+		0
+	)
 	_impact_service.emit_actuator_sustained_entry(
 		striker_element_id,
 		head_body as RigidBody3D,
 		null,
 		applied_force_n,
-		delta
+		delta,
+		striker_shape_index
 	)
 
 
@@ -1075,14 +1081,16 @@ func _create_body(
 	anchored: bool
 ) -> PhysicsBody3D:
 	var body: PhysicsBody3D
-	var locomotive := _is_locomotive_assembly(assembly_id)
 	if anchored:
 		body = StaticBody3D.new()
 	else:
 		var rigid: RigidBody3D
-		if locomotive or _mounted_bodies.has(assembly_id):
+		if _mounted_bodies.has(assembly_id):
 			rigid = RigidBody3D.new()
 		else:
+			# Locomotive bodies also carry the fragment script: precise
+			# contact impulses come from _integrate_forces, and the script
+			# no longer conflicts with wheel forces (no custom integrator).
 			rigid = FragmentBodyScript.new() as RigidBody3D
 		rigid.freeze = false
 		rigid.physics_material_override = _get_assembly_physics_material()

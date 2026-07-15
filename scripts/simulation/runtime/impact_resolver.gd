@@ -61,24 +61,27 @@ static func is_terrain_partner(partner: Object) -> bool:
 static func is_world_surface_partner(partner: Object) -> bool:
 	if is_terrain_partner(partner):
 		return true
-	if partner is PhysicsBody3D:
-		return int((partner as PhysicsBody3D).get_meta("assembly_id", 0)) == 0
-	return partner is StaticBody3D
+	# Only anchored world geometry counts; players (CharacterBody3D) and
+	# loose rigid props are ignored in v1.
+	if partner is StaticBody3D:
+		return int((partner as StaticBody3D).get_meta("assembly_id", 0)) == 0
+	return false
+
+
+static func is_assembly_partner(partner: Object) -> bool:
+	if not partner is PhysicsBody3D:
+		return false
+	return int((partner as PhysicsBody3D).get_meta("assembly_id", 0)) > 0
 
 
 static func element_id_from_shape_index(
 	body: PhysicsBody3D,
 	shape_index: int
 ) -> int:
-	if body == null or shape_index < 0:
+	var collider := collider_from_shape_index(body, shape_index)
+	if collider == null:
 		return 0
-	var index := 0
-	for child: Node in body.get_children():
-		if child is CollisionShape3D:
-			if index == shape_index:
-				return int((child as CollisionShape3D).get_meta("element_id", 0))
-			index += 1
-	return 0
+	return int(collider.get_meta("element_id", 0))
 
 
 static func collider_from_shape_index(
@@ -87,13 +90,35 @@ static func collider_from_shape_index(
 ) -> CollisionShape3D:
 	if body == null or shape_index < 0:
 		return null
+	# Body shape indices are assigned per shape owner, in owner order —
+	# walk owners the same way CollisionObject3D.shape_find_owner does.
 	var index := 0
-	for child: Node in body.get_children():
-		if child is CollisionShape3D:
-			if index == shape_index:
-				return child as CollisionShape3D
-			index += 1
+	for owner_id: int in body.get_shape_owners():
+		var owner_shape_count := body.shape_owner_get_shape_count(owner_id)
+		if shape_index < index + owner_shape_count:
+			return body.shape_owner_get_owner(owner_id) as CollisionShape3D
+		index += owner_shape_count
 	return null
+
+
+static func shape_index_for_element(
+	body: PhysicsBody3D,
+	element_id: int
+) -> int:
+	if body == null or element_id <= 0:
+		return -1
+	var index := 0
+	for owner_id: int in body.get_shape_owners():
+		var owner := body.shape_owner_get_owner(owner_id)
+		var owner_shape_count := body.shape_owner_get_shape_count(owner_id)
+		if (
+			owner is CollisionShape3D
+			and int((owner as CollisionShape3D).get_meta("element_id", 0))
+			== element_id
+		):
+			return index
+		index += owner_shape_count
+	return -1
 
 
 static func same_assembly_subgrid(
@@ -110,10 +135,25 @@ static func same_assembly_subgrid(
 	return false
 
 
+## Reduced mass of the contact pair: m1·m2/(m1+m2); terrain/static ⇒ m1.
+static func effective_mass(body: RigidBody3D, partner: Object) -> float:
+	if body == null:
+		return 0.001
+	var m1 := maxf(body.mass, 0.001)
+	if partner is RigidBody3D:
+		var m2 := maxf((partner as RigidBody3D).mass, 0.001)
+		return m1 * m2 / (m1 + m2)
+	return m1
+
+
+## J = m_eff · |v_rel · n|. Pass relative_velocity explicitly when the
+## bodies' current velocities are already post-solve (contact signals fire
+## after the physics step, so linear_velocity is the bounced-off value).
 static func fallback_impulse_length(
 	body: RigidBody3D,
 	partner: Object,
-	contact_normal: Vector3
+	contact_normal: Vector3,
+	relative_velocity: Variant = null
 ) -> float:
 	if body == null:
 		return 0.0
@@ -122,12 +162,16 @@ static func fallback_impulse_length(
 		normal = Vector3.UP
 	else:
 		normal = normal.normalized()
-	var partner_velocity := Vector3.ZERO
-	if partner is RigidBody3D:
-		partner_velocity = (partner as RigidBody3D).linear_velocity
-	var v_rel := body.linear_velocity - partner_velocity
+	var v_rel: Vector3
+	if relative_velocity is Vector3:
+		v_rel = relative_velocity
+	else:
+		var partner_velocity := Vector3.ZERO
+		if partner is RigidBody3D:
+			partner_velocity = (partner as RigidBody3D).linear_velocity
+		v_rel = body.linear_velocity - partner_velocity
 	var v_sep := absf(v_rel.dot(normal))
-	return maxf(body.mass, 0.001) * v_sep
+	return effective_mass(body, partner) * v_sep
 
 
 static func assembly_has_construction_elements(

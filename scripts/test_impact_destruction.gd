@@ -303,6 +303,15 @@ func _test_shape_enter_carves_terrain() -> bool:
 	if body == null:
 		_free_fixture(fixture)
 		return _fail("shape-enter body missing")
+	if not body.has_meta("impact_monitoring"):
+		_free_fixture(fixture)
+		return _fail("dynamic assembly body missing impact monitoring")
+	if body.custom_integrator:
+		_free_fixture(fixture)
+		return _fail(
+			"impact body must not enable custom_integrator"
+			+ " (Jolt drops applied forces and gravity)"
+		)
 	body.linear_velocity = Vector3(0.0, -12.0, 0.0)
 	var tool: VoxelTool = fixture.terrain.get_voxel_tool()
 	tool.channel = VoxelBuffer.CHANNEL_SDF
