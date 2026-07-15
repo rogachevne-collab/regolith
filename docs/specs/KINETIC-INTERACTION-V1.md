@@ -1,8 +1,8 @@
 # Kinetic Interaction v1
 
 Статус: PoC-расширение Impact Destruction v0. Tier 1 (единый импульс + устойчивое
-усилие актуатора). Tier 2 (давление / yield материала) — отдельная спека позже,
-не блокирует v1.
+усилие актуатора). Продолжение (carve-бюджет, grind, VFX, лут, Tier 2
+давление/yield, урон игроку) — `KINETIC-INTERACTION-V2.md`.
 
 Родительские документы:
 
@@ -200,7 +200,7 @@ entries от carriage-контактов независимо от `machine_enab
 | Фаза | Поведение |
 |---|---|
 | **v1** | Кинетически вырезанный regolith **исчезает** (как v0 impact и `voxel_remove`). Inventory не меняется. Лут — только hand/stationary drill. |
-| **позже** | Опциональный yield при `J ≥ I_loot` — отдельная спека, v1 не блокирует. |
+| **позже** | Yield при `J ≥ I_LOOT` — см. `KINETIC-INTERACTION-V2.md` (V2-4). |
 
 ## Команды и доставка
 
