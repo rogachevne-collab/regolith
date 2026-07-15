@@ -134,33 +134,46 @@ overload — это честно к текущей физике мотора.
 Sustained эмитится только пока `applied_force_n > 0` и есть контакт (т.е. в
 saturation-окне, до перехода в STOP).
 
-## Carriage: impact monitoring без custom integrator
+## Impact bodies: custom integrator ЗАПРЕЩЁН
 
-Конфликт Jolt: полный impact-путь v0 ставит `custom_integrator = true` и читает
-контакты в `_integrate_forces`. Но пистон двигает carriage через
-`apply_central_force`, а Jolt **игнорирует** central force при
-`custom_integrator = true` — поэтому carriage сейчас принудительно
-`custom_integrator = false` и полностью выпадает из impact.
+Семантика встроенного Jolt-модуля Godot 4.5 (проверено по
+`modules/jolt_physics/objects/jolt_body_3d.cpp` и `scene/3d/physics/rigid_body_3d.cpp`):
 
-v1 разделяет два режима конфигурации rigid body (`ImpactResolverService`):
+- при `custom_integrator = true` Jolt **молча дропает**
+  `apply_force` / `apply_central_force` / `apply_torque` (early-return) и не
+  интегрирует гравитацию/демпфирование — ломаются пистон, реакция базы и
+  колёсные силы ровера;
+- виртуальный `_integrate_forces` вызывается **всегда** (state-sync callback),
+  независимо от `custom_integrator`;
+- контактные импульсы Jolt — оценка `EstimateCollisionResponse` во время шага:
+  доступны уже в **первый** кадр контакта, но приблизительны при множественных
+  контактах/joint (потому J объединяется максимумом с fallback);
+- `state.integrate_forces()` внутри callback при `custom_integrator = false`
+  добавляет гравитацию **второй раз** — вызывать нельзя.
 
-| Режим | Что ставит | Кому |
+Поэтому impact-конфигурация (`ImpactResolverService.configure_impact_body`)
+никогда не включает `custom_integrator`; оба режима ставят `contact_monitor`,
+`max_contacts_reported`, `continuous_cd`:
+
+| Режим | Источник J | Кому |
 |---|---|---|
-| `FULL` | `contact_monitor`, `max_contacts_reported`, `continuous_cd`, `custom_integrator = true`, `_integrate_forces` | обычные динамические assembly (как v0) |
-| `MONITOR_ONLY` | `contact_monitor`, `max_contacts_reported`, `continuous_cd`; **без** `custom_integrator` | carriage пистона |
+| `FULL` | contact impulse из `_integrate_forces` (оценка Jolt) ∨ `J_fallback` | динамические assembly, роверы, группы пистона |
+| `MONITOR_ONLY` | `J_fallback` (`body_shape_entered`) и `J_sustained` | carriage пистона |
 
-Для `MONITOR_ONLY` источник `J` — `J_fallback` (через `body_shape_entered` +
-`v_rel · n · m_eff`) и `J_sustained` (actuator-канал). `get_contact_impulse()`
-недоступен без `_integrate_forces`, поэтому carriage опирается на fallback/sustained.
+**Скорости для `J_fallback`.** К моменту `body_shape_entered` столкновение уже
+разрешено — `linear_velocity` погашена (известная грабля Godot). Сервис кэширует
+pre-step скорости отслеживаемых тел в `_physics_process`; в `_integrate_forces`
+используется `get_contact_local_velocity_at_position` (pre-solve скорость из
+Jolt contact listener).
 
 ## Классификация партнёра
 
 | Partner | Действие |
 |---|---|
-| `VoxelTerrain` / static world | carve + damage ударяющего `element_id` |
-| Другой `PhysicsBody3D` с `assembly_id` meta (**иной** assembly) | damage обоим `element_id` |
+| `VoxelTerrain` / `StaticBody3D` без `assembly_id` (world surface) | carve + damage ударяющего `element_id` |
+| Другой `PhysicsBody3D` с `assembly_id` meta (**иной** assembly) | damage обоим `element_id` (каждая сторона эмитит свой entry) |
 | Тот же `assembly_id` (base ↔ head, carriage internal) | **игнор** (subgrid immunity) |
-| Игрок / прочие тела | игнор в v1 |
+| Игрок (`CharacterBody3D`) / rigid-пропсы без `assembly_id` / прочие тела | игнор в v1 |
 
 `StaticBody3D` anchored assembly не источник удара (frozen, без integrate) — v0.
 
@@ -203,8 +216,8 @@ entries от carriage-контактов независимо от `machine_enab
 
 | Модуль | Роль в v1 |
 |---|---|
-| `scripts/simulation/runtime/impact_resolver.gd` | формулы `J`, `strength`, `damage`; subgrid-фильтр |
-| `scripts/simulation/runtime/impact_resolver_service.gd` | `configure_impact_body(FULL/MONITOR_ONLY)`; `J_fallback` в `body_shape_entered`; batch/cooldown |
+| `scripts/simulation/runtime/impact_resolver.gd` | формулы `J`, `strength`, `damage`; subgrid-фильтр; классификация партнёров; shape index ↔ element |
+| `scripts/simulation/runtime/impact_resolver_service.gd` | `configure_impact_body` (без custom integrator); pre-step velocity cache; `J_fallback` в `body_shape_entered` и `_integrate_forces`; batch/cooldown (merge по max J) |
 | `scripts/simulation/projection/simulation_physics_projection.gd` | carriage → `MONITOR_ONLY`; actuator sustained emit в `_tick_piston_actuators` |
 | `scripts/simulation/runtime/terrain_impact_carver.gd` | форма carve (как v0) |
 | `scripts/world_command_gateway.gd` | `terrain_carve` доставка (как v0) |
