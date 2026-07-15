@@ -36,6 +36,7 @@ var _snap_event_bound := false
 var _excavation := TerrainExcavationService.new()
 var _material_source := TerrainMaterialSource.new()
 var _hand_drill_last_bite_center: Variant = null
+var _hand_drill_last_bite_msec := 0
 var _rover_seat_player: Node3D
 var _rover_seat_assembly_id := 0
 var _rover_seat_element_id := 0
@@ -179,10 +180,17 @@ func _remove_voxel(
 	)
 	var sdf_scale := IndustryArchetypeProfile.hand_drill_sdf_scale()
 	var total_removed_m3 := 0.0
-	if (
-		_hand_drill_last_bite_center is Vector3
-		and bite_center.distance_squared_to(_hand_drill_last_bite_center) > 0.0001
-	):
+	var now_msec := Time.get_ticks_msec()
+	var use_path_sweep := false
+	if _hand_drill_last_bite_center is Vector3:
+		var span_m := bite_center.distance_to(_hand_drill_last_bite_center)
+		var gap_ms := now_msec - _hand_drill_last_bite_msec
+		use_path_sweep = (
+			span_m > 0.0001
+			and span_m <= IndustryArchetypeProfile.hand_drill_path_max_span_m()
+			and gap_ms <= IndustryArchetypeProfile.hand_drill_path_max_gap_ms()
+		)
+	if use_path_sweep:
 		var sweep := _excavation.excavate(
 			_voxel_tool,
 			{
@@ -210,6 +218,7 @@ func _remove_voxel(
 	total_removed_m3 += float(excavation["removed_volume_m3"])
 	if total_removed_m3 > 0.000001:
 		_hand_drill_last_bite_center = bite_center
+		_hand_drill_last_bite_msec = now_msec
 	else:
 		_hand_drill_last_bite_center = null
 	var removed_m3 := total_removed_m3

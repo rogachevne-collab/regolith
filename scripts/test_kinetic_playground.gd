@@ -3,6 +3,7 @@ extends Node3D
 const FLAT_SURFACE_Y := 0.0
 const FLAT_HALF_EXTENT := 40.0
 const DROP_HEIGHT_M := 14.0
+const DROP_DOWN_IMPULSE_SPEED := 1600.0
 const RAM_LAUNCH_SPEED := 11.0
 
 @onready var _terrain: VoxelTerrain = $VoxelTerrain
@@ -261,8 +262,19 @@ func _drop_frame() -> void:
 	if not _release_assembly_physics(_drop_assembly_id):
 		_flash_hint("Нет RigidBody — P переспавн")
 		return
+	var body := _session.projection.get_physics_body(
+		_drop_assembly_id
+	) as RigidBody3D
+	if body != null:
+		body.apply_central_impulse(
+			Vector3.DOWN * body.mass * DROP_DOWN_IMPULSE_SPEED
+		)
+		_session.projection.sync_body_motion_now(_drop_assembly_id)
 	_drop_released = true
-	_flash_hint("Отпущена. Падение ~%.0f м, g=1.62." % DROP_HEIGHT_M)
+	_flash_hint(
+		"Пинок вниз %.0f м/с + падение с %.0f м"
+		% [DROP_DOWN_IMPULSE_SPEED, DROP_HEIGHT_M]
+	)
 
 
 func _launch_ram() -> void:
@@ -380,11 +392,11 @@ func _refresh_status() -> void:
 	elif drop_body is StaticBody3D:
 		body_kind = "static (!)"
 	_overlay.text = """Kinetic playground — удары, не пистон
-J — отпустить парящую раму (RigidBody, лунная g)
+J — пинок рамы вниз (%.0f м/с) + удар о землю
 K — таран двух рам сзади
 P — переспавн | U — залить землю | H — скрыть
 
-Оранжевая рама впереди = J. Две рамы сзади = K."""
+Оранжевая рама впереди = J. Две рамы сзади = K.""" % DROP_DOWN_IMPULSE_SPEED
 	if (
 		not _status_hint.is_empty()
 		and Time.get_ticks_msec() < _status_hint_until_msec

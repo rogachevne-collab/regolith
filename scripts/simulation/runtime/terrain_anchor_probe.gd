@@ -133,7 +133,8 @@ static func raycast_terrain(
 	from: Vector3,
 	direction: Vector3,
 	max_distance: float,
-	collision_mask: int = 1
+	collision_mask: int = 1,
+	exclude_rids: Array[RID] = []
 ) -> Dictionary:
 	if space_state == null or max_distance <= 0.000001:
 		return {}
@@ -147,6 +148,8 @@ static func raycast_terrain(
 	query.collision_mask = collision_mask
 	query.collide_with_areas = false
 	query.collide_with_bodies = true
+	if not exclude_rids.is_empty():
+		query.exclude = exclude_rids
 	var hit: Dictionary = space_state.intersect_ray(query)
 	if hit.is_empty():
 		return {}

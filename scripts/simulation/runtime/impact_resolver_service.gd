@@ -268,9 +268,9 @@ func integrate_contacts(
 		)
 		if not _cooldown_ready(batch_key):
 			continue
-		var contact_world := body.to_global(
-			state.get_contact_local_position(contact_index)
-		)
+		# Godot 4.x/Jolt: get_contact_local_position is already world space
+		# (misleading name). body.to_global() double-transforms and shifts carve.
+		var contact_world := state.get_contact_local_position(contact_index)
 		# Contact velocities are captured pre-solve by the Jolt contact
 		# listener; body.linear_velocity here is already post-impact.
 		var contact_relative_velocity := (
@@ -299,24 +299,54 @@ func integrate_contacts(
 			"contact_world": contact_world,
 			"contact_normal": world_normal,
 			"inbound_velocity": inbound_velocity,
+			"contact_from_physics": true,
 			"contact_points": PackedVector3Array(),
 			"contact_impulses": PackedFloat32Array(),
 		})
 
 
 ## Entries from different J sources (contact estimate, fallback, sustained)
-## may target the same pair in one frame — spec combines them by max.
+## may target the same pair in one frame — spec combines them by max impulse,
+## but contact position from Jolt/manifold wins over SDF guesses (scale 0.65).
 func _queue_entry(entry: Dictionary) -> void:
 	var batch_key := str(entry.get("batch_key", ""))
 	if batch_key.is_empty():
 		return
 	var existing: Dictionary = _frame_batch.get(batch_key, {})
-	if (
-		existing.is_empty()
-		or float(entry.get("impulse_length", 0.0))
-		>= float(existing.get("impulse_length", 0.0))
-	):
-		_frame_batch[batch_key] = existing.merged(entry, true)
+	if existing.is_empty():
+		_frame_batch[batch_key] = entry.duplicate(true)
+	else:
+		var merged := existing.duplicate(true)
+		var new_impulse := float(entry.get("impulse_length", 0.0))
+		var old_impulse := float(merged.get("impulse_length", 0.0))
+		merged["impulse_length"] = maxf(old_impulse, new_impulse)
+		var entry_physics := bool(entry.get("contact_from_physics", false))
+		var merged_physics := bool(merged.get("contact_from_physics", false))
+		if entry_physics:
+			merged["contact_world"] = entry["contact_world"]
+			merged["contact_normal"] = entry.get(
+				"contact_normal",
+				merged.get("contact_normal", Vector3.UP)
+			)
+			merged["inbound_velocity"] = entry.get(
+				"inbound_velocity",
+				merged.get("inbound_velocity", Vector3.ZERO)
+			)
+			merged["contact_from_physics"] = true
+		elif not merged_physics and new_impulse >= old_impulse:
+			merged["contact_world"] = entry.get(
+				"contact_world",
+				merged.get("contact_world", Vector3.ZERO)
+			)
+			merged["contact_normal"] = entry.get(
+				"contact_normal",
+				merged.get("contact_normal", Vector3.UP)
+			)
+			merged["inbound_velocity"] = entry.get(
+				"inbound_velocity",
+				merged.get("inbound_velocity", Vector3.ZERO)
+			)
+		_frame_batch[batch_key] = merged
 	if not _flush_scheduled:
 		_flush_scheduled = true
 		call_deferred("_flush_batch")
@@ -424,10 +454,14 @@ func _apply_terrain_carve(
 	var carve_direction := _terrain_carve_direction(entry)
 	if carve_direction.length_squared() <= 0.000001:
 		return 0.0
-	var contact_world := _snap_contact_to_terrain_surface(
-		Vector3(entry.get("contact_world", Vector3.ZERO)),
-		terrain
-	)
+	var raw_contact := Vector3(entry.get("contact_world", Vector3.ZERO))
+	var contact_world := raw_contact
+	if not bool(entry.get("contact_from_physics", false)):
+		contact_world = _snap_contact_to_terrain_surface(
+			raw_contact,
+			terrain,
+			body
+		)
 	var op := TerrainImpactCarver.build_sphere_op(
 		contact_world,
 		collider,
@@ -460,29 +494,79 @@ func _terrain_carve_direction(entry: Dictionary) -> Vector3:
 
 func _snap_contact_to_terrain_surface(
 	contact_world: Vector3,
-	terrain: Node3D
+	terrain: Node3D,
+	striker_body: PhysicsBody3D = null
 ) -> Vector3:
-	if _gateway == null or terrain == null:
-		return contact_world
+	return _probe_terrain_surface_world(
+		contact_world + Vector3.UP * 1.25,
+		Vector3.DOWN,
+		terrain,
+		striker_body,
+		4.0
+	)
+
+
+func _probe_terrain_surface_world(
+	probe_origin: Vector3,
+	ray_direction: Vector3,
+	terrain: Node3D,
+	striker_body: PhysicsBody3D = null,
+	max_distance: float = 4.0
+) -> Vector3:
+	if terrain == null or ray_direction.length_squared() <= 0.000001:
+		return probe_origin
+	var nudged_origin := _nudge_integer_ray_origin(probe_origin)
+	var voxel_terrain := terrain as VoxelTerrain
+	var space_state: PhysicsDirectSpaceState3D = null
+	if striker_body != null:
+		space_state = striker_body.get_world_3d().direct_space_state
+	elif terrain.is_inside_tree():
+		space_state = terrain.get_world_3d().direct_space_state
+	if space_state != null and voxel_terrain != null:
+		var exclude: Array[RID] = []
+		if striker_body != null:
+			exclude.append(striker_body.get_rid())
+		var physics_hit := TerrainAnchorProbe.raycast_terrain(
+			space_state,
+			voxel_terrain,
+			nudged_origin,
+			ray_direction,
+			max_distance,
+			1,
+			exclude
+		)
+		if not physics_hit.is_empty():
+			return physics_hit["position"] as Vector3
+	if _gateway == null:
+		return probe_origin
 	var tool: VoxelTool = _gateway.get_voxel_tool()
 	if tool == null:
-		return contact_world
+		return probe_origin
 	tool.channel = VoxelBuffer.CHANNEL_SDF
 	var hit: VoxelRaycastResult = VoxelSpaceUtil.raycast_world(
 		tool,
 		terrain,
-		contact_world + Vector3.UP * 0.75,
-		Vector3.DOWN,
-		2.0
+		nudged_origin,
+		ray_direction,
+		max_distance
 	)
 	if hit == null:
-		return contact_world
+		return probe_origin
 	return VoxelSpaceUtil.raycast_hit_world_point(
 		terrain,
-		contact_world + Vector3.UP * 0.75,
-		Vector3.DOWN,
+		nudged_origin,
+		ray_direction,
 		hit
 	)
+
+
+func _nudge_integer_ray_origin(origin: Vector3) -> Vector3:
+	if (
+		absf(origin.x - roundf(origin.x)) < 0.001
+		and absf(origin.z - roundf(origin.z)) < 0.001
+	):
+		return origin + Vector3(0.05, 0.0, 0.05)
+	return origin
 
 
 func _apply_element_damage(
@@ -578,47 +662,28 @@ func _contact_point_on_body(
 		origin = collider.global_position
 	if _gateway == null:
 		return origin
-	var tool: VoxelTool = _gateway.get_voxel_tool()
-	if tool == null:
-		return origin
-	tool.channel = VoxelBuffer.CHANNEL_SDF
 	var terrain: Node3D = _gateway.get_node_or_null(_gateway.terrain_path)
-	# Probe along the motion direction — the surface we hit lies ahead of
-	# the collider, not behind it.
-	var ray_dir := Vector3.DOWN
+	if terrain == null:
+		return origin
 	var motion := inbound_velocity
-	if motion == Vector3.ZERO:
+	if motion.length_squared() <= 0.01:
 		motion = body.linear_velocity
+	var ray_dir := Vector3.DOWN
 	if motion.length_squared() > 0.01:
 		ray_dir = motion.normalized()
-	var ray_origin := origin - ray_dir * 0.25
-	var hit: VoxelRaycastResult = VoxelSpaceUtil.raycast_world(
-		tool,
-		terrain,
-		ray_origin,
+	var along_motion := _probe_terrain_surface_world(
+		origin - ray_dir * 0.25,
 		ray_dir,
-		4.0
-	)
-	if hit != null:
-		return VoxelSpaceUtil.raycast_hit_world_point(
-			terrain,
-			ray_origin,
-			ray_dir,
-			hit
-		)
-	# Fallback: probe downward when velocity-aligned ray misses.
-	hit = VoxelSpaceUtil.raycast_world(
-		tool,
 		terrain,
-		origin + Vector3.UP * 0.25,
-		Vector3.DOWN,
+		body,
 		4.0
 	)
-	if hit != null:
-		return VoxelSpaceUtil.raycast_hit_world_point(
-			terrain,
-			origin + Vector3.UP * 0.25,
-			Vector3.DOWN,
-			hit
-		)
-	return origin
+	if along_motion.distance_squared_to(origin - ray_dir * 0.25) > 0.000001:
+		return along_motion
+	return _probe_terrain_surface_world(
+		origin + Vector3.UP * 1.25,
+		Vector3.DOWN,
+		terrain,
+		body,
+		4.0
+	)

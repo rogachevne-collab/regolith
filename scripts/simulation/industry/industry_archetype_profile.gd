@@ -72,6 +72,10 @@ const HAND_DRILL_LOOT_SCALE_MAX := 1.35
 ## Small tolerance so resting sphere contacts count as merge-eligible.
 const HAND_DRILL_LOOT_MERGE_CONTACT_EPSILON_M := 0.02
 const HAND_DRILL_INTERVAL_S := 0.08
+## Consecutive bites closer than this (while still drilling) get a path sweep.
+const HAND_DRILL_PATH_MAX_SPAN_M := 1.4
+## Pause longer than this starts a fresh isolated bite (no trench from old hole).
+const HAND_DRILL_PATH_MAX_GAP_MS := 250
 const HAND_DRILL_LOOT_DESPAWN_S := 600.0
 
 
@@ -159,6 +163,14 @@ static func hand_drill_loot_pile_max_mass_kg() -> float:
 
 static func hand_drill_interval_s() -> float:
 	return HAND_DRILL_INTERVAL_S
+
+
+static func hand_drill_path_max_span_m() -> float:
+	return HAND_DRILL_PATH_MAX_SPAN_M
+
+
+static func hand_drill_path_max_gap_ms() -> int:
+	return HAND_DRILL_PATH_MAX_GAP_MS
 
 
 static func hand_drill_loot_merge_radius_m() -> float:

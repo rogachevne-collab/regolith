@@ -17,11 +17,20 @@ static func minimum_measurable_radius_m(terrain: Node3D) -> float:
 	)
 
 
+static func maximum_inward_offset_m(radius: float) -> float:
+	# Sphere top must reach the contact (surface kiss). When inward >= radius the
+	# stamp sits entirely below the contact and only nicks boundary voxels.
+	return radius * 0.92
+
+
 static func minimum_inward_offset_m(terrain: Node3D, radius: float) -> float:
 	var voxel_size := VoxelSpaceUtil.voxel_size_m(terrain)
-	return maxf(
-		radius - bite_depth_for_radius(radius),
-		voxel_size * 0.5
+	return minf(
+		maxf(
+			radius - bite_depth_for_radius(radius),
+			voxel_size * 0.5
+		),
+		maximum_inward_offset_m(radius)
 	)
 
 
@@ -47,6 +56,7 @@ static func bite_center(
 	var inward := radius - bite_depth_for_radius(radius)
 	if terrain != null:
 		inward = maxf(inward, minimum_inward_offset_m(terrain, radius))
+	inward = minf(inward, maximum_inward_offset_m(radius))
 	return contact_world + direction * inward
 
 
@@ -69,13 +79,21 @@ static func build_sphere_op(
 	max_radius: float = MAX_RADIUS
 ) -> Dictionary:
 	var clamped_strength := clampf(strength, 0.05, 1.0)
+	var collider_base := base_radius_from_collider(collider)
+	var scaled := collider_base * (0.35 + 0.65 * clamped_strength)
 	var radius := clampf(
-		base_radius_from_collider(collider) * (0.25 + 0.45 * clamped_strength),
+		scaled,
 		MIN_RADIUS,
 		minf(max_radius, MAX_RADIUS)
 	)
 	if terrain != null:
-		radius = maxf(radius, minimum_measurable_radius_m(terrain))
+		var floor_radius := minimum_measurable_radius_m(terrain)
+		var ceiling := minf(max_radius, MAX_RADIUS)
+		radius = clampf(
+			maxf(radius, lerpf(floor_radius, ceiling, clamped_strength)),
+			floor_radius,
+			ceiling
+		)
 	return {
 		"stamp_kind": &"sphere",
 		"center": bite_center(
