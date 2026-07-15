@@ -139,3 +139,11 @@ static func drive_wheel() -> ElementArchetype:
 
 static func cockpit() -> ElementArchetype:
 	return load_required("cockpit")
+
+
+static func power_battery_small() -> ElementArchetype:
+	return load_required("power_battery_small")
+
+
+static func power_distributor_small() -> ElementArchetype:
+	return load_required("power_distributor_small")

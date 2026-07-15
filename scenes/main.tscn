@@ -6,7 +6,6 @@
 [ext_resource type="Material" path="res://resources/terrain_material_smooth.tres" id="4"]
 [ext_resource type="Texture2D" uid="uid://wb282s8lece5" path="res://resources/starfield_panorama.png" id="5"]
 [ext_resource type="Script" uid="uid://q1onpmc4txha" path="res://scripts/placed_blocks.gd" id="6"]
-[ext_resource type="PackedScene" path="res://scenes/launch_vehicle.tscn" id="7"]
 [ext_resource type="Script" uid="uid://dy6xqaqoolp22" path="res://scripts/world_command_gateway.gd" id="10"]
 [ext_resource type="PackedScene" path="res://scenes/simulation_session.tscn" id="11"]
 
@@ -84,9 +83,6 @@ gateway_path = NodePath("../WorldCommandGateway")
 [node name="BaseSpawn" type="Marker3D" parent="." unique_id=1964029452]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -30, 0, 8)
 
-[node name="LaunchVehicle" parent="." unique_id=607288109 instance=ExtResource("7")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4.5, 0, 16)
-
 [node name="Player" parent="." unique_id=213621646 instance=ExtResource("2")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 16)
 
@@ -123,8 +119,8 @@ theme_override_constants/shadow_offset_x = 1
 theme_override_constants/shadow_offset_y = 1
 text = "WASD — ходьба, Shift — бег, Space — прыжок, Esc — настройки
 1–9 — инструменты, ЛКМ — действие, C/V/B — поворот блока
-ПКМ/F по грунту — первый блок базы, E у корабля — кокпит
-В кокпите: Space — тяга, WASD — баланс, E — выйти"
+ПКМ/F по грунту — первый блок базы, E у ровера — кокпит
+В кокпите: WASD — ехать, Space — тормоз, E — выйти"
 
 [node name="Coordinates" type="Label" parent="CanvasLayer" unique_id=1269680688]
 anchors_preset = 1

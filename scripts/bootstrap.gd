@@ -10,7 +10,6 @@ const AUTOSAVE_INTERVAL_S := 90.0
 
 @onready var _terrain: VoxelTerrain = $VoxelTerrain
 @onready var _player: Node3D = $Player
-@onready var _launch_vehicle: RigidBody3D = $LaunchVehicle
 @onready var _session: SimulationSession = $SimulationSession
 @onready var _base_spawn: Node3D = $BaseSpawn
 ## Debug overlay (coordinate readout + controls hint) is off by default; the
@@ -18,6 +17,8 @@ const AUTOSAVE_INTERVAL_S := 90.0
 @export var debug_overlay := false
 ## Fills player cargo with a large playtest mix on every world entry (fresh or loaded).
 @export var playtest_cargo := true
+## Spawns a welded demo rover near the player on a fresh world (not on save load).
+@export var spawn_demo_rover := true
 
 @onready var _loading: Label = $CanvasLayer/Loading
 @onready var _coordinates: Label = $CanvasLayer/Coordinates
@@ -114,6 +115,8 @@ func _finish_world_entry(player_position: Vector3) -> void:
 	_resync_player_camera()
 	_session.get_industry_simulation().bind_world(_session.world)
 	_apply_playtest_cargo_if_enabled()
+	if spawn_demo_rover:
+		call_deferred("_spawn_demo_rover_near_player")
 
 
 func _finish_loaded_world_entry(spawn_position: Vector3) -> void:
@@ -132,6 +135,28 @@ func _apply_playtest_cargo_if_enabled() -> void:
 		push_error("Playtest cargo seed failed")
 
 
+func _spawn_demo_rover_near_player() -> void:
+	if _session == null or _player == null:
+		return
+	var tool: VoxelTool = _terrain.get_voxel_tool()
+	tool.channel = VoxelBuffer.CHANNEL_SDF
+	var target_xz := (
+		_player.global_position
+		+ _player.global_transform.basis.z * 6.0
+	)
+	var probe_origin := Vector3(target_xz.x, SKY_PROBE_Y, target_xz.z)
+	var hit: VoxelRaycastResult = _voxel_down_hit(probe_origin, tool)
+	if hit == null:
+		push_warning("Demo rover spawn failed: terrain raycast missed")
+		return
+	var ground := _ground_point_from_down_hit(probe_origin, hit)
+	var result := RoverDemoSpawn.spawn_on_terrain(_session, ground)
+	if not bool(result.get("ok", false)):
+		push_warning(
+			"Demo rover spawn failed: %s" % str(result.get("error", "unknown"))
+		)
+
+
 func _resync_player_camera() -> void:
 	var head: Camera3D = _player.get_node_or_null("Camera") as Camera3D
 	if head != null and head.has_method("snap_after_teleport"):
@@ -148,10 +173,6 @@ func _place_when_ground_exists() -> void:
 	var tool: VoxelTool = _terrain.get_voxel_tool()
 	tool.channel = VoxelBuffer.CHANNEL_SDF
 	var player_origin := Vector3(_player_spawn_xz.x, SKY_PROBE_Y, _player_spawn_xz.y)
-	var vehicle_origin := Vector3(
-		_launch_vehicle.global_position.x,
-		SKY_PROBE_Y,
-		_launch_vehicle.global_position.z)
 
 	while true:
 		if _warmup_frames < MIN_WARMUP_FRAMES:
@@ -164,16 +185,7 @@ func _place_when_ground_exists() -> void:
 			continue
 
 		var player_hit: VoxelRaycastResult = _voxel_down_hit(player_origin, tool)
-		var vehicle_hit: VoxelRaycastResult = _voxel_down_hit(vehicle_origin, tool)
-		var spawn_area_ready := player_hit != null and vehicle_hit != null
-		if spawn_area_ready:
-			var vehicle_ground := _ground_point_from_down_hit(
-				vehicle_origin,
-				vehicle_hit
-			)
-			_launch_vehicle.global_position = (
-				vehicle_ground + Vector3.UP * 0.52
-			)
+		if player_hit != null:
 			if WorldPersistence.has_save() and not _save_load_attempted:
 				_save_load_attempted = true
 				_loading.text = "Загрузка сохранения..."

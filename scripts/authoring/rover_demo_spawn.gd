@@ -1,0 +1,362 @@
+class_name RoverDemoSpawn
+extends RefCounted
+
+const STORE_ID := "player"
+
+
+static func spawn_on_terrain(
+	session: SimulationSession,
+	world_position: Vector3,
+	store_id: String = STORE_ID
+) -> Dictionary:
+	if session == null or session.world == null:
+		return {"ok": false, "error": "no_session"}
+	var world := session.world
+	world.ensure_resource_store(store_id)
+	world.set_resource_amount(store_id, "construction_component", 500.0)
+	var assembly_transform := _assembly_transform_on_surface(world_position)
+	var grid_frame := GridSpawnUtil.grid_frame_from_transform(assembly_transform)
+	var assembly_id := _spawn_anchor(world, grid_frame, store_id)
+	if assembly_id <= 0:
+		return {"ok": false, "error": "anchor_failed"}
+	var revision := _assembly_revision(world, assembly_id)
+	var module_ids: Dictionary = {}
+	var pairs := [
+		{
+			"suspension_cell": Vector3i(-1, 0, 0),
+			"suspension_face": Vector3i.RIGHT,
+			"wheel_cell": Vector3i(-1, -1, 0),
+			"steerable": true,
+			"key": "fl",
+		},
+		{
+			"suspension_cell": Vector3i(1, 0, 0),
+			"suspension_face": Vector3i.LEFT,
+			"wheel_cell": Vector3i(1, -1, 0),
+			"steerable": true,
+			"key": "fr",
+		},
+		{
+			"suspension_cell": Vector3i(0, 0, -1),
+			"suspension_face": Vector3i(0, 0, 1),
+			"wheel_cell": Vector3i(0, -1, -1),
+			"steerable": false,
+			"key": "rl",
+		},
+		{
+			"suspension_cell": Vector3i(0, 0, 1),
+			"suspension_face": Vector3i(0, 0, -1),
+			"wheel_cell": Vector3i(0, -1, 1),
+			"steerable": false,
+			"key": "rr",
+		},
+	]
+	for pair: Dictionary in pairs:
+		var built := _place_wheel_pair(
+			world,
+			assembly_id,
+			revision,
+			store_id,
+			pair
+		)
+		if not bool(built.get("ok", false)):
+			return built
+		revision = int(built.get("revision", revision))
+		module_ids[str(pair["key"])] = built.get("element_ids", {})
+	var placed := _place_chassis(world, assembly_id, revision, store_id)
+	if not bool(placed.get("ok", false)):
+		return placed
+	module_ids.merge(placed.get("element_ids", {}))
+	_weld_assembly(world, assembly_id)
+	_wire_demo_power(world, module_ids)
+	_charge_demo_battery(world, int(module_ids.get("battery", 0)))
+	_configure_steerable(world, module_ids)
+	var motion := AssemblyMotionState.from_grid_frame(grid_frame)
+	motion.frozen = false
+	motion.sleeping = false
+	motion.linear_velocity = Vector3.ZERO
+	motion.angular_velocity = Vector3.ZERO
+	session.projection.project_assembly_now(assembly_id, motion)
+	_wake_locomotive_body(session, assembly_id)
+	if session.visuals != null:
+		session.visuals.rebuild_assembly(assembly_id)
+	if session.piston_visuals != null:
+		session.piston_visuals.rebuild_assembly(assembly_id)
+	if session.wheel_visuals != null:
+		session.wheel_visuals.rebuild_assembly(assembly_id)
+	return {
+		"ok": true,
+		"assembly_id": assembly_id,
+		"element_ids": module_ids,
+	}
+
+
+static func _assembly_transform_on_surface(
+	surface_point: Vector3,
+	basis: Basis = Basis.IDENTITY
+) -> Transform3D:
+	var archetype := Slice01Archetypes.rover_frame()
+	var contact := GridPoseUtil.ground_contact_local(archetype, 0)
+	return Transform3D(basis, surface_point - basis * contact)
+
+
+static func _wake_locomotive_body(
+	session: SimulationSession,
+	assembly_id: int
+) -> void:
+	if (
+		session == null
+		or session.world == null
+		or session.projection == null
+		or assembly_id <= 0
+	):
+		return
+	if not WheelSimulationService.is_locomotive_assembly(
+		session.world,
+		assembly_id
+	):
+		push_warning("RoverDemoSpawn: assembly %d is not locomotive" % assembly_id)
+		return
+	var body := session.projection.get_physics_body(assembly_id)
+	if body is StaticBody3D:
+		var assembly := session.world.get_assembly_raw(assembly_id)
+		if assembly != null:
+			var motion := assembly.motion.duplicate_state()
+			motion.frozen = false
+			motion.sleeping = false
+			session.projection.project_assembly_now(assembly_id, motion)
+			body = session.projection.get_physics_body(assembly_id)
+	if body is RigidBody3D:
+		var rigid := body as RigidBody3D
+		rigid.freeze = false
+		rigid.sleeping = false
+		rigid.linear_velocity = Vector3.ZERO
+		rigid.angular_velocity = Vector3.ZERO
+
+
+static func _spawn_anchor(
+	world: SimulationWorld,
+	grid_frame: GridTransform,
+	store_id: String
+) -> int:
+	var place := PlaceElementCommand.new()
+	place.assembly_id = 0
+	place.origin_cell = Vector3i.ZERO
+	place.orientation_index = 0
+	place.archetype = Slice01Archetypes.rover_frame()
+	place.new_assembly_grid_frame = grid_frame
+	place.initial_motion = AssemblyMotionState.from_grid_frame(grid_frame)
+	place.store_id = store_id
+	var result := world.apply_structural_command_now(place)
+	if not result.is_ok():
+		return 0
+	return int(result.data.get("assembly_id", 0))
+
+
+static func _place_chassis(
+	world: SimulationWorld,
+	assembly_id: int,
+	revision: int,
+	store_id: String
+) -> Dictionary:
+	var element_ids := {"center": 0}
+	var cockpit := _place(
+		world,
+		assembly_id,
+		revision,
+		Slice01Archetypes.cockpit(),
+		Vector3i(0, 1, 0),
+		0,
+		store_id
+	)
+	if not cockpit.is_ok():
+		return {"ok": false, "error": "cockpit: %s" % cockpit.reason}
+	revision = int(cockpit.data["topology_revision"])
+	element_ids["cockpit"] = int(cockpit.data["element_id"])
+	var battery := _place(
+		world,
+		assembly_id,
+		revision,
+		Slice01Archetypes.power_battery_small(),
+		Vector3i(-1, 1, 0),
+		0,
+		store_id
+	)
+	if not battery.is_ok():
+		return {"ok": false, "error": "battery: %s" % battery.reason}
+	revision = int(battery.data["topology_revision"])
+	element_ids["battery"] = int(battery.data["element_id"])
+	var distributor := _place(
+		world,
+		assembly_id,
+		revision,
+		Slice01Archetypes.power_distributor_small(),
+		Vector3i(1, 1, 0),
+		0,
+		store_id
+	)
+	if not distributor.is_ok():
+		return {"ok": false, "error": "distributor: %s" % distributor.reason}
+	revision = int(distributor.data["topology_revision"])
+	element_ids["distributor"] = int(distributor.data["element_id"])
+	return {
+		"ok": true,
+		"revision": revision,
+		"element_ids": element_ids,
+	}
+
+
+static func _place_wheel_pair(
+	world: SimulationWorld,
+	assembly_id: int,
+	revision: int,
+	store_id: String,
+	spec: Dictionary
+) -> Dictionary:
+	var suspension_orientation := _orientation_with_local_face(
+		Vector3i.RIGHT,
+		spec["suspension_face"]
+	)
+	var suspension := _place(
+		world,
+		assembly_id,
+		revision,
+		Slice01Archetypes.wheel_suspension(),
+		spec["suspension_cell"],
+		suspension_orientation,
+		store_id
+	)
+	if not suspension.is_ok():
+		return {"ok": false, "error": "suspension: %s" % suspension.reason}
+	revision = int(suspension.data["topology_revision"])
+	var wheel := _place(
+		world,
+		assembly_id,
+		revision,
+		Slice01Archetypes.drive_wheel(),
+		spec["wheel_cell"],
+		0,
+		store_id
+	)
+	if not wheel.is_ok():
+		return {"ok": false, "error": "wheel: %s" % wheel.reason}
+	revision = int(wheel.data["topology_revision"])
+	return {
+		"ok": true,
+		"revision": revision,
+		"element_ids": {
+			"suspension": int(suspension.data["element_id"]),
+			"wheel": int(wheel.data["element_id"]),
+			"steerable": bool(spec.get("steerable", false)),
+		},
+	}
+
+
+static func _wire_demo_power(
+	world: SimulationWorld,
+	element_ids: Dictionary
+) -> void:
+	var battery_id := int(element_ids.get("battery", 0))
+	var distributor_id := int(element_ids.get("distributor", 0))
+	if battery_id <= 0 or distributor_id <= 0:
+		return
+	var result := world.connect_network(
+		battery_id,
+		"power_out",
+		distributor_id,
+		"power_in"
+	)
+	if not result.is_ok():
+		push_warning(
+			"RoverDemoSpawn: battery→distributor wire failed: %s"
+			% result.reason
+		)
+
+
+static func _charge_demo_battery(
+	world: SimulationWorld,
+	battery_element_id: int
+) -> void:
+	if battery_element_id <= 0:
+		return
+	var element := world.get_element(battery_element_id)
+	if element == null:
+		return
+	var runtime := world.ensure_industry_element_runtime(battery_element_id)
+	runtime.battery_kwh = IndustryElectricProfile.battery_max_kwh(element)
+
+
+static func _configure_steerable(
+	world: SimulationWorld,
+	module_ids: Dictionary
+) -> void:
+	for key: String in ["fl", "fr"]:
+		var pair_variant: Variant = module_ids.get(key, {})
+		if not pair_variant is Dictionary:
+			continue
+		var pair: Dictionary = pair_variant
+		if not bool(pair.get("steerable", false)):
+			continue
+		var wheel_id := int(pair.get("wheel", 0))
+		if wheel_id <= 0:
+			continue
+		var command := ConfigureWheelCommand.new()
+		command.wheel_element_id = wheel_id
+		command.steerable_set = true
+		command.steerable = true
+		world.apply_configure_wheel(command)
+
+
+static func _weld_assembly(world: SimulationWorld, assembly_id: int) -> void:
+	var assembly := world.get_assembly_raw(assembly_id)
+	if assembly == null:
+		return
+	for element_id: int in assembly.element_ids:
+		var element := world.get_element(element_id)
+		if element == null:
+			continue
+		var weld := WeldElementCommand.new()
+		weld.element_id = element_id
+		weld.expected_state_revision = element.state_revision
+		weld.max_material_amount = 100.0
+		weld.store_id = STORE_ID
+		world.apply_structural_command_now(weld)
+
+
+static func _place(
+	world: SimulationWorld,
+	assembly_id: int,
+	revision: int,
+	archetype: ElementArchetype,
+	origin_cell: Vector3i,
+	orientation_index: int,
+	store_id: String
+) -> StructuralCommandResult:
+	var place := PlaceElementCommand.new()
+	place.assembly_id = assembly_id
+	place.expected_assembly_revision = revision
+	place.archetype = archetype
+	place.origin_cell = origin_cell
+	place.orientation_index = orientation_index
+	place.store_id = store_id
+	return world.apply_structural_command_now(place)
+
+
+static func _assembly_revision(world: SimulationWorld, assembly_id: int) -> int:
+	var assembly := world.get_assembly_raw(assembly_id)
+	if assembly == null:
+		return 0
+	return assembly.topology_revision
+
+
+static func _orientation_with_local_face(
+	local_face: Vector3i,
+	world_direction: Vector3i
+) -> int:
+	for index: int in range(OrientationUtil.ORIENTATION_COUNT):
+		if (
+			OrientationUtil.rotate_direction(local_face, index)
+			== world_direction
+		):
+			return index
+	return 0
