@@ -263,9 +263,11 @@ func integrate_contacts(
 			var partner_id := state.get_contact_collider_id(contact_index)
 			if partner_id != 0:
 				partner = instance_from_id(partner_id)
-		var local_normal := state.get_contact_local_normal(contact_index)
-		var world_normal := (
-			body.global_transform.basis * local_normal
+		# Like get_contact_local_position, get_contact_local_normal is
+		# already world space in Godot/Jolt ("local" = this body's side);
+		# rotating it by the body basis skews normals of tilted bodies.
+		var world_normal := state.get_contact_local_normal(
+			contact_index
 		).normalized()
 		if partner == null and absf(world_normal.y) >= 0.35:
 			partner = _terrain_partner()
