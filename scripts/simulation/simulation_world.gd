@@ -965,6 +965,8 @@ func _validate_place_element(
 ) -> StructuralCommandResult:
 	if PistonPlacementUtil.is_piston_archetype(command.archetype):
 		return _validate_piston_place_element(command)
+	if WheelPlacementUtil.is_wheel_archetype(command.archetype):
+		return _validate_wheel_place_element(command)
 	var archetype := command.archetype
 	if (
 		archetype == null
@@ -1104,6 +1106,156 @@ func _validate_place_element(
 		if bridge_error != null:
 			return bridge_error
 
+	return StructuralCommandResult.ok({
+		"placement_resource_id": first_requirement.resource_id,
+		"placement_resource_amount": placement_amount,
+		"connections": connections,
+		"build_progress": preview.build_progress,
+	})
+
+
+func _validate_wheel_place_element(
+	command: PlaceElementCommand
+) -> StructuralCommandResult:
+	var archetype := command.archetype
+	if (
+		archetype == null
+		or archetype.wheel_definition == null
+		or archetype.internal_archetype
+		or command.orientation_index < 0
+		or command.orientation_index >= OrientationUtil.ORIENTATION_COUNT
+		or archetype.build_requirements.is_empty()
+	):
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INVALID_TARGET
+		)
+	var archetype_validation := _validate_construction_archetype(
+		archetype,
+		command.orientation_index
+	)
+	if not archetype_validation.is_ok():
+		return archetype_validation
+	var first_requirement: BuildRequirement = archetype.build_requirements[0]
+	if (
+		first_requirement == null
+		or first_requirement.resource_id.is_empty()
+		or not is_finite(first_requirement.amount)
+		or first_requirement.amount <= 0.0
+	):
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INVALID_TARGET
+		)
+	var placement_amount := minf(first_requirement.amount, 1.0)
+	var store := get_resource_store(command.store_id)
+	if (
+		store == null
+		or not store.can_remove(first_requirement.resource_id, placement_amount)
+	):
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INSUFFICIENT_MATERIAL,
+			{
+				"resource_id": first_requirement.resource_id,
+				"required": placement_amount,
+				"available": (
+					store.amount(first_requirement.resource_id)
+					if store != null else 0.0
+				),
+			}
+		)
+	var preview := SimulationElement.frame(
+		-1,
+		command.assembly_id,
+		archetype,
+		command.origin_cell,
+		command.orientation_index,
+		{first_requirement.resource_id: placement_amount}
+	)
+	var wheel_error: Variant = WheelPlacementUtil.validate_wheel_placement(
+		self,
+		command,
+		preview
+	)
+	if (
+		wheel_error is StructuralCommandResult
+		and not (wheel_error as StructuralCommandResult).is_ok()
+	):
+		return wheel_error
+	if command.assembly_id == 0:
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INCOMPATIBLE_CONNECTION,
+			{"detail": &"wheel_socket_required"}
+		)
+	var assembly := get_assembly_raw(command.assembly_id)
+	if assembly == null or assembly.tombstoned:
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INVALID_REFERENCE
+		)
+	if not _assembly_has_anchor(assembly.assembly_id):
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INVALID_TARGET,
+			{"detail": &"mobile_construction_not_supported"}
+		)
+	if assembly.topology_revision != command.expected_assembly_revision:
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_STALE_REVISION,
+			{
+				"expected": command.expected_assembly_revision,
+				"actual": assembly.topology_revision,
+			}
+		)
+	var occupancy := _assembly_occupancy_index(assembly)
+	var preview_cells := preview.occupied_cells()
+	for cell: Vector3i in preview_cells:
+		if occupancy.has(cell):
+			return StructuralCommandResult.failed(
+				StructuralCommandResult.REASON_OVERLAP
+			)
+	var connections: Array[Dictionary] = []
+	var neighbour_ids := _neighbour_element_ids(preview_cells, occupancy)
+	for existing_id: int in neighbour_ids:
+		var existing := get_element(existing_id)
+		var connection := RuntimeConnectivity.find_rigid_connection(
+			existing,
+			preview
+		)
+		if connection.is_empty():
+			continue
+		if (
+			existing.archetype_id == "wheel_suspension"
+			and WheelPlacementUtil.wheel_attached_to_suspension(
+				self,
+				assembly.assembly_id,
+				existing_id
+			)
+		):
+			return StructuralCommandResult.failed(
+				StructuralCommandResult.REASON_INCOMPATIBLE_CONNECTION,
+				{"detail": &"socket_occupied"}
+			)
+		connections.append({
+			"existing_element_id": existing_id,
+			"existing_port_id": connection["left_port_id"],
+			"new_port_id": connection["right_port_id"],
+		})
+	if connections.is_empty():
+		var empty_error: Variant = WheelPlacementUtil.validate_wheel_placement(
+			self,
+			command,
+			preview
+		)
+		if empty_error is StructuralCommandResult:
+			return empty_error
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INCOMPATIBLE_CONNECTION,
+			{"detail": &"wheel_socket_required"}
+		)
+	var bridge_error := _validate_new_rigid_connections(
+		assembly.assembly_id,
+		preview,
+		connections
+	)
+	if bridge_error != null:
+		return bridge_error
 	return StructuralCommandResult.ok({
 		"placement_resource_id": first_requirement.resource_id,
 		"placement_resource_amount": placement_amount,
