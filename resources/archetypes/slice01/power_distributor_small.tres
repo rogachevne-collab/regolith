@@ -9,14 +9,16 @@
 [sub_resource type="Resource" id="Requirement"]
 script = ExtResource("1_req")
 resource_id = "construction_component"
-amount = 3.0
+amount = 4.0
 
 [sub_resource type="Resource" id="Collider"]
 script = ExtResource("2_col")
-size = Vector3(0.44, 0.34, 0.44)
+size = Vector3(1, 1, 1)
+offset_in_cell = Vector3(0.5, 0.5, 0.5)
 
 [sub_resource type="Resource" id="Mount_px"]
 script = ExtResource("4_pad")
+local_cell = Vector3i(1, 0, 0)
 
 [sub_resource type="Resource" id="Mount_nx"]
 script = ExtResource("4_pad")
@@ -24,6 +26,7 @@ local_face = 1
 
 [sub_resource type="Resource" id="Mount_py"]
 script = ExtResource("4_pad")
+local_cell = Vector3i(0, 1, 0)
 local_face = 2
 
 [sub_resource type="Resource" id="Mount_ny"]
@@ -32,6 +35,7 @@ local_face = 3
 
 [sub_resource type="Resource" id="Mount_pz"]
 script = ExtResource("4_pad")
+local_cell = Vector3i(0, 0, 1)
 local_face = 4
 
 [sub_resource type="Resource" id="Mount_nz"]
@@ -49,6 +53,7 @@ compatibility_tags = PackedStringArray("electric")
 script = ExtResource("3_port")
 port_id = "power_out"
 kind = 1
+local_cell = Vector3i(0, 0, 1)
 local_face = 4
 compatibility_tags = PackedStringArray("electric")
 
@@ -57,9 +62,10 @@ script = ExtResource("5_arch")
 archetype_id = "power_distributor_small"
 display_name = "Распред м"
 roles = PackedStringArray("Hub")
-mass_kg = 20.0
-colliders = Array[ExtResource("2_col")]([SubResource("Collider")])
+mass_kg = 40.0
+footprint_cells = Array[Vector3i]([Vector3i(0, 0, 0), Vector3i(0, 0, 1), Vector3i(0, 1, 0), Vector3i(0, 1, 1), Vector3i(1, 0, 0), Vector3i(1, 0, 1), Vector3i(1, 1, 0), Vector3i(1, 1, 1)])
 structural_surface_policy = 2
 structural_mount_pads = Array[ExtResource("4_pad")]([SubResource("Mount_px"), SubResource("Mount_nx"), SubResource("Mount_py"), SubResource("Mount_ny"), SubResource("Mount_pz"), SubResource("Mount_nz")])
+colliders = Array[ExtResource("2_col")]([SubResource("Collider")])
 ports = Array[ExtResource("3_port")]([SubResource("Power_in"), SubResource("Power_out")])
 build_requirements = Array[ExtResource("1_req")]([SubResource("Requirement")])

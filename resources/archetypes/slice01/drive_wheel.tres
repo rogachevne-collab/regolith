@@ -14,7 +14,6 @@ amount = 2.0
 
 [sub_resource type="Resource" id="Collider"]
 script = ExtResource("2_col")
-size = Vector3(0.4, 0.3, 0.4)
 
 [sub_resource type="Resource" id="WheelDefinition"]
 script = ExtResource("4_wheel")

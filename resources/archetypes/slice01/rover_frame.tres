@@ -12,7 +12,6 @@ amount = 2.0
 
 [sub_resource type="Resource" id="Collider"]
 script = ExtResource("2_col")
-size = Vector3(0.46, 0.3, 0.46)
 
 [resource]
 script = ExtResource("4_arch")

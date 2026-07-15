@@ -8,18 +8,20 @@
 [sub_resource type="Resource" id="Requirement"]
 script = ExtResource("1_req")
 resource_id = "construction_component"
-amount = 4.0
+amount = 8.0
 
 [sub_resource type="Resource" id="Collider"]
 script = ExtResource("2_col")
-size = Vector3(0.42, 0.34, 0.42)
+size = Vector3(1.5, 1, 1)
+offset_in_cell = Vector3(0.75, 0.5, 0.5)
 
 [resource]
 script = ExtResource("4_arch")
 archetype_id = "cockpit"
 display_name = "Кокпит"
 roles = PackedStringArray("ControlSeat", "Frame")
-mass_kg = 18.0
-colliders = Array[ExtResource("2_col")]([SubResource("Collider")])
+mass_kg = 60.0
+footprint_cells = Array[Vector3i]([Vector3i(0, 0, 0), Vector3i(0, 0, 1), Vector3i(0, 1, 0), Vector3i(0, 1, 1), Vector3i(1, 0, 0), Vector3i(1, 0, 1), Vector3i(1, 1, 0), Vector3i(1, 1, 1), Vector3i(2, 0, 0), Vector3i(2, 0, 1), Vector3i(2, 1, 0), Vector3i(2, 1, 1)])
 structural_surface_policy = 1
+colliders = Array[ExtResource("2_col")]([SubResource("Collider")])
 build_requirements = Array[ExtResource("1_req")]([SubResource("Requirement")])

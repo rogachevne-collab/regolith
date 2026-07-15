@@ -88,7 +88,7 @@ static func attach_runtime(
 	if element.archetype_id == "drive_wheel":
 		record["spin_root"] = visual.get_node_or_null("SpinRoot") as Node3D
 		record["hub_root"] = visual.get_node_or_null("Hub") as Node3D
-		record["hub_base_y"] = 0.12
+		record["hub_base_y"] = 0.14
 		record["spin_base_y"] = 0.0
 	return record
 
@@ -166,18 +166,25 @@ static func update_runtime(
 	compression_m: float,
 	delta: float
 ) -> void:
-	var root: Node3D = record.get("root") as Node3D
-	if root == null or delta <= 0.0:
+	if delta <= 0.0:
+		return
+	var root_variant: Variant = record.get("root")
+	if root_variant == null or not is_instance_valid(root_variant):
+		return
+	var root: Node3D = root_variant as Node3D
+	if root == null:
 		return
 	var spin := spin_root(record)
-	if spin != null:
+	if spin != null and is_instance_valid(spin):
 		spin.rotate_object_local(Vector3.RIGHT, wheel_speed * delta)
-	var hub: Node3D = record.get("hub_root") as Node3D
-	var compression_offset := clampf(compression_m, 0.0, 0.6) * 0.9
-	if hub != null:
+	var hub_variant: Variant = record.get("hub_root")
+	if hub_variant != null and is_instance_valid(hub_variant):
+		var hub: Node3D = hub_variant as Node3D
+		var compression_offset := clampf(compression_m, 0.0, 0.6) * 0.9
 		hub.position.y = float(record.get("hub_base_y", 0.12)) - compression_offset
-	if spin != null:
-		spin.position.y = float(record.get("spin_base_y", 0.0)) - compression_offset
+	if spin != null and is_instance_valid(spin):
+		var compression_offset_spin := clampf(compression_m, 0.0, 0.6) * 0.9
+		spin.position.y = float(record.get("spin_base_y", 0.0)) - compression_offset_spin
 
 
 static func _build_suspension_gizmos(

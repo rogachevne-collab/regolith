@@ -23,37 +23,36 @@ emission_energy_multiplier = 1.2
 
 [sub_resource type="BoxMesh" id="Mesh_body"]
 material = SubResource("Material_body")
-size = Vector3(0.34, 0.26, 0.3)
+size = Vector3(0.48, 0.96, 0.48)
 
 [sub_resource type="BoxMesh" id="Mesh_knuckle"]
 material = SubResource("Material_body")
-size = Vector3(0.14, 0.18, 0.14)
+size = Vector3(0.2, 0.22, 0.2)
 
 [sub_resource type="BoxMesh" id="Mesh_mount"]
 material = SubResource("Material_mount")
-size = Vector3(0.06, 0.28, 0.32)
+size = Vector3(0.08, 0.36, 0.4)
 
 [sub_resource type="CylinderMesh" id="Mesh_socket"]
 material = SubResource("Material_socket")
-top_radius = 0.07
-bottom_radius = 0.09
-height = 0.1
+top_radius = 0.09
+bottom_radius = 0.11
+height = 0.12
 radial_segments = 12
 
 [node name="WheelSuspensionVisual" type="Node3D"]
 
 [node name="Body" type="MeshInstance3D" parent="."]
-position = Vector3(0, 0.04, 0)
 mesh = SubResource("Mesh_body")
 
 [node name="Knuckle" type="MeshInstance3D" parent="."]
-position = Vector3(-0.08, -0.06, 0)
+position = Vector3(0, -0.34, 0)
 mesh = SubResource("Mesh_knuckle")
 
 [node name="MountFace" type="MeshInstance3D" parent="."]
-position = Vector3(0.2, 0.04, 0)
+position = Vector3(0.24, 0.34, 0)
 mesh = SubResource("Mesh_mount")
 
 [node name="WheelSocket" type="MeshInstance3D" parent="."]
-position = Vector3(-0.08, -0.16, 0)
+position = Vector3(0, -0.48, 0)
 mesh = SubResource("Mesh_socket")

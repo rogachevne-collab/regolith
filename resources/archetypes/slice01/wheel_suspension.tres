@@ -14,7 +14,8 @@ amount = 3.0
 
 [sub_resource type="Resource" id="Collider"]
 script = ExtResource("2_col")
-size = Vector3(0.42, 0.34, 0.38)
+size = Vector3(0.5, 1, 0.5)
+offset_in_cell = Vector3(0.25, 0.5, 0.25)
 
 [sub_resource type="Resource" id="SuspensionDefinition"]
 script = ExtResource("4_susp")
@@ -39,9 +40,10 @@ script = ExtResource("6_arch")
 archetype_id = "wheel_suspension"
 display_name = "Подвеска"
 roles = PackedStringArray("Support")
-mass_kg = 12.0
-colliders = Array[ExtResource("2_col")]([SubResource("Collider")])
+mass_kg = 18.0
+footprint_cells = Array[Vector3i]([Vector3i(0, 0, 0), Vector3i(0, 1, 0)])
 structural_surface_policy = 2
 structural_mount_pads = Array[ExtResource("5_pad")]([SubResource("Mount_frame"), SubResource("Mount_socket")])
+colliders = Array[ExtResource("2_col")]([SubResource("Collider")])
 build_requirements = Array[ExtResource("1_req")]([SubResource("Requirement")])
 suspension_definition = SubResource("SuspensionDefinition")
