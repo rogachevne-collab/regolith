@@ -2,6 +2,9 @@ class_name WheelProjectionUtil
 extends RefCounted
 
 const RAYCAST_MASK := 3
+## Below this body-up · world-up, suspension/tire forces are skipped.
+## ~70° tip: sideways scrape must not inject max spring+traction torque.
+const MIN_UPRIGHT_DOT := 0.35
 
 
 static func mount_pad_anchor_assembly_local(
@@ -100,10 +103,25 @@ static func tick_pair(
 		result["status"] = &"invalid_body"
 		return result
 	var body_transform := body.global_transform
+	if (
+		not body_transform.origin.is_finite()
+		or not body.linear_velocity.is_finite()
+		or not body.angular_velocity.is_finite()
+	):
+		result["status"] = &"invalid_body"
+		return result
+	var body_up := body_transform.basis.y
+	if not body_up.is_finite() or body_up.length_squared() <= 0.0001:
+		result["status"] = &"invalid_body"
+		return result
+	var upright_dot := body_up.normalized().dot(Vector3.UP)
 	var ray_origin_world := body_transform * ray_origin_local
 	var ray_dir_world := (
 		body_transform.basis * ray_dir_local
 	).normalized()
+	if not ray_dir_world.is_finite() or ray_dir_world.length_squared() <= 0.0001:
+		result["status"] = &"invalid_body"
+		return result
 	var ray_length := travel_m + radius_m
 	result["socket_body_local"] = body.to_local(ray_origin_world)
 	result["suspension_length_m"] = travel_m
@@ -131,6 +149,30 @@ static func tick_pair(
 	if not powered:
 		drive_command = 0.0
 		result["status"] = &"no_power"
+
+	# Tipped / inverted: sockets can scrape ground sideways and dump full
+	# spring+traction torque into the chassis. Treat as airborne.
+	if upright_dot < MIN_UPRIGHT_DOT:
+		wheel_speed += (
+			drive_command * drive_torque * drive_scale / wheel_inertia * delta
+		)
+		wheel_speed = _apply_wheel_brake(
+			wheel_speed,
+			brake_command,
+			brake_torque,
+			wheel_inertia,
+			delta
+		)
+		result["wheel_speed"] = _stabilize_wheel_speed(
+			wheel_speed,
+			angular_damping,
+			max_angular_speed,
+			delta
+		)
+		result["wheel_speed_rad_s"] = result["wheel_speed"]
+		if powered:
+			result["status"] = &"airborne"
+		return result
 
 	var space := body.get_world_3d().direct_space_state
 	var query := PhysicsRayQueryParameters3D.create(
@@ -197,11 +239,12 @@ static func tick_pair(
 		max_suspension_force
 	)
 	var spring_force := -ray_dir_world * force_magnitude
-	body.apply_force(
-		spring_force,
-		ray_origin_world - body_transform.origin
-	)
-	_apply_reaction_force(collider, -spring_force, hit_point)
+	if spring_force.is_finite():
+		body.apply_force(
+			spring_force,
+			ray_origin_world - body_transform.origin
+		)
+		_apply_reaction_force(collider, -spring_force, hit_point)
 	result["normal_force_n"] = force_magnitude
 
 	var forward_axis_local: Vector3 = pair.get(
@@ -248,11 +291,12 @@ static func tick_pair(
 		var tire_force := (
 			wheel_forward * traction_force + wheel_right * lateral_force
 		)
-		body.apply_force(
-			tire_force,
-			hit_point - body_transform.origin
-		)
-		_apply_reaction_force(collider, -tire_force, hit_point)
+		if tire_force.is_finite():
+			body.apply_force(
+				tire_force,
+				hit_point - body_transform.origin
+			)
+			_apply_reaction_force(collider, -tire_force, hit_point)
 		var wheel_torque := (
 			drive_command * drive_torque * drive_scale
 			- traction_force * radius_m

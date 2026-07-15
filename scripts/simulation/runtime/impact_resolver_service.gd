@@ -227,6 +227,9 @@ func _on_body_shape_entered(
 		return
 	if ImpactResolver.same_assembly_subgrid(assembly_id, other_body):
 		return
+	# ROVER-MODULES-V1: locomotive ↔ terrain carve/damage off (wheels only).
+	if _locomotive_ignores_terrain_partner(assembly_id, other_body):
+		return
 	if not ImpactResolver.assembly_has_construction_elements(_world, assembly_id):
 		return
 	var striker_element_id := ImpactResolver.element_id_from_shape_index(
@@ -326,6 +329,9 @@ func integrate_contacts(
 		):
 			continue
 		if ImpactResolver.same_assembly_subgrid(assembly_id, partner):
+			continue
+		# ROVER-MODULES-V1: locomotive ↔ terrain carve/damage off (wheels only).
+		if _locomotive_ignores_terrain_partner(assembly_id, partner):
 			continue
 		var partner_key := ImpactResolver.partner_key_from_object(partner)
 		var batch_key := ImpactResolver.batch_key(
@@ -488,7 +494,12 @@ func _apply_entry(
 	var partner: Object = entry.get("partner")
 	if ImpactResolver.same_assembly_subgrid(striker_assembly_id, partner):
 		return 0.0
+	# ROVER-MODULES-V1: locomotive ↔ terrain carve/damage off (wheels only).
+	if _locomotive_ignores_terrain_partner(striker_assembly_id, partner):
+		return 0.0
 	var impulse_length := float(entry.get("impulse_length", 0.0))
+	if not is_finite(impulse_length):
+		return 0.0
 	var strength := ImpactResolver.impulse_strength(impulse_length)
 	if strength <= 0.0:
 		return 0.0
@@ -511,6 +522,17 @@ func _apply_entry(
 			_drop_kinetic_loot(entry, impulse_length, used_volume)
 	_apply_element_damage(striker_element_id, impulse_length)
 	return used_volume
+
+
+func _locomotive_ignores_terrain_partner(
+	assembly_id: int,
+	partner: Object
+) -> bool:
+	if _world == null or assembly_id <= 0 or partner == null:
+		return false
+	if not ImpactResolver.is_world_surface_partner(partner):
+		return false
+	return WheelSimulationService.is_locomotive_assembly(_world, assembly_id)
 
 
 ## V2-4: strong-enough impacts leave part of the carved regolith as a
