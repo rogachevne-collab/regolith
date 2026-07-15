@@ -171,10 +171,11 @@ static func _place_deck_frames(
 	store_id: String
 ) -> int:
 	var deck_cells: Array[Vector3i] = []
-	for z: int in range(-2, 4):
+	for z: int in [0, -1, -2, 1, 2, 3]:
 		deck_cells.append(Vector3i(1, 0, z))
 		if z in [-2, 0, 1, 3]:
-			deck_cells.append(Vector3i(0, 0, z))
+			if z != 0:
+				deck_cells.append(Vector3i(0, 0, z))
 			deck_cells.append(Vector3i(2, 0, z))
 	for cell: Vector3i in deck_cells:
 		var placed := _place(

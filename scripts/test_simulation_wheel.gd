@@ -53,6 +53,17 @@ func _boot_world() -> SimulationWorld:
 	return world
 
 
+func _boot_demo_session() -> SimulationSession:
+	var session_scene: PackedScene = load(
+		"res://scenes/simulation_session.tscn"
+	)
+	var session := session_scene.instantiate() as SimulationSession
+	add_child(session)
+	for archetype: ElementArchetype in Slice01Archetypes.load_rover_archetypes():
+		session.world.get_archetype_registry().register(archetype)
+	return session
+
+
 func _spawn_foundation(world: SimulationWorld) -> Dictionary:
 	var spawn := SpawnBlueprintCommand.new()
 	spawn.blueprint = _single_blueprint(Slice01Archetypes.foundation())
@@ -377,24 +388,28 @@ func _test_wheel_snapshot_roundtrip() -> bool:
 		world.free()
 		return _fail("suspension snapshot configure failed")
 	var snapshot := world.capture_snapshot()
-	var restored := SimulationSnapshot.create_from_snapshot(snapshot)
+	var restored: SimulationWorld = SimulationSnapshot.create_from_snapshot(
+		snapshot
+	)
 	if restored == null:
 		world.free()
 		return _fail(
 			"wheel snapshot restore failed: %s"
 			% SimulationSnapshot.last_validate_error
 		)
-	var wheel_state := restored.ensure_wheel_instance_state(
+	var wheel_state: WheelInstanceState = restored.ensure_wheel_instance_state(
 		wheel_command.wheel_element_id
 	)
-	var suspension_state := restored.ensure_suspension_instance_state(
-		suspension_command.suspension_element_id
+	var suspension_state: SuspensionInstanceState = (
+		restored.ensure_suspension_instance_state(
+			suspension_command.suspension_element_id
+		)
 	)
-	var equal := SimulationSnapshot.semantic_equals(
+	var equal: bool = SimulationSnapshot.semantic_equals(
 		snapshot,
 		restored.capture_snapshot()
 	)
-	var valid := (
+	var valid: bool = (
 		wheel_state.steerable
 		and is_equal_approx(wheel_state.drive_torque_scale, 0.6)
 		and is_equal_approx(suspension_state.travel_m, 0.8)
@@ -436,19 +451,8 @@ func _test_dismantle_wheel_breaks_locomotive() -> bool:
 
 
 func _test_demo_rover_spawn() -> bool:
-	var world := SimulationWorld.new()
-	var session := SimulationSession.new()
-	var projection := SimulationPhysicsProjection.new()
-	world.name = "SimulationWorld"
-	projection.name = "SimulationPhysicsProjection"
-	session.add_child(world)
-	session.add_child(projection)
-	session.world = world
-	session.projection = projection
-	projection.bind_world(world)
-	world.ensure_resource_store("player")
-	for archetype: ElementArchetype in Slice01Archetypes.load_rover_archetypes():
-		world.get_archetype_registry().register(archetype)
+	var session := _boot_demo_session()
+	var world := session.world
 	var result: Dictionary = ROVER_DEMO_SPAWN.spawn_on_terrain(
 		session,
 		Vector3(8.0, 0.0, 0.0)
@@ -459,11 +463,34 @@ func _test_demo_rover_spawn() -> bool:
 		ok
 		and WheelSimulationService.is_locomotive_assembly(world, assembly_id)
 	)
+	var activated := (
+		ok
+		and world.get_locomotion_controller(assembly_id).is_activated()
+	)
+	var module_ids: Dictionary = result.get("element_ids", {})
+	var wheelbase_m := -1.0
+	var front_pair: Dictionary = module_ids.get("fl", {})
+	var rear_pair: Dictionary = module_ids.get("rl", {})
+	var front_suspension := world.get_element(
+		int(front_pair.get("suspension", 0))
+	)
+	var rear_suspension := world.get_element(
+		int(rear_pair.get("suspension", 0))
+	)
+	if front_suspension != null and rear_suspension != null:
+		wheelbase_m = (
+			absf(
+				float(
+					rear_suspension.origin_cell.z
+					- front_suspension.origin_cell.z
+				)
+			)
+			* GridMetric.CELL_SIZE_M
+		)
 	world.get_locomotion_controller(assembly_id).set_drive_command(1.0)
 	IndustryElectricBudget.apply_tick(world, 1.0)
 	var powered_wheels := 0
 	var dynamic_demand_w := 0.0
-	var module_ids: Dictionary = result.get("element_ids", {})
 	for key: String in ["fl", "fr", "rl", "rr"]:
 		var pair_variant: Variant = module_ids.get(key, {})
 		if not pair_variant is Dictionary:
@@ -492,6 +519,12 @@ func _test_demo_rover_spawn() -> bool:
 		return _fail("demo rover spawn failed: %s" % result.get("error", ""))
 	if not locomotive:
 		return _fail("demo rover should be locomotive")
+	if not activated:
+		return _fail("demo rover should be explicitly activated")
+	if not is_equal_approx(wheelbase_m, 2.5):
+		return _fail(
+			"demo rover wheelbase should be 2.5 m, got %.3f" % wheelbase_m
+		)
 	if powered_wheels != 4:
 		return _fail(
 			"demo rover should power all 4 wheels, got %d" % powered_wheels
@@ -508,19 +541,9 @@ func _test_demo_rover_spawn() -> bool:
 
 
 func _test_demo_rover_wheel_sockets_point_down() -> bool:
-	var world := SimulationWorld.new()
-	var session := SimulationSession.new()
-	var projection := SimulationPhysicsProjection.new()
-	world.name = "SimulationWorld"
-	projection.name = "SimulationPhysicsProjection"
-	session.add_child(world)
-	session.add_child(projection)
-	session.world = world
-	session.projection = projection
-	projection.bind_world(world)
-	world.ensure_resource_store("player")
-	for archetype: ElementArchetype in Slice01Archetypes.load_rover_archetypes():
-		world.get_archetype_registry().register(archetype)
+	var session := _boot_demo_session()
+	var world := session.world
+	var projection := session.projection
 	var result: Dictionary = ROVER_DEMO_SPAWN.spawn_on_terrain(
 		session,
 		Vector3(8.0, 0.0, 0.0)

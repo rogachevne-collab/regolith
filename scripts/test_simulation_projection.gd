@@ -628,7 +628,7 @@ func _test_piston_multibody_projection() -> bool:
 		world,
 		assembly_id,
 		Slice01Archetypes.rover_frame(),
-		Vector3i(4, 1, 0),
+		Vector3i(5, 1, -1),
 		piston
 	)
 	if not carriage_frame.is_ok():
@@ -637,7 +637,7 @@ func _test_piston_multibody_projection() -> bool:
 		world,
 		assembly_id,
 		WHEEL_SUSPENSION,
-		Vector3i(3, 1, 0),
+		Vector3i(4, 1, -1),
 		carriage_frame
 	)
 	if not suspension.is_ok():
@@ -646,7 +646,7 @@ func _test_piston_multibody_projection() -> bool:
 		world,
 		assembly_id,
 		DRIVE_WHEEL,
-		Vector3i(3, 0, 0),
+		Vector3i(4, 0, -1),
 		suspension
 	)
 	if not wheel.is_ok():
@@ -655,7 +655,7 @@ func _test_piston_multibody_projection() -> bool:
 		world,
 		assembly_id,
 		STATIONARY_DRILL,
-		Vector3i(6, 1, 0),
+		Vector3i(6, 1, -1),
 		wheel
 	)
 	if not drill.is_ok():

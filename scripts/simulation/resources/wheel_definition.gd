@@ -73,12 +73,14 @@ func validate(archetype: ElementArchetype) -> Array[String]:
 		if pad != null and pad.socket_tag == "wheel_plug":
 			plug_pads += 1
 			plug_face = pad.local_face
+	var forward_axis := OrientationUtil.face_to_vector(forward_axis_face)
+	var plug_axis := OrientationUtil.face_to_vector(plug_face)
 	if plug_pads != 1:
 		errors.append("drive_wheel must expose exactly one wheel_plug pad")
 	elif (
-		OrientationUtil.face_to_vector(forward_axis_face).dot(
-			OrientationUtil.face_to_vector(plug_face)
-		)
+		forward_axis.x * plug_axis.x
+		+ forward_axis.y * plug_axis.y
+		+ forward_axis.z * plug_axis.z
 		!= 0
 	):
 		errors.append("wheel forward axis must be perpendicular to wheel plug")

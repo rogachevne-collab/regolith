@@ -279,7 +279,7 @@ func ensure_suspension_instance_state(
 
 func list_wheel_instance_rows() -> Array[Dictionary]:
 	var rows: Array[Dictionary] = []
-	for element_id: int in _sorted_int_keys(_wheel_instances):
+	for element_id: int in _sorted_keys(_wheel_instances):
 		rows.append({
 			"element_id": element_id,
 			"state": (
@@ -291,7 +291,7 @@ func list_wheel_instance_rows() -> Array[Dictionary]:
 
 func list_suspension_instance_rows() -> Array[Dictionary]:
 	var rows: Array[Dictionary] = []
-	for element_id: int in _sorted_int_keys(_suspension_instances):
+	for element_id: int in _sorted_keys(_suspension_instances):
 		rows.append({
 			"element_id": element_id,
 			"state": (
