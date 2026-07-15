@@ -4,6 +4,7 @@ extends RefCounted
 const STORE_ID := "player"
 const SKY_PROBE_Y := 120.0
 const GROUND_PROBE_MAX_DISTANCE := 200.0
+const PARK_COMPRESSION_RATIO := 0.2
 const FLAT_SEARCH_RADIUS_M := 24.0
 const FLAT_SEARCH_STEP_M := 3.0
 const FLAT_SAMPLE_SPAN_M := 2.5
@@ -150,6 +151,13 @@ static func spawn_on_terrain(
 	motion.linear_velocity = Vector3.ZERO
 	motion.angular_velocity = Vector3.ZERO
 	session.projection.project_assembly_now(assembly_id, motion)
+	_seat_by_wheel_sockets(
+		session,
+		assembly_id,
+		terrain,
+		tool,
+		space_state
+	)
 	if session.visuals != null:
 		session.visuals.rebuild_assembly(assembly_id)
 	if session.piston_visuals != null:
@@ -170,14 +178,13 @@ static func _assembly_transform_on_surface(
 	tool: VoxelTool = null,
 	space_state: PhysicsDirectSpaceState3D = null
 ) -> Transform3D:
+	# Provisional pose only — final Y comes from _seat_by_wheel_sockets after
+	# the wheel pairs exist. Old travel+radius clearance floated the chassis
+	# then looked like a sink/clip once visuals raycast to ground.
 	var archetype := Slice01Archetypes.rover_frame()
 	var contact := GridPoseUtil.ground_contact_local(archetype, 0)
-	var suspension := Slice01Archetypes.wheel_suspension()
 	var wheel := Slice01Archetypes.drive_wheel()
-	var clearance := (
-		suspension.suspension_definition.suspension_travel_m
-		+ wheel.wheel_definition.radius_m
-	)
+	var provisional_clearance := wheel.wheel_definition.radius_m + 0.15
 	var seat_y := _lowest_surface_y_near(
 		surface_point,
 		terrain,
@@ -187,8 +194,103 @@ static func _assembly_transform_on_surface(
 	var seated_point := Vector3(surface_point.x, seat_y, surface_point.z)
 	return Transform3D(
 		basis,
-		seated_point - basis * contact + basis.y.normalized() * clearance
+		seated_point - basis * contact + basis.y.normalized() * provisional_clearance
 	)
+
+
+## Parked ride height: seat so wheel bottoms sit on physics ground at a light
+## spring compression (not full droop travel+radius).
+static func _seat_by_wheel_sockets(
+	session: SimulationSession,
+	assembly_id: int,
+	terrain: VoxelTerrain = null,
+	tool: VoxelTool = null,
+	space_state: PhysicsDirectSpaceState3D = null
+) -> void:
+	if session == null or session.world == null or session.projection == null:
+		return
+	if assembly_id <= 0:
+		return
+	var world := session.world
+	var assembly := world.get_assembly_raw(assembly_id)
+	var body := session.projection.get_physics_body(assembly_id) as PhysicsBody3D
+	if assembly == null or body == null:
+		return
+	if space_state == null and body.is_inside_tree():
+		space_state = body.get_world_3d().direct_space_state
+	if space_state == null:
+		return
+	var body_xf := body.global_transform
+	var delta_y := -INF
+	var found := false
+	for pair: Dictionary in WheelSimulationService.discover_pairs(world, assembly_id):
+		if not WheelSimulationService.is_complete_pair(pair):
+			continue
+		var suspension: SimulationElement = pair.get("suspension_element")
+		var wheel_element: SimulationElement = pair.get("wheel_element")
+		if suspension == null or wheel_element == null:
+			continue
+		var socket := WheelProjectionUtil.mount_pad_anchor_assembly_local(
+			suspension,
+			"wheel_socket"
+		)
+		if socket.is_empty():
+			continue
+		var travel_m := (
+			world.ensure_suspension_instance_state(suspension.element_id).travel_m
+		)
+		if travel_m <= 0.0:
+			var sus_def := suspension.get_archetype().suspension_definition
+			travel_m = sus_def.suspension_travel_m if sus_def != null else 0.6
+		var radius_m := 0.4
+		var wheel_def := wheel_element.get_archetype().wheel_definition
+		if wheel_def != null:
+			radius_m = wheel_def.radius_m
+		var rest_length := travel_m * (1.0 - PARK_COMPRESSION_RATIO)
+		var socket_world: Vector3 = body_xf * Vector3(socket["origin"])
+		var ray_dir := (
+			body_xf.basis * Vector3(socket["direction"])
+		).normalized()
+		if ray_dir.length_squared() <= 0.0001:
+			continue
+		var surface_variant: Variant = null
+		if terrain != null and tool != null:
+			surface_variant = _ground_point_at_xz(
+				terrain,
+				tool,
+				space_state,
+				Vector2(socket_world.x, socket_world.z)
+			)
+		if not surface_variant is Vector3:
+			var physics_y := VoxelSpaceUtil.physics_down_surface_y(
+				space_state,
+				Vector2(socket_world.x, socket_world.z),
+				socket_world.y + 2.0,
+				12.0
+			)
+			if is_finite(physics_y):
+				surface_variant = Vector3(socket_world.x, physics_y, socket_world.z)
+		if not surface_variant is Vector3:
+			continue
+		var surface: Vector3 = surface_variant
+		var wheel_bottom: Vector3 = (
+			socket_world + ray_dir * (rest_length + radius_m)
+		)
+		var needed := surface.y - wheel_bottom.y
+		if not found or needed > delta_y:
+			delta_y = needed
+			found = true
+	if not found:
+		return
+	if absf(delta_y) < 0.01:
+		return
+	var motion := assembly.motion.duplicate_state()
+	motion.transform.origin.y += delta_y
+	motion.frozen = true
+	motion.sleeping = true
+	motion.linear_velocity = Vector3.ZERO
+	motion.angular_velocity = Vector3.ZERO
+	session.projection.project_assembly_now(assembly_id, motion)
 
 
 static func _lowest_surface_y_near(
@@ -225,7 +327,7 @@ static func _lowest_surface_y_near(
 	return lowest if found else center.y
 
 
-## After load: re-seat released locomotives to physics ground under the footprint.
+## After load: re-seat released locomotives by wheel sockets on physics ground.
 static func reseat_parked_locomotives(
 	session: SimulationSession,
 	terrain: VoxelTerrain,
@@ -242,14 +344,6 @@ static func reseat_parked_locomotives(
 	):
 		return
 	var world := session.world
-	var archetype := Slice01Archetypes.rover_frame()
-	var contact := GridPoseUtil.ground_contact_local(archetype, 0)
-	var suspension := Slice01Archetypes.wheel_suspension()
-	var wheel := Slice01Archetypes.drive_wheel()
-	var clearance := (
-		suspension.suspension_definition.suspension_travel_m
-		+ wheel.wheel_definition.radius_m
-	)
 	for assembly: SimulationAssembly in world.list_assemblies():
 		if assembly == null or assembly.tombstoned:
 			continue
@@ -266,29 +360,13 @@ static func reseat_parked_locomotives(
 			continue
 		if not locomotion.has_released_from_anchor():
 			locomotion.mark_released_from_anchor()
-		var motion := assembly.motion.duplicate_state()
-		var origin := motion.transform.origin
-		var seat_y := _lowest_surface_y_near(
-			origin,
+		_seat_by_wheel_sockets(
+			session,
+			assembly.assembly_id,
 			terrain,
 			tool,
 			space_state
 		)
-		var basis := motion.transform.basis
-		var desired := (
-			Vector3(origin.x, seat_y, origin.z)
-			- basis * contact
-			+ basis.y.normalized() * clearance
-		)
-		var delta_y := desired.y - origin.y
-		if absf(delta_y) < 0.02 and motion.frozen:
-			continue
-		motion.transform.origin.y += delta_y
-		motion.frozen = true
-		motion.sleeping = true
-		motion.linear_velocity = Vector3.ZERO
-		motion.angular_velocity = Vector3.ZERO
-		session.projection.project_assembly_now(assembly.assembly_id, motion)
 
 
 static func _ground_point_at_xz(
