@@ -17,7 +17,7 @@ const AUTOSAVE_INTERVAL_S := 90.0
 @export var debug_overlay := false
 ## Fills player cargo with a large playtest mix on every world entry (fresh or loaded).
 @export var playtest_cargo := true
-## Spawns a welded demo rover near the player on a fresh world (not on save load).
+## Spawns a welded demo rover on the flattest ground patch near BaseSpawn.
 @export var spawn_demo_rover := true
 
 @onready var _loading: Label = $CanvasLayer/Loading
@@ -31,6 +31,11 @@ var _world_ready := false
 var _autosave_accum := 0.0
 var _last_save_ms := 0
 var _save_load_attempted := false
+
+
+## True after spawn settle (or loaded-world entry). Beckett: `time_control op=step_until condition="is_world_ready()"`.
+func is_world_ready() -> bool:
+	return _world_ready
 
 
 func _ready() -> void:
@@ -136,21 +141,27 @@ func _apply_playtest_cargo_if_enabled() -> void:
 
 
 func _spawn_demo_rover_near_player() -> void:
-	if _session == null or _player == null:
+	if _session == null or _base_spawn == null:
 		return
 	var tool: VoxelTool = _terrain.get_voxel_tool()
 	tool.channel = VoxelBuffer.CHANNEL_SDF
-	var target_xz := (
-		_player.global_position
-		+ _player.global_transform.basis.z * 6.0
+	var center_xz := Vector2(
+		_base_spawn.global_position.x,
+		_base_spawn.global_position.z
 	)
-	var probe_origin := Vector3(target_xz.x, SKY_PROBE_Y, target_xz.z)
-	var hit: VoxelRaycastResult = _voxel_down_hit(probe_origin, tool)
-	if hit == null:
-		push_warning("Demo rover spawn failed: terrain raycast missed")
+	var ground_variant: Variant = RoverDemoSpawn.find_flat_ground_near(
+		_terrain,
+		tool,
+		_physics_space_state(),
+		center_xz
+	)
+	if not ground_variant is Vector3:
+		push_warning("Demo rover spawn failed: no flat ground near BaseSpawn")
 		return
-	var ground := _ground_point_from_down_hit(probe_origin, hit)
-	var result := RoverDemoSpawn.spawn_on_terrain(_session, ground)
+	var result := RoverDemoSpawn.spawn_on_terrain(
+		_session,
+		ground_variant as Vector3
+	)
 	if not bool(result.get("ok", false)):
 		push_warning(
 			"Demo rover spawn failed: %s" % str(result.get("error", "unknown"))

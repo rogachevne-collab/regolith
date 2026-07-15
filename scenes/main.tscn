@@ -65,11 +65,10 @@ light_energy = 0.28
 
 [node name="VoxelTerrain" type="VoxelTerrain" parent="." unique_id=823362394]
 transform = Transform3D(0.65, 0, 0, 0, 0.65, 0, 0, 0, 0.65, 0, 0, 0)
-max_view_distance = 200
 generator = ExtResource("3")
 mesher = SubResource("VoxelMesherTransvoxel_main")
+max_view_distance = 200
 material_override = ExtResource("4")
-generate_collisions = true
 
 [node name="PlacedBlocks" type="Node3D" parent="." unique_id=1799464660]
 script = ExtResource("6")

@@ -2,6 +2,65 @@ class_name RoverDemoSpawn
 extends RefCounted
 
 const STORE_ID := "player"
+const SKY_PROBE_Y := 120.0
+const GROUND_PROBE_MAX_DISTANCE := 200.0
+const FLAT_SEARCH_RADIUS_M := 24.0
+const FLAT_SEARCH_STEP_M := 3.0
+const FLAT_SAMPLE_SPAN_M := 2.5
+const MAX_FLAT_SLOPE_M := 0.35
+
+
+static func find_flat_ground_near(
+	terrain: VoxelTerrain,
+	tool: VoxelTool,
+	space_state: PhysicsDirectSpaceState3D,
+	center_xz: Vector2,
+	search_radius_m: float = FLAT_SEARCH_RADIUS_M,
+	step_m: float = FLAT_SEARCH_STEP_M
+) -> Variant:
+	if terrain == null or tool == null or space_state == null:
+		return null
+	var best_ground: Vector3 = Vector3.ZERO
+	var best_slope := INF
+	var best_dist_sq := INF
+	var steps := maxi(int(ceil(search_radius_m / step_m)), 1)
+	for ix: int in range(-steps, steps + 1):
+		for iz: int in range(-steps, steps + 1):
+			var xz := center_xz + Vector2(
+				float(ix) * step_m,
+				float(iz) * step_m
+			)
+			if xz.distance_to(center_xz) > search_radius_m + 0.001:
+				continue
+			var ground_variant: Variant = _ground_point_at_xz(
+				terrain,
+				tool,
+				space_state,
+				xz
+			)
+			if not ground_variant is Vector3:
+				continue
+			var ground: Vector3 = ground_variant
+			var slope := _local_slope_m(
+				terrain,
+				tool,
+				space_state,
+				ground,
+				FLAT_SAMPLE_SPAN_M
+			)
+			if slope > MAX_FLAT_SLOPE_M:
+				continue
+			var dist_sq := xz.distance_squared_to(center_xz)
+			if slope < best_slope - 0.001 or (
+				is_equal_approx(slope, best_slope)
+				and dist_sq < best_dist_sq
+			):
+				best_slope = slope
+				best_dist_sq = dist_sq
+				best_ground = ground
+	if best_slope >= INF:
+		return null
+	return best_ground
 
 
 static func spawn_on_terrain(
@@ -109,6 +168,66 @@ static func _assembly_transform_on_surface(
 		basis,
 		surface_point - basis * contact + basis.y.normalized() * clearance
 	)
+
+
+static func _ground_point_at_xz(
+	terrain: VoxelTerrain,
+	tool: VoxelTool,
+	space_state: PhysicsDirectSpaceState3D,
+	xz: Vector2
+) -> Variant:
+	var origin := Vector3(xz.x, SKY_PROBE_Y, xz.y)
+	var hit: VoxelRaycastResult = VoxelSpaceUtil.raycast_world(
+		tool,
+		terrain,
+		origin,
+		Vector3.DOWN,
+		GROUND_PROBE_MAX_DISTANCE
+	)
+	if hit == null:
+		return null
+	var sdf_y := (
+		origin.y
+		- VoxelSpaceUtil.raycast_hit_world_distance(terrain, hit)
+	)
+	var surface_y := VoxelSpaceUtil.resolve_ground_surface_y(
+		space_state,
+		xz,
+		sdf_y,
+		SKY_PROBE_Y,
+		GROUND_PROBE_MAX_DISTANCE
+	)
+	return Vector3(xz.x, surface_y, xz.y)
+
+
+static func _local_slope_m(
+	terrain: VoxelTerrain,
+	tool: VoxelTool,
+	space_state: PhysicsDirectSpaceState3D,
+	center: Vector3,
+	sample_span_m: float
+) -> float:
+	var max_delta := 0.0
+	for offset: Vector2 in [
+		Vector2(1.0, 0.0),
+		Vector2(-1.0, 0.0),
+		Vector2(0.0, 1.0),
+		Vector2(0.0, -1.0),
+	]:
+		var neighbor_xz := Vector2(center.x, center.z) + offset * sample_span_m
+		var neighbor_variant: Variant = _ground_point_at_xz(
+			terrain,
+			tool,
+			space_state,
+			neighbor_xz
+		)
+		if not neighbor_variant is Vector3:
+			return INF
+		max_delta = maxf(
+			max_delta,
+			absf((neighbor_variant as Vector3).y - center.y)
+		)
+	return max_delta
 
 
 static func _wake_locomotive_body(
