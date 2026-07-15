@@ -75,6 +75,23 @@ func _prompt_for(hit: InteractionHit) -> String:
 			)
 		if _is_terminal_target(hit):
 			return "E — открыть инвентарь"
+	# Seat / module E-prompts stay visible with any tool (including drill).
+	if (
+		hit.valid
+		and hit.distance <= 4.5
+		and hit.target_kind == InteractionHit.KIND_CONTROL_SEAT
+	):
+		return "E — сесть в кокпит"
+	if (
+		hit.valid
+		and hit.distance <= 4.0
+		and hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
+		and str(hit.metadata.get("archetype_id", "")) in [
+			"drive_wheel",
+			"wheel_suspension",
+		]
+	):
+		return "E — настройки модуля"
 	if _tools.active_tool == &"drill":
 		return ""
 	if _tools.active_tool == &"connect":
@@ -113,21 +130,6 @@ func _prompt_for(hit: InteractionHit) -> String:
 		return "Удерживай / — радиус питания"
 	if not hit.valid:
 		return ""
-	if (
-		hit.target_kind == InteractionHit.KIND_CONTROL_SEAT
-		and hit.distance <= 4.5
-	):
-		return "E — сесть в кокпит"
-	if (
-		hit.valid
-		and hit.distance <= 4.0
-		and hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
-		and str(hit.metadata.get("archetype_id", "")) in [
-			"drive_wheel",
-			"wheel_suspension",
-		]
-	):
-		return "E — настройки модуля"
 	if _tools.active_tool == &"weld":
 		if (
 			hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT

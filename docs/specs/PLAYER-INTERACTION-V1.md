@@ -112,13 +112,18 @@ Step solver использует motion tests `up → forward → down`; camera 
   transform;
 - physics target обновляется в `_physics_process`;
 - top-level camera в `_process` следует за target transform **одним
-  источником** (position + basis из одного `global_transform`): yaw
+  источником** (position + basis из одного transform): yaw
   применяется сразу в input, а смешение interpolated position с raw basis
-  давало rotation jitter на неровном voxel ground; при
-  `physics_interpolation_mode = OFF` у игрока используется
-  `global_transform`, не `get_global_transform_interpolated()`;
+  давало rotation jitter на неровном voxel ground; пешком у игрока
+  `physics_interpolation_mode = OFF` → `global_transform`; в `ControlSeat`
+  (child of locomotive `RigidBody3D`) interpolation **ON** и камера берёт
+  `get_global_transform_interpolated()`, иначе judder на частоте физики;
 - mouse delta применяется без зависимости от render FPS;
 - pitch ограничен, roll отсутствует без отдельного эффекта;
+- в `ControlSeat` допустим toggle FP ↔ free orbit 3P (`toggle_vehicle_camera`,
+  клавиша V): орбита крутит собственные yaw/pitch вокруг vehicle pivot и
+  **не** владеет gameplay yaw игрока; WASD остаётся locomotion InputMap;
+  `exit_vehicle` сбрасывает orbit в FP;
 - procedural bob/sway воздействует только на visual rig и имеет малую амплитуду;
 - interaction ray использует согласованную aim pose и не дрожит из-за camera bob;
 - sensitivity и FOV доступны игроку и сохраняются в `user://`.

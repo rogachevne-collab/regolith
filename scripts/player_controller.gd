@@ -95,6 +95,11 @@ func enter_vehicle(vehicle: Node3D, seat_position: Vector3) -> void:
 	reparent(vehicle, false)
 	position = seat_position
 	rotation = Vector3.ZERO
+	# Foot mode keeps interpolation OFF (yaw/basis mix on voxel ground).
+	# Seated child of RigidBody must interpolate or the top-level camera
+	# judders at physics rate while the world renders at display rate.
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_ON
+	reset_physics_interpolation()
 	$Drill.set_physics_process(false)
 	$Camera/DrillVisual.visible = false
 	if _voxel_viewer != null:
@@ -108,6 +113,8 @@ func exit_vehicle(world_position: Vector3) -> void:
 	_current_vehicle = null
 	rotation = Vector3.ZERO
 	velocity = Vector3.ZERO
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+	reset_physics_interpolation()
 	$CollisionShape3D.set_deferred("disabled", false)
 	$Drill.set_physics_process(true)
 	$Camera/DrillVisual.visible = true
