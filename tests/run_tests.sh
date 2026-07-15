@@ -14,7 +14,6 @@ KERNEL=(
 	test_simulation_actuator
 	test_simulation_wheel
 	test_simulation_projection
-	test_cart_kernel_topology
 	test_construction_preview
 	test_construction_damage
 	test_industry_ports
@@ -27,17 +26,11 @@ KERNEL=(
 # game is the verifier for that layer. Runnable via --all or run_one.sh.
 EXTRA=(
 	test_assembly
-	test_cart_drive
-	test_cart_flat
-	test_cart_rebuild
-	test_cart_steering
 	test_character_controller
 	test_construction_toolbar_remap
 	test_hud_palette_layout
 	test_impact_destruction
-	test_passenger
 	test_player_interaction
-	test_wheel_detach
 )
 
 SCENES=("${KERNEL[@]}")

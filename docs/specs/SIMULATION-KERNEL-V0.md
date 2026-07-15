@@ -306,24 +306,12 @@ resources/blueprints/baked/*.tres   (deterministic output, committed)
 
 Функциональные Industry-роли остаются data/status stubs до Industry v1.
 
-## Rover archetypes и `cart_rover` Blueprint (§5 migration)
+## Rover modules (composition)
 
-Hand-authored rover fixtures в `resources/archetypes/rover/`:
-
-- `rover_frame` — `Frame`, `mass_kg = 340/11`, box collider `0.92×0.6×0.92` m;
-- `rover_wheel` — `Support`, `mass_kg = 15`, box collider для projection fragment.
-
-Authoring: `scenes/blueprint_authoring/cart_rover.tscn` → bake
-`resources/blueprints/baked/cart_rover.tres` (`BlueprintBaker`). 15 placements,
-одна rigid component, стабильные `local_id` (`frame_*`, `bridge_*`, `wheel_*`).
-
-Runtime detach/attach на ровере: batched `BreakRigidJointCommand` до split
-изолированного элемента; attach — `MergeAssembliesCommand` через
-`SimulationMergeGateway`; projection выравнивает fragment перед командой и
-применяет общий momentum-safe merge. Locomotion остаётся raycast
-`CartLocomotion`, не в Kernel.
-
-Headless: `scenes/test_cart_kernel_topology.tscn` → `KERNEL-CART-TOPOLOGY: PASS`.
+Ровер — композиция placeable модулей (`ROVER-MODULES-V1`): `rover_frame`,
+`wheel_suspension`, `drive_wheel`, `cockpit`, power blocks. Headless gate:
+`scenes/test_simulation_wheel.tscn`. Legacy цельный `cart_rover` / `CartLocomotion`
+сняты.
 
 ## Acceptance (Phase 1)
 

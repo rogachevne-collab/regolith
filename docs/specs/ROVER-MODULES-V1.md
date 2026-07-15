@@ -98,8 +98,6 @@ electric budget, что у Industry v1.
 - suspension damage-animation, отрыв колеса на ходу как отдельный эффект
   (dismantle — да, спец-анимации — нет);
 - autopilot, programmable bindings, sequencing;
-- миграция baked `cart_rover` на новые модули (остаётся на legacy
-  `CartLocomotion`);
 - строительство/расширение движущегося ровера.
 
 ## Archetypes
@@ -132,10 +130,7 @@ archetypes»).
 | `power_battery_small` | `Tank` | — (electric fixture) | — |
 | `power_distributor_small` | `Hub` | — (electric fixture) | — |
 
-`rover_frame` совпадает по смыслу с существующим
-`resources/archetypes/rover/rover_frame.tres`, но материализуется как
-slice01-fixture, чтобы попасть в player construction path; baked blueprint
-продолжает ссылаться на свою копию.
+`rover_frame` материализуется как slice01-fixture в player construction path.
 
 ### SuspensionDefinition
 
@@ -153,7 +148,7 @@ SuspensionDefinition {
 
 - `wheel_socket_face` проходит через `OrientationUtil`; мировая грань берётся из
   orientation элемента, а не из presentation node.
-- Начальные fixture-значения наследуют текущий `CartLocomotion`:
+- Начальные fixture-значения:
   `suspension_travel_m = 0.6`, `spring_stiffness = 1600`, `spring_damping = 400`.
   Это initial tuning, а не kernel-константы.
 
@@ -182,7 +177,7 @@ WheelDefinition {
 }
 ```
 
-- Fixture-значения наследуют `CartLocomotion`: `radius 0.4`, `width 0.3`,
+- Fixture-значения: `radius 0.4`, `width 0.3`,
   `drive_torque 65`,
   `brake_torque 180`, `longitudinal_grip 1.2`, `lateral_grip 0.9`,
   `slip_stiffness 800`, `lateral_stiffness 1000`, `wheel_inertia 0.65`,
@@ -354,8 +349,7 @@ locomotive assembly и каждой complete `WheelPair`:
    orientation элемента; hardcoded `±body.basis.z` запрещён;
 7. steer: `forward.rotated(hit_normal, steering_angle_rad)` (поворот в плоскости
    контакта, не euler body); `steering_angle_rad = 0`, если колесо не steerable;
-8. traction/lateral через friction ellipse (перенос математики
-   `CartLocomotion`): при превышении grip — скольжение;
+8. traction/lateral через friction ellipse: при превышении grip — скольжение;
 9. drive/brake torque шкалируется питанием: если
    `IndustryElementRuntime.powered == false` для элемента колеса — drive torque
    = 0, тормоз доступен (пассивное трение остаётся);
@@ -381,7 +375,7 @@ locomotive assembly и каждой complete `WheelPair`:
   assembly-up на максимальный `travel + radius` среди complete pairs, после
   чего Jolt сам осаживает подвеску; live body не телепортируется и скрытый
   downforce не применяется;
-- mounted legacy `Cart` не является production-путём композиции и не определяет
+- техника собирается из placeable модулей; цельный mounted cart не определяет
   семантику модульного ровера.
 
 ### Запреты
