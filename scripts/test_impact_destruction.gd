@@ -445,7 +445,8 @@ func _test_mesh_stamp_carves_terrain() -> bool:
 		contact,
 		collider,
 		1.0,
-		Vector3.DOWN
+		Vector3.DOWN,
+		fixture.terrain
 	)
 	collider.queue_free()
 	if op.is_empty():

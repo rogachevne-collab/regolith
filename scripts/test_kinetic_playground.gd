@@ -404,9 +404,12 @@ P — переспавн | U — залить землю | H — скрыть
 		_status.text = _status_hint
 	else:
 		_status_hint = ""
+		var carve_m3 := 0.0
+		if _session != null and _session.impact_service != null:
+			carve_m3 = _session.impact_service.last_terrain_carve_m3
 		_status.text = "drop |v|=%.1f int=%.0f%% carve=%.3fm³ %s" % [
 			drop_speed,
 			_integrity_percent(_drop_assembly_id),
-			_session.impact_service.last_terrain_carve_m3,
+			carve_m3,
 			body_kind,
 		]

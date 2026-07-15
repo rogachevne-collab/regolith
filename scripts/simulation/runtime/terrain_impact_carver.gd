@@ -138,11 +138,17 @@ static func unit_box_mesh_sdf() -> VoxelMeshSDF:
 ## world orientation, sunk past the contact along the carve direction. Falls
 ## back to empty when the collider is not a box or baking failed — caller
 ## uses the sphere op instead.
+##
+## Collider boxes are often smaller than one voxel (frame = 0.5 m, terrain
+## scale 0.65). Like build_sphere_op, the stamp is floored to a measurable
+## half-extent so MODE_REMOVE actually clears cells.
 static func build_mesh_op(
 	contact_world: Vector3,
 	collider: CollisionShape3D,
 	strength: float,
-	carve_direction: Vector3 = Vector3.DOWN
+	carve_direction: Vector3 = Vector3.DOWN,
+	terrain: Node3D = null,
+	max_half_extent: float = IMPACT_MAX_RADIUS
 ) -> Dictionary:
 	if collider == null or not collider.shape is BoxShape3D:
 		return {}
@@ -155,23 +161,47 @@ static func build_mesh_op(
 		direction = Vector3.DOWN
 	else:
 		direction = direction.normalized()
+	var shape_scale := collider.global_transform.basis.get_scale().abs()
 	var box_size: Vector3 = (
-		(collider.shape as BoxShape3D).size * MESH_STAMP_INFLATE
+		(collider.shape as BoxShape3D).size * shape_scale * MESH_STAMP_INFLATE
 	)
+	if terrain != null:
+		var floor_half := minimum_measurable_radius_m(terrain)
+		var ceiling_half := minf(max_half_extent, MAX_RADIUS)
+		var target_half := lerpf(floor_half, ceiling_half, clamped_strength)
+		var min_axis := target_half * 2.0
+		box_size = Vector3(
+			maxf(box_size.x, min_axis),
+			maxf(box_size.y, min_axis),
+			maxf(box_size.z, min_axis)
+		)
 	var collider_basis := collider.global_transform.basis.orthonormalized()
-	# Box support extent along the dig direction: how far the surface-facing
-	# face sits from the box center.
+	# Dig-side face half-extent: distance from box center to the face that
+	# hits the surface along carve_direction.
 	var dir_local := (collider_basis.inverse() * direction).abs()
 	var support := 0.5 * (
 		dir_local.x * box_size.x
 		+ dir_local.y * box_size.y
 		+ dir_local.z * box_size.z
 	)
-	var bite := bite_depth_for_radius(base_radius_from_collider(collider)) * (
+	var bite := bite_depth_for_radius(maxf(box_size.x, maxf(box_size.y, box_size.z)) * 0.5) * (
 		0.4 + 0.6 * clamped_strength
 	)
-	# Face kisses the contact point, then sinks by the bite depth.
+	if terrain != null:
+		bite = maxf(bite, minimum_measurable_radius_m(terrain))
+	# Keep the approach face near the contact while most of the oriented
+	# volume goes below it — otherwise MODE_REMOVE only softens SDF and the
+	# isosurface never opens a visible crater at scale 0.65.
+	bite = clampf(bite, support * 0.85, support * 0.95)
+	# Dig-side face at contact + bite*dir; approach face stays near contact.
 	var center := contact_world - direction * (support - bite)
+	var isolevel := 0.0
+	if terrain != null:
+		# Inflate the brush by ~half a voxel so the isosurface actually opens.
+		isolevel = VoxelSpaceUtil.world_distance_to_local(
+			terrain,
+			minimum_measurable_radius_m(terrain) * 0.5
+		)
 	return {
 		"stamp_kind": &"mesh",
 		"mesh_sdf": mesh_sdf,
@@ -179,6 +209,7 @@ static func build_mesh_op(
 			collider_basis * Basis.from_scale(box_size),
 			center
 		),
+		"isolevel": isolevel,
 		"strength": clamped_strength,
 	}
 

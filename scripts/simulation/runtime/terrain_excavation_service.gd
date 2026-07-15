@@ -204,6 +204,7 @@ func _to_local_request(
 				"stamp_kind": stamp_kind,
 				"mesh_sdf": mesh_sdf,
 				"transform": local_transform,
+				"isolevel": float(request.get("isolevel", 0.0)),
 				"sdf_scale": request.get(
 					"sdf_scale",
 					DEFAULT_SDF_SCALE
@@ -235,7 +236,8 @@ func _apply_stamp(voxel_tool: VoxelTool, request: Dictionary) -> void:
 		&"mesh":
 			voxel_tool.do_mesh(
 				request["mesh_sdf"],
-				request["transform"]
+				request["transform"],
+				float(request.get("isolevel", 0.0))
 			)
 
 

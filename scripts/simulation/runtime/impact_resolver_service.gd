@@ -174,7 +174,7 @@ func emit_actuator_sustained_entry(
 		"contact_points": PackedVector3Array([contact_world]),
 		"contact_impulses": PackedFloat32Array([impulse_length]),
 	}
-	var path_from := _sustained_path_from(batch_key, contact_world)
+	var path_from: Variant = _sustained_path_from(batch_key, contact_world)
 	if path_from is Vector3:
 		entry["sustained_path_from"] = path_from
 	_queue_entry(entry)
@@ -581,12 +581,14 @@ func _apply_terrain_carve(
 	if op.is_empty():
 		# Oriented bite: box colliders stamp with their world rotation, so
 		# a cube landing at an angle digs a slanted imprint instead of a
-		# vertical square pit. Sphere stays the fallback shape.
+		# vertical square pit. Sphere stays the fallback for non-box shapes.
 		op = TerrainImpactCarver.build_mesh_op(
 			contact_world,
 			collider,
 			strength,
-			carve_direction
+			carve_direction,
+			terrain,
+			TerrainImpactCarver.IMPACT_MAX_RADIUS
 		)
 	if op.is_empty():
 		op = TerrainImpactCarver.build_sphere_op(
