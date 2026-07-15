@@ -5,6 +5,8 @@ Standalone Godot 4.5+ проект: voxel terrain (Voxel Tools 1.6x), Jolt physi
 ресурсы в `resources/`. Концепт: `docs/CONCEPT.md`.
 Этот файл — единственный источник процессных правил для агентов.
 
+Rule 1 - отвечай коротко, по делу и понятным языком
+
 ## Доменный контракт
 
 `docs/PHYSICAL-LANGUAGE.md` — большой. НЕ читай его целиком: в начале файла
