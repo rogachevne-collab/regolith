@@ -108,8 +108,18 @@ damage   = strength² · max_integrity · K_DAMAGE
 ```
 
 **Terrain carve** (только partner = `VoxelTerrain`, как v0): `strength` →
-`sdf_strength`, радиус и форма (`path` / `sphere`) по contact points; бюджет
-`V_MAX_M3`, cooldown на пару.
+`sdf_strength`; бюджет `V_MAX_M3`, cooldown на пару. Форма стампа:
+
+- **`mesh` (carve v2, приоритет)** — box-коллайдер ударника штампуется
+  `VoxelTool.do_mesh` с его **мировой ориентацией**: единичный куб один раз
+  запекается в `VoxelMeshSDF` (`TerrainImpactCarver.unit_box_mesh_sdf`),
+  transform = базис коллайдера × размер шейпы; центр — грань «целует» contact
+  point и утапливается на bite depth вдоль carve direction. Куб, упавший под
+  углом, выгрызает наклонный отпечаток, а не вертикальную квадратную яму.
+  `do_mesh` доступен на `VoxelToolTerrain` с Voxel Tools 1.5; transform
+  передаётся в excavation **в terrain-local** (контракт `do_mesh_chunked`).
+- **`sphere` / `path`** — fallback (не-box шейпа, неудачный bake) и прежние
+  каналы (sustained grind, hand drill).
 
 ## Actuator sustained channel
 
@@ -254,7 +264,7 @@ entries от carriage-контактов независимо от `machine_enab
 
 - Tier 2: давление `P = F/A_contact`, yield regolith/элементов, глубина от энергии;
 - safe-speed порог, clamp скорости, ослабление sustained — против design intent;
-- `do_mesh` collider-stamp (v0 backlog) — nice-to-have после v1;
+- ~~`do_mesh` collider-stamp~~ — реализовано (carve v2, см. «Terrain carve»);
 - loot от кинетики, debris-тела грунта, урон игроку;
 - миграция пистона на joint linear motor вместо `apply_central_force`;
 - FEM, усталость, fracture-меши в стиле SE2.

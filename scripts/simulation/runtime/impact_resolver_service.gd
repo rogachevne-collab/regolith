@@ -480,14 +480,24 @@ func _apply_terrain_carve(
 			terrain,
 			body
 		)
-	var op := TerrainImpactCarver.build_sphere_op(
+	# Oriented bite first: box colliders stamp with their world rotation, so
+	# a cube landing at an angle digs a slanted imprint instead of a
+	# vertical square pit. Sphere stays the fallback shape.
+	var op := TerrainImpactCarver.build_mesh_op(
 		contact_world,
 		collider,
 		strength,
-		terrain,
-		carve_direction,
-		TerrainImpactCarver.IMPACT_MAX_RADIUS
+		carve_direction
 	)
+	if op.is_empty():
+		op = TerrainImpactCarver.build_sphere_op(
+			contact_world,
+			collider,
+			strength,
+			terrain,
+			carve_direction,
+			TerrainImpactCarver.IMPACT_MAX_RADIUS
+		)
 	op["sdf_scale"] = clampf(0.25 + 0.75 * strength, 0.25, 1.0)
 	var carved := _gateway.apply_terrain_carve(op, volume_budget_m3)
 	last_terrain_carve_m3 = carved

@@ -10,7 +10,11 @@ func excavate(voxel_tool: VoxelTool, request: Dictionary) -> Dictionary:
 	if voxel_tool == null:
 		return _result(&"not_ready")
 	var stamp_kind := StringName(request.get("stamp_kind", &""))
-	if stamp_kind != &"sphere" and stamp_kind != &"path":
+	if (
+		stamp_kind != &"sphere"
+		and stamp_kind != &"path"
+		and stamp_kind != &"mesh"
+	):
 		return _result(&"invalid_request")
 	var terrain: Node3D = request.get("terrain")
 	var local_request := _to_local_request(terrain, request)
@@ -93,6 +97,31 @@ func _to_local_request(
 					DEFAULT_SDF_SCALE
 				),
 			}
+		&"mesh":
+			var mesh_sdf: VoxelMeshSDF = request.get("mesh_sdf")
+			if mesh_sdf == null or not mesh_sdf.is_baked():
+				return {}
+			var world_transform: Transform3D = request.get(
+				"transform",
+				Transform3D.IDENTITY
+			)
+			# do_mesh expects the stamp transform in terrain-local space
+			# (do_mesh_chunked: "transform is local to the terrain").
+			var local_transform := world_transform
+			if terrain != null:
+				local_transform = (
+					terrain.global_transform.affine_inverse()
+					* world_transform
+				)
+			return {
+				"stamp_kind": stamp_kind,
+				"mesh_sdf": mesh_sdf,
+				"transform": local_transform,
+				"sdf_scale": request.get(
+					"sdf_scale",
+					DEFAULT_SDF_SCALE
+				),
+			}
 		_:
 			return {}
 
@@ -116,6 +145,11 @@ func _apply_stamp(voxel_tool: VoxelTool, request: Dictionary) -> void:
 				request["points"],
 				request["radii"]
 			)
+		&"mesh":
+			voxel_tool.do_mesh(
+				request["mesh_sdf"],
+				request["transform"]
+			)
 
 
 func _sample_bounds(request: Dictionary) -> Dictionary:
@@ -136,6 +170,17 @@ func _sample_bounds(request: Dictionary) -> Dictionary:
 			for radius: float in radii:
 				if radius <= EPSILON:
 					return {}
+		&"mesh":
+			var mesh_sdf: VoxelMeshSDF = request.get("mesh_sdf")
+			if mesh_sdf == null:
+				return {}
+			var local_transform: Transform3D = request.get(
+				"transform",
+				Transform3D.IDENTITY
+			)
+			var stamp_aabb: AABB = local_transform * mesh_sdf.get_aabb()
+			points.append(stamp_aabb.get_center())
+			radii.append(stamp_aabb.size.length() * 0.5)
 		_:
 			return {}
 	var min_point := points[0]
@@ -219,10 +264,18 @@ func _removed_volume_m3(
 
 
 func _contact_point(request: Dictionary) -> Vector3:
-	if StringName(request["stamp_kind"]) == &"sphere":
-		return Vector3(request["center"])
-	var points: PackedVector3Array = request["points"]
-	return points[points.size() - 1]
+	match StringName(request["stamp_kind"]):
+		&"sphere":
+			return Vector3(request["center"])
+		&"mesh":
+			var stamp_transform: Transform3D = request.get(
+				"transform",
+				Transform3D.IDENTITY
+			)
+			return stamp_transform.origin
+		_:
+			var points: PackedVector3Array = request["points"]
+			return points[points.size() - 1]
 
 
 func _result(status: StringName, extra: Dictionary = {}) -> Dictionary:

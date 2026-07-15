@@ -3,10 +3,18 @@ extends RefCounted
 
 const MIN_RADIUS := 0.08
 const MAX_RADIUS := 1.6
+## Unit-cube SDF resolution; the stamp is scaled per collider, so a modest
+## grid keeps the one-time bake cheap without visible faceting.
+const MESH_STAMP_CELL_COUNT := 24
+## Slight inflation so the stamp overlaps boundary voxels at scale 0.65.
+const MESH_STAMP_INFLATE := 1.05
+
 ## Impulse craters stay local; sustained actuator drag may use larger stamps.
 const IMPACT_MAX_RADIUS := 0.72
 ## Smallest stamp that still overlaps solid voxels on the terrain grid.
 const MIN_RADIUS_VOXEL_FRACTION := 0.45
+
+static var _unit_box_sdf: VoxelMeshSDF
 
 
 static func minimum_measurable_radius_m(terrain: Node3D) -> float:
@@ -103,6 +111,74 @@ static func build_sphere_op(
 			terrain
 		),
 		"radius": radius,
+		"strength": clamped_strength,
+	}
+
+
+## Baked SDF of a unit cube, shared by every box-collider stamp; do_mesh
+## orients and scales it through the stamp transform.
+static func unit_box_mesh_sdf() -> VoxelMeshSDF:
+	if _unit_box_sdf != null and _unit_box_sdf.is_baked():
+		return _unit_box_sdf
+	var box := BoxMesh.new()
+	box.size = Vector3.ONE
+	var mesh_sdf := VoxelMeshSDF.new()
+	mesh_sdf.mesh = box
+	mesh_sdf.cell_count = MESH_STAMP_CELL_COUNT
+	mesh_sdf.margin_ratio = 0.25
+	mesh_sdf.bake_mode = VoxelMeshSDF.BAKE_MODE_ACCURATE_PARTITIONED
+	mesh_sdf.bake()
+	if not mesh_sdf.is_baked():
+		return null
+	_unit_box_sdf = mesh_sdf
+	return _unit_box_sdf
+
+
+## Oriented bite: stamp the striker's box collider into the terrain with its
+## world orientation, sunk past the contact along the carve direction. Falls
+## back to empty when the collider is not a box or baking failed — caller
+## uses the sphere op instead.
+static func build_mesh_op(
+	contact_world: Vector3,
+	collider: CollisionShape3D,
+	strength: float,
+	carve_direction: Vector3 = Vector3.DOWN
+) -> Dictionary:
+	if collider == null or not collider.shape is BoxShape3D:
+		return {}
+	var mesh_sdf := unit_box_mesh_sdf()
+	if mesh_sdf == null:
+		return {}
+	var clamped_strength := clampf(strength, 0.05, 1.0)
+	var direction := carve_direction
+	if direction.length_squared() <= VoxelSpaceUtil.EPSILON:
+		direction = Vector3.DOWN
+	else:
+		direction = direction.normalized()
+	var box_size: Vector3 = (
+		(collider.shape as BoxShape3D).size * MESH_STAMP_INFLATE
+	)
+	var collider_basis := collider.global_transform.basis.orthonormalized()
+	# Box support extent along the dig direction: how far the surface-facing
+	# face sits from the box center.
+	var dir_local := (collider_basis.inverse() * direction).abs()
+	var support := 0.5 * (
+		dir_local.x * box_size.x
+		+ dir_local.y * box_size.y
+		+ dir_local.z * box_size.z
+	)
+	var bite := bite_depth_for_radius(base_radius_from_collider(collider)) * (
+		0.4 + 0.6 * clamped_strength
+	)
+	# Face kisses the contact point, then sinks by the bite depth.
+	var center := contact_world - direction * (support - bite)
+	return {
+		"stamp_kind": &"mesh",
+		"mesh_sdf": mesh_sdf,
+		"transform": Transform3D(
+			collider_basis * Basis.from_scale(box_size),
+			center
+		),
 		"strength": clamped_strength,
 	}
 

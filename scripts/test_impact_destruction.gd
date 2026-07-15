@@ -18,6 +18,7 @@ func _run_tests() -> void:
 		_test_weak_impulse_ignored,
 		_test_fallback_impulse_uses_separating_velocity,
 		_test_terrain_carve_changes_sdf,
+		_test_mesh_stamp_carves_terrain,
 		_test_assembly_contact_damages_both,
 		_test_shape_enter_carves_terrain,
 		_test_subgrid_immunity_ignores_same_assembly,
@@ -234,6 +235,46 @@ func _test_terrain_carve_changes_sdf() -> bool:
 		return _fail(
 			"terrain sdf did not change enough before=%.3f after=%.3f"
 			% [before, after]
+		)
+	return true
+
+
+func _test_mesh_stamp_carves_terrain() -> bool:
+	var fixture := await _new_fixture()
+	var collider := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = Vector3.ONE
+	collider.shape = shape
+	add_child(collider)
+	# Tilted box, as after an angled landing.
+	collider.global_transform = Transform3D(
+		Basis(Vector3(0.0, 0.0, 1.0), deg_to_rad(35.0)),
+		Vector3(0.5, 0.4, 0.5)
+	)
+	var contact := Vector3(0.5, 0.0, 0.5)
+	var op := TerrainImpactCarver.build_mesh_op(
+		contact,
+		collider,
+		1.0,
+		Vector3.DOWN
+	)
+	collider.queue_free()
+	if op.is_empty():
+		_free_fixture(fixture)
+		return _fail("mesh stamp op unavailable for box collider")
+	var tool: VoxelTool = fixture.terrain.get_voxel_tool()
+	tool.channel = VoxelBuffer.CHANNEL_SDF
+	var sample := Vector3(0.5, -0.5, 0.5)
+	var sdf_before := _terrain_sdf_at(tool, sample)
+	var carved: float = fixture.gateway.apply_terrain_carve(op)
+	var sdf_after := _terrain_sdf_at(tool, sample)
+	_free_fixture(fixture)
+	if carved <= 0.0:
+		return _fail("mesh stamp carved zero volume")
+	if not (sdf_after > sdf_before + 0.05):
+		return _fail(
+			"mesh stamp did not change sdf %.3f -> %.3f"
+			% [sdf_before, sdf_after]
 		)
 	return true
 
