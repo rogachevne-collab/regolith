@@ -239,7 +239,7 @@ Gameplay-код не читает физические keycode или mouse butt
 - цель `simulation_element` → `DamageElementCommand` через `CommandGateway`
   (без прямой мутации projection);
 - cadence continuous action (`interval = 0.05`, `max_range = 2.2`);
-- урон за tick: `GRINDER_DPS * interval` (настраиваемая константа, v0: 20 integrity/s);
+- урон за tick: `GRINDER_DPS * interval` (настраиваемая константа, v0: 200 integrity/s);
 - lethal destruction возвращает `50%` установленных материалов (`GRINDER_REFUND_FRACTION`);
 - бур при lethal destruction материалы не возвращает;
 - voxel и прочие цели отменяют action.

@@ -1,5 +1,12 @@
 extends Node3D
 
+const PISTON_BASE := preload(
+	"res://resources/archetypes/slice01/piston_base.tres"
+)
+const PISTON_HEAD := preload(
+	"res://resources/archetypes/slice01/piston_head.tres"
+)
+
 
 func _ready() -> void:
 	call_deferred("_run_tests")
@@ -9,16 +16,22 @@ func _run_tests() -> void:
 	var tests: Array[Callable] = [
 		_test_damage_scales_with_impulse,
 		_test_weak_impulse_ignored,
+		_test_fallback_impulse_uses_separating_velocity,
 		_test_terrain_carve_changes_sdf,
 		_test_assembly_contact_damages_both,
 		_test_shape_enter_carves_terrain,
+		_test_subgrid_immunity_ignores_same_assembly,
+		_test_sustained_actuator_carves_terrain,
+		_test_sustained_actuator_damages_striker,
 	]
 	for test: Callable in tests:
 		if not bool(await test.call()):
 			return
+	if not await _test_carriage_monitor_only_configured():
+		return
 	if not await _test_physics_fall_damages_structure():
 		return
-	print("IMPACT-DESTRUCTION-V0: PASS")
+	print("KINETIC-INTERACTION-V1: PASS")
 	get_tree().quit(0)
 
 
@@ -33,6 +46,170 @@ func _test_damage_scales_with_impulse() -> bool:
 func _test_weak_impulse_ignored() -> bool:
 	if ImpactResolver.damage_amount(2.0, 100.0) != 0.0:
 		return _fail("sub-threshold impulse applied damage")
+	return true
+
+
+func _test_fallback_impulse_uses_separating_velocity() -> bool:
+	var body := RigidBody3D.new()
+	body.mass = 10.0
+	body.linear_velocity = Vector3(3.0, -4.0, 0.0)
+	var along_normal: float = ImpactResolver.fallback_impulse_length(
+		body,
+		null,
+		Vector3.UP
+	)
+	var raw_speed: float = body.linear_velocity.length() * body.mass
+	body.queue_free()
+	if not is_equal_approx(along_normal, 40.0):
+		return _fail(
+			"fallback impulse expected 40 got %.3f" % along_normal
+		)
+	if along_normal >= raw_speed:
+		return _fail("fallback should ignore tangential velocity")
+	return true
+
+
+func _test_subgrid_immunity_ignores_same_assembly() -> bool:
+	var fixture := await _new_fixture()
+	var piston := await _spawn_piston_on_ground(fixture)
+	if piston.is_empty():
+		_free_fixture(fixture)
+		return _fail("subgrid piston spawn failed")
+	var head_id := int(piston["head_element_id"])
+	var base_id := int(piston["base_element_id"])
+	var head_body: PhysicsBody3D = (
+		fixture.projection.get_element_projection(head_id).get("body")
+	)
+	var base_body: PhysicsBody3D = (
+		fixture.projection.get_element_projection(base_id).get("body")
+	)
+	if head_body == null or base_body == null:
+		_free_fixture(fixture)
+		return _fail("subgrid bodies missing")
+	var integrity_before: float = (
+		fixture.world.get_element(head_id).integrity
+	)
+	fixture.impact_service.apply_entry_for_test({
+		"batch_key": "subgrid_test",
+		"striker_element_id": head_id,
+		"striker_body": head_body,
+		"local_shape_index": 0,
+		"partner": base_body,
+		"impulse_length": 48.0,
+		"contact_world": head_body.global_position,
+		"contact_points": PackedVector3Array([head_body.global_position]),
+		"contact_impulses": PackedFloat32Array([48.0]),
+	})
+	var integrity_after: float = fixture.world.get_element(head_id).integrity
+	_free_fixture(fixture)
+	if integrity_after < integrity_before:
+		return _fail("same-assembly contact damaged striker")
+	return true
+
+
+func _test_sustained_actuator_carves_terrain() -> bool:
+	var fixture := await _new_fixture()
+	var piston := await _spawn_piston_on_ground(fixture)
+	if piston.is_empty():
+		_free_fixture(fixture)
+		return _fail("sustained carve piston spawn failed")
+	var head_id := int(piston["head_element_id"])
+	var head_body: RigidBody3D = (
+		fixture.projection.get_element_projection(head_id).get("body")
+	)
+	if head_body == null:
+		_free_fixture(fixture)
+		return _fail("sustained carve head body missing")
+	var tool: VoxelTool = fixture.terrain.get_voxel_tool()
+	tool.channel = VoxelBuffer.CHANNEL_SDF
+	var contact_world := head_body.global_position + Vector3.DOWN * 0.5
+	var sample := contact_world + Vector3(0.0, -0.25, 0.0)
+	var sdf_before: float = _terrain_sdf_at(tool, sample)
+	var used_volume: float = (
+		fixture.impact_service.emit_actuator_sustained_entry_for_test(
+			head_id,
+			head_body,
+			fixture.terrain,
+			240_000.0,
+			1.0 / 60.0,
+			0,
+			contact_world
+		)
+	)
+	var sdf_after: float = _terrain_sdf_at(tool, sample)
+	_free_fixture(fixture)
+	if used_volume <= 0.0:
+		return _fail("sustained actuator carved zero volume")
+	if not (sdf_after > sdf_before + 0.05):
+		return _fail(
+			"sustained actuator did not carve terrain %.3f -> %.3f"
+			% [sdf_before, sdf_after]
+		)
+	return true
+
+
+func _test_sustained_actuator_damages_striker() -> bool:
+	var fixture := await _new_fixture()
+	var spawn := _spawn_single(fixture.world)
+	if not spawn.is_ok():
+		_free_fixture(fixture)
+		return _fail("sustained damage spawn failed")
+	var element_id := int(spawn.data["element_ids"][0])
+	var body: RigidBody3D = fixture.projection.get_physics_body(
+		int(spawn.data["assembly_id"])
+	) as RigidBody3D
+	if body == null:
+		_free_fixture(fixture)
+		return _fail("sustained damage body missing")
+	var element: SimulationElement = fixture.world.get_element(element_id)
+	if element == null:
+		_free_fixture(fixture)
+		return _fail("sustained damage element missing")
+	var integrity_before: float = element.integrity
+	var impulse_length := 600.0 * (1.0 / 60.0)
+	fixture.impact_service.apply_entry_for_test({
+		"batch_key": "sustained_damage_test",
+		"striker_element_id": element_id,
+		"striker_body": body,
+		"local_shape_index": 0,
+		"partner": fixture.terrain,
+		"impulse_length": impulse_length,
+		"contact_world": body.global_position,
+		"contact_points": PackedVector3Array([body.global_position]),
+		"contact_impulses": PackedFloat32Array([impulse_length]),
+	})
+	element = fixture.world.get_element(element_id)
+	if element == null:
+		_free_fixture(fixture)
+		return _fail("sustained impulse removed striker")
+	var integrity_after: float = element.integrity
+	_free_fixture(fixture)
+	if integrity_after >= integrity_before:
+		return _fail("sustained-scale impulse did not damage striker")
+	return true
+
+
+func _test_carriage_monitor_only_configured() -> bool:
+	var fixture := await _new_fixture()
+	var piston := await _spawn_piston_on_ground(fixture)
+	if piston.is_empty():
+		_free_fixture(fixture)
+		return _fail("monitor-only piston spawn failed")
+	var head_id := int(piston["head_element_id"])
+	var head_body: PhysicsBody3D = (
+		fixture.projection.get_element_projection(head_id).get("body")
+	)
+	_free_fixture(fixture)
+	if head_body == null:
+		return _fail("monitor-only head body missing")
+	if not head_body.has_meta("impact_monitoring"):
+		return _fail("carriage missing impact monitoring")
+	if int(head_body.get_meta("impact_body_mode", -1)) != (
+		ImpactResolverService.ImpactBodyMode.MONITOR_ONLY
+	):
+		return _fail("carriage impact mode is not MONITOR_ONLY")
+	if head_body.custom_integrator:
+		return _fail("carriage must keep custom_integrator disabled")
 	return true
 
 
@@ -282,6 +459,66 @@ func _spawn(
 	return world.apply_structural_command_now(command)
 
 
+func _spawn_piston_on_ground(fixture: Dictionary) -> Dictionary:
+	var world: SimulationWorld = fixture.world
+	world.ensure_resource_store("player")
+	world.set_resource_amount("player", "construction_component", 100.0)
+	world.get_archetype_registry().register(PISTON_HEAD)
+	var foundation := _spawn(
+		world,
+		_single_blueprint_foundation(),
+		GridTransform.identity()
+	)
+	if not foundation.is_ok():
+		return {}
+	var assembly_id := int(foundation.data["assembly_id"])
+	var frame_place := PlaceElementCommand.new()
+	frame_place.assembly_id = assembly_id
+	frame_place.expected_assembly_revision = int(
+		foundation.data["topology_revision"]
+	)
+	frame_place.archetype = Slice01Archetypes.frame()
+	frame_place.origin_cell = Vector3i(4, 0, 0)
+	frame_place.orientation_index = 0
+	frame_place.store_id = "player"
+	var frame_result := world.apply_structural_command_now(frame_place)
+	if not frame_result.is_ok():
+		return {}
+	var piston_place := PlaceElementCommand.new()
+	piston_place.assembly_id = assembly_id
+	piston_place.expected_assembly_revision = int(
+		frame_result.data["topology_revision"]
+	)
+	piston_place.archetype = PISTON_BASE
+	piston_place.origin_cell = Vector3i(5, 0, 0)
+	piston_place.orientation_index = 0
+	piston_place.store_id = "player"
+	var piston_result := world.apply_structural_command_now(piston_place)
+	if not piston_result.is_ok():
+		return {}
+	fixture.projection.project_assembly_now(assembly_id, null)
+	for _frame: int in range(6):
+		await get_tree().physics_frame
+	return {
+		"assembly_id": assembly_id,
+		"base_element_id": int(piston_result.data["element_id"]),
+		"head_element_id": int(piston_result.data["head_element_id"]),
+	}
+
+
+func _single_blueprint_foundation() -> Blueprint:
+	return BlueprintBaker.bake_from_placements(
+		"impact_foundation",
+		[
+			_placement(
+				"element_0",
+				Slice01Archetypes.foundation(),
+				Vector3i.ZERO
+			)
+		]
+	)
+
+
 func _single_blueprint() -> Blueprint:
 	return BlueprintBaker.bake_from_placements(
 		"impact_single_frame",
@@ -356,6 +593,6 @@ func _seed_flat_terrain(
 
 
 func _fail(reason: String) -> bool:
-	print("IMPACT-DESTRUCTION-V0: FAIL %s" % reason)
+	print("KINETIC-INTERACTION-V1: FAIL %s" % reason)
 	get_tree().quit(1)
 	return false

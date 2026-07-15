@@ -1,6 +1,11 @@
 class_name ImpactResolverService
 extends Node
 
+enum ImpactBodyMode {
+	FULL,
+	MONITOR_ONLY,
+}
+
 const COOLDOWN_MS := 80
 
 var _world: SimulationWorld
@@ -27,13 +32,21 @@ func unbind() -> void:
 
 
 func configure_rigid_body(body: RigidBody3D) -> void:
+	configure_impact_body(body, ImpactBodyMode.FULL)
+
+
+func configure_impact_body(
+	body: RigidBody3D,
+	mode: ImpactBodyMode = ImpactBodyMode.FULL
+) -> void:
 	if body == null or body.has_meta("impact_monitoring"):
 		return
 	body.contact_monitor = true
 	body.max_contacts_reported = 16
 	body.continuous_cd = true
-	body.custom_integrator = true
+	body.custom_integrator = mode == ImpactBodyMode.FULL
 	body.set_meta("impact_monitoring", true)
+	body.set_meta("impact_body_mode", mode)
 	body.body_shape_entered.connect(
 		func(
 			body_rid: RID,
@@ -51,6 +64,56 @@ func configure_rigid_body(body: RigidBody3D) -> void:
 	)
 
 
+func emit_actuator_sustained_entry(
+	striker_element_id: int,
+	striker_body: RigidBody3D,
+	partner: Object,
+	force_n: float,
+	delta: float,
+	local_shape_index: int = 0,
+	contact_world: Vector3 = Vector3.ZERO
+) -> void:
+	if (
+		_world == null
+		or striker_element_id <= 0
+		or striker_body == null
+		or force_n <= 0.0
+		or delta <= 0.0
+	):
+		return
+	if partner == null:
+		partner = _terrain_partner()
+	if partner == null:
+		return
+	var impulse_length := force_n * delta
+	if impulse_length < ImpactResolver.I_MIN:
+		return
+	var assembly_id := int(striker_body.get_meta("assembly_id", 0))
+	if ImpactResolver.same_assembly_subgrid(assembly_id, partner):
+		return
+	var partner_key := ImpactResolver.partner_key_from_object(partner)
+	var batch_key := ImpactResolver.batch_key(
+		striker_element_id,
+		partner_key,
+		local_shape_index
+	)
+	if not _cooldown_ready(batch_key):
+		return
+	if contact_world == Vector3.ZERO:
+		contact_world = _contact_point_on_body(striker_body, local_shape_index)
+	_queue_entry({
+		"batch_key": batch_key,
+		"striker_element_id": striker_element_id,
+		"striker_body": striker_body,
+		"local_shape_index": local_shape_index,
+		"partner": partner,
+		"impulse_length": impulse_length,
+		"contact_world": contact_world,
+		"contact_points": PackedVector3Array([contact_world]),
+		"contact_impulses": PackedFloat32Array([impulse_length]),
+	})
+
+
 func _on_body_shape_entered(
 	body: RigidBody3D,
 	_body_rid: RID,
@@ -65,6 +128,8 @@ func _on_body_shape_entered(
 	var assembly_id := int(body.get_meta("assembly_id", 0))
 	if assembly_id <= 0:
 		return
+	if ImpactResolver.same_assembly_subgrid(assembly_id, other_body):
+		return
 	if not ImpactResolver.assembly_has_construction_elements(_world, assembly_id):
 		return
 	var striker_element_id := ImpactResolver.element_id_from_shape_index(
@@ -73,7 +138,17 @@ func _on_body_shape_entered(
 	)
 	if striker_element_id <= 0:
 		return
-	var impulse_length := body.linear_velocity.length() * maxf(body.mass, 0.001)
+	var contact_world := _contact_point_on_body(body, local_shape_index)
+	var contact_normal := _contact_normal_toward_partner(
+		body,
+		contact_world,
+		other_body
+	)
+	var impulse_length := ImpactResolver.fallback_impulse_length(
+		body,
+		other_body,
+		contact_normal
+	)
 	if impulse_length < ImpactResolver.I_MIN:
 		return
 	var partner_key := ImpactResolver.partner_key_from_object(other_body)
@@ -84,7 +159,6 @@ func _on_body_shape_entered(
 	)
 	if not _cooldown_ready(batch_key):
 		return
-	var contact_world := _contact_point_on_body(body, local_shape_index)
 	_queue_entry({
 		"batch_key": batch_key,
 		"striker_element_id": striker_element_id,
@@ -127,6 +201,8 @@ func integrate_contacts(
 			if partner_id != 0:
 				partner = instance_from_id(partner_id)
 		if partner == null or ImpactResolver.is_world_surface_partner(partner):
+			continue
+		if ImpactResolver.same_assembly_subgrid(assembly_id, partner):
 			continue
 		var partner_key := ImpactResolver.partner_key_from_object(partner)
 		var batch_key := ImpactResolver.batch_key(
@@ -184,6 +260,36 @@ func apply_entry_for_test(entry: Dictionary) -> float:
 	return _apply_entry(entry)
 
 
+func emit_actuator_sustained_entry_for_test(
+	striker_element_id: int,
+	striker_body: RigidBody3D,
+	partner: Object,
+	force_n: float,
+	delta: float,
+	local_shape_index: int = 0,
+	contact_world: Vector3 = Vector3.ZERO
+) -> float:
+	emit_actuator_sustained_entry(
+		striker_element_id,
+		striker_body,
+		partner,
+		force_n,
+		delta,
+		local_shape_index,
+		contact_world
+	)
+	if _frame_batch.is_empty():
+		return 0.0
+	var batch: Dictionary = _frame_batch.duplicate(true)
+	_frame_batch.clear()
+	_flush_scheduled = false
+	var volume_budget := ImpactResolver.V_MAX_M3
+	var used := 0.0
+	for key: Variant in batch.keys():
+		used += _apply_entry(batch[key], volume_budget - used)
+	return used
+
+
 func _flush_batch() -> void:
 	_flush_scheduled = false
 	if _frame_batch.is_empty():
@@ -209,6 +315,13 @@ func _apply_entry(
 	var striker_element_id := int(entry.get("striker_element_id", 0))
 	if striker_element_id <= 0:
 		return 0.0
+	var striker_body: PhysicsBody3D = entry.get("striker_body")
+	var striker_assembly_id := 0
+	if striker_body != null:
+		striker_assembly_id = int(striker_body.get_meta("assembly_id", 0))
+	var partner: Object = entry.get("partner")
+	if ImpactResolver.same_assembly_subgrid(striker_assembly_id, partner):
+		return 0.0
 	var impulse_length := float(entry.get("impulse_length", 0.0))
 	var strength := ImpactResolver.impulse_strength(impulse_length)
 	if strength <= 0.0:
@@ -216,7 +329,6 @@ func _apply_entry(
 	var batch_key := str(entry.get("batch_key", ""))
 	if not batch_key.is_empty():
 		_cooldown_until[batch_key] = Time.get_ticks_msec() + COOLDOWN_MS
-	var partner: Object = entry.get("partner")
 	var used_volume := 0.0
 	if ImpactResolver.is_world_surface_partner(partner):
 		used_volume = _apply_terrain_carve(entry, strength, volume_budget_m3)
@@ -308,6 +420,30 @@ func _cooldown_ready(batch_key: String) -> bool:
 	return Time.get_ticks_msec() >= int(_cooldown_until.get(batch_key, 0))
 
 
+func _terrain_partner() -> Object:
+	if _gateway == null:
+		return null
+	return _gateway.get_node_or_null(_gateway.terrain_path)
+
+
+func _contact_normal_toward_partner(
+	body: RigidBody3D,
+	contact_world: Vector3,
+	partner: Object
+) -> Vector3:
+	if body == null:
+		return Vector3.UP
+	var partner_point := contact_world
+	if partner is Node3D:
+		partner_point = (partner as Node3D).global_position
+	var toward_partner := partner_point - body.global_position
+	if toward_partner.length_squared() <= 0.000001:
+		if body.linear_velocity.length_squared() > 0.01:
+			return -body.linear_velocity.normalized()
+		return Vector3.UP
+	return toward_partner.normalized()
+
+
 func _contact_point_on_body(
 	body: RigidBody3D,
 	local_shape_index: int
@@ -326,7 +462,26 @@ func _contact_point_on_body(
 		return origin
 	tool.channel = VoxelBuffer.CHANNEL_SDF
 	var terrain: Node3D = _gateway.get_node_or_null(_gateway.terrain_path)
+	var ray_dir := Vector3.DOWN
+	if body.linear_velocity.length_squared() > 0.01:
+		ray_dir = -body.linear_velocity.normalized()
+	var ray_origin := origin - ray_dir * 0.25
 	var hit: VoxelRaycastResult = VoxelSpaceUtil.raycast_world(
+		tool,
+		terrain,
+		ray_origin,
+		ray_dir,
+		4.0
+	)
+	if hit != null:
+		return VoxelSpaceUtil.raycast_hit_world_point(
+			terrain,
+			ray_origin,
+			ray_dir,
+			hit
+		)
+	# Fallback: probe downward when velocity-aligned ray misses.
+	hit = VoxelSpaceUtil.raycast_world(
 		tool,
 		terrain,
 		origin + Vector3.UP * 0.25,

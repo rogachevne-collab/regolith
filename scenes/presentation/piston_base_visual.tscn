@@ -1,0 +1,51 @@
+[gd_scene load_steps=8 format=3]
+
+[sub_resource type="StandardMaterial3D" id="Material_housing"]
+albedo_color = Color(0.08, 0.1, 0.13, 1)
+metallic = 0.9
+roughness = 0.3
+
+[sub_resource type="StandardMaterial3D" id="Material_sleeve"]
+albedo_color = Color(0.14, 0.18, 0.24, 1)
+metallic = 0.86
+roughness = 0.26
+
+[sub_resource type="StandardMaterial3D" id="Material_shaft"]
+albedo_color = Color(0.28, 0.58, 0.78, 1)
+metallic = 0.82
+roughness = 0.22
+emission_enabled = true
+emission = Color(0.08, 0.28, 0.42, 1)
+emission_energy_multiplier = 0.35
+
+[sub_resource type="BoxMesh" id="Mesh_housing"]
+material = SubResource("Material_housing")
+size = Vector3(0.44, 0.44, 0.44)
+
+[sub_resource type="CylinderMesh" id="Mesh_sleeve"]
+material = SubResource("Material_sleeve")
+top_radius = 0.16
+bottom_radius = 0.18
+height = 0.1
+radial_segments = 16
+
+[sub_resource type="CylinderMesh" id="Mesh_shaft"]
+material = SubResource("Material_shaft")
+top_radius = 0.07
+bottom_radius = 0.07
+height = 0.04
+radial_segments = 12
+
+[node name="PistonBaseVisual" type="Node3D"]
+
+[node name="Housing" type="MeshInstance3D" parent="."]
+position = Vector3(0, -0.22, 0)
+mesh = SubResource("Mesh_housing")
+
+[node name="Sleeve" type="MeshInstance3D" parent="."]
+position = Vector3(0, -0.02, 0)
+mesh = SubResource("Mesh_sleeve")
+
+[node name="Shaft" type="MeshInstance3D" parent="."]
+position = Vector3(0, 0.02, 0)
+mesh = SubResource("Mesh_shaft")

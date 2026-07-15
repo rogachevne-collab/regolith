@@ -23,7 +23,7 @@ ADR. Интеграция в Erebus — через Erebus Lite addon, когда
 | Blueprint (чертежи, baked) | «Примитивы» → «Blueprint» |
 | id элементов, топология, structural commands | «Identity и topology (Kernel v0)» |
 | строительство, прочность, ремонт | «Строительство, прочность и ремонт» |
-| кинетический удар, разрушение | «Кинетический удар (Impact Destruction v0)» |
+| кинетический удар, разрушение, упор актуатора | «Кинетический удар (Impact Destruction v0)» |
 | логи, инспекция, отладка симуляции | «Диагностируемость» |
 | скафандр (кислород, энергия) | «Состояние скафандра (SuitState)» |
 | бюджеты производительности | «Производительность» |
@@ -731,7 +731,16 @@ Jolt авторитетен за импульс контакта; правила
 - **Impact:** использует тот же measured carve path; политика material yield
   задаётся явно для каждого impact type и не может обходить мировую операцию.
 
-PoC-спека impact: `docs/specs/IMPACT-DESTRUCTION-V0.md`.
+Kinetic Interaction v1 расширяет удар на **приводимые актуаторы**: единый скаляр
+`J = max(collision_impulse, m_eff·v_rel, applied_force·Δt)` даёт carve/damage не
+только от падения и тарана, но и от упора пистона/бура в грунт. Carriage пистона
+получает impact-мониторинг (`MONITOR_ONLY`, без `custom_integrator`), sustained
+carve идёт в окне насыщения до `OVERLOADED`. Subgrid immunity: контакты внутри
+одной assembly (base ↔ head) не наносят урон. Кинетически вырезанный грунт
+исчезает (лут — только у буров).
+
+PoC-спеки impact: `docs/specs/IMPACT-DESTRUCTION-V0.md` (база),
+`docs/specs/KINETIC-INTERACTION-V1.md` (актуаторы, carriage, sustained).
 
 ## Диагностируемость
 

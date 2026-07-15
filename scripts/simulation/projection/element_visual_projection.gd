@@ -139,6 +139,8 @@ func _rebuild_assembly(assembly_id: int) -> void:
 		var archetype := element.get_archetype()
 		if archetype == null or archetype.colliders.is_empty():
 			continue
+		if PistonVisual.is_piston_element(element.archetype_id):
+			continue
 		for collider_index: int in range(archetype.colliders.size()):
 			var collider: ColliderDefinition = archetype.colliders[collider_index]
 			if collider.shape_kind != ColliderDefinition.ShapeKind.BOX:

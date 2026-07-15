@@ -4,6 +4,9 @@ extends Node3D
 const STATIONARY_DRILL_VISUAL_SCRIPT := preload(
 	"res://scripts/presentation/stationary_drill_visual.gd"
 )
+const PISTON_VISUAL_SCRIPT := preload(
+	"res://scripts/presentation/piston_visual.gd"
+)
 
 @export var query_path: NodePath = NodePath("../InteractionQuery")
 @export var tool_controller_path: NodePath = NodePath("../ToolController")
@@ -376,6 +379,26 @@ func _build_mesh_nodes(
 ) -> Array[Node]:
 	var material := _valid_material if valid else _invalid_material
 	var nodes: Array[Node] = []
+	if archetype.piston_definition != null:
+		var head_archetype := Slice01Archetypes.piston_head()
+		if head_archetype != null:
+			nodes.append_array(
+				PISTON_VISUAL_SCRIPT.build_placement_preview_nodes(
+					archetype,
+					head_archetype,
+					origin_cell,
+					orientation_index,
+					valid
+				)
+			)
+		nodes.append_array(
+			_build_preview_port_markers(
+				archetype,
+				origin_cell,
+				orientation_index
+			)
+		)
+		return nodes
 	for collider: ColliderDefinition in archetype.colliders:
 		if collider.shape_kind != ColliderDefinition.ShapeKind.BOX:
 			continue

@@ -82,7 +82,7 @@ const TOOLBAR_SLOTS_PER_PAGE := 9
 const DRILL_DPS := 5.0
 const DRILL_INTERVAL := 0.05
 ## Continuous demolition rate for the grinder (integrity units per second).
-const GRINDER_DPS := 20.0
+const GRINDER_DPS := 200.0
 const GRINDER_INTERVAL := 0.05
 ## Material refund when grinder destroys a block (same as dismantle).
 const GRINDER_REFUND_FRACTION := 0.5

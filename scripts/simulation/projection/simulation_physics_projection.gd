@@ -5,6 +5,7 @@ const BODY_NAME_PREFIX := "AssemblyBody_"
 const GROUP_BODY_NAME_PREFIX := "AssemblyGroupBody_"
 const PISTON_JOINT_NAME_PREFIX := "PistonJoint_"
 const MIN_MASS := 0.001
+const SUSTAINED_V_EPS := 0.05
 const FragmentBodyScript := preload(
 	"res://scripts/simulation/projection/projected_assembly_body.gd"
 )
@@ -68,10 +69,12 @@ func get_group_physics_body(assembly_id: int, group_id: int) -> PhysicsBody3D:
 	return null
 
 
-func list_piston_constraint_records(assembly_id: int) -> Array[Dictionary]:
-	var records: Variant = _piston_constraints.get(assembly_id, [])
+func list_piston_constraint_records(assembly_id: int) -> Array:
+	if not _piston_constraints.has(assembly_id):
+		return []
+	var records: Variant = _piston_constraints[assembly_id]
 	if records is Array:
-		return records
+		return (records as Array).duplicate()
 	return []
 
 
@@ -526,7 +529,10 @@ func _project_assembly_single(
 			and mounted == null
 			and not anchored
 		):
-			_impact_service.configure_rigid_body(rigid)
+			_impact_service.configure_impact_body(
+				rigid,
+				ImpactResolverService.ImpactBodyMode.FULL
+			)
 	_bodies[assembly_id] = body
 	for element_id: int in colliders_by_element:
 		_element_records[element_id] = {
@@ -611,10 +617,13 @@ func _project_assembly_multibody(
 				rigid.sleeping = seed_motion.sleeping
 				rigid.freeze = false
 				# Jolt ignores apply_central_force when custom_integrator is on.
-				if _impact_service != null and not is_carriage:
-					_impact_service.configure_rigid_body(rigid)
-				elif is_carriage:
-					rigid.custom_integrator = false
+				if _impact_service != null:
+					var impact_mode := (
+						ImpactResolverService.ImpactBodyMode.MONITOR_ONLY
+						if is_carriage
+						else ImpactResolverService.ImpactBodyMode.FULL
+					)
+					_impact_service.configure_impact_body(rigid, impact_mode)
 		add_child(body)
 		_apply_collision_profile(assembly_id, body)
 		_apply_body_groups(assembly_id, body)
@@ -895,7 +904,94 @@ func _tick_piston_actuators(delta: float) -> void:
 				absf(force_n),
 				saturated
 			)
+			_emit_piston_sustained_kinetic(
+				record,
+				head_body,
+				absf(force_n),
+				saturated,
+				float(measured.get("relative_velocity_mps", 0.0)),
+				delta
+			)
 	_world.tick_actuators(delta)
+
+
+func _emit_piston_sustained_kinetic(
+	record: Dictionary,
+	head_body: PhysicsBody3D,
+	applied_force_n: float,
+	saturated: bool,
+	relative_velocity_mps: float,
+	delta: float
+) -> void:
+	if (
+		_impact_service == null
+		or applied_force_n <= 0.0
+		or delta <= 0.0
+		or not head_body is RigidBody3D
+	):
+		return
+	if not saturated and absf(relative_velocity_mps) >= SUSTAINED_V_EPS:
+		return
+	var carriage_element_ids: Array = record.get("carriage_element_ids", [])
+	if not _carriage_touches_terrain(
+		head_body as RigidBody3D,
+		carriage_element_ids
+	):
+		return
+	var striker_element_id := _pick_carriage_striker_element_id(
+		carriage_element_ids
+	)
+	if striker_element_id <= 0:
+		return
+	_impact_service.emit_actuator_sustained_entry(
+		striker_element_id,
+		head_body as RigidBody3D,
+		null,
+		applied_force_n,
+		delta
+	)
+
+
+func _pick_carriage_striker_element_id(carriage_element_ids: Array) -> int:
+	var fallback_id := 0
+	for element_variant: Variant in carriage_element_ids:
+		var element_id := int(element_variant)
+		var element := _world.get_element(element_id)
+		if element == null:
+			continue
+		if element.archetype_id == "stationary_drill":
+			return element_id
+		if (
+			fallback_id <= 0
+			and TerrainAnchorProbe.is_construction_archetype(
+				element.archetype_id
+			)
+		):
+			fallback_id = element_id
+	return fallback_id
+
+
+func _carriage_touches_terrain(
+	head_body: RigidBody3D,
+	carriage_element_ids: Array
+) -> bool:
+	if _world == null or head_body == null:
+		return false
+	var space_state := get_world_3d().direct_space_state
+	if space_state == null:
+		return false
+	var assembly_transform := head_body.global_transform
+	for element_variant: Variant in carriage_element_ids:
+		var element := _world.get_element(int(element_variant))
+		if element == null:
+			continue
+		if TerrainAnchorProbe.element_touches_terrain(
+			assembly_transform,
+			element,
+			space_state
+		):
+			return true
+	return false
 
 
 func _clear_piston_constraints(assembly_id: int) -> void:

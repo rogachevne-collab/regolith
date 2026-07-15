@@ -96,6 +96,40 @@ static func collider_from_shape_index(
 	return null
 
 
+static func same_assembly_subgrid(
+	striker_assembly_id: int,
+	partner: Object
+) -> bool:
+	if striker_assembly_id <= 0 or partner == null:
+		return false
+	if partner is PhysicsBody3D:
+		var partner_assembly_id := int(
+			(partner as PhysicsBody3D).get_meta("assembly_id", 0)
+		)
+		return partner_assembly_id > 0 and partner_assembly_id == striker_assembly_id
+	return false
+
+
+static func fallback_impulse_length(
+	body: RigidBody3D,
+	partner: Object,
+	contact_normal: Vector3
+) -> float:
+	if body == null:
+		return 0.0
+	var normal := contact_normal
+	if normal.length_squared() <= 0.000001:
+		normal = Vector3.UP
+	else:
+		normal = normal.normalized()
+	var partner_velocity := Vector3.ZERO
+	if partner is RigidBody3D:
+		partner_velocity = (partner as RigidBody3D).linear_velocity
+	var v_rel := body.linear_velocity - partner_velocity
+	var v_sep := absf(v_rel.dot(normal))
+	return maxf(body.mass, 0.001) * v_sep
+
+
 static func assembly_has_construction_elements(
 	world: SimulationWorld,
 	assembly_id: int
