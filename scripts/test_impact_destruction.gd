@@ -18,7 +18,9 @@ func _run_tests() -> void:
 		_test_weak_impulse_ignored,
 		_test_fallback_impulse_uses_separating_velocity,
 		_test_terrain_carve_changes_sdf,
+		_test_carve_respects_volume_budget,
 		_test_mesh_stamp_carves_terrain,
+		_test_sustained_grind_carves_trench,
 		_test_assembly_contact_damages_both,
 		_test_shape_enter_carves_terrain,
 		_test_subgrid_immunity_ignores_same_assembly,
@@ -235,6 +237,83 @@ func _test_terrain_carve_changes_sdf() -> bool:
 		return _fail(
 			"terrain sdf did not change enough before=%.3f after=%.3f"
 			% [before, after]
+		)
+	return true
+
+
+func _test_carve_respects_volume_budget() -> bool:
+	var fixture := await _new_fixture()
+	# Fitted radius must stay above minimum_measurable_radius_m (0.45 at
+	# voxel size 1.0), so the budget cannot be arbitrarily small here.
+	var budget := 0.5
+	var carved: float = fixture.gateway.apply_terrain_carve(
+		{
+			"stamp_kind": &"sphere",
+			"center": Vector3(0.5, -0.5, 0.5),
+			"radius": 1.2,
+			"strength": 1.0,
+		},
+		budget
+	)
+	_free_fixture(fixture)
+	if carved <= 0.0:
+		return _fail("budgeted carve removed nothing")
+	if carved > budget * 1.15:
+		return _fail(
+			"carve exceeded volume budget %.3f > %.3f" % [carved, budget]
+		)
+	return true
+
+
+func _test_sustained_grind_carves_trench() -> bool:
+	var fixture := await _new_fixture()
+	var piston := await _spawn_piston_on_ground(fixture)
+	if piston.is_empty():
+		_free_fixture(fixture)
+		return _fail("grind piston spawn failed")
+	var head_id := int(piston["head_element_id"])
+	var head_body: RigidBody3D = (
+		fixture.projection.get_element_projection(head_id).get("body")
+	)
+	if head_body == null:
+		_free_fixture(fixture)
+		return _fail("grind head body missing")
+	var start := head_body.global_position + Vector3.DOWN * 0.5
+	var finish := start + Vector3(1.2, 0.0, 0.0)
+	var midpoint := (start + finish) * 0.5 + Vector3.DOWN * 0.25
+	fixture.impact_service.emit_actuator_sustained_entry_for_test(
+		head_id,
+		head_body,
+		fixture.terrain,
+		240_000.0,
+		1.0 / 60.0,
+		0,
+		start
+	)
+	# Same batch key: wait out the pair cooldown before the second bite.
+	await get_tree().create_timer(0.12).timeout
+	var tool: VoxelTool = fixture.terrain.get_voxel_tool()
+	tool.channel = VoxelBuffer.CHANNEL_SDF
+	var sdf_mid_before := _terrain_sdf_at(tool, midpoint)
+	var carved: float = (
+		fixture.impact_service.emit_actuator_sustained_entry_for_test(
+			head_id,
+			head_body,
+			fixture.terrain,
+			240_000.0,
+			1.0 / 60.0,
+			0,
+			finish
+		)
+	)
+	var sdf_mid_after := _terrain_sdf_at(tool, midpoint)
+	_free_fixture(fixture)
+	if carved <= 0.0:
+		return _fail("grind segment carved zero volume")
+	if not (sdf_mid_after > sdf_mid_before + 0.05):
+		return _fail(
+			"grind did not trench between contacts %.3f -> %.3f"
+			% [sdf_mid_before, sdf_mid_after]
 		)
 	return true
 

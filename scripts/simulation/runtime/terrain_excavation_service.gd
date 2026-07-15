@@ -17,6 +17,12 @@ func excavate(voxel_tool: VoxelTool, request: Dictionary) -> Dictionary:
 	):
 		return _result(&"invalid_request")
 	var terrain: Node3D = request.get("terrain")
+	var budget_m3 := float(request.get("volume_budget_m3", INF))
+	if budget_m3 <= 0.0:
+		return _result(&"budget_exhausted")
+	request = _fit_request_to_budget(request, terrain, budget_m3)
+	if request.is_empty():
+		return _result(&"budget_exhausted")
 	var local_request := _to_local_request(terrain, request)
 	if local_request.is_empty():
 		return _result(&"invalid_request")
@@ -40,6 +46,87 @@ func excavate(voxel_tool: VoxelTool, request: Dictionary) -> Dictionary:
 			"contact_point": _contact_point(request),
 		}
 	)
+
+
+## Upper-bound estimate of the stamp's removable volume (world m³).
+func _estimate_stamp_volume_m3(request: Dictionary) -> float:
+	var sdf_scale := clampf(
+		float(request.get("sdf_scale", DEFAULT_SDF_SCALE)),
+		0.05,
+		1.0
+	)
+	match StringName(request.get("stamp_kind", &"")):
+		&"sphere":
+			return sphere_volume_m3(float(request.get("radius", 0.0))) * sdf_scale
+		&"path":
+			var radii: PackedFloat32Array = request.get(
+				"radii",
+				PackedFloat32Array()
+			)
+			var total := 0.0
+			for radius: float in radii:
+				total += sphere_volume_m3(radius)
+			return total * sdf_scale
+		&"mesh":
+			var stamp: Transform3D = request.get(
+				"transform",
+				Transform3D.IDENTITY
+			)
+			return (
+				stamp.basis.x.length()
+				* stamp.basis.y.length()
+				* stamp.basis.z.length()
+				* sdf_scale
+			)
+	return 0.0
+
+
+## Shrink the stamp uniformly so its estimated volume fits the budget;
+## reject ({}) when the fitted stamp would be too small to touch voxels.
+func _fit_request_to_budget(
+	request: Dictionary,
+	terrain: Node3D,
+	budget_m3: float
+) -> Dictionary:
+	var estimate := _estimate_stamp_volume_m3(request)
+	if estimate <= budget_m3 or estimate <= EPSILON:
+		return request
+	var scale: float = pow(budget_m3 / estimate, 1.0 / 3.0)
+	var min_radius := TerrainImpactCarver.minimum_measurable_radius_m(terrain)
+	var fitted := request.duplicate(true)
+	match StringName(request.get("stamp_kind", &"")):
+		&"sphere":
+			var radius := float(request.get("radius", 0.0)) * scale
+			if radius < min_radius:
+				return {}
+			fitted["radius"] = radius
+		&"path":
+			var radii: PackedFloat32Array = request.get(
+				"radii",
+				PackedFloat32Array()
+			)
+			var scaled := PackedFloat32Array()
+			var max_radius := 0.0
+			for radius: float in radii:
+				scaled.append(radius * scale)
+				max_radius = maxf(max_radius, radius * scale)
+			if max_radius < min_radius:
+				return {}
+			fitted["radii"] = scaled
+		&"mesh":
+			var stamp: Transform3D = request.get(
+				"transform",
+				Transform3D.IDENTITY
+			)
+			stamp.basis = stamp.basis.scaled(Vector3.ONE * scale)
+			var smallest := minf(
+				stamp.basis.x.length(),
+				minf(stamp.basis.y.length(), stamp.basis.z.length())
+			)
+			if smallest < min_radius * 2.0:
+				return {}
+			fitted["transform"] = stamp
+	return fitted
 
 
 func _to_local_request(

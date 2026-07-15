@@ -7,6 +7,11 @@ enum ImpactBodyMode {
 }
 
 const COOLDOWN_MS := 80
+## A sustained grind chains into a path stamp only while consecutive
+## contacts stay this close (in voxels) and this recent.
+const SUSTAINED_PATH_MIN_VOXELS := 0.5
+const SUSTAINED_PATH_MAX_VOXELS := 4.0
+const SUSTAINED_PATH_TIMEOUT_MS := 500
 
 var _world: SimulationWorld
 var _gateway: WorldCommandGateway
@@ -15,6 +20,7 @@ var _flush_scheduled := false
 var _cooldown_until: Dictionary = {}
 var _tracked_bodies: Dictionary = {}
 var _pre_step_velocity: Dictionary = {}
+var _last_sustained_contact: Dictionary = {}
 var last_terrain_carve_m3: float = 0.0
 
 
@@ -41,6 +47,7 @@ func unbind() -> void:
 	_cooldown_until.clear()
 	_tracked_bodies.clear()
 	_pre_step_velocity.clear()
+	_last_sustained_contact.clear()
 	_flush_scheduled = false
 
 
@@ -153,7 +160,7 @@ func emit_actuator_sustained_entry(
 		return
 	if contact_world == Vector3.ZERO:
 		contact_world = _contact_point_on_body(striker_body, local_shape_index)
-	_queue_entry({
+	var entry := {
 		"batch_key": batch_key,
 		"striker_element_id": striker_element_id,
 		"striker_body": striker_body,
@@ -163,7 +170,36 @@ func emit_actuator_sustained_entry(
 		"contact_world": contact_world,
 		"contact_points": PackedVector3Array([contact_world]),
 		"contact_impulses": PackedFloat32Array([impulse_length]),
-	})
+	}
+	var path_from := _sustained_path_from(batch_key, contact_world)
+	if path_from is Vector3:
+		entry["sustained_path_from"] = path_from
+	_queue_entry(entry)
+
+
+## While the carriage crawls under load, chain consecutive contact points
+## into one trench segment instead of stamping isolated pits.
+func _sustained_path_from(batch_key: String, contact_world: Vector3) -> Variant:
+	var now := Time.get_ticks_msec()
+	var previous: Dictionary = _last_sustained_contact.get(batch_key, {})
+	_last_sustained_contact[batch_key] = {
+		"point": contact_world,
+		"msec": now,
+	}
+	if previous.is_empty():
+		return null
+	if now - int(previous.get("msec", 0)) > SUSTAINED_PATH_TIMEOUT_MS:
+		return null
+	var voxel := VoxelSpaceUtil.voxel_size_m(_terrain_partner() as Node3D)
+	var distance := Vector3(previous.get("point", Vector3.ZERO)).distance_to(
+		contact_world
+	)
+	if (
+		distance < voxel * SUSTAINED_PATH_MIN_VOXELS
+		or distance > voxel * SUSTAINED_PATH_MAX_VOXELS
+	):
+		return null
+	return Vector3(previous.get("point", Vector3.ZERO))
 
 
 func _on_body_shape_entered(
@@ -482,15 +518,35 @@ func _apply_terrain_carve(
 			terrain,
 			body
 		)
-	# Oriented bite first: box colliders stamp with their world rotation, so
-	# a cube landing at an angle digs a slanted imprint instead of a
-	# vertical square pit. Sphere stays the fallback shape.
-	var op := TerrainImpactCarver.build_mesh_op(
-		contact_world,
-		collider,
-		strength,
-		carve_direction
-	)
+	var op: Dictionary = {}
+	var path_from: Variant = entry.get("sustained_path_from")
+	if path_from is Vector3:
+		# Sustained grind: trench segment between consecutive contacts.
+		var segment_radius := float(TerrainImpactCarver.build_sphere_op(
+			contact_world,
+			collider,
+			strength,
+			terrain,
+			carve_direction,
+			TerrainImpactCarver.IMPACT_MAX_RADIUS
+		).get("radius", 0.0))
+		op = TerrainImpactCarver.build_path_op(
+			PackedVector3Array([path_from, contact_world]),
+			PackedFloat32Array([segment_radius, segment_radius]),
+			strength,
+			terrain,
+			carve_direction
+		)
+	if op.is_empty():
+		# Oriented bite: box colliders stamp with their world rotation, so
+		# a cube landing at an angle digs a slanted imprint instead of a
+		# vertical square pit. Sphere stays the fallback shape.
+		op = TerrainImpactCarver.build_mesh_op(
+			contact_world,
+			collider,
+			strength,
+			carve_direction
+		)
 	if op.is_empty():
 		op = TerrainImpactCarver.build_sphere_op(
 			contact_world,

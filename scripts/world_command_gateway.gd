@@ -280,10 +280,11 @@ func _route_hand_drill_yield(
 
 func apply_terrain_carve(
 	op: Dictionary,
-	_volume_budget_m3: float = INF
+	volume_budget_m3: float = INF
 ) -> float:
 	var request := op.duplicate(true)
 	request["terrain"] = _terrain
+	request["volume_budget_m3"] = volume_budget_m3
 	if not request.has("sdf_scale"):
 		request["sdf_scale"] = TerrainExcavationService.DEFAULT_SDF_SCALE
 	return float(
