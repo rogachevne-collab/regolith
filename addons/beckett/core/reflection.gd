@@ -27,11 +27,6 @@ static func resolve(target: String) -> Object:
 		n = root.find_child(target, true, false)
 		if n != null:
 			return n
-		# Walk a path that dips from a node into its resource sub-properties, e.g.
-		# "Cube/mesh" or "WorldEnvironment/environment/sky": resolve the longest node
-		# prefix, then follow the remaining segments as Object-typed properties. This is
-		# what lets `set_property target=Cube/mesh property=size` and friends work — the
-		# resolver reaches the embedded sub-resource, not just nodes.
 		var walked := _resolve_property_walk(root, target)
 		if walked != null:
 			return walked
@@ -135,7 +130,6 @@ static func to_json_safe(v: Variant) -> Variant:
 				d[str(k)] = to_json_safe(v[k])
 			return d
 		_:
-			# Vectors/Transforms/etc not special-cased above: stringify the literal.
 			return var_to_str(v)
 
 
@@ -144,10 +138,6 @@ static func to_json_safe(v: Variant) -> Variant:
 static func coerce_for_property(obj: Object, prop: String, value: Variant) -> Variant:
 	var cur: Variant = obj.get(prop)
 	var want := typeof(cur)
-	# A null/unset property has no live type to mirror — read the declared type from
-	# the property list instead, so an unset Vector2/Color export still coerces (e.g.
-	# "100 50" -> Vector2). Without this, want stays TYPE_NIL and the value passes
-	# through uncoerced.
 	if want == TYPE_NIL:
 		want = _declared_type(obj, prop)
 	return coerce_to_type(value, want)
@@ -163,9 +153,6 @@ static func _declared_type(obj: Object, prop: String) -> int:
 
 
 static func coerce_to_type(value: Variant, want: int) -> Variant:
-	# MCP clients sometimes JSON-stringify array/object values for an untyped param, so
-	# [1, 0.91, 0.78] can arrive as the String "[1, 0.91, 0.78]". Recover the structure
-	# before matching, else a Color/Vector falls to the string branch (e.g. Color() black).
 	if value is String:
 		var raw := (value as String).strip_edges()
 		if raw.begins_with("[") or raw.begins_with("{"):
@@ -175,7 +162,6 @@ static func coerce_to_type(value: Variant, want: int) -> Variant:
 	var have := typeof(value)
 	if have == want:
 		return value
-	# JSON gives us strings/numbers/bools/arrays/dicts; bridge to Godot types.
 	match want:
 		TYPE_VECTOR2:
 			return _to_vec(value, 2, false)
@@ -208,7 +194,6 @@ static func coerce_to_type(value: Variant, want: int) -> Variant:
 		TYPE_STRING, TYPE_STRING_NAME:
 			return str(value)
 		_:
-			# Try a Godot literal (e.g. "Vector3(1, 0, 0)", "&\"name\"", a NodePath).
 			if value is String:
 				var parsed: Variant = str_to_var(value)
 				if parsed != null:
@@ -219,9 +204,6 @@ static func coerce_to_type(value: Variant, want: int) -> Variant:
 static func _to_vec(value: Variant, dim: int, as_int: bool) -> Variant:
 	var comps: Array = []
 	if value is String:
-		# Accept a real Godot literal like "Vector2(1, 2)"; but str_to_var("100 50")
-		# partial-parses to 100, so only trust it when it yields an actual vector —
-		# otherwise fall through to whitespace-separated components.
 		var parsed: Variant = str_to_var(value)
 		match typeof(parsed):
 			TYPE_VECTOR2, TYPE_VECTOR2I, TYPE_VECTOR3, TYPE_VECTOR3I, TYPE_VECTOR4, TYPE_VECTOR4I:

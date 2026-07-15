@@ -10,7 +10,7 @@ class_name BeckettBatchTools
 ## NOT rolled back; the result says so. Sub-calls are re-gated, so read-only / allowlist /
 ## confirm-destructive rules still apply per step.
 
-var server  # mcp_server node (owns .registry and ._gate)
+var server
 
 
 func _register(registry) -> void:
@@ -95,7 +95,6 @@ func _batch_execute(args: Dictionary) -> Dictionary:
 	return {"json": out}
 
 
-# ---------------------------------------------------------------- rollback
 
 ## The plain UndoRedo for the open scene's history (or null if unavailable).
 func _scene_undo() -> UndoRedo:

@@ -8,7 +8,7 @@ class_name BeckettReflectionTools
 
 const Reflect := preload("res://addons/beckett/core/reflection.gd")
 
-var server  # mcp_server node (for get_undo_redo); set by the caller
+var server
 
 
 func _register(registry) -> void:
@@ -91,7 +91,6 @@ func _register(registry) -> void:
 	})
 
 
-# ---------------------------------------------------------------- handlers
 
 func _get_godot_version(_args: Dictionary) -> Dictionary:
 	return {"json": Engine.get_version_info()}
@@ -112,9 +111,6 @@ func _find_classes(args: Dictionary) -> Dictionary:
 			out.append({"name": String(c), "parent": String(ClassDB.get_parent_class(c))})
 			if out.size() >= maxn:
 				break
-	# Also surface user-defined global classes (GDScript class_name + C# [GlobalClass]) —
-	# ClassDB never lists these. Tagged with language + script path so the agent knows they
-	# are project types (drive them the same way: create_node / set_property / call_method).
 	if out.size() < maxn:
 		for e in _global_classes():
 			var nm := String(e.get("class", ""))
@@ -248,7 +244,6 @@ func _get_scene_tree(_args: Dictionary) -> Dictionary:
 	return {"json": _node_tree(root)}
 
 
-# ---------------------------------------------------------------- helpers
 
 func _node_tree(n: Node) -> Dictionary:
 	var d: Dictionary = {"name": String(n.name), "class": n.get_class()}
@@ -278,7 +273,7 @@ func _did_you_mean(cls: String) -> String:
 			hits.append(String(c))
 			if hits.size() >= 5:
 				break
-	for e in _global_classes():  # include the project's own types in suggestions
+	for e in _global_classes():
 		if hits.size() >= 5:
 			break
 		var nm := String(e.get("class", ""))

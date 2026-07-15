@@ -28,28 +28,16 @@ var port: int = 0
 const _HEADER_LIMIT := 64 * 1024
 const _BODY_LIMIT := 16 * 1024 * 1024
 
-# Editor responsiveness: when unfocused, the editor raises its main-loop sleep
-# (interface/editor/unfocused_low_processor_mode_sleep_usec, default 50000+ µs) —
-# exactly the situation when an agent drives it from a terminal. Every request then
-# pays multiple slowed ticks (accept → read → respond). While traffic is active we
-# clamp the sleep down to the focused-editor default; once idle we stop touching it
-# and the editor re-asserts its own value on the next focus change.
 const _BOOST_SLEEP_USEC := 6900
 const _BOOST_LINGER_MSEC := 10_000
 
-const _SSE_HEARTBEAT_MSEC := 15_000  # comment ping cadence on idle event streams
+const _SSE_HEARTBEAT_MSEC := 15_000
 
 var _tcp := TCPServer.new()
-var _clients: Array[Dictionary] = []  # [{peer:StreamPeerTCP, buf:PackedByteArray, age:int, hdr_end:int, scan:int}]
-var _sse_peers: Array[StreamPeerTCP] = []  # long-lived GET event streams
+var _clients: Array[Dictionary] = []
+var _sse_peers: Array[StreamPeerTCP] = []
 var _last_activity_msec: int = -1_000_000
 var _last_heartbeat_msec: int = 0
-# Re-entrancy guard. A request handler can pump the editor main loop (e.g.
-# EditorInterface.save_scene() shows a progress dialog that runs Main::iteration),
-# which re-enters _process. Without this the nested tick re-dispatches the SAME
-# in-flight request (still in _clients until _try_handle returns) → the handler
-# recurses into itself until the stack overflows and the editor crashes ("Task 'save'
-# already exists" on the 2nd save_scene). Nested ticks no-op; the outer one finishes.
 var _in_process: bool = false
 
 
@@ -87,7 +75,6 @@ func _process(_delta: float) -> void:
 
 	_update_responsiveness()
 
-	# Accept new connections.
 	while _tcp.is_connection_available():
 		var peer := _tcp.take_connection()
 		if peer != null:
@@ -95,17 +82,16 @@ func _process(_delta: float) -> void:
 			_clients.append({"peer": peer, "buf": PackedByteArray(), "age": 0, "hdr_end": -1, "scan": 0})
 			_last_activity_msec = Time.get_ticks_msec()
 
-	# Service existing connections.
 	var keep: Array[Dictionary] = []
 	for c in _clients:
 		var peer: StreamPeerTCP = c["peer"]
 		peer.poll()
 		var status := peer.get_status()
 		if status == StreamPeerTCP.STATUS_ERROR or status == StreamPeerTCP.STATUS_NONE:
-			continue  # drop
+			continue
 		if status != StreamPeerTCP.STATUS_CONNECTED:
 			c["age"] = int(c["age"]) + 1
-			if int(c["age"]) < 600:  # ~10s @60fps grace for connecting sockets
+			if int(c["age"]) < 600:
 				keep.append(c)
 			continue
 
@@ -118,11 +104,10 @@ func _process(_delta: float) -> void:
 				c["buf"] = buf
 
 		var verdict := _try_handle(c)
-		if verdict == 0:  # incomplete — wait for more bytes
+		if verdict == 0:
 			c["age"] = int(c["age"]) + 1
-			if int(c["age"]) < 1800:  # ~30s to finish a request
+			if int(c["age"]) < 1800:
 				keep.append(c)
-		# verdict == -1 means handled (closed, or upgraded to SSE) → drop from this list
 	_clients = keep
 
 	_service_sse()
@@ -143,8 +128,6 @@ func _update_responsiveness() -> void:
 ## Returns 0 if the request is not fully received yet; -1 once handled & closed.
 func _try_handle(c: Dictionary) -> int:
 	var buf: PackedByteArray = c["buf"]
-	# Find the end of the header block once, resuming the scan where the last tick
-	# stopped (a fresh full scan per tick would be quadratic on chunked bodies).
 	var sep := int(c.get("hdr_end", -1))
 	if sep == -1:
 		sep = _find_header_end(buf, maxi(0, int(c.get("scan", 0)) - 3))
@@ -180,7 +163,7 @@ func _try_handle(c: Dictionary) -> int:
 
 	var body_start := sep + 4
 	if buf.size() - body_start < content_length:
-		return 0  # body still arriving
+		return 0
 
 	var body := buf.slice(body_start, body_start + content_length).get_string_from_utf8()
 	var req := {"method": method, "path": path, "headers": headers, "body": body}
@@ -190,7 +173,7 @@ func _try_handle(c: Dictionary) -> int:
 		resp = request_handler.call(req)
 	if bool(resp.get("sse", false)):
 		_upgrade_sse(c["peer"])
-		return -1  # peer now lives in _sse_peers; just drop it from _clients
+		return -1
 	_respond(c["peer"], resp)
 	return -1
 
@@ -253,7 +236,7 @@ func _service_sse() -> void:
 
 
 func _respond(peer: StreamPeerTCP, resp: Dictionary) -> void:
-	_last_activity_msec = Time.get_ticks_msec()  # keep the responsiveness boost alive
+	_last_activity_msec = Time.get_ticks_msec()
 	if peer == null:
 		return
 	var status := int(resp.get("status", 200))
@@ -278,7 +261,6 @@ func _respond(peer: StreamPeerTCP, resp: Dictionary) -> void:
 
 
 static func _find_header_end(buf: PackedByteArray, from: int = 0) -> int:
-	# locate the CRLF CRLF that ends the header block, scanning from `from`
 	for i in range(from, buf.size() - 3):
 		if buf[i] == 13 and buf[i + 1] == 10 and buf[i + 2] == 13 and buf[i + 3] == 10:
 			return i

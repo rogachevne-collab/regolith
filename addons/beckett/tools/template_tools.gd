@@ -39,7 +39,6 @@ func _apply_template(args: Dictionary) -> Dictionary:
 		return {"error": "No template '%s'." % tpl, "json": {"available": _list_templates()}}
 
 	var dir := DirAccess.open(src)
-	# Copy source files only — skip editor sidecars and the manifest itself.
 	var files: Array = []
 	for f in dir.get_files():
 		var fn := str(f)
@@ -59,7 +58,6 @@ func _apply_template(args: Dictionary) -> Dictionary:
 			return {"error": "Refusing to overwrite existing files (pass force=true to replace).",
 				"json": {"would_overwrite": clash}}
 
-	# Scripts/resources before scenes so a scene's ext_resource refs resolve on open.
 	var ordered: Array = []
 	for f in files:
 		if not str(f).ends_with(".tscn"):
@@ -83,7 +81,6 @@ func _apply_template(args: Dictionary) -> Dictionary:
 			EditorInterface.get_resource_filesystem().update_file(to)
 		wrote.append(to)
 
-	# The template — not apply_template — decides whether it owns the main scene.
 	var manifest := _manifest(src)
 	var main_scene := str(manifest.get("main_scene", ""))
 	if not main_scene.is_empty() and FileAccess.file_exists(main_scene):

@@ -8,7 +8,7 @@ class_name BeckettSceneTools
 
 const Reflect := preload("res://addons/beckett/core/reflection.gd")
 
-var server  # mcp_server node
+var server
 
 
 func _register(registry) -> void:
@@ -93,7 +93,6 @@ func _register(registry) -> void:
 	})
 
 
-# ---------------------------------------------------------------- handlers
 
 func _create_node(args: Dictionary) -> Dictionary:
 	var root := EditorInterface.get_edited_scene_root()
@@ -119,7 +118,6 @@ func _create_node(args: Dictionary) -> Dictionary:
 	ur.add_do_reference(node)
 	ur.add_undo_method(parent, "remove_child", node)
 	ur.commit_action()
-	# Focus the NEW node (not the parent) — get_path_to is valid now it's in the tree.
 	return {"text": "created %s '%s' under %s" % [type, node.name, parent.name],
 		"focus": {"kind": "node", "target": str(root.get_path_to(node))}}
 
@@ -216,11 +214,11 @@ func _save_scene(args: Dictionary) -> Dictionary:
 		return {"error": "No scene is open to save."}
 	var path := str(args.get("path", ""))
 	if path.is_empty():
-		var err := EditorInterface.save_scene()  # returns Error
+		var err := EditorInterface.save_scene()
 		if err != OK:
 			return {"error": "save failed: %s" % error_string(err)}
 		return {"text": "saved scene"}
-	EditorInterface.save_scene_as(path, true)  # returns void
+	EditorInterface.save_scene_as(path, true)
 	return {"text": "saved scene as %s" % path}
 
 
@@ -275,7 +273,6 @@ func _move_node(args: Dictionary) -> Dictionary:
 		"focus": {"kind": "node", "target": str(root.get_path_to(node))}}
 
 
-# ---------------------------------------------------------------- helpers
 
 func _node(target: String) -> Node:
 	var root := EditorInterface.get_edited_scene_root()

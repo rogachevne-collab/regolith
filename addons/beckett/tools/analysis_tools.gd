@@ -22,7 +22,6 @@ func _register(registry) -> void:
 	})
 
 
-# ---------------------------------------------------------------- statistics
 
 func _statistics(_args: Dictionary) -> Dictionary:
 	var files := _all_files([])
@@ -65,7 +64,6 @@ func _statistics(_args: Dictionary) -> Dictionary:
 	}}
 
 
-# ---------------------------------------------------------------- file walk
 
 func _all_files(exts: Array) -> Array:
 	var out: Array = []

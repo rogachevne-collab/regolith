@@ -19,9 +19,9 @@ class_name BeckettCSharpTools
 ##    before running). Kept isolated on purpose.
 ##  * `--tl:off` is REQUIRED: .NET 8+ Terminal Logger reformats output and breaks the parser.
 
-var server  # mcp_server node
+var server
 
-var _dotnet := ""  # cached resolved dotnet path (probe once)
+var _dotnet := ""
 
 
 func _register(registry) -> void:
@@ -37,7 +37,6 @@ func _register(registry) -> void:
 	})
 
 
-# ---------------------------------------------------------------- handler
 
 func _build_csharp(args: Dictionary) -> Dictionary:
 	var dotnet := _find_dotnet()
@@ -47,19 +46,16 @@ func _build_csharp(args: Dictionary) -> Dictionary:
 	var csproj := _resolve_csproj(str(args.get("csproj", "")))
 	if csproj.is_empty():
 		return _csproj_error()
-	# Godot's FileAccess and dotnet both take forward slashes; a caller may pass a native
-	# Windows path with backslashes, which FileAccess.file_exists would miss.
 	csproj = csproj.replace("\\", "/")
 	if not FileAccess.file_exists(csproj):
 		return {"error": "No .csproj at: %s" % _to_res(csproj)}
 	var config := str(args.get("configuration", "Debug"))
 	if config != "Debug" and config != "Release":
 		config = "Debug"
-	# Build to a scratch dir so we never fight the editor for the loaded DLL.
 	var build_args := ["build", csproj, "-c", config, "-o", _scratch_dir(),
 		"--tl:off", "-clp:NoSummary", "-v:m", "-nologo"]
 	var output: Array = []
-	var code := OS.execute(dotnet, build_args, output, true)  # read_stderr=true
+	var code := OS.execute(dotnet, build_args, output, true)
 	if code == -1:
 		return {"error": "Failed to launch `dotnet build` (%s). Is the .NET SDK healthy?" % dotnet}
 	var text := ""
@@ -74,8 +70,6 @@ func _build_csharp(args: Dictionary) -> Dictionary:
 		else:
 			warns += 1
 	var ok := code == 0
-	# NOTE: return ONLY "json" — the server's result serializer is if/elif, so a top-level
-	# "text" key would shadow the "json" branch and drop structuredContent. Summary goes inside.
 	return {"json": {
 		"ok": ok,
 		"summary": ("C# build OK — compiles (%d warning(s))." % warns) if ok \
@@ -89,7 +83,6 @@ func _build_csharp(args: Dictionary) -> Dictionary:
 	}}
 
 
-# ---------------------------------------------------------------- helpers
 
 ## Locate the dotnet executable: PATH first, then DOTNET_ROOT / well-known install dirs.
 ## Validated with a bounded `--version` probe; the result is cached for the session.
@@ -103,8 +96,6 @@ func _find_dotnet() -> String:
 		var pf := OS.get_environment("ProgramFiles")
 		cands.append((pf if not pf.is_empty() else "C:/Program Files").path_join("dotnet/dotnet.exe"))
 	else:
-		# macOS installer, Linux apt/official, Homebrew-Intel, Homebrew-AppleSilicon, Linux snap.
-		# These matter when the editor is GUI-launched (minimal PATH) so a bare `dotnet` misses.
 		cands.append_array(["/usr/local/share/dotnet/dotnet", "/usr/bin/dotnet", "/usr/local/bin/dotnet",
 			"/opt/homebrew/bin/dotnet", "/snap/bin/dotnet"])
 		if OS.has_environment("HOME"):

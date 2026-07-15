@@ -11,10 +11,10 @@ class_name BeckettRunTools
 ## It may touch only the stable seam: registry.register(spec), server fields
 ## (bridge, plugin, registry), and the handler return conventions.
 
-# Max main-thread block per wait_until call — see _wait_until for why.
 const BLOCK_SLICE_MS := 1500
+const MCPJobsScript := preload("res://addons/beckett/core/jobs.gd")
 
-var server  # mcp_server node (exposes .bridge)
+var server
 
 
 func _register(registry) -> void:
@@ -64,7 +64,6 @@ func _register(registry) -> void:
 	})
 
 
-# ---------------------------------------------------------------- play session
 
 func _play_scene(args: Dictionary) -> Dictionary:
 	var scene := str(args.get("scene", ""))
@@ -95,11 +94,6 @@ func _get_play_state(_args: Dictionary) -> Dictionary:
 
 func _wait_until(args: Dictionary) -> Dictionary:
 	var cond := str(args.get("condition", ""))
-	# Hard per-call cap. Blocking the main thread freezes the editor's OWN deferred
-	# work — including the play-launch pipeline and background jobs — so a long wait
-	# here deadlocks the very condition it polls (game launched in ~1 s once the
-	# editor got frames back; a 40 s in-call wait never saw it). Yield instead and
-	# let the agent re-call; each HTTP round-trip gives the editor frames.
 	var budget: int = clampi(int(args.get("timeout_ms", BLOCK_SLICE_MS)), 100, BLOCK_SLICE_MS)
 	if cond.begins_with("seconds:"):
 		var ms := int(float(cond.substr(8)) * 1000.0)
@@ -107,15 +101,12 @@ func _wait_until(args: Dictionary) -> Dictionary:
 		if ms > budget:
 			return {"text": "waited %d ms of %s — call again for the remainder (per-call cap keeps the editor responsive)" % [budget, cond]}
 		return {"text": "condition met: %s" % cond}
-	var t0 := Time.get_ticks_msec()
-	while Time.get_ticks_msec() - t0 < budget:
-		# Pump the bridge — we hold the main thread, so its _process can't run and
-		# would otherwise never accept the game's incoming connection.
-		if server.bridge != null:
-			server.bridge.poll_once()
-		if _check(cond):
-			return {"text": "condition met: %s" % cond}
-		OS.delay_msec(50)
+	var tick := func() -> Dictionary:
+		return {"met": true} if _check(cond) else {}
+	var pump := Callable(server.bridge, "poll_once") if server.bridge != null else Callable()
+	var res: Dictionary = MCPJobsScript.poll_until(budget, 50, tick, pump)
+	if res.has("met"):
+		return {"text": "condition met: %s" % cond}
 	return {"error": "not yet: %s (waited %d ms — per-call cap; the editor needs free frames between calls to launch the game and run jobs). Call wait_until again." % [cond, budget]}
 
 
@@ -129,11 +120,10 @@ func _check(cond: String) -> bool:
 	if cond.begins_with("file_exists:"):
 		return FileAccess.file_exists(cond.substr(12))
 	if cond.begins_with("seconds:"):
-		return false  # handled purely by the timeout loop elapsing
+		return false
 	return false
 
 
-# ---------------------------------------------------------------- logs_read
 
 func _logs_read(args: Dictionary) -> Dictionary:
 	var path := str(args.get("path", ""))

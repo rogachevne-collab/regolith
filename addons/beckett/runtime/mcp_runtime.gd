@@ -15,68 +15,48 @@ var _buf := PackedByteArray()
 var _port := 8771
 var _since_retry := 0.0
 var _was_connected := false
+var _hello_sent := false
 
-# Input recording (record_input / replay_input over the bridge).
 var _recording := false
 var _rec: Array = []
 var _rec_t0 := 0
-var _rec_f0 := 0                  # Engine.get_physics_frames() at record_start; events stamp the frame delta 'f' for deterministic (frame-stepped) replay
+var _rec_f0 := 0
 
-# Deterministic playtest control (time_control tool). A stepping WINDOW can't run
-# inside a single bridge handler — physics only advances between frames, and the
-# handler blocks the frame it runs on — so `step`/`step_until` just OPEN the window
-# (unpause + arm the flag) and reply immediately; _physics_process counts the ticks
-# and closes it (re-pause), while the editor polls tc_status. Because this autoload is
-# PROCESS_MODE_ALWAYS, its _physics_process fires even when the tree is paused, so the
-# tick counter is gated on `not get_tree().paused` — it counts ONLY real, unpaused
-# physics ticks during an open window (a naive counter would over-count paused frames).
-var _stepping := false            # a step/step_until window is open
-var _step_kind := ""              # "count" (fixed N frames) or "until" (condition)
-var _step_target := 0             # frames to run for kind=count
-var _step_count := 0              # unpaused physics ticks seen so far this window
-var _step_deadline := 0          # Time.get_ticks_msec() cap for kind=until (timeout)
-var _step_max_frames := 0         # optional frame cap for kind=until (0 = none)
-var _step_cond := ""              # condition source for kind=until
-var _step_expr: Object = null     # compiled Expression for the condition (game-side)
-var _step_result := ""            # terminator that closed the last window: done|condition|timeout|max_frames
-var _step_cond_value = null       # last evaluated condition value (for step_until reporting)
-var _resume_paused := true        # re-pause when the window closes (step always leaves paused)
-var _step_open_frame := 0         # Engine.get_physics_frames() snapshotted when the window opened (delta base)
+var _stepping := false
+var _step_kind := ""
+var _step_target := 0
+var _step_count := 0
+var _step_deadline := 0
+var _step_max_frames := 0
+var _step_cond := ""
+var _step_expr: Object = null
+var _step_result := ""
+var _step_cond_value = null
+var _resume_paused := true
+var _step_open_frame := 0
 
-# Deterministic input replay window (playtest op=run). Mirrors the stepping window above:
-# unpause, run UNPAUSED physics ticks, inject each event when the tick index reaches its
-# recorded frame stamp 'f', then re-pause so asserts read a settled, reproducible state.
-# Injection happens mid-frame while UNPAUSED, so both _input() callbacks AND polled Input.*
-# state see it (a paused inject would miss pausable nodes' _input).
 var _replaying := false
 var _replay_events: Array = []
 var _replay_i := 0
 var _replay_tick := 0
 var _replay_end := 0
 var _replay_injected := 0
+const ReplayPerf := preload("res://addons/beckett/runtime/replay_perf.gd")
+var _replay_perf := ReplayPerf.new()
+const InputCodec := preload("res://addons/beckett/runtime/input_codec.gd")
 
-# Captured game output — runtime script errors WITH stack traces, push_error/warning,
-# and print() — via a custom OS Logger installed in the played game. This is the
-# real-time play->see-error->fix signal the agent reads through the game_logs tool;
-# no file logging, no editor debugger needed (the engine routes built-in error/output
-# to the internal debugger, not to EditorDebuggerPlugin captures — so we tap them here,
-# at the source, in the game process itself).
-#
-# The Logger base class + OS.add_logger() are Godot 4.5+. On older engines (4.2–4.4)
-# there's no such API, so capture gracefully no-ops and game_logs returns empty (see
-# _install_log_sink). Everything Logger-typed is kept out of parse scope — typed Object
-# here, the sink compiled at runtime — so this file still parses/loads on 4.2–4.4.
-const _LOG_CAP := 800
-var _log_ring: Array = []
-var _log_dropped := 0
-var _log_mutex := Mutex.new()
-var _logger: Object = null
+const GameLogSink := preload("res://addons/beckett/runtime/game_log_sink.gd")
+var _log_sink := GameLogSink.new()
 
 
 func _ready() -> void:
-	# Keep serving while the game is paused (get_tree().paused = true) — pause
-	# menus and game-over screens are exactly when the agent needs to look at the
-	# game and click buttons; an INHERIT-mode autoload would freeze the channel.
+	for sib in get_tree().root.get_children():
+		if sib != self and sib.get_script() == get_script() and sib.get_index() < get_index():
+			push_warning("[beckett] duplicate runtime autoload '%s' (twin of '%s') — staying dormant; remove the stale autoload entry from project.godot" % [name, sib.name])
+			set_process(false)
+			set_physics_process(false)
+			set_process_input(false)
+			return
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	var p := OS.get_environment("BECKETT_RUNTIME_PORT")
 	if p != "" and p.is_valid_int():
@@ -84,23 +64,17 @@ func _ready() -> void:
 	_dial()
 	set_process(true)
 	set_process_input(true)
-	# Tap the game's own log stream (errors/warnings/stack traces/prints).
-	# Logger + OS.add_logger() are Godot 4.5+; on 4.2–4.4 this is a graceful no-op.
-	_install_log_sink()
+	_log_sink.install()
 
 
 func _exit_tree() -> void:
-	if _logger != null:
-		# OS.call(): OS.remove_logger() is compile-checked and absent on < 4.5; _logger is
-		# only ever non-null on 4.5+, so this dynamic call is only reached where it exists.
-		OS.call("remove_logger", _logger)
-		_logger = null
+	_log_sink.uninstall()
 
 
 func _input(event: InputEvent) -> void:
 	if not _recording:
 		return
-	var d := _serialize_event(event)
+	var d: Dictionary = InputCodec.serialize_event(event)
 	if not d.is_empty():
 		d["t"] = float(Time.get_ticks_msec() - _rec_t0)
 		d["f"] = Engine.get_physics_frames() - _rec_f0
@@ -109,6 +83,7 @@ func _input(event: InputEvent) -> void:
 
 func _dial() -> void:
 	_peer = StreamPeerTCP.new()
+	_hello_sent = false
 	_peer.connect_to_host("127.0.0.1", _port)
 
 
@@ -116,6 +91,9 @@ func _process(delta: float) -> void:
 	_peer.poll()
 	var st := _peer.get_status()
 	if st == StreamPeerTCP.STATUS_CONNECTED:
+		if not _hello_sent:
+			_hello_sent = true
+			_peer.put_data((JSON.stringify({"hello": OS.get_environment("BECKETT_RUNTIME_TOKEN")}) + "\n").to_utf8_buffer())
 		_was_connected = true
 		var avail := _peer.get_available_bytes()
 		if avail > 0:
@@ -130,12 +108,7 @@ func _process(delta: float) -> void:
 			_buf = _buf.slice(nl + 1)
 			_handle(line)
 	elif st == StreamPeerTCP.STATUS_ERROR or st == StreamPeerTCP.STATUS_NONE:
-		# Reconnect on DROP too, not just before the first connect. A mid-session drop
-		# (bridge restart, editor focus loss) used to be permanent — the old retry was
-		# gated on `not _was_connected`, so once connected it never re-dialed until a
-		# stop+replay. Now we re-dial on the same interval whenever the link is down.
 		if _was_connected:
-			# Just lost an established link: reset read state and re-dial promptly.
 			_was_connected = false
 			_buf = PackedByteArray()
 			_since_retry = RETRY_INTERVAL
@@ -145,10 +118,6 @@ func _process(delta: float) -> void:
 			_dial()
 
 
-# Drive an open stepping window forward one physics tick at a time. Runs in
-# PROCESS_MODE_ALWAYS, so it also fires while the tree is paused — we count ONLY
-# ticks that happen while the tree is genuinely UNPAUSED, so a step of N advances
-# the game by exactly N physics frames (paused ticks in between never count).
 func _physics_process(_delta: float) -> void:
 	if _replaying:
 		var rtree := get_tree()
@@ -160,9 +129,6 @@ func _physics_process(_delta: float) -> void:
 	var tree := get_tree()
 	if tree == null:
 		return
-	# Only a real, UNPAUSED physics tick advances the game — count that one. This gate is
-	# why an ALWAYS-mode autoload doesn't over-count: its _physics_process fires even while
-	# the tree is paused, but those ticks are skipped here.
 	if tree.paused:
 		return
 	_step_count += 1
@@ -171,8 +137,6 @@ func _physics_process(_delta: float) -> void:
 			if _step_count >= _step_target:
 				_close_step("done")
 		"until":
-			# Evaluate the condition AFTER this tick's simulation — the moment it is true we
-			# pause. (An already-true condition is handled at open time with 0 frames run.)
 			if _eval_step_condition():
 				_close_step("condition")
 			elif _step_max_frames > 0 and _step_count >= _step_max_frames:
@@ -227,6 +191,7 @@ func _replay_open(msg: Dictionary) -> Dictionary:
 	_replay_i = 0
 	_replay_tick = 0
 	_replay_injected = 0
+	_replay_perf.begin()
 	var settle: int = maxi(0, int(msg.get("settle_frames", 4)))
 	var last_f := 0
 	if ordered.size() > 0:
@@ -242,11 +207,12 @@ func _replay_open(msg: Dictionary) -> Dictionary:
 ## event whose recorded frame 'f' has arrived, advance the tick, and re-pause once all events
 ## have fired and the settle margin has elapsed.
 func _replay_step_tick() -> void:
+	_replay_perf.tick()
 	while _replay_i < _replay_events.size():
 		var ev: Dictionary = _replay_events[_replay_i]
 		if int(ev.get("f", 0)) > _replay_tick:
 			break
-		var ie := _build_event(ev)
+		var ie: InputEvent = InputCodec.build_event(ev)
 		if ie != null:
 			Input.parse_input_event(ie)
 			_replay_injected += 1
@@ -264,8 +230,6 @@ func _handle(line: String) -> void:
 	if not (msg is Dictionary):
 		return
 	var resp := _dispatch(msg)
-	# Echo the editor's sequence id so a late reply (this handler ran past the editor's
-	# read deadline) is recognised as stale on the next command instead of desyncing.
 	if (msg as Dictionary).has("_id"):
 		resp["_id"] = (msg as Dictionary)["_id"]
 	_peer.put_data((JSON.stringify(resp) + "\n").to_utf8_buffer())
@@ -320,7 +284,7 @@ func _dispatch(msg: Dictionary) -> Dictionary:
 		"perf":
 			return {"ok": true, "monitors": _perf_monitors()}
 		"logs":
-			return _logs_cmd(msg)
+			return _log_sink.snapshot(msg)
 		"record_start":
 			_recording = true
 			_rec = []
@@ -343,7 +307,7 @@ func _dispatch(msg: Dictionary) -> Dictionary:
 		"replay_open":
 			return _replay_open(msg)
 		"replay_status":
-			return {"ok": true, "replaying": _replaying, "injected": _replay_injected, "frames": _replay_tick, "total_events": _replay_events.size(), "remaining": _replay_events.size() - _replay_i, "paused": (get_tree() != null and get_tree().paused)}
+			return {"ok": true, "replaying": _replaying, "injected": _replay_injected, "frames": _replay_tick, "total_events": _replay_events.size(), "remaining": _replay_events.size() - _replay_i, "paused": (get_tree() != null and get_tree().paused), "perf": _replay_perf.summary()}
 		"tc_freeze":
 			return _tc_freeze()
 		"tc_unfreeze":
@@ -362,7 +326,6 @@ func _dispatch(msg: Dictionary) -> Dictionary:
 			return {"ok": false, "error": "unknown cmd"}
 
 
-# ---------------------------------------------------------------- runtime ops
 
 func _root() -> Node:
 	var t := get_tree()
@@ -386,19 +349,16 @@ func _resolve(path: String) -> Node:
 	if path.is_empty() or path == "." or path == root.name:
 		return root
 	var tree := get_tree()
-	# Absolute SceneTree path (/root/...).
 	if path.begins_with("/root") and tree != null:
 		var abs := tree.root.get_node_or_null(NodePath(path))
 		if abs != null:
 			return abs
-	# Relative to the current scene.
 	var n := root.get_node_or_null(NodePath(path))
 	if n != null:
 		return n
 	n = root.find_child(path, true, false)
 	if n != null:
 		return n
-	# Last resort: name search from the SceneTree root (covers autoloads / overlays).
 	if tree != null and tree.root != null:
 		n = tree.root.find_child(path, true, false)
 	return n
@@ -479,7 +439,7 @@ func _coerce_value(obj: Object, prop: String, value: Variant) -> Variant:
 		TYPE_STRING:
 			return str(value)
 		TYPE_VECTOR2:
-			return _vec2(value)
+			return InputCodec.vec2(value)
 		TYPE_VECTOR3:
 			return _vec3(value)
 		TYPE_COLOR:
@@ -519,7 +479,6 @@ func _not_found(msg: Dictionary) -> String:
 	return "no node matches selector %s (nth=%d)" % [", ".join(sel), int(msg.get("nth", 0))]
 
 
-# ---------------------------------------------------------------- time control (deterministic playtest)
 
 ## Common state block returned by every time_control op so the agent always sees the
 ## same shape: is the game running, is the tree paused, current Engine.time_scale,
@@ -541,7 +500,6 @@ func _tc_freeze() -> Dictionary:
 	var tree := get_tree()
 	if tree == null:
 		return {"ok": false, "error": "no scene tree"}
-	# A pending step window is abandoned by an explicit freeze — the user wants a hard stop.
 	_stepping = false
 	_step_expr = null
 	tree.paused = true
@@ -567,7 +525,6 @@ func _tc_step(msg: Dictionary) -> Dictionary:
 	if tree == null:
 		return {"ok": false, "error": "no scene tree"}
 	var frames: int = maxi(1, int(msg.get("frames", 1)))
-	# Baseline: ensure paused so no stray ticks land before the window opens.
 	tree.paused = true
 	_step_kind = "count"
 	_step_target = frames
@@ -577,7 +534,6 @@ func _tc_step(msg: Dictionary) -> Dictionary:
 	_resume_paused = true
 	_step_open_frame = Engine.get_physics_frames()
 	_stepping = true
-	# Unpause so the very next physics tick begins the run.
 	tree.paused = false
 	return {"ok": true, "started": true, "kind": "count", "frames_requested": frames,
 		"physics_frames_before": _step_open_frame}
@@ -609,7 +565,6 @@ func _tc_step_until(msg: Dictionary) -> Dictionary:
 	var timeout_sec: float = clampf(float(msg.get("timeout_sec", 10.0)), 0.1, 120.0)
 	_step_deadline = Time.get_ticks_msec() + int(timeout_sec * 1000.0)
 	_step_open_frame = Engine.get_physics_frames()
-	# Already true? Close immediately with zero frames run — pause and report.
 	if _eval_step_condition():
 		_step_result = "condition"
 		_stepping = false
@@ -634,9 +589,6 @@ func _tc_step_status() -> Dictionary:
 	var out := _tc_state()
 	out["kind"] = _step_kind
 	out["frames"] = _step_count
-	# before was snapshotted at open; after = before + counted ticks. Computed (not read live)
-	# so after-before == frames both mid-window and after close, immune to the raw engine
-	# counter drifting while paused between close and this poll.
 	out["physics_frames_before"] = _step_open_frame
 	out["physics_frames_after"] = _step_open_frame + _step_count
 	if not _stepping:
@@ -663,7 +615,6 @@ func _tc_time_scale(msg: Dictionary) -> Dictionary:
 	return st
 
 
-# ---------------------------------------------------------------- tree (scoped)
 
 func _tree_cmd(msg: Dictionary) -> Dictionary:
 	var root := _root()
@@ -717,8 +668,6 @@ func _tree2(n: Node, root: Node, depth: int, ctx: Dictionary) -> Dictionary:
 			ctx["truncated"] = true
 			break
 		var c: Node = kids[i]
-		# Collapse a run of identical childless leaf siblings (e.g. 8 CPUParticles2D)
-		# into one entry — the #1 source of token-bloat in real scene trees.
 		if bool(ctx["collapse"]) and c.get_child_count() == 0 and _script_global_name(c) == "":
 			var cls := c.get_class()
 			var j := i
@@ -777,76 +726,13 @@ func _run_input(events: Array) -> Dictionary:
 	for e in events:
 		if not (e is Dictionary):
 			continue
-		var ev := _build_event(e)
+		var ev: InputEvent = InputCodec.build_event(e)
 		if ev != null:
 			Input.parse_input_event(ev)
 			count += 1
 	return {"ok": true, "dispatched": count}
 
 
-func _build_event(e: Dictionary) -> InputEvent:
-	match str(e.get("type", "")):
-		"key":
-			var k := InputEventKey.new()
-			var kc: int = OS.find_keycode_from_string(str(e.get("keycode", "")))
-			k.keycode = kc
-			k.physical_keycode = kc
-			k.pressed = bool(e.get("pressed", true))
-			return k
-		"action":
-			var a := InputEventAction.new()
-			a.action = StringName(str(e.get("action", "")))
-			a.pressed = bool(e.get("pressed", true))
-			a.strength = float(e.get("strength", 1.0)) if e.get("pressed", true) else 0.0
-			return a
-		"mouse_button":
-			var mb := InputEventMouseButton.new()
-			mb.button_index = int(e.get("button", 1))
-			mb.pressed = bool(e.get("pressed", true))
-			mb.position = _vec2(e.get("position", [0, 0]))
-			return mb
-		"mouse_motion":
-			var mm := InputEventMouseMotion.new()
-			mm.position = _vec2(e.get("position", [0, 0]))
-			mm.relative = _vec2(e.get("relative", [0, 0]))
-			return mm
-		"joy_button":
-			var jb := InputEventJoypadButton.new()
-			jb.button_index = int(e.get("button", 0))
-			jb.pressed = bool(e.get("pressed", true))
-			jb.device = int(e.get("device", 0))
-			return jb
-		"joy_axis":
-			var ja := InputEventJoypadMotion.new()
-			ja.axis = int(e.get("axis", 0))
-			ja.axis_value = clampf(float(e.get("value", 0.0)), -1.0, 1.0)
-			ja.device = int(e.get("device", 0))
-			return ja
-		"touch":
-			var st := InputEventScreenTouch.new()
-			st.index = int(e.get("index", 0))
-			st.position = _vec2(e.get("position", [0, 0]))
-			st.pressed = bool(e.get("pressed", true))
-			return st
-		"touch_drag":
-			var sd := InputEventScreenDrag.new()
-			sd.index = int(e.get("index", 0))
-			sd.position = _vec2(e.get("position", [0, 0]))
-			sd.relative = _vec2(e.get("relative", [0, 0]))
-			return sd
-		_:
-			return null
-
-
-func _vec2(v: Variant) -> Vector2:
-	if v is Array and v.size() >= 2:
-		return Vector2(v[0], v[1])
-	if v is Dictionary:
-		return Vector2(v.get("x", 0), v.get("y", 0))
-	return Vector2.ZERO
-
-
-# ---------------------------------------------------------------- find (live nodes)
 
 func _find(msg: Dictionary) -> Dictionary:
 	var root := _root()
@@ -919,14 +805,11 @@ func _node_text(n: Node) -> String:
 	return ""
 
 
-# ---------------------------------------------------------------- click
 
 func _click_text(msg: Dictionary) -> Dictionary:
 	var root := _root()
 	if root == null:
 		return {"ok": false, "error": "no current scene"}
-	# Same resolver as click_control, scoped to buttons: the two tools agree on the
-	# match set and nth ordering (a bare text selector elsewhere also scopes to BaseButton).
 	var sel := msg.duplicate()
 	if str(sel.get("class", "")) == "":
 		sel["class"] = "BaseButton"
@@ -957,9 +840,6 @@ func _click_text(msg: Dictionary) -> Dictionary:
 ## clipped/off-screen we scroll it into view and report clicked=false (the re-sort is
 ## deferred one frame) so the caller calls again to land the click — never a fake hit.
 func _click_control(msg: Dictionary) -> Dictionary:
-	# Clicking by bare text means "a button": scope it to BaseButton so nth indexes the
-	# SAME set/order as click_button_by_text. Without this, a text-only selector also
-	# counts Labels and other text-bearing nodes, shifting nth onto the wrong control.
 	if str(msg.get("text", "")) != "" and str(msg.get("class", "")) == "" \
 			and str(msg.get("path", "")) == "" and str(msg.get("name", "")) == "":
 		msg = msg.duplicate()
@@ -982,7 +862,6 @@ func _click_control(msg: Dictionary) -> Dictionary:
 		if not _scroll_into_view(ctrl):
 			return {"ok": true, "clicked": false, "scrolled": false, "path": path, "at": [center.x, center.y],
 				"warning": "control is off-screen/clipped and has no ScrollContainer ancestor to bring it into view"}
-		# Flush the deferred re-sort so the scrolled position applies THIS call (no retry).
 		_force_sort(ctrl)
 		center = ctrl.get_global_rect().get_center()
 		if _is_point_clipped(ctrl, center, vp):
@@ -1055,9 +934,6 @@ func _control_rect(msg: Dictionary) -> Dictionary:
 	var vp := get_viewport()
 	if vp == null:
 		return {"ok": false, "error": "no viewport"}
-	# local -> canvas (gui) -> output(physical). The final_transform carries the
-	# content-scale/stretch, so screen_rect matches screenshot pixels (gui_rect doesn't
-	# when the window is larger than the canvas, e.g. a 1.735x stretch).
 	var xf := vp.get_final_transform() * ctrl.get_global_transform_with_canvas()
 	var s0: Vector2 = xf * Vector2.ZERO
 	var s1: Vector2 = xf * ctrl.size
@@ -1081,9 +957,6 @@ func _click_node3d(msg: Dictionary) -> Dictionary:
 	if not (n is Node3D):
 		return {"ok": false, "error": "not a Node3D (%s)" % n.get_class()}
 	var n3 := n as Node3D
-	# Target the visible CENTER for meshes: their origin is often at (0,0,0) while the
-	# geometry sits elsewhere, so projecting the bare origin misses the screen. Use the
-	# world-space AABB center when the node is a VisualInstance3D.
 	var world: Vector3 = n3.global_position
 	if n3 is VisualInstance3D:
 		var ab: AABB = (n3 as VisualInstance3D).get_aabb()
@@ -1114,7 +987,6 @@ func _world_click(world: Vector3, button: int, label: String) -> Dictionary:
 	if not vp.get_visible_rect().has_point(screen):
 		return {"ok": true, "clicked": false, "target": label, "at": [screen.x, screen.y],
 			"warning": "world point projects off-screen at (%d, %d)" % [int(screen.x), int(screen.y)]}
-	# Hover first (pickers track the moused-over object), then press+release.
 	var motion := InputEventMouseMotion.new()
 	motion.position = screen
 	motion.global_position = screen
@@ -1151,7 +1023,7 @@ func _scroll_cmd(msg: Dictionary) -> Dictionary:
 		return {"ok": false, "error": "no viewport"}
 	var pos: Vector2
 	if msg.has("position"):
-		pos = _vec2(msg.get("position", []))
+		pos = InputCodec.vec2(msg.get("position", []))
 	else:
 		var n := _resolve_target(msg)
 		if n == null:
@@ -1191,8 +1063,8 @@ func _drag_cmd(msg: Dictionary) -> Dictionary:
 	var t: Variant = msg.get("to", null)
 	if not (f is Array and (f as Array).size() >= 2 and t is Array and (t as Array).size() >= 2):
 		return {"ok": false, "error": "from and to must both be [x, y]"}
-	var from := _vec2(f)
-	var to := _vec2(t)
+	var from := InputCodec.vec2(f)
+	var to := InputCodec.vec2(t)
 	var button := int(msg.get("button", 1))
 	var mask := 1 << (button - 1)
 	var steps: int = clampi(int(msg.get("steps", 8)), 1, 60)
@@ -1225,8 +1097,6 @@ func _safe(v: Variant) -> Variant:
 	var t := typeof(v)
 	if t == TYPE_OBJECT:
 		return str(v)
-	# Stringify built-in math structs — JSON can't encode them and they'd come back
-	# as null (the global_rect / transform 'returns null' trap).
 	var structs := [TYPE_VECTOR2, TYPE_VECTOR2I, TYPE_VECTOR3, TYPE_VECTOR3I,
 		TYPE_VECTOR4, TYPE_VECTOR4I, TYPE_COLOR, TYPE_RECT2, TYPE_RECT2I,
 		TYPE_TRANSFORM2D, TYPE_TRANSFORM3D, TYPE_BASIS, TYPE_QUATERNION,
@@ -1262,158 +1132,5 @@ func _perf_monitors() -> Dictionary:
 	return out
 
 
-# ---------------------------------------------------------------- log capture
-
-## Called by the OS Logger on every print() (and stderr writes).
-func _on_message(message: String, error: bool) -> void:
-	_push_log({"type": "stderr" if error else "print", "t": Time.get_ticks_msec(), "text": message})
 
 
-## Called by the OS Logger on every error/warning — including runtime SCRIPT errors,
-## with their stack trace(s) in script_backtraces (ScriptBacktrace.format()).
-func _on_error(function: String, file: String, line: int, code: String, rationale: String, error_type: int, script_backtraces: Array) -> void:
-	var bt := ""
-	for b in script_backtraces:
-		# Duck-typed instead of `b is ScriptBacktrace`: that class is Godot 4.5+, and a
-		# parse-time type reference would break this file on < 4.5. We only reach here from
-		# the 4.5+ sink anyway, where these are genuine ScriptBacktraces.
-		if b is Object and b.has_method("format") and b.has_method("is_empty") and not b.is_empty():
-			bt += b.format(0, 2)
-	_push_log({
-		"type": _err_type_name(error_type),
-		"t": Time.get_ticks_msec(),
-		"function": function, "file": file, "line": line,
-		"rationale": rationale if str(rationale) != "" else code,
-		"backtrace": bt,
-	})
-
-
-func _err_type_name(t: int) -> String:
-	# Logger.ERROR_TYPE_* values (Godot 4.5+): ERROR=0, WARNING=1, SCRIPT=2, SHADER=3.
-	# Inlined as literals so this file parses on < 4.5 where the Logger class is absent.
-	match t:
-		1:
-			return "warning"
-		2:
-			return "script"
-		3:
-			return "shader"
-		_:
-			return "error"
-
-
-func _push_log(e: Dictionary) -> void:
-	_log_mutex.lock()
-	_log_ring.append(e)
-	if _log_ring.size() > _LOG_CAP:
-		_log_ring.pop_front()
-		_log_dropped += 1
-	_log_mutex.unlock()
-
-
-func _logs_cmd(msg: Dictionary) -> Dictionary:
-	var level := str(msg.get("level", "error")).to_lower()
-	var needle := str(msg.get("filter", ""))
-	var limit: int = maxi(1, int(msg.get("limit", 100)))
-	_log_mutex.lock()
-	var snapshot: Array = _log_ring.duplicate()
-	var dropped := _log_dropped
-	if bool(msg.get("clear", false)):
-		_log_ring.clear()
-		_log_dropped = 0
-	_log_mutex.unlock()
-	var out: Array = []
-	for e in snapshot:
-		if not _level_pass(str(e.get("type", "")), level):
-			continue
-		if needle != "" and _entry_text(e).findn(needle) == -1:
-			continue
-		out.append(e)
-	if out.size() > limit:
-		out = out.slice(out.size() - limit, out.size())
-	# capture_active tells the editor side whether the log sink is actually installed —
-	# false on Godot < 4.5 (no Logger API), where an empty buffer means "capture off",
-	# NOT "the game logged nothing". game_logs surfaces that distinction to the agent.
-	return {"ok": true, "entries": out, "count": out.size(), "dropped": dropped, "buffer_size": snapshot.size(), "capture_active": _logger != null}
-
-
-func _level_pass(ty: String, level: String) -> bool:
-	if level == "all":
-		return true
-	var is_err := ty == "error" or ty == "script" or ty == "shader"
-	if level == "warning":
-		return is_err or ty == "warning"
-	return is_err
-
-
-func _entry_text(e: Dictionary) -> String:
-	if e.has("text"):
-		return str(e["text"])
-	return "%s %s %s" % [str(e.get("file", "")), str(e.get("rationale", "")), str(e.get("backtrace", ""))]
-
-
-func _serialize_event(e: InputEvent) -> Dictionary:
-	if e is InputEventKey:
-		var k := e as InputEventKey
-		if k.echo:
-			return {}
-		var kc: int = k.keycode if k.keycode != 0 else k.physical_keycode
-		return {"type": "key", "keycode": OS.get_keycode_string(kc), "pressed": k.pressed}
-	if e is InputEventMouseButton:
-		var mb := e as InputEventMouseButton
-		return {"type": "mouse_button", "button": mb.button_index, "position": [mb.position.x, mb.position.y], "pressed": mb.pressed}
-	if e is InputEventMouseMotion:
-		var mm := e as InputEventMouseMotion
-		return {"type": "mouse_motion", "position": [mm.position.x, mm.position.y], "relative": [mm.relative.x, mm.relative.y]}
-	if e is InputEventJoypadButton:
-		var jb := e as InputEventJoypadButton
-		return {"type": "joy_button", "button": jb.button_index, "pressed": jb.pressed, "device": jb.device}
-	if e is InputEventJoypadMotion:
-		var ja := e as InputEventJoypadMotion
-		return {"type": "joy_axis", "axis": ja.axis, "value": ja.axis_value, "device": ja.device}
-	if e is InputEventScreenTouch:
-		var st := e as InputEventScreenTouch
-		return {"type": "touch", "index": st.index, "position": [st.position.x, st.position.y], "pressed": st.pressed}
-	if e is InputEventScreenDrag:
-		var sd := e as InputEventScreenDrag
-		return {"type": "touch_drag", "index": sd.index, "position": [sd.position.x, sd.position.y], "relative": [sd.relative.x, sd.relative.y]}
-	return {}
-
-
-## Install a custom OS Logger that forwards the played game's log stream (prints,
-## warnings, errors, script stack traces) into our ring buffer. The Logger class and
-## OS.add_logger() are Godot 4.5+; on 4.2–4.4 there's no such API, so this is a graceful
-## no-op (game_logs just returns an empty buffer) and the runtime module still loads.
-func _install_log_sink() -> void:
-	if not ClassDB.class_exists("Logger") or not OS.has_method("add_logger"):
-		return
-	var sink := _make_log_sink()
-	if sink == null:
-		return
-	_logger = sink
-	OS.call("add_logger", _logger)
-
-
-## Build the Logger sink by compiling it from source at runtime. It `extends Logger` — a
-## base class absent before 4.5 — so it can't live as a parsed inner class here: that is
-## exactly what broke parsing on older engines. Compiling from a string keeps every
-## Logger reference out of this file's parse scope; the source is only compiled on 4.5+.
-## Kept tiny and print-free — anything the sink itself logged would re-enter the logger.
-func _make_log_sink() -> Object:
-	var src := "\n".join([
-		"extends Logger",
-		"var host",
-		"func _log_message(message, error):",
-		"\tif host != null: host._on_message(message, error)",
-		"func _log_error(function, file, line, code, rationale, editor_notify, error_type, script_backtraces):",
-		"\tif host != null: host._on_error(function, file, line, code, rationale, error_type, script_backtraces)",
-	])
-	var gd := GDScript.new()
-	gd.source_code = src
-	if gd.reload() != OK:
-		return null
-	var sink: Object = gd.new()
-	if sink == null:
-		return null
-	sink.set("host", self)
-	return sink

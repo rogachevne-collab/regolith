@@ -6,11 +6,8 @@ class_name BeckettToolRegistry
 ## Keeps the dispatcher free of per-tool knowledge and makes an optional Pro tier
 ## or per-tool enable/disable trivial later.
 
-# Preloaded-const, not the global class_name: the global class cache may not exist
-# yet (fresh checkout, headless --check-only), and a cache miss would parse-fail us.
 const MCPEffortScript := preload("res://addons/beckett/core/effort.gd")
 
-# name -> {name, description, input_schema, handler:Callable, destructive:bool, readonly:bool[, title, idempotent, open_world]}
 var _tools: Dictionary = {}
 
 
@@ -26,8 +23,6 @@ func register(spec: Dictionary) -> void:
 		"destructive": bool(spec.get("destructive", false)),
 		"readonly": bool(spec.get("readonly", false)),
 	}
-	# Optional annotation extras (see list_specs): human title, idempotency,
-	# open-world (talks to something beyond this editor/project, e.g. the Asset Library).
 	for opt in ["title", "idempotent", "open_world"]:
 		if spec.has(opt):
 			t[opt] = spec[opt]
@@ -63,9 +58,6 @@ func list_specs(max_level: int = -1) -> Array:
 			"name": t["name"],
 			"description": t["description"],
 			"inputSchema": t["input_schema"],
-			# MCP tool annotations (spec 2025-03-26+): hints that let clients render
-			# safety UX (e.g. warn before destructive calls) without parsing prose.
-			# Untrusted by definition — they mirror the same flags our own gates use.
 			"annotations": _annotations(t),
 		}
 		out.append(spec)

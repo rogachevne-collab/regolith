@@ -7,17 +7,17 @@ class_name BeckettScriptTools
 ## writes by default — closing the #1 AI-on-Godot failure mode (GDScript hallucination)
 ## at the source instead of letting broken code land on disk.
 
-var server  # mcp_server node
+var server
 
 
 func _register(registry) -> void:
 	registry.register({
 		"name": "validate_script",
-		"description": "Parse/compile GDScript WITHOUT writing it. Pass 'content' (source) or 'path' (res://). Returns whether it compiles — use before write_script to catch hallucinated APIs.",
+		"description": "Parse/compile GDScript WITHOUT writing it. Pass 'content' (source) or 'path' (res://). Returns whether it compiles — use before write_script to catch hallucinated APIs. Scripts whose class_name is already registered validate correctly (v1.9; the old false 'hides a global class' error is fixed); when validating 'content' destined for an existing file, ALSO pass its 'path' so a real cross-file class_name duplicate is still reported as the error it is.",
 		"readonly": true,
 		"input_schema": {"type": "object", "properties": {
 			"content": {"type": "string"},
-			"path": {"type": "string", "description": "res:// path to validate an existing file"},
+			"path": {"type": "string", "description": "res:// path — the file to validate, or (with content) the file the content is destined for"},
 		}},
 		"handler": Callable(self, "_validate_script"),
 	})
@@ -63,20 +63,21 @@ func _register(registry) -> void:
 	})
 
 
-# ---------------------------------------------------------------- handlers
 
 func _validate_script(args: Dictionary) -> Dictionary:
 	var content: String
+	var vpath := ""
 	if args.has("content"):
 		content = str(args["content"])
+		vpath = str(args.get("path", ""))
 	elif args.has("path"):
-		var path := str(args["path"])
-		if not FileAccess.file_exists(path):
-			return {"error": "No file at: %s" % path}
-		content = FileAccess.get_file_as_string(path)
+		vpath = str(args["path"])
+		if not FileAccess.file_exists(vpath):
+			return {"error": "No file at: %s" % vpath}
+		content = FileAccess.get_file_as_string(vpath)
 	else:
 		return {"error": "Provide 'content' or 'path'."}
-	var v := _compile(content)
+	var v := _compile(content, vpath)
 	if v["valid"]:
 		return {"text": "OK — script compiles."}
 	return {"error": "Script does not compile: %s" % v["detail"],
@@ -89,11 +90,9 @@ func _write_script(args: Dictionary) -> Dictionary:
 	if not guard.is_empty():
 		return {"error": guard}
 	var content := str(args.get("content", ""))
-	# The compile-gate is GDScript-only (in-process GDScript.reload). C#/.cs and other text
-	# files can't be gated here — C# compiles out-of-process; check it with build_csharp.
 	var validate := bool(args.get("validate", true)) and path.ends_with(".gd")
 	if validate:
-		var v := _compile(content)
+		var v := _compile(content, path)
 		if not v["valid"]:
 			return {"error": "Refusing to write: script does not compile (%s)." % v["detail"],
 				"suggestion": "Fix the error or pass validate=false to force. Use describe_class/find_methods to confirm the API."}
@@ -105,7 +104,6 @@ func _write_script(args: Dictionary) -> Dictionary:
 		return {"error": "Cannot open for write: %s (%s)" % [path, error_string(FileAccess.get_open_error())]}
 	f.store_string(content)
 	f.close()
-	# Make the editor pick up the new/changed file.
 	if Engine.is_editor_hint():
 		EditorInterface.get_resource_filesystem().update_file(path)
 	if path.ends_with(".cs"):
@@ -185,7 +183,7 @@ func _script_patch(args: Dictionary) -> Dictionary:
 		applied += 1
 	var validate := bool(args.get("validate", true)) and path.ends_with(".gd")
 	if validate:
-		var v := _compile(text)
+		var v := _compile(text, path)
 		if not v["valid"]:
 			return {"error": "Refusing to write: result does not compile (%s)." % v["detail"],
 				"suggestion": "Adjust the edits, or pass validate=false to force."}
@@ -199,16 +197,47 @@ func _script_patch(args: Dictionary) -> Dictionary:
 	return {"text": "patched %s — %d edit(s), now %d bytes" % [path, applied, text.length()]}
 
 
-# ---------------------------------------------------------------- helpers
 
 ## Compile GDScript source in-memory. Returns {valid:bool, detail:String}.
-func _compile(content: String) -> Dictionary:
+func _compile(content: String, target_path: String = "") -> Dictionary:
+	var masked := _mask_registered_class_name(content, target_path)
+	if masked.has("conflict"):
+		return {"valid": false, "detail": str(masked["conflict"])}
 	var gd := GDScript.new()
-	gd.source_code = content
+	gd.source_code = str(masked["content"])
 	var err := gd.reload(false)
 	if err == OK:
 		return {"valid": true, "detail": ""}
 	return {"valid": false, "detail": "%s — see the Godot Output panel (or get_log) for the line." % error_string(err)}
+
+
+## Neutralize a `class_name X` declaration ONLY when X is already registered in the global
+## class list — the case that used to false-error every validate of an existing named script.
+## The masking is a RENAME-IN-PLACE of just the name token (X -> __BeckettValidate, a name
+## nothing registers): line numbers, any inline `extends`, and annotation attachment (`@tool`,
+## `@icon`, the 4.5+ same-line `@abstract class_name X` form — verified empirically on 4.6.2)
+## are all preserved. Self-references to X inside the body still resolve — X IS registered,
+## which is exactly why the mask is needed; the temp name itself is never referenced. If X is
+## registered by a DIFFERENT file than target_path, that's a real project error the engine
+## would also reject on save: return it as {conflict} instead of masking it away.
+func _mask_registered_class_name(content: String, target_path: String) -> Dictionary:
+	var re := RegEx.new()
+	re.compile("(?m)^(?:@[A-Za-z_]+[ \\t]+)*class_name[ \\t]+([A-Za-z_][A-Za-z0-9_]*)")
+	var m := re.search(content)
+	if m == null:
+		return {"content": content}
+	var cname := m.get_string(1)
+	var registered_path := ""
+	for gc in ProjectSettings.get_global_class_list():
+		if str(gc.get("class", "")) == cname:
+			registered_path = str(gc.get("path", ""))
+			break
+	if registered_path.is_empty():
+		return {"content": content}
+	if not target_path.is_empty() and registered_path != target_path:
+		return {"conflict": "class_name %s is already registered by %s — two scripts cannot share one class_name. Pick another name (or update that file instead)." % [cname, registered_path]}
+	var out := content.substr(0, m.get_start(1)) + "__BeckettValidate" + content.substr(m.get_end(1))
+	return {"content": out}
 
 
 ## Project-scope + traversal guard for writes.

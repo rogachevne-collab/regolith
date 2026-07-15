@@ -51,7 +51,6 @@ func read(uri: String) -> Dictionary:
 			return {"ok": false, "error": "unknown resource: %s" % uri}
 
 
-# ---------------------------------------------------------------- builders
 
 func _tree(n: Node) -> Dictionary:
 	var d: Dictionary = {"name": str(n.name), "class": n.get_class()}
@@ -147,7 +146,6 @@ func _log_tail(lines: int = 100) -> Dictionary:
 	return {"ok": true, "mime": "text/plain", "text": "\n".join(tail)}
 
 
-# ---------------------------------------------------------------- helpers
 
 func root_rel(n: Node) -> NodePath:
 	var root := EditorInterface.get_edited_scene_root()

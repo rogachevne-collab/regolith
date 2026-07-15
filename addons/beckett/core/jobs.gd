@@ -15,10 +15,38 @@ class_name BeckettJobs
 ## OS pipe buffer (~64KB) and then BLOCKS on write — draining only on status polls
 ## would deadlock it between polls (observed live with Godot's import progress spam).
 
-const _OUTPUT_CAP := 65536  # keep at most this much tail per job
+const _OUTPUT_CAP := 65536
 
-# id -> {id, kind, pid, started, meta, output:String, stdio:FileAccess?, stderr:FileAccess?,
-#        done:bool, exit_code:int}
+
+## v1.9 (B2): the ONE blocking-poll primitive every synchronous tool handler shares.
+## The zero-sidecar constraint means a handler that must wait does so by blocking the
+## editor thread in a bounded loop; before v1.9 each tool hand-rolled that loop (deadline
+## arithmetic, pump, delay) with subtle drift between the copies. poll_until owns the
+## shape: run `pump` (optional — e.g. the runtime bridge's poll_once, which must run
+## because we hold the very main thread that would otherwise service it), then `tick`;
+## a non-empty Dictionary from tick is the result and ends the wait, {} keeps polling.
+## After `timeout_ms` it returns {"timeout": true} — which callers treat as failure
+## (wait_for_node) or as completion (a fixed sampling window).
+##
+## What does NOT belong here: transport-internal pump loops (runtime_bridge.send_command's
+## bounded byte-read, asset_lib's HTTPClient connect/request/body phases) — those are the
+## channel itself, not a handler waiting on a condition; and build_csharp, which is a
+## synchronous OS.execute with no loop at all.
+static func poll_until(timeout_ms: int, interval_ms: int, tick: Callable, pump: Callable = Callable()) -> Dictionary:
+	var t0 := Time.get_ticks_msec()
+	var out: Dictionary = {}
+	while out.is_empty():
+		if pump.is_valid():
+			pump.call()
+		var r: Variant = tick.call()
+		if r is Dictionary and not (r as Dictionary).is_empty():
+			out = r
+		elif Time.get_ticks_msec() - t0 >= timeout_ms:
+			out = {"timeout": true}
+		else:
+			OS.delay_msec(maxi(1, interval_ms))
+	return out
+
 var _jobs: Dictionary = {}
 var _seq: int = 0
 
@@ -39,7 +67,6 @@ func spawn(kind: String, exe: String, arguments: Array, meta: Dictionary = {}) -
 	}
 
 	if _has_pipe_spawn():
-		# Dynamic call keeps this script parse-safe on engines without the method.
 		var d: Variant = OS.call("execute_with_pipe", exe, args, false)
 		if typeof(d) == TYPE_DICTIONARY and d.has("pid"):
 			job["pid"] = int(d["pid"])
@@ -111,7 +138,6 @@ func list() -> Array:
 	return out
 
 
-# ---------------------------------------------------------------- internals
 
 func _refresh(job: Dictionary) -> void:
 	_drain(job)
@@ -121,7 +147,7 @@ func _refresh(job: Dictionary) -> void:
 	if OS.is_process_running(pid):
 		return
 	job["done"] = true
-	_drain(job)  # final drain after exit
+	_drain(job)
 	job["exit_code"] = _exit_code(pid)
 
 
@@ -138,14 +164,12 @@ func _drain(job: Dictionary) -> void:
 
 
 func _exit_code(pid: int) -> int:
-	# OS.get_process_exit_code is 4.3+; report -1 (unknown) on older engines.
 	if OS.has_method("get_process_exit_code"):
 		return int(OS.call("get_process_exit_code", pid))
 	return -1
 
 
 func _has_pipe_spawn() -> bool:
-	# execute_with_pipe exists from 4.3 but its non-blocking flag arrived in 4.4.
 	var v := Engine.get_version_info()
 	return int(v.get("major", 4)) > 4 \
 		or (int(v.get("major", 4)) == 4 and int(v.get("minor", 0)) >= 4)
