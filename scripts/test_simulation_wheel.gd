@@ -27,6 +27,7 @@ func _run_tests() -> void:
 		_test_configure_suspension_rejects_invalid_travel,
 		_test_dismantle_wheel_breaks_locomotive,
 		_test_demo_rover_spawn,
+		_test_demo_rover_wheel_sockets_point_down,
 	]
 	for test: Callable in tests:
 		if not bool(test.call()):
@@ -413,6 +414,57 @@ func _test_demo_rover_spawn() -> bool:
 		return _fail("demo rover should be locomotive")
 	if not wheel_powered:
 		return _fail("demo rover wheels should be powered after electric tick")
+	return true
+
+
+func _test_demo_rover_wheel_sockets_point_down() -> bool:
+	var world := SimulationWorld.new()
+	var session := SimulationSession.new()
+	var projection := SimulationPhysicsProjection.new()
+	world.name = "SimulationWorld"
+	projection.name = "SimulationPhysicsProjection"
+	session.add_child(world)
+	session.add_child(projection)
+	session.world = world
+	session.projection = projection
+	projection.bind_world(world)
+	world.ensure_resource_store("player")
+	for archetype: ElementArchetype in Slice01Archetypes.load_rover_archetypes():
+		world.get_archetype_registry().register(archetype)
+	var result: Dictionary = ROVER_DEMO_SPAWN.spawn_on_terrain(
+		session,
+		Vector3(8.0, 0.0, 0.0)
+	)
+	var assembly_id := int(result.get("assembly_id", 0))
+	if not bool(result.get("ok", false)):
+		session.free()
+		return _fail("demo rover spawn failed for socket test")
+	var body := projection.get_physics_body(assembly_id) as RigidBody3D
+	if body == null:
+		session.free()
+		return _fail("demo rover missing rigid body for socket test")
+	for pair: Dictionary in WheelSimulationService.discover_pairs(world, assembly_id):
+		if not WheelSimulationService.is_complete_pair(pair):
+			continue
+		var suspension: SimulationElement = pair.get("suspension_element")
+		var socket_pose := WheelProjectionUtil.mount_pad_anchor_assembly_local(
+			suspension,
+			"wheel_socket"
+		)
+		if socket_pose.is_empty():
+			session.free()
+			return _fail("suspension missing wheel_socket pose")
+		var ray_dir_world := (
+			body.global_transform.basis
+			* Vector3(socket_pose["direction"])
+		).normalized()
+		if ray_dir_world.dot(Vector3.DOWN) < 0.7:
+			session.free()
+			return _fail(
+				"wheel socket should raycast down, got %s"
+				% str(ray_dir_world)
+			)
+	session.free()
 	return true
 
 
