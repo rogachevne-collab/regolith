@@ -12,6 +12,9 @@ const FragmentBodyScript := preload(
 const PistonProjectionUtil := preload(
 	"res://scripts/simulation/projection/piston_projection_util.gd"
 )
+const WheelSimulationService := preload(
+	"res://scripts/simulation/runtime/wheel_simulation_service.gd"
+)
 
 var _world: SimulationWorld
 var _bodies: Dictionary = {}
@@ -199,6 +202,7 @@ func _physics_process(delta: float) -> void:
 	if _world == null:
 		return
 	_tick_piston_actuators(delta)
+	_tick_wheel_pairs(delta)
 	for assembly_id: int in _sorted_int_keys(_bodies):
 		var assembly: SimulationAssembly = _world.get_assembly_raw(assembly_id)
 		var body: PhysicsBody3D = _bodies[assembly_id] as PhysicsBody3D
@@ -448,7 +452,10 @@ func _project_assembly_single(
 		if motion_override != null
 		else assembly.motion
 	)
-	var anchored: bool = _world.assembly_has_anchor(assembly_id)
+	var locomotive := _is_locomotive_assembly(assembly_id)
+	var anchored: bool = (
+		_world.assembly_has_anchor(assembly_id) and not locomotive
+	)
 	var mounted: RigidBody3D = _mounted_bodies.get(assembly_id) as RigidBody3D
 	var mounted_motion: AssemblyMotionState = null
 	var body: PhysicsBody3D
@@ -489,7 +496,9 @@ func _project_assembly_single(
 		colliders_by_element[element_id].append(collider)
 	var motion: AssemblyMotionState = seed_motion.duplicate_state()
 	motion.frozen = anchored
-	if anchored:
+	if locomotive:
+		motion.frozen = false
+	if anchored and not locomotive:
 		motion.linear_velocity = Vector3.ZERO
 		motion.angular_velocity = Vector3.ZERO
 		motion.sleeping = true
@@ -572,7 +581,12 @@ func _project_assembly_multibody(
 		for member_variant: Variant in members:
 			element_ids.append(int(member_variant))
 		var is_root := group_id == root_group_id
-		var is_static := is_root and _world.assembly_has_anchor(assembly_id)
+		var locomotive := _is_locomotive_assembly(assembly_id)
+		var is_static := (
+			is_root
+			and _world.assembly_has_anchor(assembly_id)
+			and not locomotive
+		)
 		var is_carriage := carriage_group_ids.has(group_id)
 		var body := _create_group_body(assembly_id, group_id, is_static)
 		var records: Array[Dictionary] = (
@@ -720,10 +734,11 @@ func _project_assembly_multibody(
 	_piston_constraints[assembly_id] = piston_records
 	var motion: AssemblyMotionState = seed_motion.duplicate_state()
 	if _world.assembly_has_anchor(assembly_id):
-		motion.frozen = true
-		motion.linear_velocity = Vector3.ZERO
-		motion.angular_velocity = Vector3.ZERO
-		motion.sleeping = true
+		if not _is_locomotive_assembly(assembly_id):
+			motion.frozen = true
+			motion.linear_velocity = Vector3.ZERO
+			motion.angular_velocity = Vector3.ZERO
+			motion.sleeping = true
 	_world.sync_assembly_motion(assembly_id, motion)
 	_projected_revision[assembly_id] = assembly.topology_revision
 
@@ -807,6 +822,27 @@ func _attach_colliders_to_body(
 			"body": body,
 			"colliders": colliders_by_element[element_id],
 		}
+
+
+func _is_locomotive_assembly(assembly_id: int) -> bool:
+	if _world == null:
+		return false
+	return WheelSimulationService.is_locomotive_assembly(_world, assembly_id)
+
+
+func _tick_wheel_pairs(delta: float) -> void:
+	if _world == null or delta <= 0.0:
+		return
+	for assembly_id: int in _sorted_int_keys(_bodies):
+		var body := _bodies[assembly_id] as RigidBody3D
+		if body == null or not _is_locomotive_assembly(assembly_id):
+			continue
+		WheelSimulationService.tick_assembly(
+			_world,
+			body,
+			assembly_id,
+			delta
+		)
 
 
 func _tick_piston_actuators(delta: float) -> void:
@@ -1032,11 +1068,12 @@ func _create_body(
 	anchored: bool
 ) -> PhysicsBody3D:
 	var body: PhysicsBody3D
+	var locomotive := _is_locomotive_assembly(assembly_id)
 	if anchored:
 		body = StaticBody3D.new()
 	else:
 		var rigid: RigidBody3D
-		if _mounted_bodies.has(assembly_id):
+		if locomotive or _mounted_bodies.has(assembly_id):
 			rigid = RigidBody3D.new()
 		else:
 			rigid = FragmentBodyScript.new() as RigidBody3D

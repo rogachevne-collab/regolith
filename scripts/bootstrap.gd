@@ -37,6 +37,8 @@ func _ready() -> void:
 		_session.world.get_archetype_registry().register(archetype)
 	for archetype: ElementArchetype in Slice01Archetypes.load_actuator_archetypes():
 		_session.world.get_archetype_registry().register(archetype)
+	for archetype: ElementArchetype in Slice01Archetypes.load_rover_archetypes():
+		_session.world.get_archetype_registry().register(archetype)
 	_loading.visible = true
 	_coordinates.visible = debug_overlay
 	_hint.visible = debug_overlay

@@ -22,6 +22,8 @@ enum StructuralSurfacePolicy {
 @export var structural_mount_pads: Array[StructuralMountPad] = []
 @export var build_requirements: Array[BuildRequirement] = []
 @export var piston_definition: PistonDefinition
+@export var suspension_definition: SuspensionDefinition
+@export var wheel_definition: WheelDefinition
 @export var internal_archetype: bool = false
 
 

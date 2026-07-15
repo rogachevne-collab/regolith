@@ -28,6 +28,7 @@ class SurfaceFaceDescriptor:
 	var local_cell: Vector3i = Vector3i.ZERO
 	var local_face: OrientationUtil.Face = OrientationUtil.Face.POS_X
 	var structural_id: String = ""
+	var socket_tag: String = ""
 
 
 static func is_structural_surface_id(port_id: String) -> bool:
@@ -92,6 +93,7 @@ static func get_surface_descriptors(
 				var face_data := {
 					"local_cell": pad.local_cell,
 					"local_face": pad.local_face,
+					"socket_tag": pad.socket_tag,
 				}
 				if _is_external_face(archetype.footprint_cells, face_data):
 					allowed_faces[_face_key(face_data)] = face_data
@@ -101,6 +103,7 @@ static func get_surface_descriptors(
 		var descriptor := SurfaceFaceDescriptor.new()
 		descriptor.local_cell = face_data["local_cell"]
 		descriptor.local_face = face_data["local_face"]
+		descriptor.socket_tag = str(face_data.get("socket_tag", ""))
 		descriptor.structural_id = structural_id_for(
 			descriptor.local_cell,
 			descriptor.local_face
@@ -273,12 +276,17 @@ static func _find_canonical_pair_specs(
 			left_world["cell"] + left_world["direction"],
 			-left_world["direction"]
 		)
-		var right_port_id: Variant = right_lookup.get(adjacent_key)
-		if right_port_id == null:
+		var right_face: Variant = right_lookup.get(adjacent_key)
+		if right_face == null:
+			continue
+		if not _socket_tags_compatible(
+			left_descriptor.socket_tag,
+			str(right_face.get("socket_tag", ""))
+		):
 			continue
 		matches.append({
 			"left_port_id": left_descriptor.structural_id,
-			"right_port_id": str(right_port_id),
+			"right_port_id": str(right_face.get("port_id", "")),
 		})
 	if matches.is_empty():
 		return {}
@@ -344,7 +352,12 @@ static func _count_matching_contact_faces_specs(
 			-left_world["direction"]
 		)
 		if right_lookup.has(adjacent_key):
-			count += 1
+			var right_face: Dictionary = right_lookup[adjacent_key]
+			if _socket_tags_compatible(
+				left_descriptor.socket_tag,
+				str(right_face.get("socket_tag", ""))
+			):
+				count += 1
 	return count
 
 
@@ -429,10 +442,21 @@ static func _world_face_lookup(
 		orientation_index
 	):
 		var world := _world_face(origin_cell, orientation_index, descriptor)
-		lookup[_world_face_lookup_key(world["cell"], world["direction"])] = (
-			descriptor.structural_id
-		)
+		lookup[_world_face_lookup_key(world["cell"], world["direction"])] = {
+			"port_id": descriptor.structural_id,
+			"socket_tag": descriptor.socket_tag,
+		}
 	return lookup
+
+
+static func _socket_tags_compatible(left_tag: String, right_tag: String) -> bool:
+	if left_tag.is_empty() and right_tag.is_empty():
+		return true
+	if left_tag == "wheel_socket" and right_tag == "wheel_plug":
+		return true
+	if left_tag == "wheel_plug" and right_tag == "wheel_socket":
+		return true
+	return false
 
 
 static func _face_key(face_data: Dictionary) -> String:

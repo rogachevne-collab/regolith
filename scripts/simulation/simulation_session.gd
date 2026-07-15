@@ -65,6 +65,16 @@ func apply_configure_actuator(command: ConfigureActuatorCommand) -> Dictionary:
 	return world.apply_configure_actuator(command)
 
 
+func apply_configure_wheel(command: ConfigureWheelCommand) -> Dictionary:
+	return world.apply_configure_wheel(command)
+
+
+func apply_configure_suspension(
+	command: ConfigureSuspensionCommand
+) -> Dictionary:
+	return world.apply_configure_suspension(command)
+
+
 func _bind_impact_service() -> void:
 	var gateway: WorldCommandGateway = null
 	if not gateway_path.is_empty():

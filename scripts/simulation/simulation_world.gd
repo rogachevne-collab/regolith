@@ -19,6 +19,10 @@ var _player_inventory: PlayerInventoryRegistry
 var _player_inventory_revision := 0
 var _industry_network := IndustryNetworkState.create_default()
 var _industry_elements: Dictionary = {}
+var _wheel_instances: Dictionary = {}
+var _suspension_instances: Dictionary = {}
+var _wheel_runtime: Dictionary = {}
+var _assembly_locomotion: Dictionary = {}
 var _cargo_graph := CargoGraph.new()
 var _industry_runner: Node
 var _world_loot_piles: Dictionary = {}
@@ -228,6 +232,79 @@ func apply_configure_actuator(
 	command: ConfigureActuatorCommand
 ) -> Dictionary:
 	return ActuatorSimulationService.apply_configure_actuator(self, command)
+
+
+func apply_configure_wheel(
+	command: ConfigureWheelCommand
+) -> Dictionary:
+	return WheelSimulationService.apply_configure_wheel(self, command)
+
+
+func apply_configure_suspension(
+	command: ConfigureSuspensionCommand
+) -> Dictionary:
+	return WheelSimulationService.apply_configure_suspension(self, command)
+
+
+func get_locomotion_controller(
+	assembly_id: int
+) -> AssemblyLocomotionController:
+	if not _assembly_locomotion.has(assembly_id):
+		_assembly_locomotion[assembly_id] = AssemblyLocomotionController.new()
+	return _assembly_locomotion[assembly_id] as AssemblyLocomotionController
+
+
+func ensure_wheel_instance_state(element_id: int) -> WheelInstanceState:
+	if not _wheel_instances.has(element_id):
+		var state := WheelInstanceState.new()
+		var element := get_element(element_id)
+		var definition := (
+			element.get_archetype().wheel_definition
+			if element != null and element.get_archetype() != null
+			else null
+		)
+		if definition != null:
+			state.steerable = definition.steerable_default
+		_wheel_instances[element_id] = state
+	return _wheel_instances[element_id] as WheelInstanceState
+
+
+func ensure_suspension_instance_state(
+	element_id: int
+) -> SuspensionInstanceState:
+	if not _suspension_instances.has(element_id):
+		_suspension_instances[element_id] = SuspensionInstanceState.new()
+	return _suspension_instances[element_id] as SuspensionInstanceState
+
+
+func get_wheel_runtime(wheel_element_id: int) -> Dictionary:
+	return _wheel_runtime.get(wheel_element_id, {})
+
+
+func store_wheel_runtime(
+	wheel_element_id: int,
+	suspension_element_id: int,
+	tick_result: Dictionary
+) -> void:
+	_wheel_runtime[wheel_element_id] = {
+		"wheel_speed": float(tick_result.get("wheel_speed", 0.0)),
+		"steering_angle_rad": float(
+			tick_result.get("steering_angle_rad", 0.0)
+		),
+		"grounded": bool(tick_result.get("grounded", false)),
+		"compression_m": float(tick_result.get("compression_m", 0.0)),
+		"suspension_element_id": suspension_element_id,
+	}
+
+
+func clear_wheel_element_state(element_id: int) -> void:
+	_wheel_instances.erase(element_id)
+	_suspension_instances.erase(element_id)
+	_wheel_runtime.erase(element_id)
+
+
+func clear_assembly_locomotion(assembly_id: int) -> void:
+	_assembly_locomotion.erase(assembly_id)
 
 
 func sync_actuator_observation(
@@ -1784,6 +1861,7 @@ func _remove_element_from_topology(
 	for joint_id: int in removed_joint_ids:
 		_joints.erase(joint_id)
 	_elements.erase(element.element_id)
+	clear_wheel_element_state(element.element_id)
 	_notify_topology_changed()
 	for resource_id: Variant in refunds.keys():
 		store.add(str(resource_id), float(refunds[resource_id]))
@@ -1791,6 +1869,7 @@ func _remove_element_from_topology(
 
 	if remaining_elements.is_empty():
 		_assemblies.erase(assembly.assembly_id)
+		clear_assembly_locomotion(assembly.assembly_id)
 		_emit_structural_event({
 			"kind": &"assembly_removed",
 			"command_id": command_id,

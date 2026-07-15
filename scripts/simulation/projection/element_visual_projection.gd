@@ -6,6 +6,9 @@ const DRILL_SPIN_SPEED := 7.0
 const STATIONARY_DRILL_VISUAL_SCRIPT := preload(
 	"res://scripts/presentation/stationary_drill_visual.gd"
 )
+const ROVER_MODULE_VISUAL_SCRIPT := preload(
+	"res://scripts/presentation/rover_module_visual.gd"
+)
 
 var _world: SimulationWorld
 var _physics_projection: SimulationPhysicsProjection
@@ -141,6 +144,9 @@ func _rebuild_assembly(assembly_id: int) -> void:
 			continue
 		if PistonVisual.is_piston_element(element.archetype_id):
 			continue
+		if ROVER_MODULE_VISUAL_SCRIPT.is_rover_module(element.archetype_id):
+			_add_rover_module_visual(body, assembly_id, element)
+			continue
 		for collider_index: int in range(archetype.colliders.size()):
 			var collider: ColliderDefinition = archetype.colliders[collider_index]
 			if collider.shape_kind != ColliderDefinition.ShapeKind.BOX:
@@ -165,6 +171,14 @@ func _rebuild_assembly(assembly_id: int) -> void:
 			body.add_child(visual)
 		if element.archetype_id == "stationary_drill":
 			_add_stationary_drill_visual(body, assembly_id, element)
+
+
+func _add_rover_module_visual(
+	body: PhysicsBody3D,
+	assembly_id: int,
+	element: SimulationElement
+) -> void:
+	ROVER_MODULE_VISUAL_SCRIPT.attach_runtime(body, assembly_id, element)
 
 
 func _add_stationary_drill_visual(

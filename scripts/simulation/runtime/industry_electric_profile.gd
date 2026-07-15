@@ -42,6 +42,20 @@ const _ARCHETYPE_DEFAULTS := {
 		"is_consumer": true,
 		"idle_w": 1500.0,
 	},
+	"drive_wheel": {
+		"is_consumer": true,
+		"idle_w": 20.0,
+	},
+	"power_battery_small": {
+		"is_battery": true,
+		"max_kwh": 2.5,
+		"charge_w": 250.0,
+		"discharge_w": 250.0,
+	},
+	"power_distributor_small": {
+		"is_distributor": true,
+		"supply_radius_m": 6.0,
+	},
 }
 
 

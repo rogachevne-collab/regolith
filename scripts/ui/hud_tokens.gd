@@ -58,6 +58,12 @@ const TOOL_CODES := {
 	"foundation": "FND",
 	"connect": "CON",
 	"piston_base": "PST",
+	"rover_frame": "RFR",
+	"wheel_suspension": "SUS",
+	"drive_wheel": "WHL",
+	"cockpit": "CPT",
+	"power_battery_small": "BAT",
+	"power_distributor_small": "DST",
 }
 
 ## Short Cyrillic chrome labels for construction archetypes shown in the Block
@@ -81,6 +87,18 @@ const ARCHETYPE_LABELS := {
 	"runtime_custom": "СВОЙ БЛОК",
 	"piston_base": "ПОРШЕНЬ",
 	"piston_head": "ГОЛОВКА",
+	"wheel_suspension": "ПОДВЕСКА",
+	"drive_wheel": "КОЛЕСО",
+	"cockpit": "КОКПИТ",
+	"power_battery_small": "БАТАРЕЯ М",
+	"power_distributor_small": "РАСПРЕД М",
+}
+
+## Short orientation hints shown in build mode for rover modules.
+const ROVER_ORIENTATION_HINTS := {
+	"wheel_suspension": "↑ рама  ↓ гнездо",
+	"drive_wheel": "↑ подвеска  ↔ протектор = ход",
+	"cockpit": "↔ стекло = перед",
 }
 
 const STORE_LABELS := {
@@ -321,6 +339,10 @@ static func make_item_icon(item_id: String, size: float = SLOT_SIZE.x) -> Contro
 	holder.add_child(code_label)
 
 	return holder
+
+
+static func rover_orientation_hint(archetype_id: String) -> String:
+	return ROVER_ORIENTATION_HINTS.get(archetype_id, "")
 
 
 static func archetype_label(archetype_id: String, gateway_name: String = "") -> String:

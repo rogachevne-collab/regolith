@@ -75,6 +75,12 @@ const CONSTRUCTION_ARCHETYPES: PackedStringArray = [
 	"processor",
 	"fabricator",
 	"piston_base",
+	"rover_frame",
+	"wheel_suspension",
+	"drive_wheel",
+	"cockpit",
+	"power_battery_small",
+	"power_distributor_small",
 ]
 
 const TOOLBAR_SLOTS_PER_PAGE := 9
@@ -110,6 +116,14 @@ const TOOLBAR_PAGES: Array = [
 		{"type": &"block", "archetype_id": "large_frame"},
 		{"type": &"block", "archetype_id": "frame_beam"},
 		{"type": &"block", "archetype_id": "power_source"},
+	],
+	[
+		{"type": &"block", "archetype_id": "rover_frame"},
+		{"type": &"block", "archetype_id": "wheel_suspension"},
+		{"type": &"block", "archetype_id": "drive_wheel"},
+		{"type": &"block", "archetype_id": "cockpit"},
+		{"type": &"block", "archetype_id": "power_battery_small"},
+		{"type": &"block", "archetype_id": "power_distributor_small"},
 	],
 ]
 

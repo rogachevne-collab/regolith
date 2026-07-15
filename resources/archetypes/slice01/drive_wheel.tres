@@ -1,0 +1,52 @@
+[gd_resource type="Resource" script_class="ElementArchetype" format=3]
+
+[ext_resource type="Script" path="res://scripts/simulation/resources/build_requirement.gd" id="1_req"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/collider_definition.gd" id="2_col"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/port_definition.gd" id="3_port"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/wheel_definition.gd" id="4_wheel"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/structural_mount_pad.gd" id="5_pad"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/element_archetype.gd" id="6_arch"]
+
+[sub_resource type="Resource" id="Requirement"]
+script = ExtResource("1_req")
+resource_id = "construction_component"
+amount = 2.0
+
+[sub_resource type="Resource" id="Collider"]
+script = ExtResource("2_col")
+size = Vector3(0.4, 0.3, 0.4)
+
+[sub_resource type="Resource" id="WheelDefinition"]
+script = ExtResource("4_wheel")
+radius_m = 0.4
+drive_torque_n_m = 65.0
+brake_torque_n_m = 180.0
+longitudinal_grip = 1.2
+lateral_grip = 0.9
+slip_stiffness = 800.0
+lateral_stiffness = 1000.0
+wheel_inertia = 0.65
+max_steering_angle_rad = 0.4887
+steering_response = 2.5
+steerable_default = false
+forward_axis_face = 4
+power_draw_w = 300.0
+idle_w = 20.0
+requires_socket_tag = "wheel_socket"
+
+[sub_resource type="Resource" id="Mount_plug"]
+script = ExtResource("5_pad")
+local_face = 2
+socket_tag = "wheel_plug"
+
+[resource]
+script = ExtResource("6_arch")
+archetype_id = "drive_wheel"
+display_name = "Колесо"
+roles = PackedStringArray("Support", "Actuator")
+mass_kg = 15.0
+colliders = Array[ExtResource("2_col")]([SubResource("Collider")])
+structural_surface_policy = 2
+structural_mount_pads = Array[ExtResource("5_pad")]([SubResource("Mount_plug")])
+build_requirements = Array[ExtResource("1_req")]([SubResource("Requirement")])
+wheel_definition = SubResource("WheelDefinition")

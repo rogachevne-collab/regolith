@@ -1,0 +1,65 @@
+[gd_resource type="Resource" script_class="ElementArchetype" format=3]
+
+[ext_resource type="Script" path="res://scripts/simulation/resources/build_requirement.gd" id="1_req"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/collider_definition.gd" id="2_col"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/port_definition.gd" id="3_port"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/structural_mount_pad.gd" id="4_pad"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/element_archetype.gd" id="5_arch"]
+
+[sub_resource type="Resource" id="Requirement"]
+script = ExtResource("1_req")
+resource_id = "construction_component"
+amount = 3.0
+
+[sub_resource type="Resource" id="Collider"]
+script = ExtResource("2_col")
+size = Vector3(0.44, 0.36, 0.44)
+
+[sub_resource type="Resource" id="Mount_px"]
+script = ExtResource("4_pad")
+
+[sub_resource type="Resource" id="Mount_nx"]
+script = ExtResource("4_pad")
+local_face = 1
+
+[sub_resource type="Resource" id="Mount_py"]
+script = ExtResource("4_pad")
+local_face = 2
+
+[sub_resource type="Resource" id="Mount_ny"]
+script = ExtResource("4_pad")
+local_face = 3
+
+[sub_resource type="Resource" id="Mount_pz"]
+script = ExtResource("4_pad")
+local_face = 4
+
+[sub_resource type="Resource" id="Mount_nz"]
+script = ExtResource("4_pad")
+local_face = 5
+
+[sub_resource type="Resource" id="Power_in"]
+script = ExtResource("3_port")
+port_id = "power_in"
+kind = 1
+local_face = 5
+compatibility_tags = PackedStringArray("electric")
+
+[sub_resource type="Resource" id="Power_out"]
+script = ExtResource("3_port")
+port_id = "power_out"
+kind = 1
+local_face = 4
+compatibility_tags = PackedStringArray("electric")
+
+[resource]
+script = ExtResource("5_arch")
+archetype_id = "power_battery_small"
+display_name = "Батарея м"
+roles = PackedStringArray("Tank")
+mass_kg = 35.0
+colliders = Array[ExtResource("2_col")]([SubResource("Collider")])
+structural_surface_policy = 2
+structural_mount_pads = Array[ExtResource("4_pad")]([SubResource("Mount_px"), SubResource("Mount_nx"), SubResource("Mount_py"), SubResource("Mount_ny"), SubResource("Mount_pz"), SubResource("Mount_nz")])
+ports = Array[ExtResource("3_port")]([SubResource("Power_in"), SubResource("Power_out")])
+build_requirements = Array[ExtResource("1_req")]([SubResource("Requirement")])

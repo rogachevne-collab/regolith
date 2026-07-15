@@ -1,0 +1,25 @@
+[gd_resource type="Resource" script_class="ElementArchetype" format=3]
+
+[ext_resource type="Script" path="res://scripts/simulation/resources/build_requirement.gd" id="1_req"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/collider_definition.gd" id="2_col"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/port_definition.gd" id="3_port"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/element_archetype.gd" id="4_arch"]
+
+[sub_resource type="Resource" id="Requirement"]
+script = ExtResource("1_req")
+resource_id = "construction_component"
+amount = 4.0
+
+[sub_resource type="Resource" id="Collider"]
+script = ExtResource("2_col")
+size = Vector3(0.42, 0.34, 0.42)
+
+[resource]
+script = ExtResource("4_arch")
+archetype_id = "cockpit"
+display_name = "Кокпит"
+roles = PackedStringArray("ControlSeat", "Frame")
+mass_kg = 18.0
+colliders = Array[ExtResource("2_col")]([SubResource("Collider")])
+structural_surface_policy = 1
+build_requirements = Array[ExtResource("1_req")]([SubResource("Requirement")])

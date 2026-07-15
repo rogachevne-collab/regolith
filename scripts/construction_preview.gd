@@ -7,6 +7,9 @@ const STATIONARY_DRILL_VISUAL_SCRIPT := preload(
 const PISTON_VISUAL_SCRIPT := preload(
 	"res://scripts/presentation/piston_visual.gd"
 )
+const ROVER_MODULE_VISUAL_SCRIPT := preload(
+	"res://scripts/presentation/rover_module_visual.gd"
+)
 
 @export var query_path: NodePath = NodePath("../InteractionQuery")
 @export var tool_controller_path: NodePath = NodePath("../ToolController")
@@ -391,6 +394,23 @@ func _build_mesh_nodes(
 					valid
 				)
 			)
+		nodes.append_array(
+			_build_preview_port_markers(
+				archetype,
+				origin_cell,
+				orientation_index
+			)
+		)
+		return nodes
+	if ROVER_MODULE_VISUAL_SCRIPT.is_rover_module(archetype.archetype_id):
+		nodes.append_array(
+			ROVER_MODULE_VISUAL_SCRIPT.build_placement_preview_nodes(
+				archetype,
+				origin_cell,
+				orientation_index,
+				valid
+			)
+		)
 		nodes.append_array(
 			_build_preview_port_markers(
 				archetype,

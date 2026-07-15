@@ -1,13 +1,16 @@
-[gd_scene load_steps=9 format=3]
+[gd_scene load_steps=10 format=3]
 
 [ext_resource type="Script" path="res://scripts/test_kinetic_playground.gd" id="1"]
 [ext_resource type="PackedScene" uid="uid://player001" path="res://scenes/player.tscn" id="2"]
-[ext_resource type="VoxelGeneratorNoise2D" uid="uid://cngp1p34afd2p" path="res://resources/terrain_generator.tres" id="3"]
 [ext_resource type="Material" path="res://resources/terrain_material_smooth.tres" id="4"]
 [ext_resource type="Texture2D" uid="uid://wb282s8lece5" path="res://resources/starfield_panorama.png" id="5"]
 [ext_resource type="Script" path="res://scripts/placed_blocks.gd" id="6"]
 [ext_resource type="Script" path="res://scripts/world_command_gateway.gd" id="10"]
 [ext_resource type="PackedScene" path="res://scenes/simulation_session.tscn" id="11"]
+
+[sub_resource type="VoxelGeneratorFlat" id="VoxelGeneratorFlat_playground"]
+channel = 1
+height = 0.0
 
 [sub_resource type="PanoramaSkyMaterial" id="PanoramaSkyMaterial_stars"]
 panorama = ExtResource("5")
@@ -66,10 +69,16 @@ light_energy = 0.28
 [node name="VoxelTerrain" type="VoxelTerrain" parent="."]
 transform = Transform3D(0.65, 0, 0, 0, 0.65, 0, 0, 0, 0.65, 0, 0, 0)
 max_view_distance = 200
-generator = ExtResource("3")
+generator = SubResource("VoxelGeneratorFlat_playground")
 mesher = SubResource("VoxelMesherTransvoxel_main")
 material_override = ExtResource("4")
 generate_collisions = true
+run_stream_in_editor = true
+automatic_loading_enabled = true
+
+[node name="TerrainViewer" type="VoxelViewer" parent="VoxelTerrain"]
+view_distance = 128
+requires_collisions = true
 
 [node name="PlacedBlocks" type="Node3D" parent="."]
 script = ExtResource("6")

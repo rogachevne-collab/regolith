@@ -12,6 +12,7 @@ KERNEL=(
 	test_simulation_kernel
 	test_simulation_runtime
 	test_simulation_actuator
+	test_simulation_wheel
 	test_simulation_projection
 	test_cart_kernel_topology
 	test_construction_preview

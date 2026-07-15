@@ -2,6 +2,14 @@ class_name Slice01Archetypes
 extends RefCounted
 
 const ARCHETYPE_DIR := "res://resources/archetypes/slice01/"
+const ROVER_IDS: PackedStringArray = [
+	"rover_frame",
+	"wheel_suspension",
+	"drive_wheel",
+	"cockpit",
+	"power_battery_small",
+	"power_distributor_small",
+]
 const REQUIRED_IDS: PackedStringArray = [
 	"foundation",
 	"frame",
@@ -105,3 +113,29 @@ static func load_actuator_archetypes() -> Array[ElementArchetype]:
 			return []
 		archetypes.append(archetype)
 	return archetypes
+
+
+static func load_rover_archetypes() -> Array[ElementArchetype]:
+	var archetypes: Array[ElementArchetype] = []
+	for archetype_id: String in ROVER_IDS:
+		var archetype: ElementArchetype = load_required(archetype_id)
+		if archetype == null:
+			return []
+		archetypes.append(archetype)
+	return archetypes
+
+
+static func rover_frame() -> ElementArchetype:
+	return load_required("rover_frame")
+
+
+static func wheel_suspension() -> ElementArchetype:
+	return load_required("wheel_suspension")
+
+
+static func drive_wheel() -> ElementArchetype:
+	return load_required("drive_wheel")
+
+
+static func cockpit() -> ElementArchetype:
+	return load_required("cockpit")

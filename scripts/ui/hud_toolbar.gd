@@ -263,6 +263,12 @@ func _update_info() -> void:
 		)
 		if is_build else ""
 	)
+	if is_build:
+		var hint := HudTokens.rover_orientation_hint(
+			_tools.selected_archetype_id
+		)
+		if not hint.is_empty():
+			_lbl_orientation.text += " · %s" % hint
 	_lbl_orientation.visible = is_build
 	_lbl_components.text = "%d КОМП" % int(round(
 		_gateway.construction_resource_amount()

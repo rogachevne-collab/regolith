@@ -452,9 +452,14 @@ outputs могут сходиться на distributor/battery input, а battery
 | `power_source` | Source | Простой генератор slice (не ветер/солнце) |
 | `power_distributor` | Hub | Распределяет питание в **радиусе** |
 | `power_battery` | Tank | Накопитель энергии (kWh), заряд/разряд в budget |
+| `power_distributor_small` | Hub | Компактный distributor ровера, радиус **6 m** |
+| `power_battery_small` | Tank | Компактная батарея ровера, **2.5 kWh** |
 
 Новые fixtures: `resources/archetypes/slice01/power_distributor.tres`,
-`power_battery.tres`.
+`power_battery.tres`. Малые варианты для ровера
+(`power_distributor_small`, `power_battery_small`) — `specs/ROVER-MODULES-V1.md`;
+`drive_wheel` — новый consumer (idle **20 W**, под тягой **300 W**), питается
+радиусом distributor, к проводам не подключается.
 
 - `power_source.output_w`: fixture placeholder **2000 W**;
 - `power_distributor.supply_radius_m`: fixture placeholder **12 m**;

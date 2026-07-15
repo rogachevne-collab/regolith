@@ -104,6 +104,8 @@ box-collider может покрывать несколько cells.
 | Archetype | Footprint cells | Физический габарит |
 |---|---:|---:|
 | `frame`, `frame_basalt`, `cargo_pipe`, `rover_frame`, `rover_wheel` | 1×1×1 | 0.5×0.5×0.5 m envelope |
+| `wheel_suspension`, `drive_wheel`, `cockpit` | 1×1×1 | 0.5×0.5×0.5 m envelope (см. `specs/ROVER-MODULES-V1.md`) |
+| `power_battery_small`, `power_distributor_small` | 1×1×1 | 0.5×0.5×0.5 m envelope |
 | `frame_beam` | 4×1×1 | 2×0.5×0.5 m |
 | `foundation` | 4×1×4 | 2×0.5×2 m |
 | `power_distributor` | 2×2×2 | 1×1×1 m |

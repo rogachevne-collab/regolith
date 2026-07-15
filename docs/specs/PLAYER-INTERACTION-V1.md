@@ -153,6 +153,11 @@ InteractionHit {
 Минимальные `target_kind`: `none`, `voxel`, `body`, `placed_block`,
 `control_seat`.
 
+Player-built ровер расширяет `control_seat` на simulation element с ролью
+`ControlSeat` (кокпит): наведение даёт enter/exit vehicle и WASD-управление,
+`configure_wheel`/`configure_suspension` открываются на `drive_wheel` и
+`wheel_suspension`. Полный контракт — `specs/ROVER-MODULES-V1.md`.
+
 ## ToolAction и commands
 
 Состояния action:

@@ -131,6 +131,7 @@ static func _mount_pad_rows(
 		rows.append({
 			"cell": pad.local_cell,
 			"face": pad.local_face,
+			"socket_tag": pad.socket_tag,
 		})
 	rows.sort_custom(
 		func(left: Dictionary, right: Dictionary) -> bool:

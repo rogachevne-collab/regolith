@@ -2,7 +2,9 @@ extends Node3D
 
 const SKY_PROBE_Y := 120.0
 const GROUND_PROBE_MAX_DISTANCE := 200.0
-const TERRAIN_RESET_HALF_EXTENT := 18.0
+const FLAT_SURFACE_Y := 0.0
+const FLAT_HALF_EXTENT := 40.0
+const TERRAIN_RESET_HALF_EXTENT := FLAT_HALF_EXTENT
 const SLAM_SPEED_MPS := 2.5
 const SLOW_SPEED_MPS := 0.2
 
@@ -21,17 +23,28 @@ const PISTON_HEAD := preload(
 @onready var _overlay: Label = $CanvasLayer/PlaygroundOverlay
 @onready var _status: Label = $CanvasLayer/PlaygroundStatus
 
+var _marker_root: Node3D
 var _world_ready := false
 var _overlay_visible := false
 var _selected_stand := 0
 var _stands: Array[Dictionary] = []
 var _terrain_surface_y := 0.0
+var _respawn_busy := false
+var _status_hint := ""
+var _status_hint_until_msec := 0
 
 
 func _ready() -> void:
+	_marker_root = Node3D.new()
+	_marker_root.name = "StandMarkers"
+	add_child(_marker_root)
+	process_physics_priority = 1
+	_session.projection.process_physics_priority = 2
 	for archetype: ElementArchetype in Slice01Archetypes.load_all_required():
 		_session.world.get_archetype_registry().register(archetype)
 	for archetype: ElementArchetype in Slice01Archetypes.load_actuator_archetypes():
+		_session.world.get_archetype_registry().register(archetype)
+	for archetype: ElementArchetype in Slice01Archetypes.load_rover_archetypes():
 		_session.world.get_archetype_registry().register(archetype)
 	_session.world.ensure_resource_store("player")
 	_session.world.set_resource_amount("player", "construction_component", 500.0)
@@ -49,20 +62,59 @@ func _ready() -> void:
 
 
 func _boot_playground() -> void:
-	await _wait_for_terrain_ready()
+	await _ensure_flat_playground()
 	var spawn_pos := await _settle_player_near_spawn()
 	_loading.visible = false
 	_world_ready = true
 	_player.call("set_spawn_ready", spawn_pos)
 	_session.get_industry_simulation().bind_world(_session.world)
 	await _spawn_all_stands()
+	_place_player_near_stands()
+	_show_spawn_banner()
 	_refresh_status()
+
+
+func _show_spawn_banner() -> void:
+	if _stands.is_empty():
+		_loading.text = "Стенды не заспавнились — см. Output. P — повтор."
+		_loading.visible = true
+		push_error("Kinetic playground: all stand spawns failed")
+		return
+	_loading.text = (
+		"Стенды: %d. F1 — пистон, L — удар. H — подсказки."
+		% _stands.size()
+	)
+	_loading.visible = true
+	await get_tree().create_timer(4.0).timeout
+	_loading.visible = false
+	_overlay_visible = true
+	_overlay.visible = true
+	_status.visible = true
+
+
+func _physics_process(_delta: float) -> void:
+	if not _world_ready:
+		return
+	_keep_piston_stands_powered()
 
 
 func _process(_delta: float) -> void:
 	if not _world_ready or not _overlay_visible:
 		return
 	_refresh_status()
+
+
+func _keep_piston_stands_powered() -> void:
+	for stand: Dictionary in _stands:
+		if stand.get("kind") != "piston":
+			continue
+		var base_id := int(stand.get("base_element_id", 0))
+		if base_id <= 0:
+			continue
+		var runtime := _session.world.ensure_industry_element_runtime(base_id)
+		runtime.machine_enabled = true
+		runtime.powered = true
+		runtime.power_reason = &"playground_override"
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -74,7 +126,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		_status.visible = _overlay_visible
 		return
 	if Input.is_action_just_pressed("playground_respawn_stands"):
-		_respawn_stands()
+		if not _respawn_busy:
+			_respawn_stands()
 		return
 	if Input.is_action_just_pressed("playground_reset_terrain"):
 		_reset_terrain_patch()
@@ -100,29 +153,74 @@ func _unhandled_input(event: InputEvent) -> void:
 		_stop_selected_piston()
 
 
-func _wait_for_terrain_ready() -> void:
-	var tool: VoxelTool = _terrain.get_voxel_tool()
-	tool.channel = VoxelBuffer.CHANNEL_SDF
-	var probe := _base_spawn.global_position + Vector3(0.0, SKY_PROBE_Y * 0.5, 0.0)
-	while true:
-		var hit: VoxelRaycastResult = tool.raycast(
-			probe,
-			Vector3.DOWN,
-			GROUND_PROBE_MAX_DISTANCE
-		)
-		if hit != null:
-			_terrain_surface_y = probe.y - hit.distance
-			return
-		_loading.text = "Стриминг террейна..."
+func _ensure_flat_playground() -> void:
+	var generator := VoxelGeneratorFlat.new()
+	generator.channel = VoxelBuffer.CHANNEL_SDF
+	generator.height = FLAT_SURFACE_Y
+	_terrain.generator = generator
+	await _seed_flat_plateau(FLAT_SURFACE_Y)
+	_terrain_surface_y = FLAT_SURFACE_Y
+	_loading.text = "Ровная площадка..."
+	for _frame: int in range(12):
 		await get_tree().physics_frame
 
 
+func _seed_flat_plateau(surface_y: float) -> void:
+	var block_size := _terrain.get_data_block_size()
+	var blocks_span := int(ceil(FLAT_HALF_EXTENT / float(block_size))) + 1
+	for bx: int in range(-blocks_span, blocks_span + 1):
+		for bz: int in range(-blocks_span, blocks_span + 1):
+			for by: int in range(-1, 2):
+				_seed_flat_block(Vector3i(bx, by, bz), surface_y)
+
+
+func _seed_flat_block(block_pos: Vector3i, surface_y: float) -> void:
+	var block_size := _terrain.get_data_block_size()
+	var buffer := VoxelBuffer.new()
+	buffer.create(block_size, block_size, block_size)
+	var block_origin := _terrain.data_block_to_voxel(block_pos)
+	for z: int in range(block_size):
+		for x: int in range(block_size):
+			for y: int in range(block_size):
+				var world_y := float(block_origin.y + y)
+				buffer.set_voxel_f(
+					world_y - surface_y,
+					x,
+					y,
+					z,
+					VoxelBuffer.CHANNEL_SDF
+				)
+	_terrain.try_set_block_data(block_pos, buffer)
+
+
+func _ground_point_at(xz: Vector2, _tool: VoxelTool = null) -> Vector3:
+	return Vector3(xz.x, FLAT_SURFACE_Y, xz.y)
+
+
+func _spawn_transform_at(world_offset: Vector3) -> Transform3D:
+	var pos := _base_spawn.global_position + world_offset
+	pos.y = FLAT_SURFACE_Y
+	return Transform3D(Basis.IDENTITY, pos)
+
+
+func _place_player_near_stands() -> void:
+	var xz := Vector2(
+		_base_spawn.global_position.x + 6.0,
+		_base_spawn.global_position.z + 4.0
+	)
+	var target := _ground_point_at(xz) + Vector3.UP * 1.8
+	if _player.has_method("set_spawn_ready"):
+		_player.call("set_spawn_ready", target)
+	else:
+		_player.global_position = target
+
+
 func _settle_player_near_spawn() -> Vector3:
-	var target := Vector3(
+	var xz := Vector2(
 		_base_spawn.global_position.x + 4.0,
-		_terrain_surface_y + 1.8,
 		_base_spawn.global_position.z + 6.0
 	)
+	var target := _ground_point_at(xz) + Vector3.UP * 1.8
 	_player.global_position = target + Vector3.UP * 2.0
 	_player.call("begin_spawn_settle", target)
 	while _player.has_method("is_spawn_settled") and not _player.is_spawn_settled():
@@ -131,90 +229,160 @@ func _settle_player_near_spawn() -> Vector3:
 
 
 func _respawn_stands() -> void:
-	_clear_stand_assemblies()
+	if _respawn_busy:
+		return
+	_respawn_busy = true
+	_clear_markers()
+	await _clear_playground_assemblies()
 	_stands.clear()
 	await _spawn_all_stands()
+	_place_player_near_stands()
+	_show_spawn_banner()
+	_respawn_busy = false
 	_refresh_status()
 
 
-func _clear_stand_assemblies() -> void:
-	for stand: Dictionary in _stands:
-		var foundation_id := int(stand.get("foundation_element_id", 0))
-		if foundation_id > 0:
-			_dismantle_element(foundation_id)
+func _clear_playground_assemblies() -> void:
+	var guard := 0
+	while guard < 128:
+		guard += 1
+		var pending := false
+		for assembly: SimulationAssembly in _session.world.list_assemblies():
+			if assembly.tombstoned or assembly.element_ids.is_empty():
+				continue
+			pending = true
+			_dismantle_element(int(assembly.element_ids[0]))
+			break
+		if not pending:
+			break
+	for _frame: int in range(8):
+		await get_tree().physics_frame
 
 
-func _dismantle_element(element_id: int) -> void:
+func _dismantle_element(element_id: int) -> bool:
 	var element := _session.world.get_element(element_id)
 	if element == null:
-		return
+		return false
+	var assembly := _session.world.get_assembly_raw(element.assembly_id)
+	if assembly == null or assembly.tombstoned:
+		return false
 	var command := DismantleElementCommand.new()
 	command.element_id = element_id
-	command.expected_state_revision = element.state_revision
+	command.expected_assembly_revision = assembly.topology_revision
 	command.store_id = "player"
-	_session.world.apply_structural_command_now(command)
+	var result := _session.world.apply_structural_command_now(command)
+	return result.is_ok()
 
 
 func _spawn_all_stands() -> void:
 	var origin := _base_spawn.global_position
-	_stands.append(
+	_append_stand(
 		await _spawn_piston_drill_stand(
 			"Piston+drill",
-			origin + Vector3(0.0, 0.0, 0.0),
-			true
+			origin + Vector3(0.0, 0.0, 0.0)
 		)
 	)
-	_stands.append(
+	_append_stand(
 		await _spawn_piston_wall_stand(
 			"Piston→wall",
 			origin + Vector3(12.0, 0.0, 0.0)
 		)
 	)
-	_stands.append(
+	_append_stand(
 		await _spawn_falling_frame_stand(
 			"Fall frame",
 			origin + Vector3(24.0, 0.0, 0.0)
 		)
 	)
 	var ram := await _spawn_ram_stands(origin + Vector3(0.0, 0.0, 14.0))
-	_stands.append(ram["a"])
-	_stands.append(ram["b"])
-	_stands.append(
+	_append_stand(ram.get("a", {}))
+	_append_stand(ram.get("b", {}))
+	_append_stand(
 		await _spawn_anchor_stand(
 			"Anchor base",
 			origin + Vector3(14.0, 0.0, 14.0)
 		)
 	)
+	_select_first_piston_stand()
+
+
+func _select_first_piston_stand() -> void:
+	for index: int in range(_stands.size()):
+		if _stands[index].get("kind") == "piston":
+			_selected_stand = index
+			return
 	if _stands.size() > 0:
 		_selected_stand = 0
 
 
+func _append_stand(stand: Dictionary) -> void:
+	if stand.is_empty():
+		push_warning("Kinetic playground: stand spawn failed")
+		return
+	_stands.append(stand)
+	_add_stand_marker(stand)
+
+
+func _add_stand_marker(stand: Dictionary) -> void:
+	var assembly_id := int(stand.get("assembly_id", 0))
+	var body := _session.projection.get_physics_body(assembly_id)
+	var marker_pos := _base_spawn.global_position
+	if body != null:
+		marker_pos = body.global_position
+	var pillar := MeshInstance3D.new()
+	var mesh := CylinderMesh.new()
+	mesh.height = 8.0
+	mesh.top_radius = 0.2
+	mesh.bottom_radius = 0.2
+	pillar.mesh = mesh
+	var material := StandardMaterial3D.new()
+	material.albedo_color = Color(1.0, 0.35, 0.1)
+	material.emission_enabled = true
+	material.emission = Color(1.0, 0.45, 0.1)
+	material.emission_energy_multiplier = 2.0
+	pillar.material_override = material
+	pillar.position = marker_pos + Vector3.UP * 4.0
+	_marker_root.add_child(pillar)
+
+
+func _clear_markers() -> void:
+	if _marker_root == null:
+		return
+	for child: Node in _marker_root.get_children():
+		child.queue_free()
+
+
 func _spawn_piston_drill_stand(
 	label: String,
-	world_origin: Vector3,
-	tower: bool
+	world_origin: Vector3
 ) -> Dictionary:
-	var assembly := await _spawn_anchored_stack(
-		world_origin,
-		6 if tower else 1
-	)
+	const TOWER_FRAMES := 3
+	var assembly := await _spawn_anchored_stack(world_origin, TOWER_FRAMES)
 	if assembly.is_empty():
 		return {}
 	var assembly_id := int(assembly["assembly_id"])
-	var prior := _place_frame(
-		assembly_id,
-		Vector3i(4, 0, 0),
-		int(assembly["topology_revision"])
-	)
-	if not prior.is_ok():
-		return {}
-	var piston := _place_piston(assembly_id, Vector3i(5, 0, 0), prior)
+	var piston_cell := Vector3i(4, TOWER_FRAMES, 0)
+	var prior := StructuralCommandResult.ok({
+		"topology_revision": _latest_revision(assembly_id),
+	})
+	var piston := _place_piston(assembly_id, piston_cell, prior)
 	if not piston.is_ok():
 		return {}
-	_power_piston(int(piston.data["element_id"]))
-	var drill := _place_drill_on_head(assembly_id, piston)
+	_power_piston(
+		int(piston.data["element_id"]),
+		int(piston.data["head_element_id"])
+	)
+	var head_cell := PistonPlacementUtil.head_origin_cell(
+		piston_cell,
+		0,
+		PISTON_BASE.piston_definition
+	)
+	var drill := _place_drill_on_head(assembly_id, piston, head_cell)
 	if not drill.is_ok():
-		return {}
+		push_warning(
+			"Kinetic playground: drill placement failed: %s"
+			% drill.reason
+		)
 	_project_assembly(assembly_id)
 	return _stand_from_piston(label, assembly_id, piston, assembly)
 
@@ -238,16 +406,18 @@ func _spawn_piston_wall_stand(label: String, world_origin: Vector3) -> Dictionar
 	var piston := _place_piston(assembly_id, Vector3i(5, 1, 0), prior)
 	if not piston.is_ok():
 		return {}
-	_power_piston(int(piston.data["element_id"]))
+	_power_piston(
+		int(piston.data["element_id"]),
+		int(piston.data["head_element_id"])
+	)
 	_project_assembly(assembly_id)
 	return _stand_from_piston(label, assembly_id, piston, assembly)
 
 
 func _spawn_falling_frame_stand(label: String, world_origin: Vector3) -> Dictionary:
-	var motion := GridSpawnUtil.motion_from_transform(
-		Transform3D(Basis.IDENTITY, world_origin + Vector3(0.0, 4.0, 0.0)),
-		false
-	)
+	var spawn_transform := _spawn_transform_at(world_origin)
+	spawn_transform.origin += Vector3.UP * 4.0
+	var motion := GridSpawnUtil.motion_from_transform(spawn_transform, false)
 	motion.linear_velocity = Vector3.ZERO
 	motion.sleeping = true
 	var spawn := _spawn_blueprint(
@@ -271,15 +441,13 @@ func _spawn_falling_frame_stand(label: String, world_origin: Vector3) -> Diction
 
 
 func _spawn_ram_stands(origin: Vector3) -> Dictionary:
-	var left_motion := GridSpawnUtil.motion_from_transform(
-		Transform3D(Basis.IDENTITY, origin + Vector3(-3.0, 1.0, 0.0)),
-		false
-	)
+	var left_transform := _spawn_transform_at(origin + Vector3(-3.0, 0.0, 0.0))
+	left_transform.origin += Vector3.UP * 1.0
+	var right_transform := _spawn_transform_at(origin + Vector3(3.0, 0.0, 0.0))
+	right_transform.origin += Vector3.UP * 1.0
+	var left_motion := GridSpawnUtil.motion_from_transform(left_transform, false)
 	left_motion.sleeping = true
-	var right_motion := GridSpawnUtil.motion_from_transform(
-		Transform3D(Basis.IDENTITY, origin + Vector3(3.0, 1.0, 0.0)),
-		false
-	)
+	var right_motion := GridSpawnUtil.motion_from_transform(right_transform, false)
 	right_motion.sleeping = true
 	var left_spawn := _spawn_blueprint(
 		_single_frame_blueprint(),
@@ -333,12 +501,7 @@ func _spawn_anchored_stack(
 	world_origin: Vector3,
 	frame_count: int
 ) -> Dictionary:
-	var basis := GridSpawnUtil.terrain_basis(Vector3.RIGHT, Vector3.BACK)
-	var transform := GridSpawnUtil.transform_on_terrain(
-		world_origin + Vector3(0.0, _terrain_surface_y, 0.0),
-		basis,
-		0.0
-	)
+	var transform := _spawn_transform_at(world_origin)
 	var spawn := _spawn_blueprint(
 		_foundation_blueprint(),
 		GridSpawnUtil.grid_frame_from_transform(transform)
@@ -382,22 +545,22 @@ func _stand_from_piston(
 	}
 
 
-func _power_piston(base_element_id: int) -> void:
-	var runtime := _session.world.ensure_industry_element_runtime(base_element_id)
-	runtime.machine_enabled = true
-	runtime.powered = true
+func _power_piston(base_element_id: int, head_element_id: int = 0) -> void:
 	_weld_element(base_element_id)
+	if head_element_id > 0:
+		_weld_element(head_element_id)
 
 
 func _place_drill_on_head(
 	assembly_id: int,
-	piston: StructuralCommandResult
+	piston: StructuralCommandResult,
+	head_cell: Vector3i
 ) -> StructuralCommandResult:
 	var place := PlaceElementCommand.new()
 	place.assembly_id = assembly_id
 	place.expected_assembly_revision = int(piston.data["topology_revision"])
 	place.archetype = Slice01Archetypes.stationary_drill()
-	place.origin_cell = Vector3i(6, 1, 0)
+	place.origin_cell = head_cell + Vector3i(0, 1, 0)
 	place.orientation_index = 0
 	place.store_id = "player"
 	return _session.world.apply_structural_command_now(place)
@@ -457,6 +620,7 @@ func _spawn_blueprint(
 
 func _project_assembly(assembly_id: int) -> void:
 	_session.projection.project_assembly_now(assembly_id, null)
+	_session.piston_visuals.rebuild_assembly(assembly_id)
 	for _frame: int in range(4):
 		await get_tree().physics_frame
 
@@ -468,9 +632,19 @@ func _latest_revision(assembly_id: int) -> int:
 	return assembly.topology_revision
 
 
+func _flash_status_hint(text: String, seconds: float = 2.5) -> void:
+	_status_hint = text
+	_status_hint_until_msec = Time.get_ticks_msec() + int(seconds * 1000.0)
+	_status.text = text
+
+
 func _drive_selected_piston(speed_mps: float) -> void:
 	var stand := _selected_stand_record()
-	if stand.is_empty() or stand.get("kind") != "piston":
+	if stand.is_empty():
+		_flash_status_hint("Нет стенда — P переспавн")
+		return
+	if stand.get("kind") != "piston":
+		_flash_status_hint("«%s» не пистон — жми F1" % stand.get("label", "?"))
 		return
 	var command := SetActuatorTargetCommand.new()
 	command.joint_id = int(stand.get("joint_id", 0))
@@ -478,7 +652,9 @@ func _drive_selected_piston(speed_mps: float) -> void:
 	command.target_velocity_mps = speed_mps
 	command.speed_limit_mps = maxf(absf(speed_mps), 0.25)
 	command.enabled = true
-	_session.apply_set_actuator_target(command)
+	var result := _session.apply_set_actuator_target(command)
+	if StringName(result.get("status", &"")) != &"ok":
+		_flash_status_hint("Пистон: %s" % str(result.get("reason", "failed")))
 
 
 func _stop_selected_piston() -> void:
@@ -519,29 +695,8 @@ func _launch_ram_assemblies() -> void:
 
 
 func _reset_terrain_patch() -> void:
-	var tool: VoxelTool = _terrain.get_voxel_tool()
-	tool.channel = VoxelBuffer.CHANNEL_SDF
-	var center := _base_spawn.global_position
-	var min_corner := center - Vector3.ONE * TERRAIN_RESET_HALF_EXTENT
-	var max_corner := center + Vector3.ONE * TERRAIN_RESET_HALF_EXTENT
-	var min_cell := Vector3i(
-		floori(min_corner.x),
-		floori(min_corner.y - 2.0),
-		floori(min_corner.z)
-	)
-	var max_cell := Vector3i(
-		ceili(max_corner.x),
-		ceili(max_corner.y + 2.0),
-		ceili(max_corner.z)
-	)
-	for z: int in range(min_cell.z, max_cell.z + 1):
-		for x: int in range(min_cell.x, max_cell.x + 1):
-			for y: int in range(min_cell.y, max_cell.y + 1):
-				var world_point := Vector3(float(x), float(y), float(z))
-				tool.set_voxel_f(
-					Vector3i(x, y, z),
-					world_point.y - _terrain_surface_y
-				)
+	_seed_flat_plateau(FLAT_SURFACE_Y)
+	_terrain_surface_y = FLAT_SURFACE_Y
 
 
 func _selected_stand_record() -> Dictionary:
@@ -555,8 +710,8 @@ func _refresh_status() -> void:
 		return
 	var lines: PackedStringArray = PackedStringArray([
 		"Kinetic Playground — H скрыть/показать",
-		"F1–F5 выбор стенда | +/- пистон | L slam | Y стоп",
-		"J сбросить frame | K таран | U terrain | P respawn",
+		"F1 — пистон (башня у спавна) | = выдвинуть | L удар | Y стоп",
+		"J сброс рамы | K таран | U земля | P respawn",
 		"",
 	])
 	for index: int in range(_stands.size()):
@@ -585,6 +740,16 @@ func _stand_metrics_line(stand: Dictionary) -> String:
 
 
 func _selected_metrics() -> String:
+	if (
+		not _status_hint.is_empty()
+		and Time.get_ticks_msec() < _status_hint_until_msec
+	):
+		return _status_hint
+	if (
+		not _status_hint.is_empty()
+		and Time.get_ticks_msec() >= _status_hint_until_msec
+	):
+		_status_hint = ""
 	var stand := _selected_stand_record()
 	if stand.is_empty():
 		return ""
