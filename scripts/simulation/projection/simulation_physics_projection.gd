@@ -456,9 +456,15 @@ func _project_assembly_single(
 		if motion_override != null
 		else assembly.motion
 	)
-	var locomotive := _is_locomotive_assembly(assembly_id)
+	var active_locomotive := _is_active_locomotive(assembly_id)
+	var release_from_anchor := (
+		active_locomotive
+		and seed_motion.frozen
+		and _world.assembly_has_anchor(assembly_id)
+		and not _mounted_bodies.has(assembly_id)
+	)
 	var anchored: bool = (
-		_world.assembly_has_anchor(assembly_id) and not locomotive
+		_world.assembly_has_anchor(assembly_id) and not active_locomotive
 	)
 	var mounted: RigidBody3D = _mounted_bodies.get(assembly_id) as RigidBody3D
 	var mounted_motion: AssemblyMotionState = null
@@ -499,11 +505,19 @@ func _project_assembly_single(
 			colliders_by_element[element_id] = []
 		colliders_by_element[element_id].append(collider)
 	var motion: AssemblyMotionState = seed_motion.duplicate_state()
+	if release_from_anchor:
+		motion.transform.origin += (
+			motion.transform.basis.y.normalized()
+			* WheelSimulationService.activation_clearance_m(
+				_world,
+				assembly_id
+			)
+		)
 	motion.frozen = anchored
-	if locomotive:
+	if active_locomotive:
 		motion.frozen = false
 		motion.sleeping = false
-	if anchored and not locomotive:
+	if anchored:
 		motion.linear_velocity = Vector3.ZERO
 		motion.angular_velocity = Vector3.ZERO
 		motion.sleeping = true
@@ -570,11 +584,27 @@ func _project_assembly_multibody(
 	var groups: Dictionary = compiled["groups"]
 	var element_to_group: Dictionary = compiled["element_to_group"]
 	var root_group_id := int(compiled.get("root_group_id", 0))
-	var seed_motion: AssemblyMotionState = (
+	var source_motion: AssemblyMotionState = (
 		motion_override
 		if motion_override != null
 		else assembly.motion
 	)
+	var seed_motion := source_motion.duplicate_state()
+	var active_locomotive := _is_active_locomotive(assembly_id)
+	if (
+		active_locomotive
+		and seed_motion.frozen
+		and _world.assembly_has_anchor(assembly_id)
+	):
+		seed_motion.transform.origin += (
+			seed_motion.transform.basis.y.normalized()
+			* WheelSimulationService.activation_clearance_m(
+				_world,
+				assembly_id
+			)
+		)
+		seed_motion.frozen = false
+		seed_motion.sleeping = false
 	var groups_map: Dictionary = {}
 	var carriage_group_ids: Dictionary = {}
 	for spec_variant: Variant in compiled.get("piston_specs", []):
@@ -586,11 +616,10 @@ func _project_assembly_multibody(
 		for member_variant: Variant in members:
 			element_ids.append(int(member_variant))
 		var is_root := group_id == root_group_id
-		var locomotive := _is_locomotive_assembly(assembly_id)
 		var is_static := (
 			is_root
 			and _world.assembly_has_anchor(assembly_id)
-			and not locomotive
+			and not active_locomotive
 		)
 		var is_carriage := carriage_group_ids.has(group_id)
 		var body := _create_group_body(assembly_id, group_id, is_static)
@@ -740,7 +769,7 @@ func _project_assembly_multibody(
 	_piston_constraints[assembly_id] = piston_records
 	var motion: AssemblyMotionState = seed_motion.duplicate_state()
 	if _world.assembly_has_anchor(assembly_id):
-		if not _is_locomotive_assembly(assembly_id):
+		if not active_locomotive:
 			motion.frozen = true
 			motion.linear_velocity = Vector3.ZERO
 			motion.angular_velocity = Vector3.ZERO
@@ -838,19 +867,47 @@ func _is_locomotive_assembly(assembly_id: int) -> bool:
 	return WheelSimulationService.is_locomotive_assembly(_world, assembly_id)
 
 
+func _is_active_locomotive(assembly_id: int) -> bool:
+	return (
+		_is_locomotive_assembly(assembly_id)
+		and _world.get_locomotion_controller(assembly_id).is_activated()
+	)
+
+
 func _tick_wheel_pairs(delta: float) -> void:
 	if _world == null or delta <= 0.0:
 		return
 	for assembly_id: int in _sorted_int_keys(_bodies):
-		var body := _bodies[assembly_id] as RigidBody3D
-		if body == null or not _is_locomotive_assembly(assembly_id):
+		if not _is_active_locomotive(assembly_id):
 			continue
 		WheelSimulationService.tick_assembly(
 			_world,
-			body,
 			assembly_id,
-			delta
+			delta,
+			Callable(self, "_wheel_body_for_suspension"),
+			_wheel_exclude_rids(assembly_id)
 		)
+
+
+func _wheel_body_for_suspension(
+	suspension_element_id: int
+) -> RigidBody3D:
+	var record := get_element_projection(suspension_element_id)
+	return record.get("body") as RigidBody3D
+
+
+func _wheel_exclude_rids(assembly_id: int) -> Array[RID]:
+	var result: Array[RID] = []
+	var groups: Variant = _assembly_group_bodies.get(assembly_id)
+	if groups is Dictionary:
+		for body_variant: Variant in (groups as Dictionary).values():
+			if body_variant is PhysicsBody3D:
+				result.append((body_variant as PhysicsBody3D).get_rid())
+		return result
+	var body := get_physics_body(assembly_id)
+	if body != null:
+		result.append(body.get_rid())
+	return result
 
 
 func _tick_piston_actuators(delta: float) -> void:

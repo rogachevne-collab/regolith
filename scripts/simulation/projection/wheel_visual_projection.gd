@@ -68,24 +68,28 @@ func _rebuild_assembly(assembly_id: int) -> void:
 	_clear_assembly(assembly_id)
 	if _world == null or _physics_projection == null:
 		return
-	var body := _physics_projection.get_physics_body(assembly_id)
-	if body == null:
-		return
 	var records: Array[Dictionary] = []
-	for child: Node in body.get_children():
-		if not child.has_meta("rover_module_visual"):
+	for pair: Dictionary in WheelSimulationService.discover_pairs(
+		_world,
+		assembly_id
+	):
+		if not WheelSimulationService.is_complete_pair(pair):
 			continue
-		var element_id := int(child.get_meta("element_id", 0))
-		var element := _world.get_element(element_id)
-		if element == null or element.archetype_id != "drive_wheel":
+		var element_id := int(pair.get("wheel_element_id", 0))
+		var projection := _physics_projection.get_element_projection(element_id)
+		var body := projection.get("body") as PhysicsBody3D
+		var root := _find_wheel_visual(body, element_id)
+		if root == null:
 			continue
 		var record := {
 			"element_id": element_id,
-			"root": child,
-			"spin_root": child.get_node_or_null("SpinRoot") as Node3D,
-			"hub_root": child.get_node_or_null("Hub") as Node3D,
-			"hub_base_y": 0.12,
-			"spin_base_y": 0.0,
+			"root": root,
+			"steer_root": root.get_node_or_null("SteerRoot") as Node3D,
+			"spin_root": (
+				root.get_node_or_null("SteerRoot/SpinRoot") as Node3D
+			),
+			"hub_root": root.get_node_or_null("SteerRoot/Hub") as Node3D,
+			"root_base_transform": root.transform,
 		}
 		records.append(record)
 	if records.is_empty():
@@ -111,12 +115,27 @@ func _sync_assembly(assembly_id: int, delta: float) -> void:
 		var runtime := _world.get_wheel_runtime(element_id)
 		RoverModuleVisualScript.update_runtime(
 			record,
-			float(runtime.get("wheel_speed", 0.0)),
-			float(runtime.get("compression_m", 0.0)),
+			runtime,
 			delta
 		)
 	if stale:
 		call_deferred("_rebuild_assembly", assembly_id)
+
+
+func _find_wheel_visual(
+	body: PhysicsBody3D,
+	element_id: int
+) -> Node3D:
+	if body == null:
+		return null
+	for child: Node in body.get_children():
+		if (
+			child is Node3D
+			and child.has_meta("rover_module_visual")
+			and int(child.get_meta("element_id", 0)) == element_id
+		):
+			return child as Node3D
+	return null
 
 
 func _clear_assembly(assembly_id: int) -> void:

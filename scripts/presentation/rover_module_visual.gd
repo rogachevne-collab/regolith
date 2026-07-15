@@ -86,10 +86,14 @@ static func attach_runtime(
 		"archetype_id": element.archetype_id,
 	}
 	if element.archetype_id == "drive_wheel":
-		record["spin_root"] = visual.get_node_or_null("SpinRoot") as Node3D
-		record["hub_root"] = visual.get_node_or_null("Hub") as Node3D
-		record["hub_base_y"] = 0.14
-		record["spin_base_y"] = 0.0
+		record["steer_root"] = visual.get_node_or_null("SteerRoot") as Node3D
+		record["spin_root"] = (
+			visual.get_node_or_null("SteerRoot/SpinRoot") as Node3D
+		)
+		record["hub_root"] = (
+			visual.get_node_or_null("SteerRoot/Hub") as Node3D
+		)
+		record["root_base_transform"] = visual.transform
 	return record
 
 
@@ -162,8 +166,7 @@ static func spin_root(record: Dictionary) -> Node3D:
 
 static func update_runtime(
 	record: Dictionary,
-	wheel_speed: float,
-	compression_m: float,
+	runtime: Dictionary,
 	delta: float
 ) -> void:
 	if delta <= 0.0:
@@ -174,17 +177,32 @@ static func update_runtime(
 	var root: Node3D = root_variant as Node3D
 	if root == null:
 		return
+	var steer := record.get("steer_root") as Node3D
+	if (
+		steer != null
+		and is_instance_valid(steer)
+		and runtime.has("wheel_center_body_local")
+	):
+		var root_base: Transform3D = record.get(
+			"root_base_transform",
+			root.transform
+		)
+		var wheel_center_body_local: Vector3 = runtime.get(
+			"wheel_center_body_local",
+			root_base.origin
+		)
+		steer.position = root_base.affine_inverse() * wheel_center_body_local
+		steer.rotation = Vector3(
+			0.0,
+			float(runtime.get("steering_angle_rad", 0.0)),
+			0.0
+		)
 	var spin := spin_root(record)
 	if spin != null and is_instance_valid(spin):
-		spin.rotate_object_local(Vector3.RIGHT, wheel_speed * delta)
-	var hub_variant: Variant = record.get("hub_root")
-	if hub_variant != null and is_instance_valid(hub_variant):
-		var hub: Node3D = hub_variant as Node3D
-		var compression_offset := clampf(compression_m, 0.0, 0.6) * 0.9
-		hub.position.y = float(record.get("hub_base_y", 0.12)) - compression_offset
-	if spin != null and is_instance_valid(spin):
-		var compression_offset_spin := clampf(compression_m, 0.0, 0.6) * 0.9
-		spin.position.y = float(record.get("spin_base_y", 0.0)) - compression_offset_spin
+		spin.rotate_object_local(
+			Vector3.RIGHT,
+			float(runtime.get("wheel_speed", 0.0)) * delta
+		)
 
 
 static func _build_suspension_gizmos(
@@ -242,10 +260,15 @@ static func _build_wheel_gizmos(
 	)
 	nodes.append(_build_socket_halo(plug_local, basis.y, valid, halo_color))
 	if _wheel_steerable_default(archetype):
+		var definition: WheelDefinition = archetype.wheel_definition
+		var neutral_forward := basis * Vector3(
+			OrientationUtil.face_to_vector(definition.forward_axis_face)
+		)
 		nodes.append(
 			_build_steering_arc(
 				pivot,
-				basis,
+				neutral_forward.normalized(),
+				basis.y.normalized(),
 				DEFAULT_MAX_STEERING_RAD,
 				valid
 			)
@@ -374,7 +397,8 @@ static func _build_socket_halo(
 
 static func _build_steering_arc(
 	pivot_local: Vector3,
-	basis: Basis,
+	neutral_forward: Vector3,
+	steering_axis: Vector3,
 	max_angle_rad: float,
 	valid: bool
 ) -> Node3D:
@@ -387,7 +411,7 @@ static func _build_steering_arc(
 	var radius := DEFAULT_WHEEL_RADIUS_M * 0.85
 	for sign: int in [-1, 1]:
 		var angle := float(sign) * max_angle_rad
-		var forward := basis.z.rotated(basis.y, angle)
+		var forward := neutral_forward.rotated(steering_axis, angle)
 		var arc := MeshInstance3D.new()
 		var arc_mesh := CylinderMesh.new()
 		arc_mesh.top_radius = 0.015

@@ -113,6 +113,12 @@ static func _fingerprint_from_schema(
 			archetype.piston_definition,
 			include_piston_tuning
 		),
+		"wheel_definition": _wheel_definition_row(
+			archetype.wheel_definition
+		),
+		"suspension_definition": _suspension_definition_row(
+			archetype.suspension_definition
+		),
 		"internal_archetype": archetype.internal_archetype,
 		"ports": ports,
 		"colliders": colliders,
@@ -142,6 +148,50 @@ static func _mount_pad_rows(
 			return int(left["face"]) < int(right["face"])
 	)
 	return rows
+
+
+static func _wheel_definition_row(
+	definition: WheelDefinition
+) -> Dictionary:
+	if definition == null:
+		return {}
+	return {
+		"radius_m": definition.radius_m,
+		"width_m": definition.width_m,
+		"drive_torque_n_m": definition.drive_torque_n_m,
+		"brake_torque_n_m": definition.brake_torque_n_m,
+		"longitudinal_grip": definition.longitudinal_grip,
+		"lateral_grip": definition.lateral_grip,
+		"slip_stiffness": definition.slip_stiffness,
+		"lateral_stiffness": definition.lateral_stiffness,
+		"wheel_inertia": definition.wheel_inertia,
+		"angular_damping": definition.angular_damping,
+		"max_angular_speed_rad_s": definition.max_angular_speed_rad_s,
+		"max_steering_angle_rad": definition.max_steering_angle_rad,
+		"steering_response": definition.steering_response,
+		"steerable_default": definition.steerable_default,
+		"forward_axis_face": definition.forward_axis_face,
+		"power_draw_w": definition.power_draw_w,
+		"idle_w": definition.idle_w,
+		"requires_socket_tag": definition.requires_socket_tag,
+	}
+
+
+static func _suspension_definition_row(
+	definition: SuspensionDefinition
+) -> Dictionary:
+	if definition == null:
+		return {}
+	return {
+		"wheel_socket_face": definition.wheel_socket_face,
+		"suspension_travel_m": definition.suspension_travel_m,
+		"spring_stiffness_n_per_m": definition.spring_stiffness_n_per_m,
+		"spring_damping_n_s_per_m": definition.spring_damping_n_s_per_m,
+		"max_suspension_force_n": definition.max_suspension_force_n,
+		"min_travel_m": definition.min_travel_m,
+		"max_travel_m": definition.max_travel_m,
+		"max_wheels_per_socket": definition.max_wheels_per_socket,
+	}
 
 
 static func _piston_definition_row(

@@ -570,7 +570,10 @@ func _enter_rover_seat(
 		assembly_id
 	):
 		return _result(&"blocked", {"detail": &"not_locomotive"})
-	var body := _session.projection.get_physics_body(assembly_id)
+	var body := (
+		_session.projection.get_element_projection(element_id).get("body")
+		as PhysicsBody3D
+	)
 	if body == null:
 		return _result(&"not_ready")
 	var element := _session.world.get_element(element_id)
@@ -578,7 +581,10 @@ func _enter_rover_seat(
 		return _result(&"invalid_target")
 	var seat_offset: Vector3 = WheelPlacementUtil.seat_offset_local(element)
 	_prepare_rover_for_drive(assembly_id)
-	body = _session.projection.get_physics_body(assembly_id)
+	body = (
+		_session.projection.get_element_projection(element_id).get("body")
+		as PhysicsBody3D
+	)
 	if body == null or not is_instance_valid(body):
 		return _result(&"not_ready")
 	if player.has_method("set_gameplay_input_enabled"):
@@ -603,6 +609,7 @@ func _prepare_rover_for_drive(assembly_id: int) -> void:
 	if _session == null or _session.world == null or assembly_id <= 0:
 		return
 	var world := _session.world
+	world.get_locomotion_controller(assembly_id).activate()
 	_ensure_rover_power_network(world, assembly_id)
 	IndustryElectricBudget.apply_tick(world, 0.25)
 	_wake_rover_body(assembly_id)
@@ -682,8 +689,6 @@ func _wake_rover_body(assembly_id: int) -> void:
 		var assembly := _session.world.get_assembly_raw(assembly_id)
 		if assembly != null:
 			var motion := assembly.motion.duplicate_state()
-			motion.frozen = false
-			motion.sleeping = false
 			_session.projection.project_assembly_now(assembly_id, motion)
 			body = _session.projection.get_physics_body(assembly_id)
 	if body is RigidBody3D:
@@ -695,7 +700,11 @@ func _wake_rover_body(assembly_id: int) -> void:
 func _exit_rover_seat(player: Node3D) -> Dictionary:
 	if _session == null or _rover_seat_assembly_id <= 0:
 		return _result(&"not_ready")
-	var body := _session.projection.get_physics_body(_rover_seat_assembly_id)
+	var body := (
+		_session.projection.get_element_projection(
+			_rover_seat_element_id
+		).get("body") as PhysicsBody3D
+	)
 	var exit_position := player.global_position
 	if body != null:
 		var element := _session.world.get_element(_rover_seat_element_id)

@@ -3,7 +3,6 @@ extends "res://scripts/character_motor.gd"
 @export var head_path: NodePath = NodePath("Camera")
 
 var _head: Camera3D
-var _gateway: Node
 var _voxel_viewer: VoxelViewer
 var _spawn_locked := true
 var _spawn_settling := false
@@ -77,26 +76,11 @@ func _ready() -> void:
 	_voxel_viewer = get_node_or_null("VoxelViewer") as VoxelViewer
 	_world_parent = get_parent()
 	set_physics_process(false)
-	call_deferred("_cache_gateway")
-
-
-func _cache_gateway() -> void:
-	var gateway := get_tree().get_first_node_in_group(
-		&"world_command_gateway"
-	)
-	if gateway != null and gateway.has_method("tick_rover_locomotion_input"):
-		_gateway = gateway
 
 
 func _process(_delta: float) -> void:
 	if _voxel_viewer != null and _current_vehicle != null:
 		_voxel_viewer.global_position = global_position
-	if (
-		_current_vehicle != null
-		and _gateway != null
-		and _gateway.has_method("tick_rover_locomotion_input")
-	):
-		_gateway.call("tick_rover_locomotion_input")
 
 
 func enter_vehicle(vehicle: Node3D, seat_position: Vector3) -> void:

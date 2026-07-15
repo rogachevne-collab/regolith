@@ -180,8 +180,32 @@ static func tick_joint(
 	_update_joint_status(world, joint, delta_s)
 
 
+static func sync_power_demand(world: SimulationWorld) -> void:
+	if world == null:
+		return
+	for element: SimulationElement in world.list_elements():
+		if element.archetype_id == "piston_base":
+			world.ensure_industry_element_runtime(
+				element.element_id
+			).dynamic_power_w = 0.0
+	for joint: SimulationJoint in world.list_joints():
+		if (
+			joint.kind != SimulationJoint.Kind.PISTON
+			or joint.motor == null
+		):
+			continue
+		var base_element := world.get_element(joint.element_a_id)
+		if base_element == null or not base_element.is_operational():
+			continue
+		world.ensure_industry_element_runtime(
+			base_element.element_id
+		).dynamic_power_w = power_demand_w(joint)
+
+
 static func power_demand_w(joint: SimulationJoint) -> float:
 	if joint == null or joint.motor == null or not joint.motor.enabled:
+		return 0.0
+	if joint.motor.control_mode == SimulationMotorState.ControlMode.STOP:
 		return 0.0
 	return joint.motor.power_draw_w
 
