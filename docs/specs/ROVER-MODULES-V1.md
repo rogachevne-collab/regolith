@@ -48,14 +48,25 @@ electric budget, что у Industry v1.
 4. Symulation владеет topology, per-instance настройками, drive/steer командой и
    status. Jolt владеет позами, скоростями, контактами.
 5. **Locomotive assembly** — та, что содержит хотя бы одну complete
-   `WheelPair` (подвеска + прикреплённое колесо). Она компилируется в dynamic
-   `RigidBody3D`, даже если topology содержит terrain anchor: anchor
-   игнорируется для locomotive assembly (см. § «Проекция физики»).
+   `WheelPair` (подвеска + прикреплённое колесо). Пока игрок строит её, terrain
+   anchor сохраняется. В dynamic `RigidBody3D` она переходит только после
+   явной активации через `ControlSeat`; установка первого колеса не отпускает
+   недостроенное шасси.
 6. Строительство ровера ведётся на земле в anchored состоянии. Расширение
    assembly после того, как она стала locomotive/движется, вне скоупа v1
    (сохраняется kernel-инвариант `mobile_construction_not_supported`).
 7. Управление в v1 — hardcoded mapping «кокпит владеет всеми колёсами своей
    assembly» (SE-подобный control block). Programmable `Binding` UI вне v1.
+8. Число `WheelPair` не ограничено и не кодируется в типе машины. Четыре колеса
+   demo-ровера — fixture, а не контракт. Physics tick обязан быть
+   детерминированным `O(N)` по отсортированным `suspension_element_id`.
+9. Каждая `WheelPair` принадлежит body group своей подвески. В single-body
+   assembly это корневой body; в assembly с `Piston` это может быть base или
+   carriage body. Raycast, силы и presentation используют один и тот же body,
+   полученный через element projection.
+10. Physics boundary публикует один `WheelRuntimeSnapshot` на пару. Jolt tick —
+    единственный писатель; presentation, HUD и диагностика только читают
+    snapshot и не пересчитывают геометрию колеса.
 
 ## Границы
 
@@ -134,6 +145,7 @@ SuspensionDefinition {
   suspension_travel_m        # длина хода (rest length)
   spring_stiffness_n_per_m
   spring_damping_n_s_per_m
+  max_suspension_force_n     # конечный bump/solver guard
   min_travel_m / max_travel_m  # допустимый диапазон configure
   max_wheels_per_socket = 1
 }
@@ -150,6 +162,7 @@ SuspensionDefinition {
 ```text
 WheelDefinition {
   radius_m
+  width_m
   drive_torque_n_m
   brake_torque_n_m
   longitudinal_grip
@@ -157,6 +170,8 @@ WheelDefinition {
   slip_stiffness
   lateral_stiffness
   wheel_inertia
+  angular_damping
+  max_angular_speed_rad_s
   max_steering_angle_rad
   steering_response
   steerable_default (bool)
@@ -167,18 +182,21 @@ WheelDefinition {
 }
 ```
 
-- Fixture-значения наследуют `CartLocomotion`: `radius 0.4`, `drive_torque 65`,
+- Fixture-значения наследуют `CartLocomotion`: `radius 0.4`, `width 0.3`,
+  `drive_torque 65`,
   `brake_torque 180`, `longitudinal_grip 1.2`, `lateral_grip 0.9`,
   `slip_stiffness 800`, `lateral_stiffness 1000`, `wheel_inertia 0.65`,
+  `angular_damping 0.2`, `max_angular_speed 150 rad/s`,
   `max_steering_angle 0.4887` rad, `steering_response 2.5`.
 - `power_draw_w` fixture — **300 W** под нагрузкой, `idle_w` — **20 W**.
 - `steerable_default = false`; игрок включает поворот на нужных колёсах.
 
 Validator отклоняет WheelDefinition/SuspensionDefinition, если:
 
-- `radius_m <= 0`, `suspension_travel_m <= 0` или травел вне
+- `radius_m <= 0`, `width_m <= 0`, `suspension_travel_m <= 0` или травел вне
   `min_travel_m..max_travel_m`;
 - любой из grip/stiffness/inertia/torque/power отрицателен;
+- `max_suspension_force_n <= 0` или `max_angular_speed_rad_s <= 0`;
 - `max_steering_angle_rad < 0`;
 - `wheel_socket_face`/`forward_axis_face` не разрешены `OrientationUtil`;
 - у `wheel_suspension` нет ровно одной socket-грани с tag `wheel_socket`;
@@ -244,6 +262,39 @@ WheelPair {
 }
 ```
 
+Physics tick публикует производный, не сохраняемый snapshot:
+
+```text
+WheelRuntimeSnapshot {
+  wheel_element_id
+  suspension_element_id
+  body_group_id
+  status                      # ok | airborne | no_power | invalid_body
+  powered
+  grounded
+  wheel_speed_rad_s
+  steering_angle_rad
+  suspension_length_m
+  compression_m
+  socket_body_local
+  wheel_center_body_local
+  contact_world
+  contact_normal_world
+  normal_force_n
+  longitudinal_force_n
+  lateral_force_n
+  slip_speed_mps
+  lateral_speed_mps
+  drive_command
+  brake_command
+}
+```
+
+`wheel_center_body_local` — каноническая pose-точка runtime-визуала. Она
+вычисляется physics tick из того же raycast, что создаёт силы:
+`socket + suspension_direction * suspension_length`. Presentation не двигает
+колесо формулой от `compression` и не хранит собственную rest pose.
+
 Discovery (`WheelSimulationService`): для каждого элемента-`wheel_suspension` в
 assembly найти соседний `drive_wheel` по socket-joint. Пара **complete**, если
 `wheel_element_id != 0` и оба элемента `is_operational()`.
@@ -272,10 +323,11 @@ SuspensionInstanceState {  # ключ: element_id подвески
 `SimulationPhysicsProjection` при (пере)сборке assembly:
 
 - `_is_locomotive_assembly(assembly_id)` — есть ≥1 complete `WheelPair`;
-- если locomotive: компилировать корень как **`RigidBody3D`**, `motion.frozen =
-  false`, `custom_integrator` **выключен**, даже если `assembly_has_anchor`
-  вернул true (anchor-joint не создаёт `StaticBody3D` и не морозит motion для
-  locomotive assembly);
+- если locomotive активирована `ControlSeat`: компилировать корень как
+  **`RigidBody3D`**, `motion.frozen = false`, `custom_integrator` **выключен**,
+  даже если `assembly_has_anchor` вернул true;
+- complete pairs без активации остаются anchored `StaticBody3D`, чтобы игрок
+  мог закончить любое число колёс, питание, piston и tool modules;
 - если не locomotive: поведение без изменений (anchored → `StaticBody3D`).
 
 ### Wheel tick
@@ -293,18 +345,44 @@ locomotive assembly и каждой complete `WheelPair`:
    layer) в маску не включать (POC-3);
 3. при отсутствии hit — колесо в воздухе, силы 0, только free-spin decay
    `wheel_speed`;
-4. при hit: пружина `F = max(spring·compression + damping·v_along_down, 0)`,
+4. скорость socket/contact считать относительно **custom COM** body:
+   `v_point = linear_velocity + angular_velocity × (point − center_of_mass_world)`;
+   body origin не является допустимой заменой COM;
+5. при hit: пружина `F = max(spring·compression + damping·v_along_down, 0)`,
    приложить `apply_force(F·up, point − body_origin)`;
-5. steer: `forward.rotated(hit_normal, steering_angle_rad)` (поворот в плоскости
+6. neutral forward получить из `WheelDefinition.forward_axis_face` с учётом
+   orientation элемента; hardcoded `±body.basis.z` запрещён;
+7. steer: `forward.rotated(hit_normal, steering_angle_rad)` (поворот в плоскости
    контакта, не euler body); `steering_angle_rad = 0`, если колесо не steerable;
-6. traction/lateral через friction ellipse (перенос математики
+8. traction/lateral через friction ellipse (перенос математики
    `CartLocomotion`): при превышении grip — скольжение;
-7. drive/brake torque шкалируется питанием: если
+9. drive/brake torque шкалируется питанием: если
    `IndustryElementRuntime.powered == false` для элемента колеса — drive torque
    = 0, тормоз доступен (пассивное трение остаётся);
-8. приложить traction+lateral как `apply_force` в точке контакта;
-9. при первом ненулевом drive/steer/brake командном входе — разбудить body
+10. приложить traction+lateral как `apply_force` в точке контакта;
+11. записать полный `WheelRuntimeSnapshot`; visual/HUD читают только его;
+12. при первом ненулевом drive/steer/brake командном входе — разбудить body
    (`sleeping = false`), иначе `apply_force` на спящем теле игнорируется.
+
+### Body groups и композиция
+
+- `SimulationPhysicsProjection.get_element_projection(suspension_element_id)`
+  определяет `RigidBody3D`, на котором тикает пара;
+- все complete pairs одной assembly получают общую control-команду, но силы
+  прикладываются к body своей подвески;
+- piston base, carriage и установленный на carriage бур остаются отдельными
+  body groups Jolt; колёса на base не меняют piston solver;
+- колесо на carriage допустимо: raycast, силы и visual обязаны следовать
+  carriage body, а не motion root assembly;
+- один невалидный body/pair даёт `status = invalid_body` только этой паре и не
+  отменяет tick остальных колёс;
+- переход anchored construction → locomotive выполняет один явный
+  release-seat: до создания live `RigidBody3D` motion поднимается вдоль
+  assembly-up на максимальный `travel + radius` среди complete pairs, после
+  чего Jolt сам осаживает подвеску; live body не телепортируется и скрытый
+  downforce не применяется;
+- mounted legacy `Cart` не является production-путём композиции и не определяет
+  семантику модульного ровера.
 
 ### Запреты
 
@@ -322,6 +400,10 @@ locomotive assembly и каждой complete `WheelPair`:
   **1.62 m/s²**, не под 9.81;
 - высоко расположенные кокпит/батарея повышают опрокидываемость — это
   ожидаемое поведение (SE-like), скрытым downforce не компенсируется.
+- spring/damper задаются на модуль: добавление колёс физически увеличивает
+  суммарную несущую способность, а drive torque и electric demand растут
+  линейно с числом powered wheels; скрытого деления на «стандартные 4 колеса»
+  нет.
 
 ## Управление и кокпит (ControlSeat)
 
@@ -371,7 +453,9 @@ KINETIC-INTERACTION).
   `power_draw_w` под тягой; без питания drive torque = 0;
 - `power_distributor_small` — distributor с `supply_radius_m = 6` (меньше
   большого 12 м);
-- `power_battery_small` — `max_kwh = 2.5`, charge/discharge fixture **250 W**;
+- `power_battery_small` — `max_kwh = 2.5`, charge **250 W**, discharge
+  **1500 W**: одна батарея питает fixture из 4 колёс, дополнительные
+  колёса/пистоны/бур требуют дополнительных батарей или source;
 - провода соединяют только энергоинфраструктуру (source/distributor/battery);
   колёса и кокпит к проводам не подключаются, питаются радиусом distributor;
 - подвеска и кокпит — не consumers.
@@ -436,8 +520,9 @@ emission (R3 — VisualShader не создавать).
 ### Runtime
 
 - `WheelVisualProjection` (по образцу `PistonVisualProjection`): шина крутится
-  пропорционально `wheel_speed`, hub визуально смещается по compression
-  (visual lerp к raycast hit; отставание ≤1 кадра допустимо и не является
+  пропорционально `wheel_speed`, steering-root получает
+  `steering_angle_rad`, а hub+tire ставятся в `wheel_center_body_local`
+  из `WheelRuntimeSnapshot` (отставание ≤1 кадра допустимо и не является
   authoritative);
 - `ElementVisualProjection` маршрутизирует cockpit/suspension/wheel на `.tscn`
   вместо box-mesh; палитра совместима с существующим rover tint.
@@ -479,6 +564,10 @@ powered
 status            # ok | airborne | no_power | no_wheel
 ```
 
+Эти поля берутся из `WheelRuntimeSnapshot`; отдельный диагностический расчёт
+запрещён. Snapshot обязан содержать только finite числа. Невалидная геометрия
+изолируется в одной pair со статусом `invalid_body`, без NaN в Jolt.
+
 ## Тесты
 
 Чистая kernel/projection логика — headless-сцена
@@ -491,8 +580,8 @@ status            # ok | airborne | no_power | no_wheel
    (`wheel_socket_required`);
 2. второе колесо на занятый socket — отклоняется (`socket_occupied`);
 3. подвеска + колесо создают complete `WheelPair` и один socket `Rigid` joint;
-4. assembly с complete `WheelPair` компилируется как dynamic `RigidBody3D`
-   несмотря на terrain anchor;
+4. assembly с complete `WheelPair` остаётся anchored при строительстве и
+   компилируется как dynamic `RigidBody3D` после `ControlSeat.activate`;
 5. при `powered` и drive-команде body набирает поступательную скорость за N
    ticks; при `no_power` — не набирает (torque = 0);
 6. steerable front pair меняет heading при steer-команде; fixed rear — нет;
@@ -503,6 +592,16 @@ status            # ok | airborne | no_power | no_wheel
 9. snapshot roundtrip сохраняет per-instance настройки и socket topology;
 10. non-locomotive assembly (только рама+подвески без колёс) остаётся anchored
     `StaticBody3D` — регресс не ломает статические постройки.
+11. 4-wheel fixture на flat collider реально набирает скорость и steering
+    меняет heading; это projection/core test, не gameplay test;
+12. 10 complete pairs discover/tick детерминированно, публикуют 10 finite
+    snapshots и не содержат fixed-four branches;
+13. custom COM: point velocity, damping и slip используют offset от COM;
+14. multibody assembly: pair на base получает base body, pair на piston
+    carriage получает carriage body; stationary drill на carriage не меняет
+    wheel body ownership;
+15. electric demand равен сумме idle+traction всех wheels; недостаток мощности
+    выключает весь supplied component симметрично, без частичного torque.
 
 Геймплей/HUD/презентация/визуал headless-тестом не подтверждаются. В запущенной
 игре (Beckett):

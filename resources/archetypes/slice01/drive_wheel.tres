@@ -14,10 +14,12 @@ amount = 2.0
 
 [sub_resource type="Resource" id="Collider"]
 script = ExtResource("2_col")
+size = Vector3(0.2, 0.2, 0.2)
 
 [sub_resource type="Resource" id="WheelDefinition"]
 script = ExtResource("4_wheel")
 radius_m = 0.4
+width_m = 0.3
 drive_torque_n_m = 65.0
 brake_torque_n_m = 180.0
 longitudinal_grip = 1.2
@@ -25,10 +27,12 @@ lateral_grip = 0.9
 slip_stiffness = 800.0
 lateral_stiffness = 1000.0
 wheel_inertia = 0.65
+angular_damping = 0.2
+max_angular_speed_rad_s = 150.0
 max_steering_angle_rad = 0.4887
 steering_response = 2.5
 steerable_default = false
-forward_axis_face = 4
+forward_axis_face = 5
 power_draw_w = 300.0
 idle_w = 20.0
 requires_socket_tag = "wheel_socket"

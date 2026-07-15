@@ -24,30 +24,30 @@ static func spawn_on_terrain(
 	revision = _place_deck_frames(world, assembly_id, revision, store_id)
 	var pairs := [
 		{
-			"suspension_cell": Vector3i(-1, 0, 0),
+			"suspension_cell": Vector3i(-1, 0, -2),
 			"suspension_face": Vector3i.RIGHT,
-			"wheel_cell": Vector3i(-1, -1, 0),
+			"wheel_cell": Vector3i(-1, -1, -2),
 			"steerable": true,
 			"key": "fl",
 		},
 		{
-			"suspension_cell": Vector3i(3, 0, 0),
+			"suspension_cell": Vector3i(3, 0, -2),
 			"suspension_face": Vector3i.LEFT,
-			"wheel_cell": Vector3i(3, -1, 0),
+			"wheel_cell": Vector3i(3, -1, -2),
 			"steerable": true,
 			"key": "fr",
 		},
 		{
-			"suspension_cell": Vector3i(-1, 0, 1),
+			"suspension_cell": Vector3i(-1, 0, 3),
 			"suspension_face": Vector3i.RIGHT,
-			"wheel_cell": Vector3i(-1, -1, 1),
+			"wheel_cell": Vector3i(-1, -1, 3),
 			"steerable": false,
 			"key": "rl",
 		},
 		{
-			"suspension_cell": Vector3i(3, 0, 1),
+			"suspension_cell": Vector3i(3, 0, 3),
 			"suspension_face": Vector3i.LEFT,
-			"wheel_cell": Vector3i(3, -1, 1),
+			"wheel_cell": Vector3i(3, -1, 3),
 			"steerable": false,
 			"key": "rr",
 		},
@@ -72,6 +72,7 @@ static func spawn_on_terrain(
 	_wire_demo_power(world, module_ids)
 	_charge_demo_battery(world, int(module_ids.get("battery", 0)))
 	_configure_steerable(world, module_ids)
+	world.get_locomotion_controller(assembly_id).activate()
 	var motion := AssemblyMotionState.from_grid_frame(grid_frame)
 	motion.frozen = false
 	motion.sleeping = false
@@ -98,7 +99,16 @@ static func _assembly_transform_on_surface(
 ) -> Transform3D:
 	var archetype := Slice01Archetypes.rover_frame()
 	var contact := GridPoseUtil.ground_contact_local(archetype, 0)
-	return Transform3D(basis, surface_point - basis * contact)
+	var suspension := Slice01Archetypes.wheel_suspension()
+	var wheel := Slice01Archetypes.drive_wheel()
+	var clearance := (
+		suspension.suspension_definition.suspension_travel_m
+		+ wheel.wheel_definition.radius_m
+	)
+	return Transform3D(
+		basis,
+		surface_point - basis * contact + basis.y.normalized() * clearance
+	)
 
 
 static func _wake_locomotive_body(
@@ -160,13 +170,14 @@ static func _place_deck_frames(
 	revision: int,
 	store_id: String
 ) -> int:
-	for cell: Vector3i in [
-		Vector3i(1, 0, 0),
-		Vector3i(2, 0, 0),
-		Vector3i(0, 0, 1),
-		Vector3i(1, 0, 1),
-		Vector3i(2, 0, 1),
-	]:
+	var deck_cells: Array[Vector3i] = []
+	for z: int in [0, -1, -2, 1, 2, 3]:
+		deck_cells.append(Vector3i(1, 0, z))
+		if z in [-2, 0, 1, 3]:
+			if z != 0:
+				deck_cells.append(Vector3i(0, 0, z))
+			deck_cells.append(Vector3i(2, 0, z))
+	for cell: Vector3i in deck_cells:
 		var placed := _place(
 			world,
 			assembly_id,
@@ -210,7 +221,7 @@ static func _place_chassis(
 		assembly_id,
 		revision,
 		Slice01Archetypes.power_battery_small(),
-		Vector3i(-2, 2, 0),
+		Vector3i(0, 1, 2),
 		0,
 		store_id
 	)
@@ -223,7 +234,7 @@ static func _place_chassis(
 		assembly_id,
 		revision,
 		Slice01Archetypes.power_distributor_small(),
-		Vector3i(0, 3, 0),
+		Vector3i(1, 1, -2),
 		0,
 		store_id
 	)

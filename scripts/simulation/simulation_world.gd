@@ -277,6 +277,46 @@ func ensure_suspension_instance_state(
 	return _suspension_instances[element_id] as SuspensionInstanceState
 
 
+func list_wheel_instance_rows() -> Array[Dictionary]:
+	var rows: Array[Dictionary] = []
+	for element_id: int in _sorted_keys(_wheel_instances):
+		rows.append({
+			"element_id": element_id,
+			"state": (
+				_wheel_instances[element_id] as WheelInstanceState
+			).to_dict(),
+		})
+	return rows
+
+
+func list_suspension_instance_rows() -> Array[Dictionary]:
+	var rows: Array[Dictionary] = []
+	for element_id: int in _sorted_keys(_suspension_instances):
+		rows.append({
+			"element_id": element_id,
+			"state": (
+				_suspension_instances[element_id] as SuspensionInstanceState
+			).to_dict(),
+		})
+	return rows
+
+
+func register_wheel_instance_state(
+	element_id: int,
+	state: WheelInstanceState
+) -> void:
+	if element_id > 0 and state != null:
+		_wheel_instances[element_id] = state
+
+
+func register_suspension_instance_state(
+	element_id: int,
+	state: SuspensionInstanceState
+) -> void:
+	if element_id > 0 and state != null:
+		_suspension_instances[element_id] = state
+
+
 func get_wheel_runtime(wheel_element_id: int) -> Dictionary:
 	return _wheel_runtime.get(wheel_element_id, {})
 
@@ -286,15 +326,40 @@ func store_wheel_runtime(
 	suspension_element_id: int,
 	tick_result: Dictionary
 ) -> void:
-	_wheel_runtime[wheel_element_id] = {
-		"wheel_speed": float(tick_result.get("wheel_speed", 0.0)),
-		"steering_angle_rad": float(
-			tick_result.get("steering_angle_rad", 0.0)
-		),
-		"grounded": bool(tick_result.get("grounded", false)),
-		"compression_m": float(tick_result.get("compression_m", 0.0)),
-		"suspension_element_id": suspension_element_id,
-	}
+	var runtime := tick_result.duplicate(true)
+	runtime["wheel_element_id"] = wheel_element_id
+	runtime["suspension_element_id"] = suspension_element_id
+	for key: String in [
+		"wheel_speed",
+		"wheel_speed_rad_s",
+		"steering_angle_rad",
+		"compression_m",
+		"suspension_length_m",
+		"normal_force_n",
+		"longitudinal_force_n",
+		"lateral_force_n",
+		"slip_speed_mps",
+		"lateral_speed_mps",
+		"drive_command",
+		"brake_command",
+	]:
+		var value := float(runtime.get(key, 0.0))
+		if not is_finite(value):
+			value = 0.0
+			runtime["status"] = &"invalid_body"
+		runtime[key] = value
+	for key: String in [
+		"socket_body_local",
+		"wheel_center_body_local",
+		"contact_world",
+		"contact_normal_world",
+	]:
+		var value: Vector3 = runtime.get(key, Vector3.ZERO)
+		if not value.is_finite():
+			value = Vector3.ZERO
+			runtime["status"] = &"invalid_body"
+		runtime[key] = value
+	_wheel_runtime[wheel_element_id] = runtime
 
 
 func clear_wheel_element_state(element_id: int) -> void:
@@ -703,6 +768,10 @@ func restore_snapshot(snapshot: Dictionary, emit_event := true) -> bool:
 	_player_inventory_revision = restored._player_inventory_revision
 	_industry_network = restored._industry_network
 	_industry_elements = restored._industry_elements
+	_wheel_instances = restored._wheel_instances
+	_suspension_instances = restored._suspension_instances
+	_wheel_runtime.clear()
+	_assembly_locomotion.clear()
 	_world_loot_piles = restored._world_loot_piles
 	_simulation_time_s = restored._simulation_time_s
 	_command_queue.clear()

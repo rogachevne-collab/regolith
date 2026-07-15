@@ -392,6 +392,10 @@ func _test_set_actuator_target() -> bool:
 	runtime.powered = true
 	_weld_element(world, base_id)
 	_weld_element(world, int(piston.data["head_element_id"]))
+	var piston_joint := world.get_joint(int(piston.data["piston_joint_id"]))
+	if ActuatorSimulationService.power_demand_w(piston_joint) != 0.0:
+		world.free()
+		return _fail("stopped piston should not draw actuator power")
 
 	var command := SetActuatorTargetCommand.new()
 	command.joint_id = int(piston.data["piston_joint_id"])
@@ -408,6 +412,12 @@ func _test_set_actuator_target() -> bool:
 	):
 		world.free()
 		return _fail("actuator target not applied")
+	if not is_equal_approx(
+		ActuatorSimulationService.power_demand_w(joint),
+		joint.motor.power_draw_w
+	):
+		world.free()
+		return _fail("commanded piston power demand was not published")
 	world.free()
 	return true
 

@@ -7,6 +7,15 @@ const PISTON_BASE := preload(
 const PISTON_HEAD := preload(
 	"res://resources/archetypes/slice01/piston_head.tres"
 )
+const STATIONARY_DRILL := preload(
+	"res://resources/archetypes/slice01/stationary_drill.tres"
+)
+const WHEEL_SUSPENSION := preload(
+	"res://resources/archetypes/slice01/wheel_suspension.tres"
+)
+const DRIVE_WHEEL := preload(
+	"res://resources/archetypes/slice01/drive_wheel.tres"
+)
 
 
 func _ready() -> void:
@@ -585,6 +594,7 @@ func _test_piston_multibody_projection() -> bool:
 	world.ensure_resource_store("player")
 	world.set_resource_amount("player", "construction_component", 100.0)
 	world.get_archetype_registry().register(PISTON_HEAD)
+	world.get_archetype_registry().register(STATIONARY_DRILL)
 	var foundation := _spawn(
 		world,
 		_single_blueprint(Slice01Archetypes.foundation()),
@@ -614,8 +624,61 @@ func _test_piston_multibody_projection() -> bool:
 	var runtime := world.ensure_industry_element_runtime(base_id)
 	runtime.machine_enabled = true
 	runtime.powered = true
-	_weld_piston_element(world, base_id)
-	_weld_piston_element(world, head_id)
+	var carriage_frame := _place_element_for_projection(
+		world,
+		assembly_id,
+		Slice01Archetypes.rover_frame(),
+		Vector3i(5, 1, -1),
+		piston
+	)
+	if not carriage_frame.is_ok():
+		return _fail("piston carriage frame placement failed")
+	var suspension := _place_element_for_projection(
+		world,
+		assembly_id,
+		WHEEL_SUSPENSION,
+		Vector3i(4, 1, -1),
+		carriage_frame
+	)
+	if not suspension.is_ok():
+		return _fail("piston carriage suspension placement failed")
+	var wheel := _place_element_for_projection(
+		world,
+		assembly_id,
+		DRIVE_WHEEL,
+		Vector3i(4, 0, -1),
+		suspension
+	)
+	if not wheel.is_ok():
+		return _fail("piston carriage wheel placement failed")
+	var drill := _place_element_for_projection(
+		world,
+		assembly_id,
+		STATIONARY_DRILL,
+		Vector3i(6, 1, -1),
+		wheel
+	)
+	if not drill.is_ok():
+		return _fail(
+			"piston carriage drill placement failed: %s" % drill.reason
+		)
+	var drill_id := int(drill.data["element_id"])
+	var suspension_id := int(suspension.data["element_id"])
+	var wheel_id := int(wheel.data["element_id"])
+	for element_id: int in [
+		base_id,
+		head_id,
+		int(carriage_frame.data["element_id"]),
+		suspension_id,
+		wheel_id,
+		drill_id,
+	]:
+		_weld_piston_element(world, element_id)
+	world.get_locomotion_controller(assembly_id).activate()
+	projection.project_assembly_now(
+		assembly_id,
+		world.get_assembly_raw(assembly_id).motion.duplicate_state()
+	)
 
 	var compiled := BodyGroupCompiler.compile(
 		world.get_assembly_raw(assembly_id).element_ids,
@@ -628,23 +691,53 @@ func _test_piston_multibody_projection() -> bool:
 	var head_group := int(
 		(compiled["element_to_group"] as Dictionary).get(head_id, 0)
 	)
+	var drill_group := int(
+		(compiled["element_to_group"] as Dictionary).get(drill_id, 0)
+	)
+	var suspension_group := int(
+		(compiled["element_to_group"] as Dictionary).get(suspension_id, 0)
+	)
+	if (
+		drill_group <= 0
+		or drill_group != head_group
+		or suspension_group != head_group
+	):
+		return _fail("drill/wheel modules did not join piston carriage body")
 	var root_body := projection.get_group_physics_body(assembly_id, root_group)
 	var head_body := projection.get_group_physics_body(assembly_id, head_group)
-	if not root_body is StaticBody3D or not head_body is RigidBody3D:
-		return _fail("piston projection did not create static/dynamic groups")
+	if not root_body is RigidBody3D or not head_body is RigidBody3D:
+		return _fail("locomotive piston projection did not create dynamic groups")
 	if projection.list_piston_constraint_records(assembly_id).is_empty():
 		return _fail("piston projection missing slider constraint")
+	var drill_body := projection.get_element_projection(drill_id).get(
+		"body"
+	) as PhysicsBody3D
+	if drill_body != head_body:
+		return _fail("drill projection did not follow carriage body")
+	var wheel_body := projection.get_element_projection(suspension_id).get(
+		"body"
+	) as PhysicsBody3D
+	if wheel_body != head_body:
+		return _fail("wheel projection did not follow carriage body")
 
 	var command := SetActuatorTargetCommand.new()
 	command.joint_id = int(piston.data["piston_joint_id"])
 	command.mode = SimulationMotorState.ControlMode.POSITION
 	command.target_position_m = 1.0
 	world.apply_set_actuator_target(command)
+	(root_body as RigidBody3D).gravity_scale = 0.0
 	(head_body as RigidBody3D).gravity_scale = 0.0
 	var start_extension := world.get_joint(command.joint_id).motor.observed_position_m
 	for _i: int in range(120):
 		await get_tree().physics_frame
 	var end_extension := world.get_joint(command.joint_id).motor.observed_position_m
+	var wheel_runtime := world.get_wheel_runtime(wheel_id)
+	if (
+		wheel_runtime.is_empty()
+		or int(wheel_runtime.get("body_group_id", 0))
+		!= int(head_body.get_meta("body_group_id", 0))
+	):
+		return _fail("wheel tick did not use carriage body group")
 	if end_extension <= start_extension + 0.05:
 		return _fail(
 			"piston projection did not extend head: %.3f -> %.3f"
@@ -699,6 +792,23 @@ func _place_piston_for_projection(
 	place.assembly_id = assembly_id
 	place.expected_assembly_revision = int(prior.data["topology_revision"])
 	place.archetype = PISTON_BASE
+	place.origin_cell = origin_cell
+	place.orientation_index = 0
+	place.store_id = "player"
+	return world.apply_structural_command_now(place)
+
+
+func _place_element_for_projection(
+	world: SimulationWorld,
+	assembly_id: int,
+	archetype: ElementArchetype,
+	origin_cell: Vector3i,
+	prior: StructuralCommandResult
+) -> StructuralCommandResult:
+	var place := PlaceElementCommand.new()
+	place.assembly_id = assembly_id
+	place.expected_assembly_revision = int(prior.data["topology_revision"])
+	place.archetype = archetype
 	place.origin_cell = origin_cell
 	place.orientation_index = 0
 	place.store_id = "player"

@@ -5,8 +5,10 @@ const WATTS_TO_KWH_PER_SECOND := 1.0 / 3600000.0
 
 
 static func apply_tick(world: SimulationWorld, dt: float) -> void:
-	if dt <= 0.0:
+	if world == null or dt <= 0.0:
 		return
+	WheelSimulationService.sync_power_demand(world)
+	ActuatorSimulationService.sync_power_demand(world)
 	var network := world.get_industry_network()
 	var graph := network.ensure_graph_current(world)
 	var consumers: Array[SimulationElement] = []

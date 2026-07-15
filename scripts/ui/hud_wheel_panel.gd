@@ -143,7 +143,7 @@ func _build() -> void:
 	title_row.add_child(close_hint)
 
 	vb.add_child(HudTokens.make_divider())
-	_status_val = _add_info_row(vb, "ПИТАНИЕ", HudTokens.COL_TEXT)
+	_status_val = _add_info_row(vb, "СТАТУС", HudTokens.COL_TEXT)
 	_steer_row = HBoxContainer.new()
 	_steer_row.custom_minimum_size.y = INFO_ROW_HEIGHT
 	_steer_row.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -236,10 +236,21 @@ func _refresh_from_hit(hit: InteractionHit) -> void:
 	_steer_row.visible = archetype_id == "drive_wheel"
 	if archetype_id == "drive_wheel":
 		var powered := bool(hit.metadata.get("wheel_powered", false))
-		_status_val.text = "есть" if powered else "нет"
+		var status := StringName(
+			hit.metadata.get(
+				"wheel_status",
+				&"ok" if powered else &"no_power"
+			)
+		)
+		_status_val.text = {
+			&"ok": "контакт",
+			&"airborne": "в воздухе",
+			&"no_power": "нет питания",
+			&"invalid_body": "ошибка физики",
+		}.get(status, str(status))
 		_status_val.add_theme_color_override(
 			"font_color",
-			HudTokens.COL_OK if powered else HudTokens.COL_WARNING
+			HudTokens.COL_OK if status == &"ok" else HudTokens.COL_WARNING
 		)
 		_steer_val.text = (
 			"поворотное" if bool(hit.metadata.get("wheel_steerable", false))

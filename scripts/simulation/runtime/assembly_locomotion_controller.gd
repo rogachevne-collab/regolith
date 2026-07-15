@@ -4,6 +4,15 @@ extends RefCounted
 var drive_command: float = 0.0
 var brake_command: float = 0.0
 var steering_command: float = 0.0
+var activated: bool = false
+
+
+func activate() -> void:
+	activated = true
+
+
+func is_activated() -> bool:
+	return activated
 
 
 func set_drive_command(throttle: float) -> void:
@@ -31,4 +40,5 @@ func duplicate_state() -> AssemblyLocomotionController:
 	copy.drive_command = drive_command
 	copy.brake_command = brake_command
 	copy.steering_command = steering_command
+	copy.activated = activated
 	return copy

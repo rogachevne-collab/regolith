@@ -178,6 +178,22 @@ static func _enrich_wheel_metadata(
 	metadata["wheel_authored_drive_torque_n_m"] = definition.drive_torque_n_m
 	var runtime := world.ensure_industry_element_runtime(element.element_id)
 	metadata["wheel_powered"] = runtime.machine_enabled and runtime.powered
+	var wheel_runtime := world.get_wheel_runtime(element.element_id)
+	metadata["wheel_status"] = StringName(
+		wheel_runtime.get("status", runtime.power_reason)
+	)
+	metadata["wheel_grounded"] = bool(
+		wheel_runtime.get("grounded", false)
+	)
+	metadata["wheel_compression_m"] = float(
+		wheel_runtime.get("compression_m", 0.0)
+	)
+	metadata["wheel_normal_force_n"] = float(
+		wheel_runtime.get("normal_force_n", 0.0)
+	)
+	metadata["wheel_slip_speed_mps"] = float(
+		wheel_runtime.get("slip_speed_mps", 0.0)
+	)
 
 
 static func _enrich_suspension_metadata(

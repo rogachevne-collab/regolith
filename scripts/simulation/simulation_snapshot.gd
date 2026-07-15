@@ -19,6 +19,8 @@ static func capture(world) -> Dictionary:
 		"player_inventory": _serialize_player_inventory(world),
 		"industry_network": world.get_industry_network().to_dict(true),
 		"industry_elements": world.list_industry_element_runtimes(),
+		"wheel_instances": world.list_wheel_instance_rows(),
+		"suspension_instances": world.list_suspension_instance_rows(),
 		"world_loot_piles": world.list_world_loot_piles(),
 		"simulation_time_s": world.get_simulation_time_s(),
 	}
@@ -59,6 +61,11 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 	var player_inventory_row: Variant = snapshot.get("player_inventory", {})
 	var industry_network_row: Variant = snapshot.get("industry_network", {})
 	var industry_element_rows: Variant = snapshot.get("industry_elements", [])
+	var wheel_instance_rows: Variant = snapshot.get("wheel_instances", [])
+	var suspension_instance_rows: Variant = snapshot.get(
+		"suspension_instances",
+		[]
+	)
 	var loot_rows: Variant = snapshot.get("world_loot_piles", [])
 	var simulation_time_s := float(snapshot.get("simulation_time_s", 0.0))
 	var allocator_data: Variant = snapshot.get("allocator")
@@ -69,6 +76,8 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 		or not joint_rows is Array
 		or not redirect_rows is Array
 		or not store_rows is Array
+		or not wheel_instance_rows is Array
+		or not suspension_instance_rows is Array
 		or not allocator_data is Dictionary
 	):
 		return false
@@ -202,6 +211,71 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 		max_element_id = maxi(max_element_id, element.element_id)
 	if elements.size() != expected_membership.size():
 		return false
+
+	var wheel_instances: Dictionary = {}
+	for row_variant: Variant in wheel_instance_rows:
+		if not row_variant is Dictionary:
+			return false
+		var row: Dictionary = row_variant
+		var element_id := int(row.get("element_id", 0))
+		var state_row: Variant = row.get("state", {})
+		var element := elements.get(element_id) as SimulationElement
+		if (
+			element == null
+			or wheel_instances.has(element_id)
+			or element.get_archetype().wheel_definition == null
+			or not state_row is Dictionary
+		):
+			return false
+		var state := WheelInstanceState.from_dict(state_row)
+		var definition: WheelDefinition = element.get_archetype().wheel_definition
+		if (
+			not is_finite(state.drive_torque_scale)
+			or state.drive_torque_scale < 0.0
+			or state.drive_torque_scale > 1.0
+			or not is_finite(state.brake_torque_n_m)
+			or state.brake_torque_n_m < -1.0
+			or state.brake_torque_n_m > definition.brake_torque_n_m
+		):
+			return false
+		wheel_instances[element_id] = state
+
+	var suspension_instances: Dictionary = {}
+	for row_variant: Variant in suspension_instance_rows:
+		if not row_variant is Dictionary:
+			return false
+		var row: Dictionary = row_variant
+		var element_id := int(row.get("element_id", 0))
+		var state_row: Variant = row.get("state", {})
+		var element := elements.get(element_id) as SimulationElement
+		if (
+			element == null
+			or suspension_instances.has(element_id)
+			or element.get_archetype().suspension_definition == null
+			or not state_row is Dictionary
+		):
+			return false
+		var state := SuspensionInstanceState.from_dict(state_row)
+		var definition: SuspensionDefinition = (
+			element.get_archetype().suspension_definition
+		)
+		if (
+			not is_finite(state.travel_m)
+			or (
+				state.travel_m >= 0.0
+				and (
+					state.travel_m < definition.min_travel_m
+					or state.travel_m > definition.max_travel_m
+				)
+			)
+			or state.travel_m < -1.0
+			or not is_finite(state.spring_stiffness_n_per_m)
+			or state.spring_stiffness_n_per_m < -1.0
+			or not is_finite(state.spring_damping_n_s_per_m)
+			or state.spring_damping_n_s_per_m < -1.0
+		):
+			return false
+		suspension_instances[element_id] = state
 
 	var joints: Dictionary = {}
 	var canonical_joints: Dictionary = {}
@@ -428,6 +502,16 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 		world._register_assembly(assembly_ids[assembly_id])
 	for element_id: int in _sorted_int_keys(elements):
 		world._register_element(elements[element_id])
+	for element_id: int in _sorted_int_keys(wheel_instances):
+		world.register_wheel_instance_state(
+			element_id,
+			wheel_instances[element_id]
+		)
+	for element_id: int in _sorted_int_keys(suspension_instances):
+		world.register_suspension_instance_state(
+			element_id,
+			suspension_instances[element_id]
+		)
 	for joint_id: int in _sorted_int_keys(joints):
 		world._register_joint(joints[joint_id])
 	for from_id: int in _sorted_int_keys(redirects):

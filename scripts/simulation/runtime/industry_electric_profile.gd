@@ -40,7 +40,7 @@ const _ARCHETYPE_DEFAULTS := {
 	},
 	"piston_base": {
 		"is_consumer": true,
-		"idle_w": 1500.0,
+		"idle_w": 0.0,
 	},
 	"drive_wheel": {
 		"is_consumer": true,
@@ -50,7 +50,7 @@ const _ARCHETYPE_DEFAULTS := {
 		"is_battery": true,
 		"max_kwh": 2.5,
 		"charge_w": 250.0,
-		"discharge_w": 250.0,
+		"discharge_w": 1500.0,
 	},
 	"power_distributor_small": {
 		"is_distributor": true,
@@ -72,7 +72,14 @@ static func for_element(element: SimulationElement) -> Dictionary:
 		for key: Variant in archetype_defaults.keys():
 			profile[key] = archetype_defaults[key]
 	_apply_role_fallback(archetype.roles, profile)
-	if profile["is_consumer"] and float(profile["idle_w"]) <= 0.0:
+	if (
+		profile["is_consumer"]
+		and float(profile["idle_w"]) <= 0.0
+		and (
+			not archetype_defaults is Dictionary
+			or not (archetype_defaults as Dictionary).has("idle_w")
+		)
+	):
 		profile["idle_w"] = DEFAULT_IDLE_W
 	return profile
 
@@ -98,6 +105,10 @@ static func output_w(element: SimulationElement) -> float:
 
 
 static func idle_w(element: SimulationElement) -> float:
+	if element != null:
+		var archetype := element.get_archetype()
+		if archetype != null and archetype.wheel_definition != null:
+			return archetype.wheel_definition.idle_w
 	return float(for_element(element).get("idle_w", 0.0))
 
 
