@@ -4,7 +4,8 @@ extends RefCounted
 const STORE_ID := "player"
 const SKY_PROBE_Y := 120.0
 const GROUND_PROBE_MAX_DISTANCE := 200.0
-const PARK_COMPRESSION_RATIO := 0.2
+const PARK_CLEARANCE_M := 0.03
+const DEFAULT_WHEEL_RADIUS_M := 0.4
 const FLAT_SEARCH_RADIUS_M := 24.0
 const FLAT_SEARCH_STEP_M := 3.0
 const FLAT_SAMPLE_SPAN_M := 2.5
@@ -198,8 +199,8 @@ static func _assembly_transform_on_surface(
 	)
 
 
-## Parked ride height: seat so wheel bottoms sit on physics ground at a light
-## spring compression (not full droop travel+radius).
+## Parked ride height: match STATIC wheel visuals (no suspension tick yet).
+## Socket+travel math buried tires because parked meshes sit on grid pivots.
 static func _seat_by_wheel_sockets(
 	session: SimulationSession,
 	assembly_id: int,
@@ -226,6 +227,76 @@ static func _seat_by_wheel_sockets(
 	for pair: Dictionary in WheelSimulationService.discover_pairs(world, assembly_id):
 		if not WheelSimulationService.is_complete_pair(pair):
 			continue
+		var wheel_element: SimulationElement = pair.get("wheel_element")
+		if wheel_element == null:
+			continue
+		var wheel_archetype := wheel_element.get_archetype()
+		if wheel_archetype == null:
+			continue
+		var radius_m := DEFAULT_WHEEL_RADIUS_M
+		if wheel_archetype.wheel_definition != null:
+			radius_m = wheel_archetype.wheel_definition.radius_m
+		var pivot_local := GridPoseUtil.oriented_footprint_pivot(
+			wheel_archetype,
+			wheel_element.origin_cell,
+			wheel_element.orientation_index
+		)
+		var pivot_world: Vector3 = body_xf * pivot_local
+		var surface_variant: Variant = null
+		if terrain != null and tool != null:
+			surface_variant = _ground_point_at_xz(
+				terrain,
+				tool,
+				space_state,
+				Vector2(pivot_world.x, pivot_world.z)
+			)
+		if not surface_variant is Vector3:
+			var physics_y := VoxelSpaceUtil.physics_down_surface_y(
+				space_state,
+				Vector2(pivot_world.x, pivot_world.z),
+				pivot_world.y + 2.0,
+				12.0
+			)
+			if is_finite(physics_y):
+				surface_variant = Vector3(pivot_world.x, physics_y, pivot_world.z)
+		if not surface_variant is Vector3:
+			continue
+		var surface: Vector3 = surface_variant
+		# Tire mesh radius hangs below the visual pivot (cylinder on SteerRoot).
+		var bottom_y := pivot_world.y - radius_m
+		var needed := (surface.y + PARK_CLEARANCE_M) - bottom_y
+		if not found or needed > delta_y:
+			delta_y = needed
+			found = true
+	if not found:
+		return
+	if absf(delta_y) >= 0.01:
+		var motion := assembly.motion.duplicate_state()
+		motion.transform.origin.y += delta_y
+		motion.frozen = true
+		motion.sleeping = true
+		motion.linear_velocity = Vector3.ZERO
+		motion.angular_velocity = Vector3.ZERO
+		session.projection.project_assembly_now(assembly_id, motion)
+		body = session.projection.get_physics_body(assembly_id) as PhysicsBody3D
+		if body == null:
+			return
+		body_xf = body.global_transform
+	_seed_parked_wheel_runtime(world, assembly_id, body, body_xf, space_state)
+
+
+static func _seed_parked_wheel_runtime(
+	world: SimulationWorld,
+	assembly_id: int,
+	body: PhysicsBody3D,
+	body_xf: Transform3D,
+	space_state: PhysicsDirectSpaceState3D
+) -> void:
+	if world == null or body == null or space_state == null:
+		return
+	for pair: Dictionary in WheelSimulationService.discover_pairs(world, assembly_id):
+		if not WheelSimulationService.is_complete_pair(pair):
+			continue
 		var suspension: SimulationElement = pair.get("suspension_element")
 		var wheel_element: SimulationElement = pair.get("wheel_element")
 		if suspension == null or wheel_element == null:
@@ -236,61 +307,44 @@ static func _seat_by_wheel_sockets(
 		)
 		if socket.is_empty():
 			continue
-		var travel_m := (
-			world.ensure_suspension_instance_state(suspension.element_id).travel_m
-		)
-		if travel_m <= 0.0:
-			var sus_def := suspension.get_archetype().suspension_definition
-			travel_m = sus_def.suspension_travel_m if sus_def != null else 0.6
-		var radius_m := 0.4
+		var travel_m := 0.6
+		var sus_def := suspension.get_archetype().suspension_definition
+		if sus_def != null:
+			travel_m = sus_def.suspension_travel_m
+		var state := world.ensure_suspension_instance_state(suspension.element_id)
+		if state.travel_m > 0.0:
+			travel_m = state.travel_m
+		var radius_m := DEFAULT_WHEEL_RADIUS_M
 		var wheel_def := wheel_element.get_archetype().wheel_definition
 		if wheel_def != null:
 			radius_m = wheel_def.radius_m
-		var rest_length := travel_m * (1.0 - PARK_COMPRESSION_RATIO)
-		var socket_world: Vector3 = body_xf * Vector3(socket["origin"])
+		var ray_origin: Vector3 = body_xf * Vector3(socket["origin"])
 		var ray_dir := (
 			body_xf.basis * Vector3(socket["direction"])
 		).normalized()
 		if ray_dir.length_squared() <= 0.0001:
 			continue
-		var surface_variant: Variant = null
-		if terrain != null and tool != null:
-			surface_variant = _ground_point_at_xz(
-				terrain,
-				tool,
-				space_state,
-				Vector2(socket_world.x, socket_world.z)
-			)
-		if not surface_variant is Vector3:
-			var physics_y := VoxelSpaceUtil.physics_down_surface_y(
-				space_state,
-				Vector2(socket_world.x, socket_world.z),
-				socket_world.y + 2.0,
-				12.0
-			)
-			if is_finite(physics_y):
-				surface_variant = Vector3(socket_world.x, physics_y, socket_world.z)
-		if not surface_variant is Vector3:
-			continue
-		var surface: Vector3 = surface_variant
-		var wheel_bottom: Vector3 = (
-			socket_world + ray_dir * (rest_length + radius_m)
+		var query := PhysicsRayQueryParameters3D.create(
+			ray_origin,
+			ray_origin + ray_dir * (travel_m + radius_m)
 		)
-		var needed := surface.y - wheel_bottom.y
-		if not found or needed > delta_y:
-			delta_y = needed
-			found = true
-	if not found:
-		return
-	if absf(delta_y) < 0.01:
-		return
-	var motion := assembly.motion.duplicate_state()
-	motion.transform.origin.y += delta_y
-	motion.frozen = true
-	motion.sleeping = true
-	motion.linear_velocity = Vector3.ZERO
-	motion.angular_velocity = Vector3.ZERO
-	session.projection.project_assembly_now(assembly_id, motion)
+		query.collision_mask = WheelProjectionUtil.RAYCAST_MASK
+		query.exclude = [body.get_rid()]
+		var hit := space_state.intersect_ray(query)
+		var suspension_length := travel_m
+		if not hit.is_empty():
+			var distance := ray_origin.distance_to(hit["position"])
+			suspension_length = clampf(distance - radius_m, 0.0, travel_m)
+		var wheel_center_world := ray_origin + ray_dir * suspension_length
+		world.store_wheel_runtime(wheel_element.element_id, suspension.element_id, {
+			"wheel_center_body_local": body.to_local(wheel_center_world),
+			"suspension_length_m": suspension_length,
+			"compression_m": travel_m - suspension_length,
+			"steering_angle_rad": 0.0,
+			"wheel_speed": 0.0,
+			"grounded": not hit.is_empty(),
+			"status": &"parked",
+		})
 
 
 static func _lowest_surface_y_near(
