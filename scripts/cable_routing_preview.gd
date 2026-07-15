@@ -18,8 +18,6 @@ var _material: StandardMaterial3D
 func _ready() -> void:
 	top_level = true
 	global_transform = Transform3D.IDENTITY
-	_query = get_node(query_path)
-	_tools = get_node(tool_controller_path)
 	_mesh = ImmediateMesh.new()
 	var mesh_instance := MeshInstance3D.new()
 	mesh_instance.mesh = _mesh
@@ -30,10 +28,16 @@ func _ready() -> void:
 	_material.albedo_color = GHOST_COLOR
 	_material.emission_enabled = true
 	_material.emission = GHOST_COLOR
+	_query = get_node_or_null(query_path) as InteractionQuery
+	_tools = get_node_or_null(tool_controller_path) as ToolController
 
 
 func _process(_delta: float) -> void:
+	if _mesh == null:
+		return
 	_mesh.clear_surfaces()
+	if _tools == null or _query == null:
+		return
 	if _tools.active_tool != &"connect":
 		return
 	var pending_id := _tools.connect_pending_element_id()

@@ -62,6 +62,8 @@ func _ready() -> void:
 
 
 func _physics_process(_delta: float) -> void:
+	if _tools == null or _query == null:
+		return
 	var player := get_parent()
 	if (
 		(

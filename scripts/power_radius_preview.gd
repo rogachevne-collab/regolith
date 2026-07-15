@@ -38,6 +38,8 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
+	if _mesh == null:
+		return
 	_mesh.clear_surfaces()
 	if not _should_show():
 		return

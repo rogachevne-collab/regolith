@@ -42,6 +42,8 @@ func _ready() -> void:
 
 
 func _physics_process(_delta: float) -> void:
+	if _tool_controller == null or _query == null:
+		return
 	if _tool_controller.active_tool == &"weld":
 		_update_welder_pose()
 		return
