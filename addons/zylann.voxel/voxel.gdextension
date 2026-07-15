@@ -6,7 +6,8 @@ compatibility_minimum = "4.4.1"
 [libraries]
 ; Relative paths ensure that our GDExtension can be placed anywhere in the project directory.
 
-macos.debug = "./bin/libvoxel.macos.editor.universal.framework/libvoxel.macos.editor.universal"
+; experiment/voxel-size-wip: local arm64 build from Zylann voxel_size branch
+macos.debug = "./bin/libvoxel.macos.editor.arm64.framework/libvoxel.macos.editor.arm64"
 macos.release = "./bin/libvoxel.macos.template_release.universal.framework/libvoxel.macos.template_release.universal"
 
 ios.debug = "./bin/libvoxel.ios.editor.arm64.dylib"

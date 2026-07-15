@@ -324,8 +324,7 @@ func _copy_sdf(
 	voxel_tool.copy(
 		min_cell,
 		buffer,
-		1 << VoxelBuffer.CHANNEL_SDF,
-		false
+		1 << VoxelBuffer.CHANNEL_SDF
 	)
 	return buffer
 

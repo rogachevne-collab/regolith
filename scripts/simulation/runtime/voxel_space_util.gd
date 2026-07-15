@@ -7,8 +7,19 @@ const EPSILON := 0.000001
 static func voxel_size_m(terrain: Node3D) -> float:
 	if terrain == null:
 		return 1.0
-	var scale := terrain.scale
-	return scale.x
+	var node_scale := absf(terrain.scale.x)
+	if node_scale <= EPSILON:
+		node_scale = 1.0
+	# WIP voxel_size: use native size only when Node3D.scale stays at 1.
+	# Release builds may expose get_voxel_size()==1 while still using node scale.
+	if (
+		is_equal_approx(node_scale, 1.0)
+		and terrain.has_method("get_voxel_size")
+	):
+		var native_size := float(terrain.call("get_voxel_size"))
+		if native_size > EPSILON:
+			return native_size
+	return node_scale
 
 
 static func cell_volume_m3(terrain: Node3D) -> float:
@@ -16,10 +27,21 @@ static func cell_volume_m3(terrain: Node3D) -> float:
 	return size * size * size
 
 
+static func _voxel_to_world_transform(terrain: Node3D) -> Transform3D:
+	var xf := terrain.global_transform
+	var size := voxel_size_m(terrain)
+	var node_scale := absf(terrain.scale.x)
+	if node_scale <= EPSILON:
+		node_scale = 1.0
+	if is_equal_approx(node_scale, 1.0) and not is_equal_approx(size, 1.0):
+		xf.basis = xf.basis.scaled(Vector3(size, size, size))
+	return xf
+
+
 static func world_to_local(terrain: Node3D, world_point: Vector3) -> Vector3:
 	if terrain == null:
 		return world_point
-	return terrain.global_transform.affine_inverse() * world_point
+	return _voxel_to_world_transform(terrain).affine_inverse() * world_point
 
 
 static func world_direction_to_local(
@@ -29,14 +51,14 @@ static func world_direction_to_local(
 	if terrain == null or direction.length_squared() <= EPSILON:
 		return direction
 	return (
-		terrain.global_transform.affine_inverse().basis * direction
+		_voxel_to_world_transform(terrain).affine_inverse().basis * direction
 	).normalized()
 
 
 static func local_to_world(terrain: Node3D, local_point: Vector3) -> Vector3:
 	if terrain == null:
 		return local_point
-	return terrain.global_transform * local_point
+	return _voxel_to_world_transform(terrain) * local_point
 
 
 static func world_distance_to_local(

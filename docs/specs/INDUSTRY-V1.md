@@ -564,17 +564,18 @@ those hooks do not define production yield semantics.
 
 ### Voxel scale (v1)
 
-- `VoxelTerrain` в `main.tscn`: uniform scale **0.65** (официальный workaround
-  плагина; свойства `voxel_size` у узла нет).
+- `VoxelTerrain` в `main.tscn`: **`voxel_size = 0.65`**, `Node3D.scale = 1`
+  (ветка `experiment/voxel-size-wip`, бинарь с Zylann `voxel_size`). На
+  `main`/релизе 1.6x остаётся workaround uniform scale **0.65**.
 - `max_view_distance` terrain ≈ **200** локальных вокселей (≈128 м мира /
   0.65); иначе плагин клампит `VoxelViewer` и блоки вокруг игрока не грузятся.
 - `VoxelViewer` игрока: `view_distance` ≈ **197** (128 м / 0.65).
-- **VoxelSpaceUtil:** `VoxelTool.raycast` — **Godot world-space**
-  origin/direction/max_distance (плагин сам учитывает transform terrain);
-  world hit = `origin + direction * hit.distance`. Редактирование SDF
-  (`do_sphere`, …) — через `world_to_local`. При scale ≠ 1 SDF-Y может быть
-  выше mesh/collider; **якорь посадки** (spawn, base, ground placement) берёт Y
-  из physics collider, SDF — fallback до готовности коллизии.
+- **VoxelSpaceUtil:** `voxel_size_m()` читает `get_voxel_size()` если node
+  scale ≈ 1, иначе `scale.x`. `world_to_local` / `local_to_world` учитывают
+  native `voxel_size` через basis scale (как `get_voxel_to_world_transform` в
+  плагине). `VoxelTool.raycast` — **Godot world-space**. Редактирование SDF
+  (`do_sphere`, …) — через `world_to_local`. При чистом node-scale ≠ 1 SDF-Y
+  может расходиться с mesh/collider; native `voxel_size` как раз для этого.
   `generate_collisions = true` на terrain обязателен. Прицел/бур/проекция на
   terrain — physics raycast (collider); SDF-raycast — fallback без collider.
 - **Bootstrap spawn:** gate только по SDF-raycast игрока и корабля; высота
