@@ -16,7 +16,11 @@ const WheelSimulationService := preload(
 	"res://scripts/simulation/runtime/wheel_simulation_service.gd"
 )
 
+const ASSEMBLY_BOUNCE := 0.32
+const ASSEMBLY_FRICTION := 0.42
+
 var _world: SimulationWorld
+var _assembly_physics_material: PhysicsMaterial
 var _bodies: Dictionary = {}
 var _element_records: Dictionary = {}
 var _projected_revision: Dictionary = {}
@@ -498,6 +502,7 @@ func _project_assembly_single(
 	motion.frozen = anchored
 	if locomotive:
 		motion.frozen = false
+		motion.sleeping = false
 	if anchored and not locomotive:
 		motion.linear_velocity = Vector3.ZERO
 		motion.angular_velocity = Vector3.ZERO
@@ -771,7 +776,9 @@ func _create_group_body(
 	if is_static:
 		body = StaticBody3D.new()
 	else:
-		body = FragmentBodyScript.new() as RigidBody3D
+		var rigid := FragmentBodyScript.new() as RigidBody3D
+		rigid.physics_material_override = _get_assembly_physics_material()
+		body = rigid
 	body.name = "%s%d_%d" % [
 		GROUP_BODY_NAME_PREFIX,
 		assembly_id,
@@ -1078,6 +1085,7 @@ func _create_body(
 		else:
 			rigid = FragmentBodyScript.new() as RigidBody3D
 		rigid.freeze = false
+		rigid.physics_material_override = _get_assembly_physics_material()
 		body = rigid
 	body.name = "%s%d" % [BODY_NAME_PREFIX, assembly_id]
 	body.collision_layer = 1
@@ -1095,6 +1103,14 @@ func _apply_collision_profile(
 	if profile is Dictionary:
 		body.collision_layer = int(profile.get("layer", body.collision_layer))
 		body.collision_mask = int(profile.get("mask", body.collision_mask))
+
+
+func _get_assembly_physics_material() -> PhysicsMaterial:
+	if _assembly_physics_material == null:
+		_assembly_physics_material = PhysicsMaterial.new()
+		_assembly_physics_material.friction = ASSEMBLY_FRICTION
+		_assembly_physics_material.bounce = ASSEMBLY_BOUNCE
+	return _assembly_physics_material
 
 
 func _apply_body_groups(
