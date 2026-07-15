@@ -51,20 +51,17 @@ func _on_structural_event(event: Dictionary) -> void:
 		&"world_restored":
 			call_deferred("rebuild_all")
 		&"assembly_spawned", &"assembly_changed":
-			call_deferred("_rebuild_assembly", int(event["assembly_id"]))
+			_rebuild_assembly(int(event["assembly_id"]))
 		&"assembly_removed":
 			_clear_assembly(int(event["assembly_id"]))
 		&"assembly_split":
-			call_deferred("_rebuild_assembly", int(event["survivor_assembly_id"]))
+			_rebuild_assembly(int(event["survivor_assembly_id"]))
 			for mapping_variant: Variant in event.get("new_assemblies", []):
 				if mapping_variant is Dictionary:
-					call_deferred(
-						"_rebuild_assembly",
-						int(mapping_variant["assembly_id"])
-					)
+					_rebuild_assembly(int(mapping_variant["assembly_id"]))
 		&"assembly_merged":
 			_clear_assembly(int(event["loser_assembly_id"]))
-			call_deferred("_rebuild_assembly", int(event["survivor_assembly_id"]))
+			_rebuild_assembly(int(event["survivor_assembly_id"]))
 
 
 func _rebuild_assembly(assembly_id: int) -> void:
@@ -100,10 +97,16 @@ func _sync_assembly(assembly_id: int, delta: float) -> void:
 	var records_variant: Variant = _records_by_assembly.get(assembly_id, [])
 	if not records_variant is Array:
 		return
-	for record_variant: Variant in records_variant:
+	var records: Array = records_variant
+	var stale := false
+	for record_variant: Variant in records:
 		if not record_variant is Dictionary:
 			continue
 		var record: Dictionary = record_variant
+		var root_variant: Variant = record.get("root")
+		if root_variant == null or not is_instance_valid(root_variant):
+			stale = true
+			continue
 		var element_id := int(record.get("element_id", 0))
 		var runtime := _world.get_wheel_runtime(element_id)
 		RoverModuleVisualScript.update_runtime(
@@ -112,6 +115,8 @@ func _sync_assembly(assembly_id: int, delta: float) -> void:
 			float(runtime.get("compression_m", 0.0)),
 			delta
 		)
+	if stale:
+		call_deferred("_rebuild_assembly", assembly_id)
 
 
 func _clear_assembly(assembly_id: int) -> void:

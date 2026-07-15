@@ -21,6 +21,7 @@ static func spawn_on_terrain(
 		return {"ok": false, "error": "anchor_failed"}
 	var revision := _assembly_revision(world, assembly_id)
 	var module_ids: Dictionary = {}
+	revision = _place_deck_frames(world, assembly_id, revision, store_id)
 	var pairs := [
 		{
 			"suspension_cell": Vector3i(-1, 0, 0),
@@ -30,23 +31,23 @@ static func spawn_on_terrain(
 			"key": "fl",
 		},
 		{
-			"suspension_cell": Vector3i(1, 0, 0),
+			"suspension_cell": Vector3i(3, 0, 0),
 			"suspension_face": Vector3i.LEFT,
-			"wheel_cell": Vector3i(1, -1, 0),
+			"wheel_cell": Vector3i(3, -1, 0),
 			"steerable": true,
 			"key": "fr",
 		},
 		{
-			"suspension_cell": Vector3i(0, 0, -1),
-			"suspension_face": Vector3i(0, 0, 1),
-			"wheel_cell": Vector3i(0, -1, -1),
+			"suspension_cell": Vector3i(-1, 0, 1),
+			"suspension_face": Vector3i.RIGHT,
+			"wheel_cell": Vector3i(-1, -1, 1),
 			"steerable": false,
 			"key": "rl",
 		},
 		{
-			"suspension_cell": Vector3i(0, 0, 1),
-			"suspension_face": Vector3i(0, 0, -1),
-			"wheel_cell": Vector3i(0, -1, 1),
+			"suspension_cell": Vector3i(3, 0, 1),
+			"suspension_face": Vector3i.LEFT,
+			"wheel_cell": Vector3i(3, -1, 1),
 			"steerable": false,
 			"key": "rr",
 		},
@@ -153,6 +154,37 @@ static func _spawn_anchor(
 	return int(result.data.get("assembly_id", 0))
 
 
+static func _place_deck_frames(
+	world: SimulationWorld,
+	assembly_id: int,
+	revision: int,
+	store_id: String
+) -> int:
+	for cell: Vector3i in [
+		Vector3i(1, 0, 0),
+		Vector3i(2, 0, 0),
+		Vector3i(0, 0, 1),
+		Vector3i(1, 0, 1),
+		Vector3i(2, 0, 1),
+	]:
+		var placed := _place(
+			world,
+			assembly_id,
+			revision,
+			Slice01Archetypes.rover_frame(),
+			cell,
+			0,
+			store_id
+		)
+		if not placed.is_ok():
+			push_warning(
+				"RoverDemoSpawn: deck frame %s failed: %s" % [cell, placed.reason]
+			)
+			continue
+		revision = int(placed.data["topology_revision"])
+	return revision
+
+
 static func _place_chassis(
 	world: SimulationWorld,
 	assembly_id: int,
@@ -178,7 +210,7 @@ static func _place_chassis(
 		assembly_id,
 		revision,
 		Slice01Archetypes.power_battery_small(),
-		Vector3i(-1, 1, 0),
+		Vector3i(-2, 2, 0),
 		0,
 		store_id
 	)
@@ -191,7 +223,7 @@ static func _place_chassis(
 		assembly_id,
 		revision,
 		Slice01Archetypes.power_distributor_small(),
-		Vector3i(1, 1, 0),
+		Vector3i(0, 3, 0),
 		0,
 		store_id
 	)

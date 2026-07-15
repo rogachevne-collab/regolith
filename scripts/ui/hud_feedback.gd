@@ -227,6 +227,8 @@ func _reason_text(reason: StringName, data: Dictionary = {}) -> String:
 		&"invalid_target":
 			return "Неподходящая цель"
 		&"blocked":
+			if StringName(data.get("detail", &"")) == &"not_locomotive":
+				return "Ровер не готов — нужны колёса и подвеска"
 			return "Действие заблокировано"
 		&"insufficient_material":
 			var resource_id := str(data.get("resource_id", ""))

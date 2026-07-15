@@ -3,6 +3,8 @@ extends "res://scripts/character_motor.gd"
 @export var head_path: NodePath = NodePath("Camera")
 
 var _head: Camera3D
+var _gateway: Node
+var _voxel_viewer: VoxelViewer
 var _spawn_locked := true
 var _spawn_settling := false
 var _settled_frames := 0
@@ -72,24 +74,51 @@ func current_vehicle() -> Node3D:
 func _ready() -> void:
 	super._ready()
 	_head = get_node(head_path)
+	_voxel_viewer = get_node_or_null("VoxelViewer") as VoxelViewer
 	_world_parent = get_parent()
 	set_physics_process(false)
+	call_deferred("_cache_gateway")
+
+
+func _cache_gateway() -> void:
+	var gateway := get_tree().get_first_node_in_group(
+		&"world_command_gateway"
+	)
+	if gateway != null and gateway.has_method("tick_rover_locomotion_input"):
+		_gateway = gateway
+
+
+func _process(_delta: float) -> void:
+	if _voxel_viewer != null and _current_vehicle != null:
+		_voxel_viewer.global_position = global_position
+	if (
+		_current_vehicle != null
+		and _gateway != null
+		and _gateway.has_method("tick_rover_locomotion_input")
+	):
+		_gateway.call("tick_rover_locomotion_input")
 
 
 func enter_vehicle(vehicle: Node3D, seat_position: Vector3) -> void:
+	if vehicle == null or not is_instance_valid(vehicle):
+		return
 	_current_vehicle = vehicle
 	set_physics_process(false)
 	velocity = Vector3.ZERO
 	clear_support_frame()
 	$CollisionShape3D.set_deferred("disabled", true)
+	_detach_voxel_viewer()
 	reparent(vehicle, false)
 	position = seat_position
 	rotation = Vector3.ZERO
 	$Drill.set_physics_process(false)
 	$Camera/DrillVisual.visible = false
+	if _voxel_viewer != null:
+		_voxel_viewer.global_position = global_position
 
 
 func exit_vehicle(world_position: Vector3) -> void:
+	_reattach_voxel_viewer()
 	reparent(_world_parent, true)
 	global_position = world_position
 	_current_vehicle = null
@@ -99,6 +128,20 @@ func exit_vehicle(world_position: Vector3) -> void:
 	$Drill.set_physics_process(true)
 	$Camera/DrillVisual.visible = true
 	set_physics_process(true)
+
+
+func _detach_voxel_viewer() -> void:
+	if _voxel_viewer == null or _world_parent == null:
+		return
+	if _voxel_viewer.get_parent() == self:
+		_voxel_viewer.reparent(_world_parent, true)
+
+
+func _reattach_voxel_viewer() -> void:
+	if _voxel_viewer == null:
+		return
+	if _voxel_viewer.get_parent() != self:
+		_voxel_viewer.reparent(self, true)
 
 
 func _physics_process(delta: float) -> void:

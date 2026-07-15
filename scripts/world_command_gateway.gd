@@ -48,6 +48,7 @@ func _ready() -> void:
 	_session = get_node_or_null(simulation_session_path) as SimulationSession
 	_voxel_tool = _terrain.get_voxel_tool()
 	_voxel_tool.channel = VoxelBuffer.CHANNEL_SDF
+	add_to_group(&"world_command_gateway")
 	for archetype_id: String in ToolController.CONSTRUCTION_ARCHETYPES:
 		_get_archetype(archetype_id)
 	var piston_head := Slice01Archetypes.piston_head()
@@ -463,10 +464,21 @@ func _toggle_control_seat(
 	command: Dictionary,
 	target: Dictionary
 ) -> Dictionary:
+	var metadata: Dictionary = target.get("metadata", {})
 	if (
 		StringName(target["target_kind"])
 		!= InteractionHit.KIND_CONTROL_SEAT
 	):
+		if (
+			str(metadata.get("archetype_id", "")) == "cockpit"
+			and int(metadata.get("element_id", 0)) > 0
+		):
+			var source: Node3D = command.get("source")
+			if source == null:
+				return _result(&"not_ready")
+			if _is_rover_seated(source):
+				return _exit_rover_seat(source)
+			return _enter_rover_seat(source, metadata)
 		return _result(&"invalid_target")
 	var source: Node3D = command.get("source")
 	if source == null:
@@ -474,7 +486,6 @@ func _toggle_control_seat(
 	if _is_rover_seated(source):
 		return _exit_rover_seat(source)
 	var vehicle: Object = target.get("collider")
-	var metadata: Dictionary = target.get("metadata", {})
 	if metadata.has("element_id"):
 		return _enter_rover_seat(source, metadata)
 	if (
@@ -499,11 +510,12 @@ func is_rover_seated(player: Node = null) -> bool:
 
 
 func tick_rover_locomotion_input() -> void:
-	if _session == null or _rover_seat_assembly_id <= 0:
+	if _session == null:
 		return
-	var locomotion := _session.world.get_locomotion_controller(
-		_rover_seat_assembly_id
-	)
+	var assembly_id := _resolve_active_rover_assembly_id()
+	if assembly_id <= 0:
+		return
+	var locomotion := _session.world.get_locomotion_controller(assembly_id)
 	var drive := (
 		Input.get_action_strength(&"move_forward")
 		- Input.get_action_strength(&"move_back")
@@ -514,6 +526,26 @@ func tick_rover_locomotion_input() -> void:
 	locomotion.set_brake_command(
 		1.0 if Input.is_action_pressed(&"jump") else 0.0
 	)
+	if locomotion.has_active_input():
+		_wake_rover_body(assembly_id)
+
+
+func _resolve_active_rover_assembly_id() -> int:
+	if _rover_seat_assembly_id > 0:
+		return _rover_seat_assembly_id
+	var player := _rover_seat_player
+	if player == null:
+		return 0
+	if (
+		player.has_method("is_in_vehicle")
+		and not player.call("is_in_vehicle")
+	):
+		return 0
+	if player.has_method("current_vehicle"):
+		var vehicle: Node = player.call("current_vehicle")
+		if vehicle != null and vehicle.has_meta("assembly_id"):
+			return int(vehicle.get_meta("assembly_id"))
+	return 0
 
 
 func _is_rover_seated(player: Node3D) -> bool:
@@ -537,7 +569,7 @@ func _enter_rover_seat(
 		_session.world,
 		assembly_id
 	):
-		return _result(&"blocked")
+		return _result(&"blocked", {"detail": &"not_locomotive"})
 	var body := _session.projection.get_physics_body(assembly_id)
 	if body == null:
 		return _result(&"not_ready")
@@ -545,6 +577,10 @@ func _enter_rover_seat(
 	if element == null:
 		return _result(&"invalid_target")
 	var seat_offset: Vector3 = WheelPlacementUtil.seat_offset_local(element)
+	_prepare_rover_for_drive(assembly_id)
+	body = _session.projection.get_physics_body(assembly_id)
+	if body == null or not is_instance_valid(body):
+		return _result(&"not_ready")
 	if player.has_method("set_gameplay_input_enabled"):
 		player.call("set_gameplay_input_enabled", false)
 	if player.has_method("enter_vehicle"):
@@ -552,10 +588,108 @@ func _enter_rover_seat(
 	_rover_seat_player = player
 	_rover_seat_assembly_id = assembly_id
 	_rover_seat_element_id = element_id
+	if _session.wheel_visuals != null:
+		_session.wheel_visuals.call_deferred(
+			"rebuild_assembly",
+			assembly_id
+		)
 	return _result(&"ok", {
 		"assembly_id": assembly_id,
 		"element_id": element_id,
 	})
+
+
+func _prepare_rover_for_drive(assembly_id: int) -> void:
+	if _session == null or _session.world == null or assembly_id <= 0:
+		return
+	var world := _session.world
+	_ensure_rover_power_network(world, assembly_id)
+	IndustryElectricBudget.apply_tick(world, 0.25)
+	_wake_rover_body(assembly_id)
+	if not _rover_has_powered_wheel(world, assembly_id):
+		push_warning(
+			"Rover %d: wheels have no distributor power — check battery wire"
+			% assembly_id
+		)
+
+
+func _rover_has_powered_wheel(
+	world: SimulationWorld,
+	assembly_id: int
+) -> bool:
+	for pair: Dictionary in WheelSimulationService.discover_pairs(
+		world,
+		assembly_id
+	):
+		if not WheelSimulationService.is_complete_pair(pair):
+			continue
+		var wheel_element: SimulationElement = pair.get("wheel_element")
+		if wheel_element == null:
+			continue
+		var runtime := world.ensure_industry_element_runtime(
+			wheel_element.element_id
+		)
+		if runtime.machine_enabled and runtime.powered:
+			return true
+	return false
+
+
+func _ensure_rover_power_network(
+	world: SimulationWorld,
+	assembly_id: int
+) -> void:
+	var assembly := world.get_assembly_raw(assembly_id)
+	if assembly == null:
+		return
+	var battery_id := 0
+	var distributor_id := 0
+	for element_id: int in assembly.element_ids:
+		var element := world.get_element(element_id)
+		if element == null or not element.is_operational():
+			continue
+		match element.archetype_id:
+			"power_battery_small", "power_battery":
+				battery_id = element_id
+			"power_distributor_small", "power_distributor":
+				distributor_id = element_id
+	if battery_id <= 0 or distributor_id <= 0:
+		return
+	if not IndustryElectricBudget.is_element_on_supplied_network(
+		world,
+		distributor_id
+	):
+		world.connect_network(
+			battery_id,
+			"power_out",
+			distributor_id,
+			"power_in"
+		)
+	var battery := world.get_element(battery_id)
+	if battery == null:
+		return
+	var battery_runtime := world.ensure_industry_element_runtime(battery_id)
+	if battery_runtime.battery_kwh <= 0.001:
+		battery_runtime.battery_kwh = IndustryElectricProfile.battery_max_kwh(
+			battery
+		)
+
+
+func _wake_rover_body(assembly_id: int) -> void:
+	if _session == null or _session.projection == null or assembly_id <= 0:
+		return
+	var body := _session.projection.get_physics_body(assembly_id)
+	if body is StaticBody3D:
+		var assembly := _session.world.get_assembly_raw(assembly_id)
+		if assembly != null:
+			var motion := assembly.motion.duplicate_state()
+			motion.frozen = false
+			motion.sleeping = false
+			_session.projection.project_assembly_now(assembly_id, motion)
+			body = _session.projection.get_physics_body(assembly_id)
+	if body is RigidBody3D:
+		var rigid := body as RigidBody3D
+		rigid.freeze = false
+		rigid.sleeping = false
 
 
 func _exit_rover_seat(player: Node3D) -> Dictionary:
