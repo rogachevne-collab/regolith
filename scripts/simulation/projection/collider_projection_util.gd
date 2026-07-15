@@ -66,8 +66,22 @@ static func assembly_center_of_mass_world(
 	world,
 	assembly: SimulationAssembly
 ) -> Vector3:
-	var local_com: Vector3 = assembly_center_of_mass_local(world, assembly)
-	return assembly.motion.transform * local_com
+	if world == null or assembly == null or assembly.element_ids.is_empty():
+		return Vector3.ZERO
+	var weighted := Vector3.ZERO
+	var total_mass := 0.0
+	for element_id: int in assembly.element_ids:
+		var element: SimulationElement = world.get_element(element_id)
+		if element == null:
+			continue
+		var mass := element.total_mass_kg(world)
+		if mass <= 0.0:
+			continue
+		weighted += world.element_world_transform(element_id).origin * mass
+		total_mass += mass
+	if total_mass <= 0.0:
+		return assembly.motion.transform.origin
+	return weighted / total_mass
 
 
 static func build_collision_shapes(

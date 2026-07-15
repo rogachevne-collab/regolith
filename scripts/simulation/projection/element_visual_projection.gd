@@ -51,6 +51,7 @@ func rebuild_assembly(assembly_id: int) -> void:
 func _process(delta: float) -> void:
 	if _world == null:
 		return
+	_resync_replaced_bodies()
 	for element_id_variant: Variant in _drill_rotors.keys():
 		var element_id := int(element_id_variant)
 		var rotor_variant: Variant = _drill_rotors[element_id]
@@ -68,6 +69,26 @@ func _process(delta: float) -> void:
 			operation_vfx.visible = running
 		if running:
 			rotor.rotate_x(DRILL_SPIN_SPEED * delta)
+
+
+## Physics may replace StaticBody→RigidBody (rover activate) without a
+## structural event; visuals were children of the freed body.
+func _resync_replaced_bodies() -> void:
+	if _physics_projection == null:
+		return
+	var stale: Array[int] = []
+	for assembly_id_variant: Variant in _known_bodies.keys():
+		var assembly_id := int(assembly_id_variant)
+		var known: Variant = _known_bodies.get(assembly_id)
+		var current := _physics_projection.get_physics_body(assembly_id)
+		if (
+			current == null
+			or not is_instance_valid(known)
+			or known != current
+		):
+			stale.append(assembly_id)
+	for assembly_id: int in stale:
+		_rebuild_assembly(assembly_id)
 
 
 func _stationary_drill_spinning(element: SimulationElement) -> bool:
@@ -254,8 +275,16 @@ func _material_for(element: SimulationElement) -> StandardMaterial3D:
 	var archetype := element.get_archetype()
 	if (
 		archetype != null
-		and archetype.resource_path.begins_with(
-			"res://resources/archetypes/rover/"
+		and (
+			archetype.resource_path.begins_with(
+				"res://resources/archetypes/slice01/"
+			)
+			and (
+				element.archetype_id.begins_with("rover_")
+				or element.archetype_id.begins_with("wheel_")
+				or element.archetype_id == "drive_wheel"
+				or element.archetype_id == "cockpit"
+			)
 		)
 	):
 		return _materials["rover"]

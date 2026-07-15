@@ -98,11 +98,10 @@ static func port_world_transform(
 ) -> Transform3D:
 	if world == null or element == null or port == null:
 		return Transform3D.IDENTITY
-	var assembly := world.get_assembly_raw(element.assembly_id)
-	if assembly == null:
+	if world.get_assembly_raw(element.assembly_id) == null:
 		return Transform3D.IDENTITY
 	return (
-		assembly.motion.transform
+		world.element_group_motion(element.element_id).transform
 		* port_local_transform(element, port, face_offset)
 	)
 
@@ -136,11 +135,8 @@ static func port_marker_world_transform(
 ) -> Transform3D:
 	if world == null or element == null or port == null:
 		return Transform3D.IDENTITY
-	var assembly := world.get_assembly_raw(element.assembly_id)
-	if assembly == null:
-		return Transform3D.IDENTITY
 	return (
-		assembly.motion.transform
+		world.element_group_motion(element.element_id).transform
 		* port_marker_local_transform(element, port, face_offset)
 	)
 

@@ -429,7 +429,6 @@ func _legacy_rank_faces(
 			continue
 		if not _assembly_has_anchor(world, assembly.assembly_id):
 			continue
-		var assembly_transform := assembly.motion.transform
 		for element_id: int in assembly.element_ids:
 			var element := world.get_element(element_id)
 			if element == null:
@@ -437,6 +436,9 @@ func _legacy_rank_faces(
 			var element_archetype := element.get_archetype()
 			if element_archetype == null:
 				continue
+			var group_transform := (
+				world.element_group_motion(element_id).transform
+			)
 			for descriptor: GridSurfaceUtil.SurfaceFaceDescriptor in (
 				GridSurfaceUtil.get_surface_descriptors(
 					element_archetype,
@@ -449,7 +451,7 @@ func _legacy_rank_faces(
 				var world_point := ConstructionSnapFaceCache._surface_face_world_point(
 					element,
 					descriptor,
-					assembly_transform
+					group_transform
 				)
 				if not _is_in_corridor(
 					ray_origin,
@@ -473,7 +475,7 @@ func _legacy_rank_faces(
 						"collider_local_cell": descriptor.local_cell,
 						"world_point": world_point,
 						"world_normal": (
-							assembly_transform.basis
+							group_transform.basis
 							* Vector3(port_direction).normalized()
 						),
 					},

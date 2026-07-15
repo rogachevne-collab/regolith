@@ -51,7 +51,10 @@ static func plan(
 			store_id,
 			held_attach_pivot
 		)
-		assembly_world_transform = assembly.motion.transform
+		assembly_world_transform = snap_context.get(
+			"assembly_world_transform",
+			assembly.motion.transform
+		) as Transform3D
 		world_transform = (
 			assembly_world_transform
 			* GridPoseUtil.element_local_transform(
@@ -166,12 +169,30 @@ static func _dominant_grid_direction(direction: Vector3) -> Vector3i:
 	return Vector3i.BACK if direction.z >= 0.0 else Vector3i.FORWARD
 
 
+static func _attach_frame_for_target(
+	world: SimulationWorld,
+	assembly: SimulationAssembly,
+	metadata: Dictionary
+) -> Transform3D:
+	var element_id := int(metadata.get("element_id", 0))
+	if element_id > 0 and world.get_element(element_id) != null:
+		return world.element_group_motion(element_id).transform
+	if assembly != null and assembly.motion != null:
+		return assembly.motion.transform
+	return Transform3D.IDENTITY
+
+
 static func _attach_snap_context(
 	world: SimulationWorld,
 	assembly: SimulationAssembly,
 	target: Dictionary,
 	metadata: Dictionary
 ) -> Dictionary:
+	var assembly_world_transform := _attach_frame_for_target(
+		world,
+		assembly,
+		metadata
+	)
 	if (
 		metadata.has("locked_target_port_cell")
 		and metadata.has("locked_snap_dir")
@@ -179,15 +200,15 @@ static func _attach_snap_context(
 		return {
 			"target_port_cell": metadata["locked_target_port_cell"],
 			"snap_dir": metadata["locked_snap_dir"],
-			"assembly_world_transform": assembly.motion.transform,
+			"assembly_world_transform": assembly_world_transform,
 		}
 	var point := Vector3(target.get("point", Vector3.ZERO))
 	var normal := Vector3(target.get("normal", Vector3.UP)).normalized()
-	var local_normal := assembly.motion.transform.basis.inverse() * normal
+	var local_normal := assembly_world_transform.basis.inverse() * normal
 	var snap_dir := _dominant_grid_direction(local_normal)
 	var target_port_cell: Vector3i
 	if point.is_finite() and normal.is_finite() and normal.length_squared() > 0.0:
-		var local_point := assembly.motion.transform.affine_inverse() * (
+		var local_point := assembly_world_transform.affine_inverse() * (
 			point + normal * SURFACE_EPSILON
 		)
 		target_port_cell = GridMetric.meters_to_cell_floor(local_point) - snap_dir
@@ -211,7 +232,7 @@ static func _attach_snap_context(
 	return {
 		"target_port_cell": target_port_cell,
 		"snap_dir": snap_dir,
-		"assembly_world_transform": assembly.motion.transform,
+		"assembly_world_transform": assembly_world_transform,
 	}
 
 
@@ -295,7 +316,10 @@ static func _plan_for_attach_origin(
 	command.assembly_id = assembly_id
 	command.expected_assembly_revision = assembly.topology_revision
 	command.origin_cell = origin_cell
-	var assembly_world_transform := assembly.motion.transform
+	var assembly_world_transform: Transform3D = snap_context.get(
+		"assembly_world_transform",
+		assembly.motion.transform
+	) as Transform3D
 	var world_transform := (
 		assembly_world_transform
 		* GridPoseUtil.element_local_transform(

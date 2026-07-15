@@ -69,14 +69,9 @@ static func element_world_position(
 	world: SimulationWorld,
 	element: SimulationElement
 ) -> Vector3:
-	var assembly := world.get_assembly_raw(element.assembly_id)
-	if assembly == null:
+	if world == null or element == null:
 		return Vector3.ZERO
-	var local := GridPoseUtil.element_local_transform(
-		element.origin_cell,
-		element.orientation_index
-	)
-	return assembly.motion.transform * local.origin
+	return world.element_world_transform(element.element_id).origin
 
 
 ## A component is "supplied" when it has an enabled operational source or

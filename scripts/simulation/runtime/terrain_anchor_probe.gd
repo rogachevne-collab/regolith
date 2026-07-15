@@ -22,20 +22,23 @@ static func is_construction_archetype(archetype_id: String) -> bool:
 
 static func touching_element_ids(
 	voxel_tool: VoxelTool,
+	world: SimulationWorld,
 	assembly: SimulationAssembly,
 	elements: Array[SimulationElement],
 	space_state: PhysicsDirectSpaceState3D = null,
 	terrain: VoxelTerrain = null
 ) -> Array[int]:
 	var touching: Array[int] = []
-	if assembly == null:
+	if assembly == null or world == null:
 		return touching
-	var assembly_transform := assembly.motion.transform
 	for element: SimulationElement in elements:
 		if not is_construction_archetype(element.archetype_id):
 			continue
+		var group_transform := (
+			world.element_group_motion(element.element_id).transform
+		)
 		if element_touches_terrain(
-			assembly_transform,
+			group_transform,
 			element,
 			space_state,
 			voxel_tool,

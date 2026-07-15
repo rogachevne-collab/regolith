@@ -15,6 +15,9 @@ const PistonProjectionUtil := preload(
 const WheelSimulationService := preload(
 	"res://scripts/simulation/runtime/wheel_simulation_service.gd"
 )
+const BodyGroupMotionUtilScript := preload(
+	"res://scripts/simulation/runtime/body_group_motion_util.gd"
+)
 
 const ASSEMBLY_BOUNCE := 0.32
 const ASSEMBLY_FRICTION := 0.42
@@ -113,34 +116,6 @@ func compute_b_to_a_grid(
 	)
 
 
-func register_mounted_body(
-	assembly_id: int,
-	body: RigidBody3D
-) -> void:
-	if body == null:
-		return
-	var projected := get_physics_body(assembly_id)
-	if projected != null and projected != body:
-		_remove_body(assembly_id)
-	_mounted_bodies[assembly_id] = body
-	body.set_meta("assembly_id", assembly_id)
-
-
-func mount_assembly_body_now(
-	assembly_id: int,
-	body: RigidBody3D
-) -> bool:
-	register_mounted_body(assembly_id, body)
-	if _world == null or _world.get_assembly_raw(assembly_id) == null:
-		return false
-	_project_assembly(assembly_id, _capture_body_motion(body))
-	return get_physics_body(assembly_id) == body
-
-
-func unregister_mounted_body(assembly_id: int) -> void:
-	_mounted_bodies.erase(assembly_id)
-
-
 func set_collision_profile(
 	assembly_id: int,
 	layer: int,
@@ -209,8 +184,23 @@ func _physics_process(delta: float) -> void:
 	_tick_wheel_pairs(delta)
 	for assembly_id: int in _sorted_int_keys(_bodies):
 		var assembly: SimulationAssembly = _world.get_assembly_raw(assembly_id)
+		if assembly == null or assembly.tombstoned:
+			continue
+		var group_bodies: Variant = _assembly_group_bodies.get(assembly_id)
+		if group_bodies is Dictionary and not (group_bodies as Dictionary).is_empty():
+			var motions: Dictionary = {}
+			for group_id_variant: Variant in (group_bodies as Dictionary).keys():
+				var group_body: PhysicsBody3D = (
+					(group_bodies as Dictionary).get(group_id_variant)
+					as PhysicsBody3D
+				)
+				if group_body == null:
+					continue
+				motions[int(group_id_variant)] = _capture_body_motion(group_body)
+			_world.sync_assembly_body_group_motions(assembly_id, motions)
+			continue
 		var body: PhysicsBody3D = _bodies[assembly_id] as PhysicsBody3D
-		if assembly == null or assembly.tombstoned or body == null:
+		if body == null:
 			continue
 		_world.sync_assembly_motion(assembly_id, _capture_body_motion(body))
 
@@ -605,6 +595,11 @@ func _project_assembly_multibody(
 		)
 		seed_motion.frozen = false
 		seed_motion.sleeping = false
+	_world.sync_assembly_motion(assembly_id, seed_motion)
+	assembly.clear_body_group_motions()
+	var group_motions: Dictionary = (
+		BodyGroupMotionUtilScript.reconstruct_all_group_motions(_world, assembly_id)
+	)
 	var groups_map: Dictionary = {}
 	var carriage_group_ids: Dictionary = {}
 	for spec_variant: Variant in compiled.get("piston_specs", []):
@@ -636,7 +631,10 @@ func _project_assembly_multibody(
 			assembly_id,
 			element_ids
 		)
-		body.global_transform = seed_motion.transform
+		var group_motion: AssemblyMotionState = group_motions.get(group_id)
+		if group_motion == null:
+			group_motion = seed_motion
+		body.global_transform = group_motion.transform
 		if body is RigidBody3D:
 			var rigid: RigidBody3D = body as RigidBody3D
 			rigid.mass = maxf(
@@ -660,9 +658,9 @@ func _project_assembly_multibody(
 				rigid.sleeping = true
 				rigid.freeze = true
 			else:
-				rigid.linear_velocity = seed_motion.linear_velocity
-				rigid.angular_velocity = seed_motion.angular_velocity
-				rigid.sleeping = seed_motion.sleeping
+				rigid.linear_velocity = group_motion.linear_velocity
+				rigid.angular_velocity = group_motion.angular_velocity
+				rigid.sleeping = group_motion.sleeping
 				rigid.freeze = false
 				# Impact bodies never enable custom_integrator (Jolt would
 				# drop piston forces); carriage keeps the signal-based mode.
@@ -677,6 +675,11 @@ func _project_assembly_multibody(
 		_apply_collision_profile(assembly_id, body)
 		_apply_body_groups(assembly_id, body)
 		groups_map[group_id] = body
+		_world.sync_assembly_body_group_motion(
+			assembly_id,
+			group_id,
+			group_motion
+		)
 
 	_assembly_group_bodies[assembly_id] = groups_map
 	_root_group_ids[assembly_id] = root_group_id
@@ -722,7 +725,9 @@ func _project_assembly_multibody(
 				definition
 			)
 		)
-		var axis_world: Vector3 = seed_motion.transform.basis * axis_local
+		var axis_world: Vector3 = (
+			base_body.global_transform.basis * axis_local
+		).normalized()
 		var base_anchor: Vector3 = (
 			PistonProjectionUtil.port_anchor_assembly_local(
 				base_element,
@@ -744,7 +749,7 @@ func _project_assembly_multibody(
 		add_child(joint_node)
 		joint_node.global_transform = Transform3D(
 			PistonProjectionUtil.basis_from_axis(axis_world),
-			seed_motion.transform * base_anchor
+			base_body.global_transform * base_anchor
 		)
 		joint_node.node_a = joint_node.get_path_to(base_body)
 		joint_node.node_b = joint_node.get_path_to(head_body)

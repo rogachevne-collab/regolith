@@ -19,6 +19,7 @@ func _run_tests() -> void:
 	var tests: Array[Callable] = [
 		_test_piston_atomic_placement,
 		_test_body_group_compiler,
+		_test_reconstruct_carriage_from_extension,
 		_test_piston_dual_anchor_root_group,
 		_test_snapshot_v6_roundtrip,
 		_test_piston_snapshot_tuning_migration,
@@ -168,6 +169,77 @@ func _test_body_group_compiler() -> bool:
 	if head_group <= 0 or head_group != platform_group:
 		world.free()
 		return _fail("head branch did not share carriage body group")
+	world.free()
+	return true
+
+
+func _test_reconstruct_carriage_from_extension() -> bool:
+	var world := SimulationWorld.new()
+	world.ensure_resource_store("player")
+	world.set_resource_amount("player", "construction_component", 100.0)
+	world.get_archetype_registry().register(PISTON_HEAD)
+	var foundation := _spawn(
+		world,
+		_single_blueprint(Slice01Archetypes.foundation()),
+		GridTransform.identity()
+	)
+	var assembly_id := int(foundation.data["assembly_id"])
+	var frame := _place_frame(world, assembly_id, Vector3i(4, 0, 0), foundation)
+	if not frame.is_ok():
+		world.free()
+		return _fail("reconstruct frame setup failed")
+	var piston := _place_piston(world, assembly_id, Vector3i(5, 0, 0), frame)
+	if not piston.is_ok():
+		world.free()
+		return _fail("reconstruct piston setup failed")
+	var joint_id := int(piston.data.get("piston_joint_id", 0))
+	var head_id := int(piston.data["head_element_id"])
+	var joint := world.get_joint(joint_id)
+	if joint == null or joint.motor == null:
+		world.free()
+		return _fail("missing piston joint")
+	var head_group := world.body_group_id_for_element(head_id)
+	var root_group := world.root_body_group_id(assembly_id)
+	if head_group <= 0 or head_group == root_group:
+		world.free()
+		return _fail("expected distinct carriage group")
+	var root_motion := AssemblyMotionState.new()
+	root_motion.transform = Transform3D(Basis.IDENTITY, Vector3(10.0, 2.0, 3.0))
+	if not world.sync_assembly_motion(assembly_id, root_motion):
+		world.free()
+		return _fail("root motion sync failed")
+	joint.motor.observed_position_m = joint.motor.lower_limit_m
+	joint.motor.observed_position_m = joint.motor.clamp_observed_position()
+	var retracted := world.get_body_group_motion(assembly_id, head_group)
+	var target_extension := minf(
+		joint.motor.lower_limit_m + 0.5,
+		joint.motor.upper_limit_m
+	)
+	joint.motor.observed_position_m = target_extension
+	joint.motor.observed_position_m = joint.motor.clamp_observed_position()
+	var extended := world.get_body_group_motion(assembly_id, head_group)
+	var travel := (
+		extended.transform.origin - retracted.transform.origin
+	).length()
+	var expected_travel := absf(
+		joint.motor.observed_position_m - joint.motor.lower_limit_m
+	)
+	if absf(travel - expected_travel) > 0.05:
+		world.free()
+		return _fail(
+			"carriage reconstruct travel %.3f expected ~%.3f"
+			% [travel, expected_travel]
+		)
+	var element_tf := world.element_world_transform(head_id)
+	var group_tf := extended.transform
+	var head_element := world.get_element(head_id)
+	var local := GridPoseUtil.element_local_transform(
+		head_element.origin_cell,
+		head_element.orientation_index
+	)
+	if not element_tf.is_equal_approx(group_tf * local):
+		world.free()
+		return _fail("element_world_transform mismatch")
 	world.free()
 	return true
 

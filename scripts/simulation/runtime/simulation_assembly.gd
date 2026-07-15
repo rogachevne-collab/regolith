@@ -6,7 +6,11 @@ const _SCRIPT := preload("res://scripts/simulation/runtime/simulation_assembly.g
 var assembly_id: int = 0
 var topology_revision: int = 0
 var grid_frame: GridTransform
+## Root body-group pose/velocity only. Child groups live in body_group_motions
+## (live sync) or are reconstructed from piston observed state.
 var motion: AssemblyMotionState
+## int group_id -> AssemblyMotionState for non-root groups (transient live truth).
+var body_group_motions: Dictionary = {}
 var element_ids: Array[int] = []
 var tombstoned: bool = false
 var redirect_to: int = 0
@@ -15,10 +19,16 @@ var redirect_to: int = 0
 func _init() -> void:
 	grid_frame = GridTransform.identity()
 	motion = AssemblyMotionState.new()
+	body_group_motions = {}
 
 
 func bump_revision() -> void:
 	topology_revision += 1
+	body_group_motions.clear()
+
+
+func clear_body_group_motions() -> void:
+	body_group_motions.clear()
 
 
 func to_dict() -> Dictionary:

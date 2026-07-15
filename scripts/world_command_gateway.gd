@@ -74,6 +74,7 @@ func _probe_assembly_terrain_contact(
 	var space_state: PhysicsDirectSpaceState3D = _physics_space_state()
 	return TerrainAnchorProbe.touching_element_ids(
 		_voxel_tool,
+		_session.world,
 		assembly,
 		elements,
 		space_state,
@@ -402,10 +403,9 @@ func _stationary_drill_working_frame(element: SimulationElement) -> Transform3D:
 	var body := _stationary_drill_physics_body(element)
 	if body != null:
 		return body.global_transform
-	var assembly := _session.world.get_assembly_raw(element.assembly_id)
-	if assembly == null:
+	if _session == null or _session.world == null or element == null:
 		return Transform3D.IDENTITY
-	return assembly.motion.transform
+	return _session.world.element_group_motion(element.element_id).transform
 
 
 func _stationary_drill_physics_body(
@@ -595,11 +595,14 @@ func _enter_rover_seat(
 	_rover_seat_player = player
 	_rover_seat_assembly_id = assembly_id
 	_rover_seat_element_id = element_id
+	# Activate may replace StaticBody→RigidBody and free mesh children;
+	# rebuild visuals onto the live body (wheels need module meshes first).
+	if _session.visuals != null:
+		_session.visuals.rebuild_assembly(assembly_id)
+	if _session.piston_visuals != null:
+		_session.piston_visuals.rebuild_assembly(assembly_id)
 	if _session.wheel_visuals != null:
-		_session.wheel_visuals.call_deferred(
-			"rebuild_assembly",
-			assembly_id
-		)
+		_session.wheel_visuals.rebuild_assembly(assembly_id)
 	return _result(&"ok", {
 		"assembly_id": assembly_id,
 		"element_id": element_id,

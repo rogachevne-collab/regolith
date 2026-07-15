@@ -139,7 +139,6 @@ func _rebuild_assembly(assembly_id: int) -> void:
 	_assembly_signatures[assembly_id] = _assembly_signature(assembly)
 	if not _anchored_assembly_ids.has(assembly_id):
 		return
-	var assembly_transform := assembly.motion.transform
 	for element_id: int in assembly.element_ids:
 		var element := _world.get_element(element_id)
 		if element == null:
@@ -147,6 +146,9 @@ func _rebuild_assembly(assembly_id: int) -> void:
 		var archetype := element.get_archetype()
 		if archetype == null:
 			continue
+		var assembly_transform := (
+			_world.element_group_motion(element.element_id).transform
+		)
 		for descriptor: GridSurfaceUtil.SurfaceFaceDescriptor in (
 			GridSurfaceUtil.get_surface_descriptors(
 				archetype,
@@ -214,10 +216,10 @@ func _add_element_faces(assembly_id: int, element_id: int) -> void:
 			"world_point": _surface_face_world_point(
 				element,
 				descriptor,
-				assembly.motion.transform
+				_world.element_group_motion(element.element_id).transform
 			),
 			"world_normal": (
-				assembly.motion.transform.basis
+				_world.element_group_motion(element.element_id).transform.basis
 				* Vector3(port_direction).normalized()
 			),
 		})
@@ -275,12 +277,28 @@ func _sorted_live_assembly_ids() -> Array[int]:
 
 func _assembly_signature(assembly: SimulationAssembly) -> String:
 	var transform := assembly.motion.transform
-	return "%d|%s|%s|%s|%s" % [
+	var group_bits := ""
+	var group_ids: Array = assembly.body_group_motions.keys()
+	group_ids.sort()
+	for group_id_variant: Variant in group_ids:
+		var group_motion: AssemblyMotionState = (
+			assembly.body_group_motions.get(group_id_variant)
+		)
+		if group_motion == null:
+			continue
+		var gt := group_motion.transform
+		group_bits += "|%d:%s:%s" % [
+			int(group_id_variant),
+			gt.origin,
+			gt.basis.y,
+		]
+	return "%d|%s|%s|%s|%s%s" % [
 		assembly.topology_revision,
 		transform.origin,
 		transform.basis.x,
 		transform.basis.y,
 		transform.basis.z,
+		group_bits,
 	]
 
 

@@ -1,6 +1,10 @@
 class_name SimulationWorld
 extends Node
 
+const BodyGroupMotionUtilScript := preload(
+	"res://scripts/simulation/runtime/body_group_motion_util.gd"
+)
+
 signal structural_event(event: Dictionary)
 signal structural_command_completed(
 	command_id: int,
@@ -735,7 +739,7 @@ func sync_assembly_motion(
 	assembly_id: int,
 	motion_state: AssemblyMotionState
 ) -> bool:
-	# Single authoritative write path for continuous kinematic truth.
+	# Root body-group write path. Child groups use sync_assembly_body_group_motion.
 	# Projection is the only live-body caller; internal seeding reuses it.
 	var assembly := get_assembly_raw(assembly_id)
 	if (
@@ -747,6 +751,126 @@ func sync_assembly_motion(
 		return false
 	assembly.motion = motion_state.duplicate_state()
 	return true
+
+
+func compile_body_groups(assembly_id: int) -> Dictionary:
+	return BodyGroupMotionUtilScript.compile_for_assembly(self, assembly_id)
+
+
+func root_body_group_id(assembly_id: int) -> int:
+	var compiled := compile_body_groups(assembly_id)
+	if not bool(compiled.get("valid", false)):
+		return 0
+	return int(compiled.get("root_group_id", 0))
+
+
+func body_group_id_for_element(element_id: int) -> int:
+	var element := get_element(element_id)
+	if element == null:
+		return 0
+	var compiled := compile_body_groups(element.assembly_id)
+	if not bool(compiled.get("valid", false)):
+		return 0
+	return int(compiled.get("element_to_group", {}).get(element_id, 0))
+
+
+func get_body_group_motion(
+	assembly_id: int,
+	group_id: int
+) -> AssemblyMotionState:
+	var assembly := get_assembly_raw(assembly_id)
+	if assembly == null or assembly.tombstoned:
+		return AssemblyMotionState.new()
+	var root_id := root_body_group_id(assembly_id)
+	if group_id <= 0 or group_id == root_id:
+		return (
+			assembly.motion.duplicate_state()
+			if assembly.motion != null
+			else AssemblyMotionState.new()
+		)
+	var stored: Variant = assembly.body_group_motions.get(group_id)
+	if stored is AssemblyMotionState:
+		return (stored as AssemblyMotionState).duplicate_state()
+	return BodyGroupMotionUtilScript.reconstruct_group_motion(
+		self,
+		assembly_id,
+		group_id
+	)
+
+
+func sync_assembly_body_group_motion(
+	assembly_id: int,
+	group_id: int,
+	motion_state: AssemblyMotionState
+) -> bool:
+	var assembly := get_assembly_raw(assembly_id)
+	if (
+		assembly == null
+		or assembly.tombstoned
+		or motion_state == null
+		or not motion_state.is_valid()
+		or group_id <= 0
+	):
+		return false
+	var root_id := root_body_group_id(assembly_id)
+	if group_id == root_id or root_id <= 0:
+		return sync_assembly_motion(assembly_id, motion_state)
+	assembly.body_group_motions[group_id] = motion_state.duplicate_state()
+	return true
+
+
+func sync_assembly_body_group_motions(
+	assembly_id: int,
+	motions_by_group: Dictionary
+) -> bool:
+	var assembly := get_assembly_raw(assembly_id)
+	if assembly == null or assembly.tombstoned:
+		return false
+	var root_id := root_body_group_id(assembly_id)
+	var ok := true
+	var group_ids: Array = motions_by_group.keys()
+	group_ids.sort()
+	for group_id_variant: Variant in group_ids:
+		var group_id := int(group_id_variant)
+		var motion: Variant = motions_by_group.get(group_id_variant)
+		if not motion is AssemblyMotionState:
+			ok = false
+			continue
+		var motion_state := motion as AssemblyMotionState
+		if not motion_state.is_valid() or group_id <= 0:
+			ok = false
+			continue
+		if group_id == root_id or root_id <= 0:
+			if not sync_assembly_motion(assembly_id, motion_state):
+				ok = false
+			continue
+		assembly.body_group_motions[group_id] = motion_state.duplicate_state()
+	return ok
+
+
+func element_world_transform(element_id: int) -> Transform3D:
+	var element := get_element(element_id)
+	if element == null:
+		return Transform3D.IDENTITY
+	var group_id := body_group_id_for_element(element_id)
+	var group_motion := get_body_group_motion(element.assembly_id, group_id)
+	return (
+		group_motion.transform
+		* GridPoseUtil.element_local_transform(
+			element.origin_cell,
+			element.orientation_index
+		)
+	)
+
+
+func element_group_motion(element_id: int) -> AssemblyMotionState:
+	var element := get_element(element_id)
+	if element == null:
+		return AssemblyMotionState.new()
+	return get_body_group_motion(
+		element.assembly_id,
+		body_group_id_for_element(element_id)
+	)
 
 
 func capture_snapshot() -> Dictionary:
