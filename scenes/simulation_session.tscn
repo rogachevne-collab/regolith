@@ -1,10 +1,11 @@
-[gd_scene load_steps=9 format=3]
+[gd_scene load_steps=10 format=3]
 
 [ext_resource type="Script" path="res://scripts/simulation/simulation_session.gd" id="1_session"]
 [ext_resource type="Script" path="res://scripts/simulation/simulation_world.gd" id="2_world"]
 [ext_resource type="Script" path="res://scripts/simulation/projection/simulation_physics_projection.gd" id="3_projection"]
 [ext_resource type="Script" path="res://scripts/simulation/projection/element_visual_projection.gd" id="4_visual"]
 [ext_resource type="Script" path="res://scripts/simulation/projection/piston_visual_projection.gd" id="4_piston_visual"]
+[ext_resource type="Script" path="res://scripts/simulation/projection/wheel_visual_projection.gd" id="4_wheel_visual"]
 [ext_resource type="Script" path="res://scripts/simulation/runtime/impact_resolver_service.gd" id="5_impact"]
 [ext_resource type="Script" path="res://scripts/simulation/projection/industry_network_projection.gd" id="6_industry_net"]
 [ext_resource type="Script" path="res://scripts/simulation/projection/industry_port_projection.gd" id="6_industry_ports"]
@@ -24,6 +25,9 @@ script = ExtResource("4_visual")
 
 [node name="PistonVisualProjection" type="Node" parent="."]
 script = ExtResource("4_piston_visual")
+
+[node name="WheelVisualProjection" type="Node" parent="."]
+script = ExtResource("4_wheel_visual")
 
 [node name="ImpactResolverService" type="Node" parent="."]
 script = ExtResource("5_impact")

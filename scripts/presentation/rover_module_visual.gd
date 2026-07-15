@@ -87,6 +87,9 @@ static func attach_runtime(
 	}
 	if element.archetype_id == "drive_wheel":
 		record["spin_root"] = visual.get_node_or_null("SpinRoot") as Node3D
+		record["hub_root"] = visual.get_node_or_null("Hub") as Node3D
+		record["hub_base_y"] = 0.12
+		record["spin_base_y"] = 0.0
 	return record
 
 
@@ -155,6 +158,26 @@ static func build_orientation_hint(archetype_id: String) -> String:
 
 static func spin_root(record: Dictionary) -> Node3D:
 	return record.get("spin_root") as Node3D
+
+
+static func update_runtime(
+	record: Dictionary,
+	wheel_speed: float,
+	compression_m: float,
+	delta: float
+) -> void:
+	var root: Node3D = record.get("root") as Node3D
+	if root == null or delta <= 0.0:
+		return
+	var spin := spin_root(record)
+	if spin != null:
+		spin.rotate_object_local(Vector3.RIGHT, wheel_speed * delta)
+	var hub: Node3D = record.get("hub_root") as Node3D
+	var compression_offset := clampf(compression_m, 0.0, 0.6) * 0.9
+	if hub != null:
+		hub.position.y = float(record.get("hub_base_y", 0.12)) - compression_offset
+	if spin != null:
+		spin.position.y = float(record.get("spin_base_y", 0.0)) - compression_offset
 
 
 static func _build_suspension_gizmos(
