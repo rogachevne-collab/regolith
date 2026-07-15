@@ -54,38 +54,50 @@ func _query_physics(
 	origin: Vector3,
 	direction: Vector3
 ) -> InteractionHit:
-	var query := PhysicsRayQueryParameters3D.create(
-		origin,
-		origin + direction * max_distance
-	)
-	query.exclude = [_player.get_rid()]
-	query.collision_mask = collision_mask
-	query.collide_with_areas = false
-	query.collide_with_bodies = true
-	var raw := get_world_3d().direct_space_state.intersect_ray(query)
-	if raw.is_empty():
-		return InteractionHit.empty()
+	var exclude: Array = [_player.get_rid()]
+	var skips_left := 8
+	while skips_left >= 0:
+		var query := PhysicsRayQueryParameters3D.create(
+			origin,
+			origin + direction * max_distance
+		)
+		query.exclude = exclude
+		query.collision_mask = collision_mask
+		query.collide_with_areas = false
+		query.collide_with_bodies = true
+		var raw := get_world_3d().direct_space_state.intersect_ray(query)
+		if raw.is_empty():
+			return InteractionHit.empty()
 
-	var collider: Object = raw["collider"]
-	var metadata := _target_metadata(collider, raw)
-	if metadata.has("loot_pile_id") and _should_skip_loot_for_drill():
-		return InteractionHit.empty()
-	var kind := _target_kind(collider, metadata)
-	metadata["aim_direction"] = direction
-	var stable_target_id := (
-		StringName(str(metadata["element_id"]))
-		if kind == InteractionHit.KIND_SIMULATION_ELEMENT
-		else StringName(str(collider.get_instance_id()))
-	)
-	return InteractionHit.create(
-		raw["position"],
-		raw["normal"],
-		origin.distance_to(raw["position"]),
-		kind,
-		collider,
-		stable_target_id,
-		metadata
-	)
+		var collider: Object = raw["collider"]
+		var metadata := _target_metadata(collider, raw)
+		if metadata.has("loot_pile_id") and _should_skip_loot_for_drill():
+			return InteractionHit.empty()
+		var kind := _target_kind(collider, metadata)
+		if (
+			kind == InteractionHit.KIND_ELECTRIC_CABLE
+			and _should_skip_cable_for_build()
+			and collider is CollisionObject3D
+		):
+			exclude.append((collider as CollisionObject3D).get_rid())
+			skips_left -= 1
+			continue
+		metadata["aim_direction"] = direction
+		var stable_target_id := (
+			StringName(str(metadata["element_id"]))
+			if kind == InteractionHit.KIND_SIMULATION_ELEMENT
+			else StringName(str(collider.get_instance_id()))
+		)
+		return InteractionHit.create(
+			raw["position"],
+			raw["normal"],
+			origin.distance_to(raw["position"]),
+			kind,
+			collider,
+			stable_target_id,
+			metadata
+		)
+	return InteractionHit.empty()
 
 
 func _query_voxel(
@@ -291,6 +303,10 @@ func _should_skip_loot_for_drill() -> bool:
 		_tools.state == ToolController.ActionState.HOLDING
 		or _tools.state == ToolController.ActionState.COMPLETED
 	)
+
+
+func _should_skip_cable_for_build() -> bool:
+	return _tools != null and _tools.active_tool == &"build"
 
 
 func _publish(hit: InteractionHit) -> void:

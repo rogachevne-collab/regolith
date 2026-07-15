@@ -447,14 +447,18 @@ func _project_assembly_single(
 		else assembly.motion
 	)
 	var active_locomotive := _is_active_locomotive(assembly_id)
+	var locomotion := _world.get_locomotion_controller(assembly_id)
 	var release_from_anchor := (
 		active_locomotive
 		and seed_motion.frozen
 		and _world.assembly_has_anchor(assembly_id)
 		and not _mounted_bodies.has(assembly_id)
+		and not locomotion.has_released_from_anchor()
 	)
 	var anchored: bool = (
-		_world.assembly_has_anchor(assembly_id) and not active_locomotive
+		_world.assembly_has_anchor(assembly_id)
+		and not active_locomotive
+		and not locomotion.has_released_from_anchor()
 	)
 	var mounted: RigidBody3D = _mounted_bodies.get(assembly_id) as RigidBody3D
 	var mounted_motion: AssemblyMotionState = null
@@ -503,14 +507,27 @@ func _project_assembly_single(
 				assembly_id
 			)
 		)
-	motion.frozen = anchored
+		locomotion.mark_released_from_anchor()
 	if active_locomotive:
 		motion.frozen = false
 		motion.sleeping = false
-	if anchored:
+	elif anchored:
+		motion.frozen = true
 		motion.linear_velocity = Vector3.ZERO
 		motion.angular_velocity = Vector3.ZERO
 		motion.sleeping = true
+	elif _is_locomotive_assembly(assembly_id):
+		# Floating chassis has no terrain anchors; keep parked until ControlSeat.
+		motion.frozen = true
+		motion.linear_velocity = Vector3.ZERO
+		motion.angular_velocity = Vector3.ZERO
+		motion.sleeping = true
+		if not locomotion.has_released_from_anchor():
+			locomotion.mark_released_from_anchor()
+	else:
+		motion.frozen = seed_motion.frozen
+		if motion_override != null:
+			motion.sleeping = seed_motion.sleeping
 	if mounted == null:
 		add_child(body)
 		body.global_transform = motion.transform
@@ -581,10 +598,12 @@ func _project_assembly_multibody(
 	)
 	var seed_motion := source_motion.duplicate_state()
 	var active_locomotive := _is_active_locomotive(assembly_id)
+	var locomotion := _world.get_locomotion_controller(assembly_id)
 	if (
 		active_locomotive
 		and seed_motion.frozen
 		and _world.assembly_has_anchor(assembly_id)
+		and not locomotion.has_released_from_anchor()
 	):
 		seed_motion.transform.origin += (
 			seed_motion.transform.basis.y.normalized()
@@ -595,6 +614,7 @@ func _project_assembly_multibody(
 		)
 		seed_motion.frozen = false
 		seed_motion.sleeping = false
+		locomotion.mark_released_from_anchor()
 	_world.sync_assembly_motion(assembly_id, seed_motion)
 	assembly.clear_body_group_motions()
 	var group_motions: Dictionary = (

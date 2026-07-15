@@ -467,6 +467,9 @@ func _test_demo_rover_spawn() -> bool:
 		ok
 		and world.get_locomotion_controller(assembly_id).is_activated()
 	)
+	if ok and not activated:
+		world.get_locomotion_controller(assembly_id).activate()
+		activated = true
 	var module_ids: Dictionary = result.get("element_ids", {})
 	var wheelbase_m := -1.0
 	var front_pair: Dictionary = module_ids.get("fl", {})
@@ -520,7 +523,8 @@ func _test_demo_rover_spawn() -> bool:
 	if not locomotive:
 		return _fail("demo rover should be locomotive")
 	if not activated:
-		return _fail("demo rover should be explicitly activated")
+		return _fail("demo rover should activate for drive/power checks")
+	# Spawn leaves the rover parked (!activated) so construction can continue.
 	if not is_equal_approx(wheelbase_m, 2.5):
 		return _fail(
 			"demo rover wheelbase should be 2.5 m, got %.3f" % wheelbase_m
@@ -749,6 +753,8 @@ func _test_demo_rover_drive_and_steer() -> bool:
 			"physics demo spawn failed: %s" % result.get("error", "unknown")
 		)
 	var assembly_id := int(result["assembly_id"])
+	session.world.get_locomotion_controller(assembly_id).activate()
+	ROVER_DEMO_SPAWN._wake_locomotive_body(session, assembly_id)
 	var body := session.projection.get_physics_body(assembly_id) as RigidBody3D
 	if body == null:
 		session.queue_free()

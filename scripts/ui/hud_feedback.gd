@@ -227,6 +227,11 @@ func _reason_text(reason: StringName, data: Dictionary = {}) -> String:
 		&"out_of_range":
 			return "Слишком далеко"
 		&"invalid_target":
+			if (
+				StringName(data.get("detail", &""))
+				== &"mobile_construction_not_supported"
+			):
+				return "Выйди из кокпита — на ходу строить нельзя"
 			return "Неподходящая цель"
 		&"blocked":
 			if StringName(data.get("detail", &"")) == &"not_locomotive":

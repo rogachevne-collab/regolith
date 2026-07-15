@@ -74,11 +74,15 @@ func resolve(params: Dictionary) -> Dictionary:
 			held_attach_pivot
 		)
 		var direct_command: PlaceElementCommand = direct_plan.get("command")
-		if direct_command != null and direct_command.assembly_id != 0:
+		if (
+			direct_command != null
+			and direct_command.assembly_id != 0
+			and bool(direct_plan.get("valid", false))
+		):
 			var direct_candidate := _make_candidate(
 				direct_hit,
 				direct_plan,
-				DIRECT_ELEMENT_SCORE if bool(direct_plan.get("valid", false)) else 0.0,
+				DIRECT_ELEMENT_SCORE,
 				&"direct_element"
 			)
 			_sticky_candidate_key = str(direct_candidate["key"])
@@ -427,7 +431,7 @@ func _legacy_rank_faces(
 	for assembly: SimulationAssembly in world.list_assemblies():
 		if assembly.tombstoned:
 			continue
-		if not _assembly_has_anchor(world, assembly.assembly_id):
+		if not world.construction_attach_allowed(assembly.assembly_id):
 			continue
 		for element_id: int in assembly.element_ids:
 			var element := world.get_element(element_id)
@@ -610,16 +614,3 @@ static func _target_from_face(
 			"snap_port_id": str(face["port_id"]),
 		}
 	).snapshot()
-
-
-static func _assembly_has_anchor(
-	world: SimulationWorld,
-	assembly_id: int
-) -> bool:
-	for joint: SimulationJoint in world.list_joints():
-		if (
-			joint.assembly_id == assembly_id
-			and joint.kind == SimulationJoint.Kind.ANCHOR
-		):
-			return true
-	return false

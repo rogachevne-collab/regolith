@@ -783,9 +783,7 @@ func _build_action_hit() -> InteractionHit:
 
 
 func _can_place_block() -> bool:
-	if _preview != null and _preview.has_resolved_placement():
-		return true
-	return _query.current_hit.valid
+	return _preview != null and _preview.has_resolved_placement()
 
 
 func _resolved_placement_hit() -> InteractionHit:

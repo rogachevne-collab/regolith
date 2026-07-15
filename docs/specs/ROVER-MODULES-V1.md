@@ -52,9 +52,10 @@ electric budget, что у Industry v1.
    anchor сохраняется. В dynamic `RigidBody3D` она переходит только после
    явной активации через `ControlSeat`; установка первого колеса не отпускает
    недостроенное шасси.
-6. Строительство ровера ведётся на земле в anchored состоянии. Расширение
-   assembly после того, как она стала locomotive/движется, вне скоупа v1
-   (сохраняется kernel-инвариант `mobile_construction_not_supported`).
+6. Строительство ровера ведётся на земле. После отпускания terrain anchors
+   (шасси на колёсах) **паркованный** locomotive (`!activated`) всё ещё можно
+   расширять. Пока кокпит активен / машина «на ходу» — attach запрещён
+   (`mobile_construction_not_supported`).
 7. Управление в v1 — hardcoded mapping «кокпит владеет всеми колёсами своей
    assembly» (SE-подобный control block). Programmable `Binding` UI вне v1.
 8. Число `WheelPair` не ограничено и не кодируется в типе машины. Четыре колеса
@@ -98,7 +99,7 @@ electric budget, что у Industry v1.
 - suspension damage-animation, отрыв колеса на ходу как отдельный эффект
   (dismantle — да, спец-анимации — нет);
 - autopilot, programmable bindings, sequencing;
-- строительство/расширение движущегося ровера.
+- строительство/расширение ровера из активного кокпита (на ходу).
 
 ## Archetypes
 

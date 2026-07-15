@@ -258,6 +258,42 @@ func get_locomotion_controller(
 	return _assembly_locomotion[assembly_id] as AssemblyLocomotionController
 
 
+func list_locomotion_rows() -> Array[Dictionary]:
+	var rows: Array[Dictionary] = []
+	for assembly_id: int in _sorted_keys(_assembly_locomotion):
+		var controller := (
+			_assembly_locomotion[assembly_id] as AssemblyLocomotionController
+		)
+		if controller == null:
+			continue
+		var keep := (
+			controller.is_activated()
+			or controller.has_released_from_anchor()
+			or WheelSimulationService.is_locomotive_assembly(self, assembly_id)
+		)
+		if not keep:
+			continue
+		rows.append({
+			"assembly_id": assembly_id,
+			"state": controller.to_dict(),
+		})
+	return rows
+
+
+func register_locomotion_state(
+	assembly_id: int,
+	state: Dictionary
+) -> void:
+	if assembly_id <= 0 or state.is_empty():
+		return
+	var controller := get_locomotion_controller(assembly_id)
+	controller.apply_dict(state)
+
+
+func clear_assembly_locomotion(assembly_id: int) -> void:
+	_assembly_locomotion.erase(assembly_id)
+
+
 func ensure_wheel_instance_state(element_id: int) -> WheelInstanceState:
 	if not _wheel_instances.has(element_id):
 		var state := WheelInstanceState.new()
@@ -370,10 +406,6 @@ func clear_wheel_element_state(element_id: int) -> void:
 	_wheel_instances.erase(element_id)
 	_suspension_instances.erase(element_id)
 	_wheel_runtime.erase(element_id)
-
-
-func clear_assembly_locomotion(assembly_id: int) -> void:
-	_assembly_locomotion.erase(assembly_id)
 
 
 func sync_actuator_observation(
@@ -895,7 +927,7 @@ func restore_snapshot(snapshot: Dictionary, emit_event := true) -> bool:
 	_wheel_instances = restored._wheel_instances
 	_suspension_instances = restored._suspension_instances
 	_wheel_runtime.clear()
-	_assembly_locomotion.clear()
+	_assembly_locomotion = restored._assembly_locomotion
 	_world_loot_piles = restored._world_loot_piles
 	_simulation_time_s = restored._simulation_time_s
 	_command_queue.clear()
@@ -1247,7 +1279,7 @@ func _validate_place_element(
 			return StructuralCommandResult.failed(
 				StructuralCommandResult.REASON_INVALID_REFERENCE
 			)
-		if not _assembly_has_anchor(assembly.assembly_id):
+		if not _construction_attach_allowed(assembly.assembly_id):
 			return StructuralCommandResult.failed(
 				StructuralCommandResult.REASON_INVALID_TARGET,
 				{"detail": &"mobile_construction_not_supported"}
@@ -1383,7 +1415,7 @@ func _validate_wheel_place_element(
 		return StructuralCommandResult.failed(
 			StructuralCommandResult.REASON_INVALID_REFERENCE
 		)
-	if not _assembly_has_anchor(assembly.assembly_id):
+	if not _construction_attach_allowed(assembly.assembly_id):
 		return StructuralCommandResult.failed(
 			StructuralCommandResult.REASON_INVALID_TARGET,
 			{"detail": &"mobile_construction_not_supported"}
@@ -1547,7 +1579,7 @@ func _validate_piston_place_element(
 			return StructuralCommandResult.failed(
 				StructuralCommandResult.REASON_INVALID_REFERENCE
 			)
-		if not _assembly_has_anchor(assembly.assembly_id):
+		if not _construction_attach_allowed(assembly.assembly_id):
 			return StructuralCommandResult.failed(
 				StructuralCommandResult.REASON_INVALID_TARGET,
 				{"detail": &"mobile_construction_not_supported"}
@@ -2855,6 +2887,10 @@ func assembly_has_anchor(assembly_id: int) -> bool:
 	return _assembly_has_anchor(assembly_id)
 
 
+func construction_attach_allowed(assembly_id: int) -> bool:
+	return _construction_attach_allowed(assembly_id)
+
+
 func _should_reconcile_assembly(assembly_id: int) -> bool:
 	var assembly := get_assembly_raw(assembly_id)
 	if assembly == null or assembly.tombstoned:
@@ -3262,6 +3298,16 @@ func _assembly_has_anchor(assembly_id: int) -> bool:
 		):
 			return true
 	return false
+
+
+## Terrain-anchored builds always attach. Parked locomotives float on wheels
+## (no terrain anchors) but may still be expanded until ControlSeat activates.
+func _construction_attach_allowed(assembly_id: int) -> bool:
+	if _assembly_has_anchor(assembly_id):
+		return true
+	if not WheelSimulationService.is_locomotive_assembly(self, assembly_id):
+		return false
+	return not get_locomotion_controller(assembly_id).is_activated()
 
 
 func _sorted_keys(dictionary: Dictionary) -> Array[int]:

@@ -258,12 +258,13 @@ static func _bucket_for_point(point: Vector3) -> Vector3i:
 
 func _rebuild_anchor_map() -> void:
 	_anchored_assembly_ids.clear()
-	for joint: SimulationJoint in _world.list_joints():
-		if (
-			joint.kind == SimulationJoint.Kind.ANCHOR
-			and not _anchored_assembly_ids.has(joint.assembly_id)
-		):
-			_anchored_assembly_ids[joint.assembly_id] = true
+	if _world == null:
+		return
+	for assembly: SimulationAssembly in _world.list_assemblies():
+		if assembly == null or assembly.tombstoned:
+			continue
+		if _world.construction_attach_allowed(assembly.assembly_id):
+			_anchored_assembly_ids[assembly.assembly_id] = true
 
 
 func _sorted_live_assembly_ids() -> Array[int]:

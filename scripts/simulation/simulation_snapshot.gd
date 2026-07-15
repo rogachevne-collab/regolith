@@ -21,6 +21,7 @@ static func capture(world) -> Dictionary:
 		"industry_elements": world.list_industry_element_runtimes(),
 		"wheel_instances": world.list_wheel_instance_rows(),
 		"suspension_instances": world.list_suspension_instance_rows(),
+		"locomotion_assemblies": world.list_locomotion_rows(),
 		"world_loot_piles": world.list_world_loot_piles(),
 		"simulation_time_s": world.get_simulation_time_s(),
 	}
@@ -66,6 +67,7 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 		"suspension_instances",
 		[]
 	)
+	var locomotion_rows: Variant = snapshot.get("locomotion_assemblies", [])
 	var loot_rows: Variant = snapshot.get("world_loot_piles", [])
 	var simulation_time_s := float(snapshot.get("simulation_time_s", 0.0))
 	var allocator_data: Variant = snapshot.get("allocator")
@@ -78,6 +80,7 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 		or not store_rows is Array
 		or not wheel_instance_rows is Array
 		or not suspension_instance_rows is Array
+		or not locomotion_rows is Array
 		or not allocator_data is Dictionary
 	):
 		return false
@@ -512,6 +515,17 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 			element_id,
 			suspension_instances[element_id]
 		)
+	for row_variant: Variant in locomotion_rows:
+		if not row_variant is Dictionary:
+			return false
+		var loco_row: Dictionary = row_variant
+		var assembly_id := int(loco_row.get("assembly_id", 0))
+		var state_variant: Variant = loco_row.get("state", {})
+		if assembly_id <= 0 or not state_variant is Dictionary:
+			return false
+		if not assembly_ids.has(assembly_id):
+			return false
+		world.register_locomotion_state(assembly_id, state_variant)
 	for joint_id: int in _sorted_int_keys(joints):
 		world._register_joint(joints[joint_id])
 	for from_id: int in _sorted_int_keys(redirects):

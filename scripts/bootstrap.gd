@@ -160,7 +160,11 @@ func _spawn_demo_rover_near_player() -> void:
 		return
 	var result := RoverDemoSpawn.spawn_on_terrain(
 		_session,
-		ground_variant as Vector3
+		ground_variant as Vector3,
+		RoverDemoSpawn.STORE_ID,
+		_terrain,
+		tool,
+		_physics_space_state()
 	)
 	if not bool(result.get("ok", false)):
 		push_warning(
@@ -178,6 +182,14 @@ func _finalize_loaded_world_after_entry() -> void:
 	if not _world_ready:
 		return
 	WorldPersistence.finalize_loaded_world(_session.world)
+	var tool: VoxelTool = _terrain.get_voxel_tool()
+	tool.channel = VoxelBuffer.CHANNEL_SDF
+	RoverDemoSpawn.reseat_parked_locomotives(
+		_session,
+		_terrain,
+		tool,
+		_physics_space_state()
+	)
 
 
 func _place_when_ground_exists() -> void:

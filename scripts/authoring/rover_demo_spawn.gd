@@ -66,14 +66,23 @@ static func find_flat_ground_near(
 static func spawn_on_terrain(
 	session: SimulationSession,
 	world_position: Vector3,
-	store_id: String = STORE_ID
+	store_id: String = STORE_ID,
+	terrain: VoxelTerrain = null,
+	tool: VoxelTool = null,
+	space_state: PhysicsDirectSpaceState3D = null
 ) -> Dictionary:
 	if session == null or session.world == null:
 		return {"ok": false, "error": "no_session"}
 	var world := session.world
 	world.ensure_resource_store(store_id)
 	world.set_resource_amount(store_id, "construction_component", 500.0)
-	var assembly_transform := _assembly_transform_on_surface(world_position)
+	var assembly_transform := _assembly_transform_on_surface(
+		world_position,
+		Basis.IDENTITY,
+		terrain,
+		tool,
+		space_state
+	)
 	var grid_frame := GridSpawnUtil.grid_frame_from_transform(assembly_transform)
 	var assembly_id := _spawn_anchor(world, grid_frame, store_id)
 	if assembly_id <= 0:
@@ -131,14 +140,16 @@ static func spawn_on_terrain(
 	_wire_demo_power(world, module_ids)
 	_charge_demo_battery(world, int(module_ids.get("battery", 0)))
 	_configure_steerable(world, module_ids)
-	world.get_locomotion_controller(assembly_id).activate()
+	# Parked at spawn: expand while !activated; ControlSeat activates drive.
+	world.get_locomotion_controller(assembly_id).mark_released_from_anchor()
 	var motion := AssemblyMotionState.from_grid_frame(grid_frame)
-	motion.frozen = false
-	motion.sleeping = false
+	# Keep terrain seating Y; grid snap alone can bury/float the chassis ±0.25 m.
+	motion.transform.origin.y = assembly_transform.origin.y
+	motion.frozen = true
+	motion.sleeping = true
 	motion.linear_velocity = Vector3.ZERO
 	motion.angular_velocity = Vector3.ZERO
 	session.projection.project_assembly_now(assembly_id, motion)
-	_wake_locomotive_body(session, assembly_id)
 	if session.visuals != null:
 		session.visuals.rebuild_assembly(assembly_id)
 	if session.piston_visuals != null:
@@ -154,7 +165,10 @@ static func spawn_on_terrain(
 
 static func _assembly_transform_on_surface(
 	surface_point: Vector3,
-	basis: Basis = Basis.IDENTITY
+	basis: Basis = Basis.IDENTITY,
+	terrain: VoxelTerrain = null,
+	tool: VoxelTool = null,
+	space_state: PhysicsDirectSpaceState3D = null
 ) -> Transform3D:
 	var archetype := Slice01Archetypes.rover_frame()
 	var contact := GridPoseUtil.ground_contact_local(archetype, 0)
@@ -164,10 +178,117 @@ static func _assembly_transform_on_surface(
 		suspension.suspension_definition.suspension_travel_m
 		+ wheel.wheel_definition.radius_m
 	)
+	var seat_y := _lowest_surface_y_near(
+		surface_point,
+		terrain,
+		tool,
+		space_state
+	)
+	var seated_point := Vector3(surface_point.x, seat_y, surface_point.z)
 	return Transform3D(
 		basis,
-		surface_point - basis * contact + basis.y.normalized() * clearance
+		seated_point - basis * contact + basis.y.normalized() * clearance
 	)
+
+
+static func _lowest_surface_y_near(
+	center: Vector3,
+	terrain: VoxelTerrain,
+	tool: VoxelTool,
+	space_state: PhysicsDirectSpaceState3D
+) -> float:
+	var half := FLAT_SAMPLE_SPAN_M * 0.5
+	var offsets: Array[Vector2] = [
+		Vector2(0.0, 0.0),
+		Vector2(-half, -half),
+		Vector2(half, -half),
+		Vector2(-half, half),
+		Vector2(half, half),
+	]
+	var lowest := center.y
+	var found := false
+	for offset: Vector2 in offsets:
+		var xz := Vector2(center.x + offset.x, center.z + offset.y)
+		var ground_variant: Variant = null
+		if space_state != null and terrain != null and tool != null:
+			ground_variant = _ground_point_at_xz(
+				terrain,
+				tool,
+				space_state,
+				xz
+			)
+		if ground_variant is Vector3:
+			var ground: Vector3 = ground_variant
+			if not found or ground.y < lowest:
+				lowest = ground.y
+				found = true
+	return lowest if found else center.y
+
+
+## After load: re-seat released locomotives to physics ground under the footprint.
+static func reseat_parked_locomotives(
+	session: SimulationSession,
+	terrain: VoxelTerrain,
+	tool: VoxelTool,
+	space_state: PhysicsDirectSpaceState3D
+) -> void:
+	if (
+		session == null
+		or session.world == null
+		or session.projection == null
+		or terrain == null
+		or tool == null
+		or space_state == null
+	):
+		return
+	var world := session.world
+	var archetype := Slice01Archetypes.rover_frame()
+	var contact := GridPoseUtil.ground_contact_local(archetype, 0)
+	var suspension := Slice01Archetypes.wheel_suspension()
+	var wheel := Slice01Archetypes.drive_wheel()
+	var clearance := (
+		suspension.suspension_definition.suspension_travel_m
+		+ wheel.wheel_definition.radius_m
+	)
+	for assembly: SimulationAssembly in world.list_assemblies():
+		if assembly == null or assembly.tombstoned:
+			continue
+		if not WheelSimulationService.is_locomotive_assembly(
+			world,
+			assembly.assembly_id
+		):
+			continue
+		var locomotion := world.get_locomotion_controller(assembly.assembly_id)
+		if (
+			not locomotion.has_released_from_anchor()
+			and world.assembly_has_anchor(assembly.assembly_id)
+		):
+			continue
+		if not locomotion.has_released_from_anchor():
+			locomotion.mark_released_from_anchor()
+		var motion := assembly.motion.duplicate_state()
+		var origin := motion.transform.origin
+		var seat_y := _lowest_surface_y_near(
+			origin,
+			terrain,
+			tool,
+			space_state
+		)
+		var basis := motion.transform.basis
+		var desired := (
+			Vector3(origin.x, seat_y, origin.z)
+			- basis * contact
+			+ basis.y.normalized() * clearance
+		)
+		var delta_y := desired.y - origin.y
+		if absf(delta_y) < 0.02 and motion.frozen:
+			continue
+		motion.transform.origin.y += delta_y
+		motion.frozen = true
+		motion.sleeping = true
+		motion.linear_velocity = Vector3.ZERO
+		motion.angular_velocity = Vector3.ZERO
+		session.projection.project_assembly_now(assembly.assembly_id, motion)
 
 
 static func _ground_point_at_xz(

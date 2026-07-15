@@ -704,6 +704,7 @@ func _wake_rover_body(assembly_id: int) -> void:
 func _exit_rover_seat(player: Node3D) -> Dictionary:
 	if _session == null or _rover_seat_assembly_id <= 0:
 		return _result(&"not_ready")
+	var assembly_id := _rover_seat_assembly_id
 	var body := (
 		_session.projection.get_element_projection(
 			_rover_seat_element_id
@@ -724,12 +725,15 @@ func _exit_rover_seat(player: Node3D) -> Dictionary:
 		player.call("exit_vehicle", exit_position)
 	if player.has_method("set_gameplay_input_enabled"):
 		player.call("set_gameplay_input_enabled", true)
-	var locomotion := _session.world.get_locomotion_controller(
-		_rover_seat_assembly_id
-	)
-	locomotion.set_drive_command(0.0)
-	locomotion.set_steering_command(0.0)
-	locomotion.set_brake_command(0.0)
+	var locomotion := _session.world.get_locomotion_controller(assembly_id)
+	locomotion.deactivate()
+	if body is RigidBody3D:
+		var rigid := body as RigidBody3D
+		rigid.linear_velocity = Vector3.ZERO
+		rigid.angular_velocity = Vector3.ZERO
+		rigid.freeze = true
+		rigid.sleeping = true
+	_session.projection.sync_body_motion_now(assembly_id)
 	_rover_seat_player = null
 	_rover_seat_assembly_id = 0
 	_rover_seat_element_id = 0
