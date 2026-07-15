@@ -3,6 +3,8 @@ extends RefCounted
 
 const MIN_RADIUS := 0.08
 const MAX_RADIUS := 1.6
+## Impulse craters stay local; sustained actuator drag may use larger stamps.
+const IMPACT_MAX_RADIUS := 0.72
 ## Smallest stamp that still overlaps solid voxels on the terrain grid.
 const MIN_RADIUS_VOXEL_FRACTION := 0.45
 
@@ -63,13 +65,14 @@ static func build_sphere_op(
 	collider: CollisionShape3D,
 	strength: float,
 	terrain: Node3D = null,
-	carve_direction: Vector3 = Vector3.DOWN
+	carve_direction: Vector3 = Vector3.DOWN,
+	max_radius: float = MAX_RADIUS
 ) -> Dictionary:
 	var clamped_strength := clampf(strength, 0.05, 1.0)
 	var radius := clampf(
-		base_radius_from_collider(collider) * (0.35 + 0.65 * clamped_strength),
+		base_radius_from_collider(collider) * (0.25 + 0.45 * clamped_strength),
 		MIN_RADIUS,
-		MAX_RADIUS
+		minf(max_radius, MAX_RADIUS)
 	)
 	if terrain != null:
 		radius = maxf(radius, minimum_measurable_radius_m(terrain))

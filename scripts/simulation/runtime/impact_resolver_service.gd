@@ -13,6 +13,7 @@ var _gateway: WorldCommandGateway
 var _frame_batch: Dictionary = {}
 var _flush_scheduled := false
 var _cooldown_until: Dictionary = {}
+var last_terrain_carve_m3: float = 0.0
 
 
 func bind(
@@ -42,7 +43,7 @@ func configure_impact_body(
 	if body == null or body.has_meta("impact_monitoring"):
 		return
 	body.contact_monitor = true
-	body.max_contacts_reported = 16
+	body.max_contacts_reported = 8
 	body.continuous_cd = true
 	body.custom_integrator = mode == ImpactBodyMode.FULL
 	body.set_meta("impact_monitoring", true)
@@ -123,6 +124,9 @@ func _on_body_shape_entered(
 ) -> void:
 	if body == null or body.freeze or other_body == null:
 		return
+	# FULL bodies use custom_integrator; integrate_contacts owns terrain + assembly.
+	if body.custom_integrator:
+		return
 	if not ImpactResolver.is_world_surface_partner(other_body):
 		return
 	var assembly_id := int(body.get_meta("assembly_id", 0))
@@ -186,8 +190,6 @@ func integrate_contacts(
 	for contact_index: int in range(state.get_contact_count()):
 		var impulse: Vector3 = state.get_contact_impulse(contact_index)
 		var impulse_length := impulse.length()
-		if impulse_length < ImpactResolver.I_MIN:
-			continue
 		var local_shape_index := state.get_contact_local_shape(contact_index)
 		var striker_element_id := ImpactResolver.element_id_from_shape_index(
 			body,
@@ -200,7 +202,13 @@ func integrate_contacts(
 			var partner_id := state.get_contact_collider_id(contact_index)
 			if partner_id != 0:
 				partner = instance_from_id(partner_id)
-		if partner == null or ImpactResolver.is_world_surface_partner(partner):
+		var local_normal := state.get_contact_local_normal(contact_index)
+		var world_normal := (
+			body.global_transform.basis * local_normal
+		).normalized()
+		if partner == null and absf(world_normal.y) >= 0.35:
+			partner = _terrain_partner()
+		if partner == null:
 			continue
 		if ImpactResolver.same_assembly_subgrid(assembly_id, partner):
 			continue
@@ -212,7 +220,21 @@ func integrate_contacts(
 		)
 		if not _cooldown_ready(batch_key):
 			continue
-		var contact_world := _contact_point_on_body(body, local_shape_index)
+		var contact_world := body.to_global(
+			state.get_contact_local_position(contact_index)
+		)
+		var effective_impulse := impulse_length
+		if ImpactResolver.is_world_surface_partner(partner):
+			effective_impulse = maxf(
+				effective_impulse,
+				ImpactResolver.fallback_impulse_length(
+					body,
+					partner,
+					world_normal
+				)
+			)
+		if effective_impulse < ImpactResolver.I_MIN:
+			continue
 		var entry: Dictionary = _frame_batch.get(batch_key, {})
 		if entry.is_empty():
 			entry = {
@@ -221,28 +243,19 @@ func integrate_contacts(
 				"striker_body": body,
 				"local_shape_index": local_shape_index,
 				"partner": partner,
-				"impulse_length": impulse_length,
+				"impulse_length": effective_impulse,
 				"contact_world": contact_world,
+				"contact_normal": world_normal,
+				"inbound_velocity": body.linear_velocity,
 				"contact_points": PackedVector3Array(),
 				"contact_impulses": PackedFloat32Array(),
 			}
 		else:
-			entry["impulse_length"] = maxf(
-				float(entry.get("impulse_length", 0.0)),
-				impulse_length
-			)
-		var points: PackedVector3Array = entry.get(
-			"contact_points",
-			PackedVector3Array()
-		)
-		points.append(contact_world)
-		entry["contact_points"] = points
-		var impulses: PackedFloat32Array = entry.get(
-			"contact_impulses",
-			PackedFloat32Array()
-		)
-		impulses.append(impulse_length)
-		entry["contact_impulses"] = impulses
+			if effective_impulse >= float(entry.get("impulse_length", 0.0)):
+				entry["impulse_length"] = effective_impulse
+				entry["contact_world"] = contact_world
+				entry["contact_normal"] = world_normal
+				entry["inbound_velocity"] = body.linear_velocity
 		_queue_entry(entry)
 
 
@@ -349,48 +362,67 @@ func _apply_terrain_carve(
 		body,
 		int(entry.get("local_shape_index", 0))
 	)
-	var carve_direction := Vector3.DOWN
-	if body != null and body.linear_velocity.length_squared() > 0.01:
-		carve_direction = body.linear_velocity.normalized()
-	var points: PackedVector3Array = entry.get(
-		"contact_points",
-		PackedVector3Array()
+	var carve_direction := _terrain_carve_direction(entry)
+	if carve_direction.length_squared() <= 0.000001:
+		return 0.0
+	var contact_world := _snap_contact_to_terrain_surface(
+		Vector3(entry.get("contact_world", Vector3.ZERO)),
+		terrain
 	)
-	var op: Dictionary
-	if points.size() >= 2:
-		var radii := PackedFloat32Array()
-		var base_radius := TerrainImpactCarver.base_radius_from_collider(collider)
-		for index: int in range(points.size()):
-			var local_strength := strength
-			if entry.has("contact_impulses"):
-				var impulses: PackedFloat32Array = entry["contact_impulses"]
-				if index < impulses.size():
-					local_strength = ImpactResolver.impulse_strength(
-						float(impulses[index])
-					)
-			radii.append(
-				clampf(
-					base_radius * (0.35 + 0.65 * local_strength),
-					TerrainImpactCarver.MIN_RADIUS,
-					TerrainImpactCarver.MAX_RADIUS
-				)
-			)
-		op = TerrainImpactCarver.build_path_op(
-			points,
-			radii,
-			strength,
-			terrain,
-			carve_direction
-		)
-	else:
-		op = TerrainImpactCarver.build_sphere_op(
-			Vector3(entry.get("contact_world", Vector3.ZERO)),
-			collider,
-			strength,
-			terrain,
-			carve_direction
-		)
-	return _gateway.apply_terrain_carve(op, volume_budget_m3)
+	var op := TerrainImpactCarver.build_sphere_op(
+		contact_world,
+		collider,
+		strength,
+		terrain,
+		carve_direction,
+		TerrainImpactCarver.IMPACT_MAX_RADIUS
+	)
+	op["sdf_scale"] = clampf(0.25 + 0.75 * strength, 0.25, 1.0)
+	var carved := _gateway.apply_terrain_carve(op, volume_budget_m3)
+	last_terrain_carve_m3 = carved
+	return carved
+
+
+func _terrain_carve_direction(entry: Dictionary) -> Vector3:
+	var normal: Vector3 = entry.get("contact_normal", Vector3.ZERO)
+	if normal.length_squared() > 0.000001:
+		normal = normal.normalized()
+		# Jolt may report ground normal as up or down — always dig into the surface.
+		if normal.y > 0.2:
+			return -normal
+		if normal.y < -0.2:
+			return normal
+	var inbound: Vector3 = entry.get("inbound_velocity", Vector3.ZERO)
+	if inbound.y < -0.5:
+		return inbound.normalized()
+	return Vector3.DOWN
+
+
+func _snap_contact_to_terrain_surface(
+	contact_world: Vector3,
+	terrain: Node3D
+) -> Vector3:
+	if _gateway == null or terrain == null:
+		return contact_world
+	var tool: VoxelTool = _gateway.get_voxel_tool()
+	if tool == null:
+		return contact_world
+	tool.channel = VoxelBuffer.CHANNEL_SDF
+	var hit: VoxelRaycastResult = VoxelSpaceUtil.raycast_world(
+		tool,
+		terrain,
+		contact_world + Vector3.UP * 0.75,
+		Vector3.DOWN,
+		2.0
+	)
+	if hit == null:
+		return contact_world
+	return VoxelSpaceUtil.raycast_hit_world_point(
+		terrain,
+		contact_world + Vector3.UP * 0.75,
+		Vector3.DOWN,
+		hit
+	)
 
 
 func _apply_element_damage(
