@@ -26,6 +26,14 @@ func bind(
 	_gateway = gateway
 
 
+func unregister_tracked_body(body: RigidBody3D) -> void:
+	if body == null:
+		return
+	var body_id := body.get_instance_id()
+	_tracked_bodies.erase(body_id)
+	_pre_step_velocity.erase(body_id)
+
+
 func unbind() -> void:
 	_world = null
 	_gateway = null
@@ -42,13 +50,21 @@ func unbind() -> void:
 ## incoming velocity (known Godot contact-signal pitfall).
 func _physics_process(_delta: float) -> void:
 	var stale: Array = []
-	for body_id: int in _tracked_bodies:
-		var body: RigidBody3D = _tracked_bodies[body_id]
-		if body == null or not is_instance_valid(body) or not body.is_inside_tree():
+	for body_id: Variant in _tracked_bodies.keys():
+		var body_variant: Variant = _tracked_bodies.get(body_id)
+		if (
+			body_variant == null
+			or not body_variant is RigidBody3D
+			or not is_instance_valid(body_variant)
+		):
 			stale.append(body_id)
 			continue
-		_pre_step_velocity[body_id] = body.linear_velocity
-	for body_id: int in stale:
+		var body := body_variant as RigidBody3D
+		if not body.is_inside_tree():
+			stale.append(body_id)
+			continue
+		_pre_step_velocity[int(body_id)] = body.linear_velocity
+	for body_id: Variant in stale:
 		_tracked_bodies.erase(body_id)
 		_pre_step_velocity.erase(body_id)
 
@@ -88,6 +104,8 @@ func configure_impact_body(
 			other_shape_index: int,
 			local_shape_index: int
 		) -> void:
+			if not is_instance_valid(body):
+				return
 			_on_body_shape_entered(
 				body,
 				body_rid,
@@ -155,7 +173,7 @@ func _on_body_shape_entered(
 	_other_shape_index: int,
 	local_shape_index: int
 ) -> void:
-	if body == null or body.freeze or other_body == null:
+	if body == null or not is_instance_valid(body) or body.freeze or other_body == null:
 		return
 	var is_world_surface := ImpactResolver.is_world_surface_partner(other_body)
 	if not is_world_surface and not ImpactResolver.is_assembly_partner(other_body):

@@ -1202,6 +1202,8 @@ func _remove_body(assembly_id: int) -> void:
 	_remove_element_records_for_assembly(assembly_id)
 	var body: PhysicsBody3D = get_physics_body(assembly_id)
 	if body != null and not _assembly_group_bodies.has(assembly_id):
+		if body is RigidBody3D and _impact_service != null:
+			_impact_service.unregister_tracked_body(body as RigidBody3D)
 		if _mounted_bodies.get(assembly_id) == body:
 			_clear_body_colliders(body)
 		else:

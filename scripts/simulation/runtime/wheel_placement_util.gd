@@ -78,15 +78,15 @@ static func enrich_control_seat_metadata(
 		or element == null
 		or element.get_archetype() == null
 		or not element.get_archetype().roles.has("ControlSeat")
-	):
-		return
-	if not WheelSimulationService.is_locomotive_assembly(
-		world,
-		element.assembly_id
+		or not element.is_operational()
 	):
 		return
 	metadata["control_seat"] = true
 	metadata["seat_offset_local"] = _seat_offset_local(element)
+	metadata["locomotive"] = WheelSimulationService.is_locomotive_assembly(
+		world,
+		element.assembly_id
+	)
 
 
 static func seat_offset_local(element: SimulationElement) -> Vector3:
@@ -210,8 +210,14 @@ static func _enrich_suspension_metadata(
 
 
 static func _seat_offset_local(element: SimulationElement) -> Vector3:
+	var archetype := element.get_archetype()
+	var pivot := GridPoseUtil.oriented_footprint_pivot(
+		archetype,
+		element.origin_cell,
+		element.orientation_index
+	)
 	var local := GridPoseUtil.element_local_transform(
 		element.origin_cell,
 		element.orientation_index
 	)
-	return local.origin + local.basis.y * 0.28
+	return pivot + local.basis.y * GridMetric.HALF_CELL_SIZE_M * 0.5
