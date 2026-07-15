@@ -61,6 +61,14 @@ func tick(delta: float) -> void:
 	changed.emit()
 
 
+## Externally inflicted damage (kinetic impacts, V2-6). Source is kept for
+## future HUD/death messaging; delivery must happen on the main thread.
+func apply_damage(amount: float, _source: StringName = &"") -> void:
+	if amount <= 0.0:
+		return
+	set_health(health - amount)
+
+
 func set_health(value: float) -> void:
 	var clamped := clampf(value, 0.0, health_max)
 	if clamped != health:

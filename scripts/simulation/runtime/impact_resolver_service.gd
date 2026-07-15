@@ -21,6 +21,7 @@ var _cooldown_until: Dictionary = {}
 var _tracked_bodies: Dictionary = {}
 var _pre_step_velocity: Dictionary = {}
 var _last_sustained_contact: Dictionary = {}
+var _player_hit_until: Dictionary = {}
 var _material_source := TerrainMaterialSource.new()
 var last_terrain_carve_m3: float = 0.0
 
@@ -49,6 +50,7 @@ func unbind() -> void:
 	_tracked_bodies.clear()
 	_pre_step_velocity.clear()
 	_last_sustained_contact.clear()
+	_player_hit_until.clear()
 	_flush_scheduled = false
 
 
@@ -213,7 +215,12 @@ func _on_body_shape_entered(
 	if body == null or not is_instance_valid(body) or body.freeze or other_body == null:
 		return
 	var is_world_surface := ImpactResolver.is_world_surface_partner(other_body)
-	if not is_world_surface and not ImpactResolver.is_assembly_partner(other_body):
+	var hits_player := ImpactResolver.player_suit_state(other_body) != null
+	if (
+		not is_world_surface
+		and not ImpactResolver.is_assembly_partner(other_body)
+		and not hits_player
+	):
 		return
 	var assembly_id := int(body.get_meta("assembly_id", 0))
 	if assembly_id <= 0:
@@ -243,6 +250,8 @@ func _on_body_shape_entered(
 	var partner_velocity := Vector3.ZERO
 	if other_body is RigidBody3D:
 		partner_velocity = pre_step_velocity(other_body as RigidBody3D)
+	elif other_body is CharacterBody3D:
+		partner_velocity = (other_body as CharacterBody3D).velocity
 	var impulse_length := ImpactResolver.fallback_impulse_length(
 		body,
 		other_body,
@@ -313,6 +322,7 @@ func integrate_contacts(
 		if (
 			not ImpactResolver.is_world_surface_partner(partner)
 			and not ImpactResolver.is_assembly_partner(partner)
+			and ImpactResolver.player_suit_state(partner) == null
 		):
 			continue
 		if ImpactResolver.same_assembly_subgrid(assembly_id, partner):
@@ -485,6 +495,12 @@ func _apply_entry(
 	var batch_key := str(entry.get("batch_key", ""))
 	if not batch_key.is_empty():
 		_cooldown_until[batch_key] = Time.get_ticks_msec() + COOLDOWN_MS
+	var suit := ImpactResolver.player_suit_state(partner)
+	if suit != null:
+		# V2-6: the player absorbs the hit; no carve and no self-damage to
+		# the striker from squashing something soft.
+		_apply_player_hit(partner, suit, impulse_length)
+		return 0.0
 	var used_volume := 0.0
 	if (
 		volume_budget_m3 > 0.0
@@ -678,6 +694,22 @@ func _nudge_integer_ray_origin(origin: Vector3) -> Vector3:
 	):
 		return origin + Vector3(0.05, 0.0, 0.05)
 	return origin
+
+
+func _apply_player_hit(
+	partner: Object,
+	suit: SuitState,
+	impulse_length: float
+) -> void:
+	var player_id := partner.get_instance_id()
+	var now := Time.get_ticks_msec()
+	if now < int(_player_hit_until.get(player_id, 0)):
+		return
+	var amount := ImpactResolver.player_damage_amount(impulse_length)
+	if amount <= 0.0:
+		return
+	_player_hit_until[player_id] = now + ImpactResolver.PLAYER_HIT_COOLDOWN_MS
+	suit.apply_damage(amount, &"kinetic_impact")
 
 
 func _apply_element_damage(

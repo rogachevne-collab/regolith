@@ -27,6 +27,7 @@ func _run_tests() -> void:
 		_test_sustained_actuator_carves_terrain,
 		_test_sustained_actuator_damages_striker,
 		_test_kinetic_loot_threshold,
+		_test_player_hit_damages_suit,
 	]
 	for test: Callable in tests:
 		if not bool(await test.call()):
@@ -246,6 +247,58 @@ func _test_kinetic_loot_threshold() -> bool:
 		return _fail(
 			"loot mass %.2f != expected %.2f" % [mass, expected]
 		)
+	return true
+
+
+func _test_player_hit_damages_suit() -> bool:
+	var fixture := await _new_fixture()
+	var spawn := _spawn_single(fixture.world)
+	if not spawn.is_ok():
+		_free_fixture(fixture)
+		return _fail("player-hit spawn failed")
+	var element_id := int(spawn.data["element_ids"][0])
+	var body: RigidBody3D = fixture.projection.get_physics_body(
+		int(spawn.data["assembly_id"])
+	) as RigidBody3D
+	var player := CharacterBody3D.new()
+	var suit := SuitState.new()
+	suit.name = "SuitState"
+	suit.simulate = false
+	player.add_child(suit)
+	add_child(player)
+	var entry := {
+		"batch_key": "player_hit_test",
+		"striker_element_id": element_id,
+		"striker_body": body,
+		"local_shape_index": 0,
+		"partner": player,
+		"impulse_length": 2.0,
+		"contact_world": Vector3.ZERO,
+		"contact_points": PackedVector3Array(),
+		"contact_impulses": PackedFloat32Array(),
+	}
+	var element_before: float = fixture.world.get_element(element_id).integrity
+	fixture.impact_service.apply_entry_for_test(entry)
+	if suit.health < suit.health_max:
+		player.queue_free()
+		_free_fixture(fixture)
+		return _fail("sub-threshold hit hurt the player")
+	entry["impulse_length"] = 36.0
+	var carved: float = fixture.impact_service.apply_entry_for_test(entry)
+	var health_after_first: float = suit.health
+	fixture.impact_service.apply_entry_for_test(entry)
+	var health_after_second: float = suit.health
+	var element_after: float = fixture.world.get_element(element_id).integrity
+	player.queue_free()
+	_free_fixture(fixture)
+	if health_after_first >= suit.health_max:
+		return _fail("strong hit did not damage the player")
+	if carved != 0.0:
+		return _fail("player hit must not carve terrain")
+	if element_after < element_before:
+		return _fail("player hit damaged the striker element")
+	if health_after_second < health_after_first:
+		return _fail("player hit ignored the personal cooldown")
 	return true
 
 

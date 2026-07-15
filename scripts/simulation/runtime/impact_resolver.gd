@@ -11,6 +11,11 @@ const I_LOOT := 12.0
 ## Impacts scatter regolith — collection efficiency is well below the
 ## drill's 1.0. Balance knob.
 const KINETIC_COLLECTIBLE_FRACTION := 0.35
+## Player hp lost at a reference-strength impact (I_REF); a few reference
+## hits are lethal. Same quadratic curve as element damage (V2-6).
+const K_PLAYER_DAMAGE := 35.0
+## Personal invulnerability window so sliding contact ticks <= 4 Hz.
+const PLAYER_HIT_COOLDOWN_MS := 250
 
 
 static func impulse_strength(impulse_length: float) -> float:
@@ -72,6 +77,20 @@ static func is_world_surface_partner(partner: Object) -> bool:
 	if partner is StaticBody3D:
 		return int((partner as StaticBody3D).get_meta("assembly_id", 0)) == 0
 	return false
+
+
+## The player is a CharacterBody3D carrying a SuitState child (player.tscn).
+static func player_suit_state(partner: Object) -> SuitState:
+	if not partner is CharacterBody3D:
+		return null
+	return (partner as CharacterBody3D).get_node_or_null(
+		"SuitState"
+	) as SuitState
+
+
+static func player_damage_amount(impulse_length: float) -> float:
+	var strength := impulse_strength(impulse_length)
+	return strength * strength * K_PLAYER_DAMAGE
 
 
 static func is_assembly_partner(partner: Object) -> bool:
