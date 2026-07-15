@@ -36,6 +36,9 @@ var _snap_event_bound := false
 var _excavation := TerrainExcavationService.new()
 var _material_source := TerrainMaterialSource.new()
 var _hand_drill_last_bite_center: Variant = null
+var _rover_seat_player: Node3D
+var _rover_seat_assembly_id := 0
+var _rover_seat_element_id := 0
 
 
 func _ready() -> void:
@@ -141,6 +144,10 @@ func _execute(command: Dictionary) -> Dictionary:
 			return _set_actuator_target(command, target)
 		&"configure_actuator":
 			return _configure_actuator(command, target)
+		&"configure_wheel":
+			return _configure_wheel(command, target)
+		&"configure_suspension":
+			return _configure_suspension(command, target)
 		_:
 			return _result(&"invalid_target")
 
@@ -452,16 +459,124 @@ func _toggle_control_seat(
 		!= InteractionHit.KIND_CONTROL_SEAT
 	):
 		return _result(&"invalid_target")
-	var vehicle: Object = target.get("collider")
 	var source: Node3D = command.get("source")
+	if source == null:
+		return _result(&"not_ready")
+	if _is_rover_seated(source):
+		return _exit_rover_seat(source)
+	var vehicle: Object = target.get("collider")
+	var metadata: Dictionary = target.get("metadata", {})
+	if metadata.has("element_id"):
+		return _enter_rover_seat(source, metadata)
 	if (
 		vehicle == null
-		or source == null
 		or not vehicle.has_method("handle_interact")
 	):
 		return _result(&"not_ready")
 	if not vehicle.call("handle_interact", source):
 		return _result(&"blocked")
+	return _result(&"ok")
+
+
+func is_rover_seated(player: Node = null) -> bool:
+	if player == null:
+		player = _rover_seat_player
+	return (
+		player != null
+		and _rover_seat_assembly_id > 0
+		and player.has_method("is_in_vehicle")
+		and player.call("is_in_vehicle")
+	)
+
+
+func tick_rover_locomotion_input() -> void:
+	if _session == null or _rover_seat_assembly_id <= 0:
+		return
+	var locomotion := _session.world.get_locomotion_controller(
+		_rover_seat_assembly_id
+	)
+	var drive := (
+		Input.get_action_strength(&"move_forward")
+		- Input.get_action_strength(&"move_back")
+	)
+	var steer := Input.get_axis(&"move_right", &"move_left")
+	locomotion.set_drive_command(drive)
+	locomotion.set_steering_command(steer)
+	locomotion.set_brake_command(
+		1.0 if Input.is_action_pressed(&"jump") else 0.0
+	)
+
+
+func _is_rover_seated(player: Node3D) -> bool:
+	return (
+		is_rover_seated(player)
+		and _rover_seat_element_id > 0
+	)
+
+
+func _enter_rover_seat(
+	player: Node3D,
+	metadata: Dictionary
+) -> Dictionary:
+	if _session == null or _session.projection == null:
+		return _result(&"not_ready")
+	var element_id := int(metadata.get("element_id", 0))
+	var assembly_id := int(metadata.get("assembly_id", 0))
+	if element_id <= 0 or assembly_id <= 0:
+		return _result(&"invalid_target")
+	if not WheelSimulationService.is_locomotive_assembly(
+		_session.world,
+		assembly_id
+	):
+		return _result(&"blocked")
+	var body := _session.projection.get_physics_body(assembly_id)
+	if body == null:
+		return _result(&"not_ready")
+	var element := _session.world.get_element(element_id)
+	if element == null:
+		return _result(&"invalid_target")
+	var seat_offset: Vector3 = WheelPlacementUtil.seat_offset_local(element)
+	if player.has_method("set_gameplay_input_enabled"):
+		player.call("set_gameplay_input_enabled", false)
+	if player.has_method("enter_vehicle"):
+		player.call("enter_vehicle", body, seat_offset)
+	_rover_seat_player = player
+	_rover_seat_assembly_id = assembly_id
+	_rover_seat_element_id = element_id
+	return _result(&"ok", {
+		"assembly_id": assembly_id,
+		"element_id": element_id,
+	})
+
+
+func _exit_rover_seat(player: Node3D) -> Dictionary:
+	if _session == null or _rover_seat_assembly_id <= 0:
+		return _result(&"not_ready")
+	var body := _session.projection.get_physics_body(_rover_seat_assembly_id)
+	var exit_position := player.global_position
+	if body != null:
+		var element := _session.world.get_element(_rover_seat_element_id)
+		if element != null:
+			var seat_offset: Vector3 = WheelPlacementUtil.seat_offset_local(element)
+			var seat_world: Vector3 = body.global_transform * seat_offset
+			exit_position = (
+				seat_world
+				+ body.global_transform.basis.x * 1.2
+				+ Vector3.UP * 0.15
+			)
+	if player.has_method("exit_vehicle"):
+		player.call("exit_vehicle", exit_position)
+	if player.has_method("set_gameplay_input_enabled"):
+		player.call("set_gameplay_input_enabled", true)
+	var locomotion := _session.world.get_locomotion_controller(
+		_rover_seat_assembly_id
+	)
+	locomotion.set_drive_command(0.0)
+	locomotion.set_steering_command(0.0)
+	locomotion.set_brake_command(0.0)
+	_rover_seat_player = null
+	_rover_seat_assembly_id = 0
+	_rover_seat_element_id = 0
 	return _result(&"ok")
 
 
@@ -1244,6 +1359,76 @@ func _configure_actuator(
 		{
 			"joint_id": configure.joint_id,
 			"status_name": result.get("status_name", &""),
+		}
+	)
+
+
+func _configure_wheel(
+	command: Dictionary,
+	target: Dictionary
+) -> Dictionary:
+	if _session == null:
+		return _result(&"not_ready")
+	var parameters: Dictionary = command.get("parameters", {})
+	var metadata: Dictionary = target.get("metadata", {})
+	var configure := ConfigureWheelCommand.new()
+	configure.wheel_element_id = int(
+		parameters.get(
+			"wheel_element_id",
+			metadata.get("wheel_element_id", metadata.get("element_id", 0))
+		)
+	)
+	if parameters.has("steerable"):
+		configure.steerable_set = true
+		configure.steerable = bool(parameters["steerable"])
+	if parameters.has("drive_torque_scale"):
+		configure.drive_torque_scale = float(
+			parameters["drive_torque_scale"]
+		)
+	if parameters.has("brake_torque_n_m"):
+		configure.brake_torque_n_m = float(parameters["brake_torque_n_m"])
+	var result := _session.apply_configure_wheel(configure)
+	return _result(
+		StringName(result.get("reason", &"invalid_target")),
+		{
+			"wheel_element_id": configure.wheel_element_id,
+		}
+	)
+
+
+func _configure_suspension(
+	command: Dictionary,
+	target: Dictionary
+) -> Dictionary:
+	if _session == null:
+		return _result(&"not_ready")
+	var parameters: Dictionary = command.get("parameters", {})
+	var metadata: Dictionary = target.get("metadata", {})
+	var configure := ConfigureSuspensionCommand.new()
+	configure.suspension_element_id = int(
+		parameters.get(
+			"suspension_element_id",
+			metadata.get(
+				"suspension_element_id",
+				metadata.get("element_id", 0)
+			)
+		)
+	)
+	if parameters.has("travel_m"):
+		configure.travel_m = float(parameters["travel_m"])
+	if parameters.has("spring_stiffness_n_per_m"):
+		configure.spring_stiffness_n_per_m = float(
+			parameters["spring_stiffness_n_per_m"]
+		)
+	if parameters.has("spring_damping_n_s_per_m"):
+		configure.spring_damping_n_s_per_m = float(
+			parameters["spring_damping_n_s_per_m"]
+		)
+	var result := _session.apply_configure_suspension(configure)
+	return _result(
+		StringName(result.get("reason", &"invalid_target")),
+		{
+			"suspension_element_id": configure.suspension_element_id,
 		}
 	)
 

@@ -124,6 +124,8 @@ func _target_kind(
 ) -> StringName:
 	if collider.has_method("interaction_target_kind"):
 		return collider.call("interaction_target_kind")
+	if metadata.has("control_seat"):
+		return InteractionHit.KIND_CONTROL_SEAT
 	if metadata.has("element_id"):
 		return InteractionHit.KIND_SIMULATION_ELEMENT
 	if metadata.has("loot_pile_id"):
@@ -265,6 +267,16 @@ func _target_metadata(
 			PistonPlacementUtil.enrich_interaction_metadata(
 				_session.world,
 				int(metadata["element_id"]),
+				metadata
+			)
+			WheelPlacementUtil.enrich_interaction_metadata(
+				_session.world,
+				int(metadata["element_id"]),
+				metadata
+			)
+			WheelPlacementUtil.enrich_control_seat_metadata(
+				_session.world,
+				element,
 				metadata
 			)
 	return metadata

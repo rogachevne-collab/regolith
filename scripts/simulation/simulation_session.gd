@@ -13,6 +13,7 @@ const SLICE01_BASE_MINIMAL := preload(
 )
 @onready var visuals: ElementVisualProjection = $ElementVisualProjection
 @onready var piston_visuals: PistonVisualProjection = $PistonVisualProjection
+@onready var wheel_visuals: WheelVisualProjection = $WheelVisualProjection
 @onready var impact_service: ImpactResolverService = $ImpactResolverService
 @onready var industry_network: IndustryNetworkProjection = $IndustryNetworkProjection
 @onready var industry_ports: IndustryPortProjection = $IndustryPortProjection
@@ -25,6 +26,7 @@ func _ready() -> void:
 	projection.bind_world(world)
 	visuals.bind(world, projection)
 	piston_visuals.bind(world, projection)
+	wheel_visuals.bind(world, projection)
 	industry_network.bind(world, projection)
 	industry_ports.bind(world, projection)
 	world_loot.bind(world)
@@ -35,6 +37,11 @@ func _ready() -> void:
 
 func _physics_process(delta: float) -> void:
 	_industry_simulation.tick(world, delta)
+	var gateway: WorldCommandGateway = null
+	if not gateway_path.is_empty():
+		gateway = get_node_or_null(gateway_path) as WorldCommandGateway
+	if gateway != null:
+		gateway.tick_rover_locomotion_input()
 
 
 func get_industry_simulation() -> IndustrySimulation:
@@ -123,6 +130,7 @@ func spawn_blueprint_at_transform(
 	projection.project_assembly_now(assembly_id, motion)
 	visuals.rebuild_all()
 	piston_visuals.rebuild_all()
+	wheel_visuals.rebuild_all()
 	return result
 
 

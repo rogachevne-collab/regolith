@@ -6,6 +6,7 @@ const ROVER_FRAME := preload(
 const WHEEL_SUSPENSION := preload(
 	"res://resources/archetypes/slice01/wheel_suspension.tres"
 )
+const ROVER_DEMO_SPAWN := preload("res://scripts/authoring/rover_demo_spawn.gd")
 const DRIVE_WHEEL := preload(
 	"res://resources/archetypes/slice01/drive_wheel.tres"
 )
@@ -18,11 +19,14 @@ func _ready() -> void:
 func _run_tests() -> void:
 	var tests: Array[Callable] = [
 		_test_socket_tag_blocks_frame_to_wheel_socket,
+		_test_wheel_placement_requires_suspension,
+		_test_wheel_placement_rejects_occupied_socket,
 		_test_wheel_pair_discovery,
 		_test_locomotive_requires_complete_pair,
 		_test_configure_wheel_steerable,
 		_test_configure_suspension_rejects_invalid_travel,
 		_test_dismantle_wheel_breaks_locomotive,
+		_test_demo_rover_spawn,
 	]
 	for test: Callable in tests:
 		if not bool(test.call()):
@@ -169,6 +173,75 @@ func _test_socket_tag_blocks_frame_to_wheel_socket() -> bool:
 	return true
 
 
+func _test_wheel_placement_requires_suspension() -> bool:
+	var world := _boot_world()
+	var partial := _build_suspension_only(world)
+	if partial.is_empty() or partial.has("error"):
+		world.free()
+		return _fail(
+			"suspension setup failed: %s"
+			% partial.get("error", "unknown")
+		)
+	var deny := _place(
+		world,
+		int(partial["assembly_id"]),
+		int(partial["revision"]),
+		DRIVE_WHEEL,
+		Vector3i(7, 0, 0)
+	)
+	world.free()
+	if deny.is_ok():
+		return _fail("wheel placed without adjacent suspension")
+	if StringName(deny.data.get("detail", &"")) != &"wheel_socket_required":
+		return _fail(
+			"expected wheel_socket_required, got %s / %s"
+			% [deny.reason, deny.data.get("detail", "")]
+		)
+	return true
+
+
+func _test_wheel_placement_rejects_occupied_socket() -> bool:
+	var world := _boot_world()
+	var built := _build_complete_pair(world)
+	if built.is_empty() or built.has("error"):
+		world.free()
+		return _fail(
+			"complete pair setup failed: %s"
+			% built.get("error", "unknown")
+		)
+	var command := PlaceElementCommand.new()
+	command.assembly_id = int(built["assembly_id"])
+	command.archetype = DRIVE_WHEEL
+	command.origin_cell = Vector3i(5, -1, 0)
+	command.orientation_index = 0
+	var preview := SimulationElement.frame(
+		-1,
+		command.assembly_id,
+		DRIVE_WHEEL,
+		command.origin_cell,
+		command.orientation_index,
+		{"construction_component": 1.0}
+	)
+	var result: Variant = WheelPlacementUtil.validate_wheel_placement(
+		world,
+		command,
+		preview
+	)
+	world.free()
+	if (
+		not result is StructuralCommandResult
+		or (result as StructuralCommandResult).is_ok()
+	):
+		return _fail("occupied socket should be rejected")
+	var wheel_result := result as StructuralCommandResult
+	if StringName(wheel_result.data.get("detail", &"")) != &"socket_occupied":
+		return _fail(
+			"expected socket_occupied, got %s"
+			% wheel_result.data.get("detail", "")
+		)
+	return true
+
+
 func _test_wheel_pair_discovery() -> bool:
 	var world := _boot_world()
 	var built := _build_complete_pair(world)
@@ -292,6 +365,54 @@ func _test_dismantle_wheel_breaks_locomotive() -> bool:
 		world.free()
 		return _fail("assembly should stop being locomotive after wheel removed")
 	world.free()
+	return true
+
+
+func _test_demo_rover_spawn() -> bool:
+	var world := SimulationWorld.new()
+	var session := SimulationSession.new()
+	var projection := SimulationPhysicsProjection.new()
+	world.name = "SimulationWorld"
+	projection.name = "SimulationPhysicsProjection"
+	session.add_child(world)
+	session.add_child(projection)
+	session.world = world
+	session.projection = projection
+	projection.bind_world(world)
+	world.ensure_resource_store("player")
+	for archetype: ElementArchetype in Slice01Archetypes.load_rover_archetypes():
+		world.get_archetype_registry().register(archetype)
+	var result: Dictionary = ROVER_DEMO_SPAWN.spawn_on_terrain(
+		session,
+		Vector3(8.0, 0.0, 0.0)
+	)
+	var assembly_id := int(result.get("assembly_id", 0))
+	var ok := bool(result.get("ok", false))
+	var locomotive := (
+		ok
+		and WheelSimulationService.is_locomotive_assembly(world, assembly_id)
+	)
+	IndustryElectricBudget.apply_tick(world, 1.0)
+	var wheel_powered := false
+	var module_ids: Dictionary = result.get("element_ids", {})
+	for key: String in ["fl", "fr", "rl", "rr"]:
+		var pair_variant: Variant = module_ids.get(key, {})
+		if not pair_variant is Dictionary:
+			continue
+		var wheel_id := int((pair_variant as Dictionary).get("wheel", 0))
+		if wheel_id <= 0:
+			continue
+		var runtime := world.get_industry_element_runtime(wheel_id)
+		if runtime != null and runtime.powered:
+			wheel_powered = true
+			break
+	session.free()
+	if not ok:
+		return _fail("demo rover spawn failed: %s" % result.get("error", ""))
+	if not locomotive:
+		return _fail("demo rover should be locomotive")
+	if not wheel_powered:
+		return _fail("demo rover wheels should be powered after electric tick")
 	return true
 
 
