@@ -73,6 +73,7 @@ generator = SubResource("VoxelGeneratorFlat_playground")
 mesher = SubResource("VoxelMesherTransvoxel_main")
 material_override = ExtResource("4")
 generate_collisions = true
+collision_margin = 0.0
 run_stream_in_editor = true
 automatic_loading_enabled = true
 

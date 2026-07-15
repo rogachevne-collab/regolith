@@ -576,7 +576,9 @@ those hooks do not define production yield semantics.
   плагине). `VoxelTool.raycast` — **Godot world-space**. Редактирование SDF
   (`do_sphere`, …) — через `world_to_local`. При чистом node-scale ≠ 1 SDF-Y
   может расходиться с mesh/collider; native `voxel_size` как раз для этого.
-  `generate_collisions = true` на terrain обязателен. Прицел/бур/проекция на
+  `generate_collisions = true` на terrain обязателен. `collision_margin = 0`
+  (дефолт плагина 0.04 раздувает concave shape → визуальный «провал» в mesh
+  при Jolt). Прицел/бур/проекция на
   terrain — physics raycast (collider); SDF-raycast — fallback без collider.
 - **Bootstrap spawn:** gate только по SDF-raycast игрока и корабля; высота
   спавна — `resolve_ground_surface_y` (physics если есть, иначе SDF), без
