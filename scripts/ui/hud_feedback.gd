@@ -118,6 +118,16 @@ func _prompt_for(hit: InteractionHit) -> String:
 		and hit.distance <= 4.5
 	):
 		return "E — сесть в кокпит"
+	if (
+		hit.valid
+		and hit.distance <= 4.0
+		and hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
+		and str(hit.metadata.get("archetype_id", "")) in [
+			"drive_wheel",
+			"wheel_suspension",
+		]
+	):
+		return "E — настройки модуля"
 	if _tools.active_tool == &"weld":
 		if (
 			hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
@@ -132,6 +142,17 @@ func _prompt_for(hit: InteractionHit) -> String:
 				return "Блок готов"
 		return "ЛКМ — сварка по конструкции"
 	if _tools.active_tool == &"build":
+		if (
+			_preview != null
+			and not _preview.resolved_target.is_empty()
+			and not _preview.has_resolved_placement()
+		):
+			var detail := StringName(
+				_preview.resolved_plan.get("data", {}).get("detail", &"")
+			)
+			var wheel_prompt := _wheel_placement_prompt(detail)
+			if not wheel_prompt.is_empty():
+				return wheel_prompt
 		if _preview != null and _preview.has_resolved_placement():
 			var block_name := _gateway.archetype_display_name(
 				_tools.selected_archetype_id
@@ -175,6 +196,17 @@ func _on_connect_rejected(reason: StringName) -> void:
 	_result_left = 1.2
 
 
+func _wheel_placement_prompt(detail: StringName) -> String:
+	match detail:
+		&"wheel_socket_required":
+			return "Нужна подвеска рядом"
+		&"socket_occupied":
+			return "Гнездо подвески занято"
+		&"wrong_orientation":
+			return "Поверни колесо к гнезду"
+	return ""
+
+
 func _suppress_success_feedback() -> bool:
 	var action := _tools.active_action
 	if action == &"tool_primary" and (
@@ -216,6 +248,10 @@ func _reason_text(reason: StringName, data: Dictionary = {}) -> String:
 		&"duplicate_connection":
 			return "Провод уже подключён"
 		&"incompatible_connection":
+			var detail := StringName(data.get("detail", &""))
+			var wheel_text := _wheel_placement_prompt(detail)
+			if not wheel_text.is_empty():
+				return wheel_text
 			return "Нет совместимых электропортов"
 		&"no_electric_ports":
 			return "У блока нет электропортов"

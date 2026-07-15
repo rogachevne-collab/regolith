@@ -33,6 +33,7 @@ enum ActionState {
 @export var preview_path: NodePath = NodePath("../ConstructionPreview")
 @export var terminal_path: NodePath = NodePath("../HUDRoot/Screen/Terminal")
 @export var actuator_panel_path: NodePath = NodePath("../HUDRoot/Screen/ActuatorPanel")
+@export var wheel_panel_path: NodePath = NodePath("../HUDRoot/Screen/WheelPanel")
 
 const ACTIONS := {
 	&"tool_primary": {
@@ -144,6 +145,7 @@ var _gateway: WorldCommandGateway
 var _preview: ConstructionPreview
 var _terminal: Node
 var _actuator_panel: Node
+var _wheel_panel: Node
 var _cooldown := 0.0
 var _issued_for_press := false
 var _locked_hit: InteractionHit
@@ -178,6 +180,7 @@ func _ready() -> void:
 	_preview = get_node_or_null(preview_path) as ConstructionPreview
 	_terminal = get_node_or_null(terminal_path)
 	_actuator_panel = get_node_or_null(actuator_panel_path)
+	_wheel_panel = get_node_or_null(wheel_panel_path)
 	_ensure_runtime_state()
 	command_requested.connect(_gateway.submit)
 	_gateway.command_completed.connect(_on_gateway_command_completed)
@@ -194,23 +197,32 @@ func _physics_process(delta: float) -> void:
 					_actuator_panel.call("close_for_interact")
 				else:
 					_actuator_panel.call("close")
+			elif _wheel_panel_is_open():
+				if _wheel_panel.has_method("close_for_interact"):
+					_wheel_panel.call("close_for_interact")
+				else:
+					_wheel_panel.call("close")
 			elif _terminal_is_open():
 				if _terminal.has_method("close_for_interact"):
 					_terminal.call("close_for_interact")
 				else:
 					_terminal.call("close")
 		return
+	if _query == null:
+		return
 	var player := get_parent()
+	var in_vehicle: bool = (
+		player.has_method("is_in_vehicle")
+		and player.call("is_in_vehicle")
+	)
 	if (
-		player.has_method("is_gameplay_input_enabled")
+		not in_vehicle
+		and player.has_method("is_gameplay_input_enabled")
 		and not player.call("is_gameplay_input_enabled")
 	):
 		cancel()
 		return
-	if not (
-		player.has_method("is_in_vehicle")
-		and player.call("is_in_vehicle")
-	):
+	if not in_vehicle:
 		_update_toolbar_input()
 	if active_tool == &"connect":
 		if Input.is_action_just_pressed(&"tool_primary"):
@@ -466,6 +478,8 @@ func _pressed_action() -> StringName:
 
 
 func _update_toolbar_input() -> void:
+	if _query == null:
+		return
 	if Input.is_action_just_pressed(&"toolbar_page_prev"):
 		_change_toolbar_page(-1)
 	if Input.is_action_just_pressed(&"toolbar_page_next"):
@@ -1037,6 +1051,8 @@ func _is_recipe_machine_hit(hit: InteractionHit) -> bool:
 func _try_emit_context_interaction(hit: InteractionHit) -> bool:
 	if _try_collect_world_loot(hit):
 		return true
+	if active_tool != &"connect" and _try_open_wheel_panel(hit):
+		return true
 	if active_tool != &"connect" and _try_open_actuator_panel(hit):
 		return true
 	if active_tool != &"connect" and _try_open_terminal(hit):
@@ -1045,7 +1061,11 @@ func _try_emit_context_interaction(hit: InteractionHit) -> bool:
 
 
 func _ui_modal_blocks_world_interact() -> bool:
-	return _terminal_blocks_world_interact() or _actuator_panel_blocks_world_interact()
+	return (
+		_terminal_blocks_world_interact()
+		or _actuator_panel_blocks_world_interact()
+		or _wheel_panel_blocks_world_interact()
+	)
 
 
 func _actuator_panel_is_open() -> bool:
@@ -1072,6 +1092,32 @@ func _try_open_actuator_panel(hit: InteractionHit) -> bool:
 	if _actuator_panel.has_method("is_open") and bool(_actuator_panel.call("is_open")):
 		return false
 	return bool(_actuator_panel.call("try_open_on_target", hit))
+
+
+func _wheel_panel_is_open() -> bool:
+	return (
+		_wheel_panel != null
+		and _wheel_panel.has_method("is_open")
+		and bool(_wheel_panel.call("is_open"))
+	)
+
+
+func _wheel_panel_blocks_world_interact() -> bool:
+	return (
+		_wheel_panel != null
+		and _wheel_panel.has_method("blocks_world_interact")
+		and bool(_wheel_panel.call("blocks_world_interact"))
+	)
+
+
+func _try_open_wheel_panel(hit: InteractionHit) -> bool:
+	if _wheel_panel == null or not _wheel_panel.has_method("try_open_on_target"):
+		return false
+	if _ui_modal_blocks_world_interact():
+		return false
+	if _wheel_panel.has_method("is_open") and bool(_wheel_panel.call("is_open")):
+		return false
+	return bool(_wheel_panel.call("try_open_on_target", hit))
 
 
 func _terminal_is_open() -> bool:
