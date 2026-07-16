@@ -51,6 +51,9 @@ func _ready() -> void:
 	_loading.visible = true
 	_coordinates.visible = debug_overlay
 	_hint.visible = debug_overlay
+	var gateway := get_node_or_null("WorldCommandGateway")
+	if gateway != null and gateway.has_signal("terrain_modified"):
+		gateway.terrain_modified.connect(_on_terrain_modified)
 	_player_spawn_hint = _player.global_position
 	if _player_spawn_hint.length_squared() <= 0.000001:
 		_player_spawn_hint = Vector3.UP
@@ -138,6 +141,10 @@ func _persist_digs() -> void:
 	lod.save_modified_blocks()
 	if _voxel_stream != null:
 		_voxel_stream.flush()
+
+
+func _on_terrain_modified(_removed_volume_m3: float) -> void:
+	_persist_digs()
 
 
 func _begin_fresh_world(player_position: Vector3) -> void:

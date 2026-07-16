@@ -20,6 +20,8 @@ const _GROUND_SEAT_SAMPLES: Array[Vector2] = [
 @export var placed_blocks_path: NodePath = NodePath("../PlacedBlocks")
 @export var simulation_session_path: NodePath = NodePath("../SimulationSession")
 
+signal terrain_modified(removed_volume_m3: float)
+
 var _terrain: Node3D
 var _placed_blocks: Node
 var _voxel_tool: VoxelTool
@@ -221,6 +223,7 @@ func _remove_voxel(
 	if total_removed_m3 > 0.000001:
 		_hand_drill_last_bite_center = bite_center
 		_hand_drill_last_bite_msec = now_msec
+		_notify_terrain_modified(total_removed_m3)
 	else:
 		_hand_drill_last_bite_center = null
 	var removed_m3 := total_removed_m3
@@ -288,9 +291,16 @@ func apply_terrain_carve(
 	request["volume_budget_m3"] = volume_budget_m3
 	if not request.has("sdf_scale"):
 		request["sdf_scale"] = TerrainExcavationService.DEFAULT_SDF_SCALE
-	return float(
+	var removed := float(
 		_excavation.excavate(_voxel_tool, request).get("removed_volume_m3", 0.0)
 	)
+	if removed > 0.000001:
+		_notify_terrain_modified(removed)
+	return removed
+
+
+func _notify_terrain_modified(removed_volume_m3: float) -> void:
+	terrain_modified.emit(removed_volume_m3)
 
 
 func stationary_drill_has_terrain_contact(element_id: int) -> bool:
@@ -309,7 +319,7 @@ func carve_stationary_drill(element_id: int) -> float:
 		* radius
 		* IndustryArchetypeProfile.drill_carve_center_offset_factor()
 	)
-	return float(
+	var removed := float(
 		_excavation.excavate(
 			_voxel_tool,
 			{
@@ -321,6 +331,9 @@ func carve_stationary_drill(element_id: int) -> float:
 			}
 		).get("removed_volume_m3", 0.0)
 	)
+	if removed > 0.000001:
+		_notify_terrain_modified(removed)
+	return removed
 
 
 func _stationary_drill_contact(element_id: int) -> Dictionary:

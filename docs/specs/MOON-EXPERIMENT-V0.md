@@ -261,10 +261,10 @@ player/projection за feature-flag / «если задан GravityField / moon_
 | Фаза | Статус |
 |---|---|
 | 0 Контракт | **done** |
-| 1 Сцена-оболочка | **in progress** |
-| 2 Terrain API | **in progress** |
-| 3 Radial gravity (RB) | pending |
-| 4 Player local up | pending |
-| 5 Construction seat | pending |
-| 6 Wheels / joints parity | pending |
-| 7 Dig persistence | pending |
+| 1 Сцена-оболочка | **done** |
+| 2 Terrain API | **done** |
+| 3 Radial gravity (RB) | **done** (Area3D point, unit_distance=0) |
+| 4 Player local up | **done** |
+| 5 Construction seat | **done** |
+| 6 Wheels / joints parity | **done** (rover spawn + field-aware wheels) |
+| 7 Dig persistence | **done** (VoxelStreamRegionFiles + carve signal flush) |
