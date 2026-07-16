@@ -10,6 +10,9 @@ const PISTON_VISUAL_SCRIPT := preload(
 const ROVER_MODULE_VISUAL_SCRIPT := preload(
 	"res://scripts/presentation/rover_module_visual.gd"
 )
+const CONNECTED_BLOCK_VISUAL_SCRIPT := preload(
+	"res://scripts/presentation/connected_block_visual.gd"
+)
 
 @export var query_path: NodePath = NodePath("../InteractionQuery")
 @export var tool_controller_path: NodePath = NodePath("../ToolController")
@@ -475,7 +478,39 @@ func _build_collider_preview_nodes(
 	material: Material
 ) -> Array[Node]:
 	var nodes: Array[Node] = []
+	var use_connected := CONNECTED_BLOCK_VISUAL_SCRIPT.is_connected_archetype(
+		archetype.archetype_id
+	)
+	var rim_material := _connected_rim_preview_material(material)
 	for collider: ColliderDefinition in archetype.colliders:
+		if (
+			use_connected
+			and collider.shape_kind == ColliderDefinition.ShapeKind.BOX
+		):
+			var root := Node3D.new()
+			root.transform = GridPoseUtil.collider_local_transform(
+				origin_cell,
+				orientation_index,
+				collider
+			)
+			var fill := MeshInstance3D.new()
+			fill.mesh = CONNECTED_BLOCK_VISUAL_SCRIPT.make_fill_mesh(
+				collider.size,
+				0
+			)
+			fill.material_override = material
+			fill.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			root.add_child(fill)
+			var rim := MeshInstance3D.new()
+			rim.mesh = CONNECTED_BLOCK_VISUAL_SCRIPT.make_rim_mesh(
+				collider.size,
+				0
+			)
+			rim.material_override = rim_material
+			rim.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			root.add_child(rim)
+			nodes.append(root)
+			continue
 		var mesh := collider.make_preview_mesh(1.015)
 		var instance := MeshInstance3D.new()
 		instance.mesh = mesh
@@ -488,6 +523,16 @@ func _build_collider_preview_nodes(
 		)
 		nodes.append(instance)
 	return nodes
+
+
+func _connected_rim_preview_material(base: Material) -> Material:
+	var source := base as StandardMaterial3D
+	if source == null:
+		return base
+	var rim := source.duplicate() as StandardMaterial3D
+	rim.albedo_color = source.albedo_color.darkened(0.45)
+	rim.metallic = minf(source.metallic + 0.15, 1.0)
+	return rim
 
 
 func _build_collider_box_nodes(

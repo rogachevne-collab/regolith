@@ -9,6 +9,9 @@ const STATIONARY_DRILL_VISUAL_SCRIPT := preload(
 const ROVER_MODULE_VISUAL_SCRIPT := preload(
 	"res://scripts/presentation/rover_module_visual.gd"
 )
+const CONNECTED_BLOCK_VISUAL_SCRIPT := preload(
+	"res://scripts/presentation/connected_block_visual.gd"
+)
 
 var _world: SimulationWorld
 var _physics_projection: SimulationPhysicsProjection
@@ -140,9 +143,21 @@ func _update_element_visual(element_id: int) -> void:
 		return
 	var prefix := "%s%d_" % [VISUAL_PREFIX, element_id]
 	var material := _material_for(element)
+	var rim_material := _rim_material_for(element)
 	for child: Node in body.get_children():
 		if child is MeshInstance3D and child.name.begins_with(prefix):
 			(child as MeshInstance3D).material_override = material
+		elif (
+			child is Node3D
+			and child.has_meta("connected_block_visual")
+			and String(child.name).begins_with(prefix)
+		):
+			var fill := child.get_node_or_null("Fill") as MeshInstance3D
+			var rim := child.get_node_or_null("Rim") as MeshInstance3D
+			if fill != null:
+				fill.material_override = material
+			if rim != null:
+				rim.material_override = rim_material
 
 
 func _rebuild_assembly(assembly_id: int) -> void:
@@ -153,6 +168,15 @@ func _rebuild_assembly(assembly_id: int) -> void:
 		return
 	_clear_assembly_visuals(assembly_id)
 	_known_bodies[assembly_id] = root_body
+	var connected_index := CONNECTED_BLOCK_VISUAL_SCRIPT.build_occupancy(
+		_world,
+		assembly
+	)
+	var occupancy_cells: Dictionary = connected_index.get("cells", {})
+	var archetype_by_element: Dictionary = connected_index.get(
+		"archetypes",
+		{}
+	)
 	for element_id: int in assembly.element_ids:
 		var element := _world.get_element(element_id)
 		if element == null:
@@ -168,8 +192,33 @@ func _rebuild_assembly(assembly_id: int) -> void:
 		if ROVER_MODULE_VISUAL_SCRIPT.is_rover_module(element.archetype_id):
 			_add_rover_module_visual(body, assembly_id, element)
 			continue
+		var use_connected := CONNECTED_BLOCK_VISUAL_SCRIPT.is_connected_archetype(
+			element.archetype_id
+		)
+		var face_mask := 0
+		if use_connected:
+			face_mask = CONNECTED_BLOCK_VISUAL_SCRIPT.face_occlusion_mask(
+				element,
+				occupancy_cells,
+				archetype_by_element
+			)
 		for collider_index: int in range(archetype.colliders.size()):
 			var collider: ColliderDefinition = archetype.colliders[collider_index]
+			if (
+				use_connected
+				and collider.shape_kind == ColliderDefinition.ShapeKind.BOX
+			):
+				CONNECTED_BLOCK_VISUAL_SCRIPT.attach_element_visual(
+					body,
+					assembly_id,
+					element,
+					collider,
+					collider_index,
+					face_mask,
+					_material_for(element),
+					_rim_material_for(element)
+				)
+				continue
 			var mesh := collider.make_preview_mesh(0.96)
 			var visual := MeshInstance3D.new()
 			visual.name = "%s%d_%d" % [
@@ -295,6 +344,17 @@ func _material_for(element: SimulationElement) -> StandardMaterial3D:
 	return _materials["operational"]
 
 
+func _rim_material_for(element: SimulationElement) -> StandardMaterial3D:
+	var reason := element.status_reason()
+	if reason == &"element_broken":
+		return _materials["rim_broken"]
+	if reason == &"element_incomplete":
+		return _materials["rim_frame"]
+	if reason == &"damaged":
+		return _materials["rim_damaged"]
+	return _materials["rim_operational"]
+
+
 func _create_materials() -> void:
 	if not _materials.is_empty():
 		return
@@ -324,6 +384,30 @@ func _create_materials() -> void:
 		0.55,
 		false,
 		0.78
+	)
+	_materials["rim_frame"] = _material(
+		Color(0.42, 0.28, 0.12, 1.0),
+		0.35,
+		false,
+		0.7
+	)
+	_materials["rim_operational"] = _material(
+		Color(0.1, 0.16, 0.24, 1.0),
+		0.85,
+		false,
+		0.35
+	)
+	_materials["rim_damaged"] = _material(
+		Color(0.55, 0.28, 0.04, 1.0),
+		0.55,
+		false,
+		0.5
+	)
+	_materials["rim_broken"] = _material(
+		Color(0.28, 0.02, 0.02, 1.0),
+		0.3,
+		false,
+		0.6
 	)
 
 
