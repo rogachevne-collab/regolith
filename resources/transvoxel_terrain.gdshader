@@ -6,7 +6,20 @@ shader_type spatial;
 #include "res://addons/zylann.voxel/shaders/lod_fade.gdshaderinc"
 #include "res://resources/triplanar_normal.gdshaderinc"
 
-// Full triplanar PBR: rock flats, cratered slopes, dark mare basins.
+// Пошаговый debug PBR — включай по одному (1 = on):
+#define TERRAIN_FEAT_NORMAL      1 // ← сейчас: normal maps (strength 0.35, cap 0.45)
+#define TERRAIN_FEAT_ROUGHNESS   1
+#define TERRAIN_FEAT_AO          1
+#define TERRAIN_FEAT_MACRO       1
+#define TERRAIN_FEAT_ALBEDO_VAR  1
+#define TERRAIN_FEAT_ALBEDO_LIFT 0 // OFF: портит базовые albedo
+#define TERRAIN_FEAT_UNDERSIDE   0 // OFF: затемняет низ/overhang, визуально неочевидно
+#define TERRAIN_FEAT_SPECULAR    1 // ← сейчас: specular от rock weight
+
+// Full triplanar PBR with adaptive planar fast-path (same look on flats/walls).
+
+const float PLANAR_THRESH = 0.93;
+const float LAYER_CULL = 0.012;
 
 uniform sampler2D u_rock_albedo : source_color, filter_linear_mipmap, repeat_enable;
 uniform sampler2D u_rock_normal : hint_normal, filter_linear_mipmap, repeat_enable;
@@ -27,7 +40,8 @@ uniform float u_detail_scale : hint_range(0.05, 2.0, 0.01) = 0.11;
 uniform float u_large_scale : hint_range(0.01, 0.5, 0.001) = 0.045;
 uniform float u_biome_scale : hint_range(0.005, 0.2, 0.001) = 0.018;
 uniform float u_macro_strength : hint_range(0.0, 1.0, 0.01) = 0.42;
-uniform float u_normal_strength : hint_range(0.0, 2.0, 0.01) = 1.3;
+uniform float u_rock_normal_strength : hint_range(0.0, 1.0, 0.01) = 0.5;
+uniform float u_layer_normal_strength : hint_range(0.0, 1.0, 0.01) = 0.2;
 uniform float u_ao_strength : hint_range(0.0, 1.0, 0.01) = 0.5;
 uniform float u_mare_amount : hint_range(0.0, 1.0, 0.01) = 0.32;
 uniform float u_detail_fade_start : hint_range(10.0, 80.0, 0.5) = 30.0;
@@ -70,11 +84,6 @@ float fbm(vec2 p) {
 	return v;
 }
 
-float triplanar_fbm(vec3 pos, vec3 blending) {
-	return fbm(pos.xz) * blending.y
-		+ fbm(pos.yz) * blending.x
-		+ fbm(pos.xy) * blending.z;
-}
 
 // Лёгкий anti-tile без rotation — rotation ломал triplanar в полосы на склонах.
 vec3 detail_pos(vec3 world_pos, float scale) {
@@ -110,11 +119,13 @@ void fragment() {
 	float steep = 1.0 - flatness;
 
 	vec3 blending = get_triplanar_blend(normal, 6.0);
+	int pmode = planar_mode(blending, PLANAR_THRESH);
+	bool fetch_pbr = detail_fade > 0.04;
 
-	vec3 biome_pos = wpos * u_biome_scale;
-	float mare_n = triplanar_fbm(biome_pos * 0.85 + vec3(12.7, -4.2, 0.0), blending);
-	float ejecta_n = triplanar_fbm(biome_pos * 1.65 + vec3(-31.0, 9.5, 0.0), blending);
-	float highland_n = triplanar_fbm(biome_pos * 0.55 + vec3(3.3, 18.1, 0.0), blending);
+	vec2 biome_uv = wpos.xz * u_biome_scale;
+	float mare_n = fbm(biome_uv * 0.85 + vec2(12.7, -4.2));
+	float ejecta_n = fbm(biome_uv * 1.65 + vec2(-31.0, 9.5));
+	float highland_n = fbm(biome_uv * 0.55 + vec2(3.3, 18.1));
 
 	// Mare — редкие бассейны на пологих участках; rock — база плато.
 	float mare_patch = smoothstep(0.62, 0.90, mare_n) * u_mare_amount;
@@ -131,33 +142,92 @@ void fragment() {
 
 	vec3 tex_pos = detail_pos(wpos, u_detail_scale);
 
-	vec3 albedo_dust = texture_triplanar(u_dust_albedo, tex_pos, blending).rgb;
-	vec3 albedo_rock = texture_triplanar(u_rock_albedo, tex_pos, blending).rgb;
-	vec3 albedo_mare = texture_triplanar(u_mare_albedo, tex_pos, blending).rgb;
+	vec3 albedo_rock = vec3(0.0);
+	vec3 albedo_dust = vec3(0.0);
+	vec3 albedo_mare = vec3(0.0);
+	vec3 n_rock = normal;
+	vec3 n_dust = normal;
+	vec3 n_mare = normal;
+	float ao_rock = 1.0;
+	float ao_dust = 1.0;
+	float ao_mare = 1.0;
+	float rough_rock = 0.76;
+	float rough_dust = 0.90;
+	float rough_mare = 0.85;
+
+	if (w_rock > LAYER_CULL) {
+		albedo_rock = sample_planar_rgb(u_rock_albedo, tex_pos, blending, pmode);
+#if TERRAIN_FEAT_NORMAL
+		if (fetch_pbr) {
+			n_rock = sample_planar_normal(u_rock_normal, tex_pos, normal, blending, pmode);
+		}
+#endif
+#if TERRAIN_FEAT_AO
+		if (fetch_pbr) {
+			ao_rock = sample_planar_r(u_rock_ao, tex_pos, blending, pmode);
+		}
+#endif
+#if TERRAIN_FEAT_ROUGHNESS
+		if (fetch_pbr) {
+			rough_rock = sample_planar_r(u_rock_roughness, tex_pos, blending, pmode);
+		}
+#endif
+	}
+	if (w_dust > LAYER_CULL) {
+		albedo_dust = sample_planar_rgb(u_dust_albedo, tex_pos, blending, pmode);
+#if TERRAIN_FEAT_NORMAL
+		if (fetch_pbr) {
+			n_dust = sample_planar_normal(u_dust_normal, tex_pos, normal, blending, pmode);
+		}
+#endif
+#if TERRAIN_FEAT_AO
+		if (fetch_pbr) {
+			ao_dust = sample_planar_r(u_dust_ao, tex_pos, blending, pmode);
+		}
+#endif
+#if TERRAIN_FEAT_ROUGHNESS
+		if (fetch_pbr) {
+			rough_dust = sample_planar_r(u_dust_roughness, tex_pos, blending, pmode);
+		}
+#endif
+	}
+	if (w_mare > LAYER_CULL) {
+		albedo_mare = sample_planar_rgb(u_mare_albedo, tex_pos, blending, pmode);
+#if TERRAIN_FEAT_NORMAL
+		if (fetch_pbr) {
+			n_mare = sample_planar_normal(u_mare_normal, tex_pos, normal, blending, pmode);
+		}
+#endif
+#if TERRAIN_FEAT_AO
+		if (fetch_pbr) {
+			ao_mare = sample_planar_r(u_mare_ao, tex_pos, blending, pmode);
+		}
+#endif
+#if TERRAIN_FEAT_ROUGHNESS
+		if (fetch_pbr) {
+			rough_mare = sample_planar_r(u_mare_roughness, tex_pos, blending, pmode);
+		}
+#endif
+	}
+
+#if TERRAIN_FEAT_ALBEDO_LIFT
 	albedo_rock = min(albedo_rock * 1.10, vec3(0.92));
-	albedo_mare = min(albedo_mare * 1.22 + vec3(0.035), vec3(0.72));
 	albedo_dust = min(albedo_dust * 1.08, vec3(0.90));
+	albedo_mare = min(albedo_mare * 1.22 + vec3(0.035), vec3(0.72));
+#endif
+
 	vec3 tex_col = albedo_dust * w_dust + albedo_rock * w_rock + albedo_mare * w_mare;
 
-	float var_n = triplanar_fbm(wpos * u_detail_scale * 0.28, blending);
+#if TERRAIN_FEAT_ALBEDO_VAR
+	float var_n = fbm(wpos.xz * u_detail_scale * 0.28 + vec2(11.0, 4.7));
 	tex_col *= mix(0.94, 1.06, var_n);
+#endif
 
-	float large_n = triplanar_fbm(wpos * u_large_scale, blending);
+#if TERRAIN_FEAT_MACRO
+	float large_n = fbm(wpos.xz * u_large_scale);
 	large_n = smoothstep(0.24, 0.76, large_n);
 	vec3 large_tint = mix(vec3(0.94, 0.93, 0.91), vec3(1.06, 1.03, 0.99), large_n);
 	tex_col *= mix(vec3(1.0), large_tint, u_macro_strength * 0.32);
-
-	float ao_dust = texture_triplanar(u_dust_ao, tex_pos, blending).r;
-	float ao_rock = texture_triplanar(u_rock_ao, tex_pos, blending).r;
-	float ao_mare = texture_triplanar(u_mare_ao, tex_pos, blending).r;
-	float ao_raw = w_dust * ao_dust + w_rock * ao_rock + w_mare * ao_mare;
-	ao_raw = mix(0.90, 1.0, clamp(ao_raw, 0.0, 1.0));
-	float ao = mix(1.0, ao_raw, u_ao_strength * mix(0.7, 1.0, detail_fade));
-
-	vec3 n_dust = triplanar_normal_whiteout(u_dust_normal, tex_pos, normal, blending);
-	vec3 n_rock = triplanar_normal_whiteout(u_rock_normal, tex_pos, normal, blending);
-	vec3 n_mare = triplanar_normal_whiteout(u_mare_normal, tex_pos, normal, blending);
-	vec3 detail_normal = normalize(n_dust * w_dust + n_rock * w_rock + n_mare * w_mare);
 
 	vec3 tint_highland = vec3(0.98, 0.99, 1.02);
 	vec3 tint_ejecta = vec3(1.06, 1.02, 0.97);
@@ -166,22 +236,48 @@ void fragment() {
 	macro_tint = mix(macro_tint, tint_highland, highland * 0.55);
 	macro_tint = mix(macro_tint, tint_ejecta, ejecta * 0.65);
 	macro_tint = mix(macro_tint, tint_mare, mare_patch * flatness * 0.55);
-	macro_tint = mix(vec3(1.0), macro_tint, u_macro_strength);
+	tex_col *= mix(vec3(1.0), macro_tint, u_macro_strength);
+#endif
 
-	ALBEDO = clamp(macro_tint * tex_col * ao, vec3(0.04), vec3(0.84));
+#if TERRAIN_FEAT_AO
+	float ao_raw = w_dust * ao_dust + w_rock * ao_rock + w_mare * ao_mare;
+	ao_raw = mix(0.90, 1.0, clamp(ao_raw, 0.0, 1.0));
+	float ao = mix(1.0, ao_raw, u_ao_strength * mix(0.7, 1.0, detail_fade));
+	tex_col *= ao;
+#endif
+
+	ALBEDO = tex_col;
+#if TERRAIN_FEAT_ALBEDO_LIFT || TERRAIN_FEAT_AO || TERRAIN_FEAT_MACRO
+	ALBEDO = clamp(ALBEDO, vec3(0.04), vec3(0.84));
+#endif
+
+#if TERRAIN_FEAT_UNDERSIDE
 	ALBEDO = mix(ALBEDO, ALBEDO * 0.78, max(0.0, -normal.y) * 0.45);
+#endif
 
-	float n_w = clamp(u_normal_strength * mix(0.35, 1.0, detail_fade), 0.0, 1.0);
-	vec3 final_normal = normalize(mix(normal, detail_normal, n_w));
+#if TERRAIN_FEAT_NORMAL
+	float rock_nw = clamp(u_rock_normal_strength * detail_fade, 0.0, 0.55);
+	float layer_nw = clamp(u_layer_normal_strength * detail_fade, 0.0, 0.28);
+	vec3 normal_perturb =
+		(n_rock - normal) * w_rock * rock_nw
+		+ (n_dust - normal) * w_dust * layer_nw
+		+ (n_mare - normal) * w_mare * layer_nw;
+	vec3 final_normal = normalize(normal + normal_perturb);
 	NORMAL = normalize((VIEW_MATRIX * vec4(final_normal, 0.0)).xyz);
+#endif
 
-	float rough_dust = texture_triplanar(u_dust_roughness, tex_pos, blending).r;
-	float rough_rock = texture_triplanar(u_rock_roughness, tex_pos, blending).r;
-	float rough_mare = texture_triplanar(u_mare_roughness, tex_pos, blending).r;
 	float rough = w_dust * rough_dust + w_rock * rough_rock + w_mare * rough_mare;
 	METALLIC = 0.0;
+#if TERRAIN_FEAT_ROUGHNESS
 	ROUGHNESS = clamp(rough, 0.68, 0.97);
+#else
+	ROUGHNESS = 0.88;
+#endif
+#if TERRAIN_FEAT_SPECULAR
 	SPECULAR = mix(u_specular * 0.7, u_specular * 1.05, w_rock);
+#else
+	SPECULAR = 0.1;
+#endif
 
 	if (get_lod_fade_discard(SCREEN_UV)) {
 		discard;
