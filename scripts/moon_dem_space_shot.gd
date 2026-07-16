@@ -1,6 +1,6 @@
 extends Node3D
 
-## HQ orbital preview with analytic heightfield normals (no faceted crater teeth).
+## HQ orbital preview from real lunar DEM (analytic heightfield normals).
 
 const CAMERA_DISTANCE_M := 2300.0
 const CAMERA_FOV_DEG := 40.0
@@ -9,9 +9,18 @@ const HEIGHT_W := 1152
 const HEIGHT_H := 576
 const MESH_SEGMENTS := 576
 const MESH_RINGS := 288
-const OUTPUT_ARTIFACT := "/opt/cursor/artifacts/assets/moon_from_space_hq.png"
+const OUTPUT_PATH := "user://moon_dem_from_space.png"
+const DEM_IMAGE_PATH := "res://resources/moon/lunar_dem_rg16.png"
+const DEM_META_PATH := "res://resources/moon/lunar_dem_meta.json"
+const GAIN := 0.005
+const MAX_HEIGHT_M := 60.0
 
-var _gen: MoonTerrainGenerator
+var _dem_image: Image
+var _dem_min_m: float
+var _dem_max_m: float
+var _dem_width: int
+var _dem_height: int
+var _dem_mean_m: float
 var _heights: PackedFloat32Array
 
 
@@ -29,12 +38,15 @@ func _run() -> void:
 	var world_root := Node3D.new()
 	viewport.add_child(world_root)
 
-	_gen = MoonSphereGeneratorFactory.create_hq() as MoonTerrainGenerator
-	print("SPACE_HQ: sampling height map ", HEIGHT_W, "x", HEIGHT_H)
+	if not _load_dem():
+		get_tree().quit()
+		return
+
+	print("SPACE_DEM: sampling height map ", HEIGHT_W, "x", HEIGHT_H, " gain=", GAIN)
 	_heights = await _sample_height_map()
-	print("SPACE_HQ: building mesh with analytic normals…")
+	print("SPACE_DEM: building mesh with analytic normals…")
 	var mesh := _mesh_from_heights()
-	print("SPACE_HQ: aabb=", mesh.get_aabb())
+	print("SPACE_DEM: aabb=", mesh.get_aabb())
 
 	var mi := MeshInstance3D.new()
 	mi.mesh = mesh
@@ -101,20 +113,44 @@ func _run() -> void:
 
 	var img: Image = viewport.get_texture().get_image()
 	img.flip_y()
-	var tmp := "user://moon_from_space.png"
-	img.save_png(tmp)
-	var abs_user := ProjectSettings.globalize_path(tmp)
-	DirAccess.make_dir_recursive_absolute("/opt/cursor/artifacts/assets")
-	DirAccess.copy_absolute(abs_user, OUTPUT_ARTIFACT)
-	DirAccess.copy_absolute(abs_user, "/opt/cursor/artifacts/assets/moon_from_space_relief.png")
-	DirAccess.copy_absolute(abs_user, "/opt/cursor/artifacts/assets/moon_from_space.png")
-	print(
-		"SPACE_HQ: artifact=",
-		OUTPUT_ARTIFACT,
-		" bytes=",
-		FileAccess.get_file_as_bytes(OUTPUT_ARTIFACT).size()
-	)
+	img.save_png(OUTPUT_PATH)
+	var abs_user := ProjectSettings.globalize_path(OUTPUT_PATH)
+	print("SPACE_DEM: saved=", abs_user, " bytes=", FileAccess.get_file_as_bytes(abs_user).size())
 	get_tree().quit()
+
+
+func _load_dem() -> bool:
+	_dem_image = Image.new()
+	var err := _dem_image.load(DEM_IMAGE_PATH)
+	if err != OK:
+		push_error("SPACE_DEM: failed to load DEM image: " + DEM_IMAGE_PATH)
+		return false
+
+	var meta_text := FileAccess.get_file_as_string(DEM_META_PATH)
+	if meta_text.is_empty():
+		push_error("SPACE_DEM: failed to load DEM meta: " + DEM_META_PATH)
+		return false
+	var meta: Variant = JSON.parse_string(meta_text)
+	if typeof(meta) != TYPE_DICTIONARY:
+		push_error("SPACE_DEM: invalid DEM meta JSON")
+		return false
+
+	_dem_min_m = float(meta["min_m"])
+	_dem_max_m = float(meta["max_m"])
+	_dem_width = int(meta["width"])
+	_dem_height = int(meta["height"])
+	_dem_mean_m = (_dem_min_m + _dem_max_m) * 0.5
+	print(
+		"SPACE_DEM: dem=",
+		_dem_width,
+		"x",
+		_dem_height,
+		" range=",
+		_dem_min_m,
+		"..",
+		_dem_max_m
+	)
+	return true
 
 
 func _make_moon_material() -> StandardMaterial3D:
@@ -141,14 +177,45 @@ func _sample_height_map() -> PackedFloat32Array:
 	var data := PackedFloat32Array()
 	data.resize(HEIGHT_W * HEIGHT_H)
 	for y in HEIGHT_H:
-		var phi := (float(y) + 0.5) / float(HEIGHT_H) * PI
+		var v := (float(y) + 0.5) / float(HEIGHT_H)
 		for x in HEIGHT_W:
-			var theta := (float(x) + 0.5) / float(HEIGHT_W) * TAU
-			data[y * HEIGHT_W + x] = _gen._height_meters(_sphere_point(theta, phi))
+			var u := (float(x) + 0.5) / float(HEIGHT_W)
+			data[y * HEIGHT_W + x] = _sample_dem_scaled(u, v)
 		if y % 64 == 0:
-			print("SPACE_HQ: height row ", y, "/", HEIGHT_H)
+			print("SPACE_DEM: height row ", y, "/", HEIGHT_H)
 			await get_tree().process_frame
 	return data
+
+
+func _sample_dem_scaled(u: float, v: float) -> float:
+	var meters := _sample_dem_meters(u, v)
+	var scaled := (meters - _dem_mean_m) * GAIN
+	return clampf(scaled, -MAX_HEIGHT_M, MAX_HEIGHT_M)
+
+
+func _sample_dem_meters(u: float, v: float) -> float:
+	var sx := fposmod(u, 1.0) * float(_dem_width)
+	var sy := clampf(v, 0.0, 1.0) * float(_dem_height)
+	var x0 := int(floor(sx)) % _dem_width
+	var x1 := (x0 + 1) % _dem_width
+	var y0 := clampi(int(floor(sy)), 0, _dem_height - 1)
+	var y1 := clampi(y0 + 1, 0, _dem_height - 1)
+	var fx := sx - floorf(sx)
+	var fy := sy - floorf(sy)
+
+	var h00 := _dem_h01_at(x0, y0)
+	var h10 := _dem_h01_at(x1, y0)
+	var h01 := _dem_h01_at(x0, y1)
+	var h11 := _dem_h01_at(x1, y1)
+	var h01_interp := lerpf(lerpf(h00, h10, fx), lerpf(h01, h11, fx), fy)
+	return _dem_min_m + h01_interp * (_dem_max_m - _dem_min_m)
+
+
+func _dem_h01_at(x: int, y: int) -> float:
+	var color := _dem_image.get_pixel(x, y)
+	var r8 := int(round(color.r * 255.0))
+	var g8 := int(round(color.g * 255.0))
+	return (float(r8) * 256.0 + float(g8)) / 65535.0
 
 
 func _mesh_from_heights() -> ArrayMesh:
