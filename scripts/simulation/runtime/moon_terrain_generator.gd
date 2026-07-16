@@ -6,6 +6,7 @@ extends VoxelGeneratorScript
 
 const CHANNEL := VoxelBuffer.CHANNEL_SDF
 
+const HUGE_CRATER_COUNT := 5
 const LARGE_CRATER_COUNT := 60
 const MED_CRATER_COUNT := 160
 const SMALL_CRATER_COUNT := 340
@@ -107,24 +108,29 @@ func _height_meters(n: Vector3) -> float:
 func _mountain_ranges(domain: Vector3, highland: float) -> float:
 	if highland < 0.05 or MoonTerrainParams.MOUNTAIN_AMP_M <= 0.001:
 		return 0.0
-	## Rare patches only — but not so rare they vanish from orbit.
+	## Rare patches — denser than before so ranges read as "dirt clumps" no more.
 	var patch := float(_massif_mask.get_noise_3dv(domain * 0.55))
-	var mask := smoothstep(0.28, 0.62, patch)
+	var mask := smoothstep(0.22, 0.58, patch)
 	if mask <= 0.001:
 		return 0.0
 	## Ridged peaks → sharper / more "mountainous" than soft FBM blobs.
 	var r0 := float(_ridge.get_noise_3dv(domain))
 	var ridged := 1.0 - absf(r0)
-	ridged = pow(ridged, 2.2)
+	ridged = pow(ridged, 2.15)
 	var r1 := float(_ridge_detail.get_noise_3dv(domain * 1.55))
-	var detail := pow(1.0 - absf(r1), 2.4)
+	var detail := pow(1.0 - absf(r1), 2.35)
 	## Keep only the sharp upper part of the ridge (cuts soft shoulders).
-	var shape := smoothstep(0.35, 0.95, ridged * 0.72 + detail * 0.28)
+	var shape := smoothstep(0.28, 0.92, ridged * 0.7 + detail * 0.3)
 	return highland * mask * shape * MoonTerrainParams.MOUNTAIN_AMP_M
 
 
 func _crater_field(n: Vector3) -> float:
 	var h := 0.0
+	## A few oversized basins first (hero impacts).
+	h += _craters_of_class(
+		n, HUGE_CRATER_COUNT, MoonTerrainParams.SEED + 50,
+		0.12, 0.20, MoonTerrainParams.CRATER_HUGE_AMP_M, 0.14
+	)
 	h += _craters_of_class(
 		n, LARGE_CRATER_COUNT, MoonTerrainParams.SEED + 100,
 		0.045, 0.095, MoonTerrainParams.CRATER_LARGE_AMP_M, 0.12
