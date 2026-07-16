@@ -1,9 +1,9 @@
-[gd_resource type="Resource" script_class="ElementArchetype" format=3]
+[gd_resource type="Resource" script_class="ElementArchetype" format=3 uid="uid://4pp5a52rbo5y"]
 
 [ext_resource type="Script" uid="uid://c2p36g85wqkru" path="res://scripts/simulation/resources/build_requirement.gd" id="1"]
 [ext_resource type="Script" uid="uid://b6d2jhfw581hb" path="res://scripts/simulation/resources/collider_definition.gd" id="2"]
 [ext_resource type="Script" uid="uid://c4hgnuqnf2up8" path="res://scripts/simulation/resources/port_definition.gd" id="3"]
-[ext_resource type="Script" path="res://scripts/simulation/resources/rotor_definition.gd" id="4"]
+[ext_resource type="Script" uid="uid://btsfxl8qgew6n" path="res://scripts/simulation/resources/rotor_definition.gd" id="4"]
 [ext_resource type="Script" uid="uid://bfuxth8e6lccw" path="res://scripts/simulation/resources/structural_mount_pad.gd" id="5"]
 [ext_resource type="Script" uid="uid://bxidpb3tep3ih" path="res://scripts/simulation/resources/element_archetype.gd" id="6"]
 
@@ -18,19 +18,6 @@ shape_kind = 1
 size = Vector3(2.5, 2, 2.5)
 offset_in_cell = Vector3(1.25, 1, 1.25)
 
-[sub_resource type="Resource" id="RotorDefinition"]
-script = ExtResource("4")
-top_archetype_id = "rotor_top_large"
-top_offset_cells = 4
-default_speed_limit_rad_s = 2.5
-forward_velocity_rad_s = 5.0
-reverse_velocity_rad_s = 5.0
-torque_limit_nm = 15000.0
-max_velocity_rad_s = 15.7
-max_torque_limit_nm = 100000.0
-damping_nm_s_per_rad = 250.0
-power_draw_w = 4000.0
-
 [sub_resource type="Resource" id="DrivePort"]
 script = ExtResource("3")
 port_id = "rotor_drive"
@@ -44,6 +31,19 @@ port_id = "power_in"
 kind = 1
 local_cell = Vector3i(2, 0, 2)
 compatibility_tags = PackedStringArray("electric", "input")
+
+[sub_resource type="Resource" id="RotorDefinition"]
+script = ExtResource("4")
+top_archetype_id = "rotor_top_large"
+top_offset_cells = 4
+default_speed_limit_rad_s = 2.5
+forward_velocity_rad_s = 5.0
+reverse_velocity_rad_s = 5.0
+torque_limit_nm = 15000.0
+max_velocity_rad_s = 15.7
+max_torque_limit_nm = 100000.0
+damping_nm_s_per_rad = 250.0
+power_draw_w = 4000.0
 
 [sub_resource type="Resource" id="MountNy"]
 script = ExtResource("5")

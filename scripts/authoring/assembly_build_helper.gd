@@ -75,6 +75,18 @@ func place(
 	var element_id := int(result.data.get("element_id", 0))
 	if not key.is_empty():
 		element_ids[key] = element_id
+		var head_id := int(result.data.get("head_element_id", 0))
+		if head_id > 0:
+			element_ids["%s_top" % key] = head_id
+		var joint_id := int(result.data.get("driven_joint_id", 0))
+		if joint_id <= 0:
+			joint_id = int(result.data.get("hinge_joint_id", 0))
+		if joint_id <= 0:
+			joint_id = int(result.data.get("rotor_joint_id", 0))
+		if joint_id <= 0:
+			joint_id = int(result.data.get("piston_joint_id", 0))
+		if joint_id > 0:
+			element_ids["%s_joint" % key] = joint_id
 	return true
 
 
