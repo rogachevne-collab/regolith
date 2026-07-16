@@ -1,15 +1,14 @@
 extends Node3D
 
-## One-shot: render the moon from outside into a square SubViewport PNG.
-## Uses strong night-limb rim so the full disk reads circular (lit-only
-## hemispheres look egg-shaped against black space).
+## From-space render: UV sphere displaced by MoonTerrainGenerator H(n).
 
-const CAMERA_DISTANCE_M := 2000.0
+const CAMERA_DISTANCE_M := 1600.0
 const CAMERA_FOV_DEG := 38.0
-const VIEWPORT_SIZE := 1024
-const SETTLE_FRAMES := 360
+const VIEWPORT_SIZE := 1280
+const SPHERE_SEGMENTS := 160
+const SPHERE_RINGS := 80
 const OUTPUT_USER := "user://moon_from_space.png"
-const OUTPUT_ARTIFACT := "/opt/cursor/artifacts/assets/moon_from_space_perspective.png"
+const OUTPUT_ARTIFACT := "/opt/cursor/artifacts/assets/moon_from_space_relief.png"
 
 
 func _ready() -> void:
@@ -18,28 +17,36 @@ func _ready() -> void:
 
 func _run() -> void:
 	var viewport := SubViewport.new()
-	viewport.name = "CaptureViewport"
 	viewport.size = Vector2i(VIEWPORT_SIZE, VIEWPORT_SIZE)
 	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-	viewport.transparent_bg = false
 	add_child(viewport)
 
 	var world_root := Node3D.new()
-	world_root.name = "World"
 	viewport.add_child(world_root)
 
-	var terrain := VoxelLodTerrain.new()
-	terrain.name = "VoxelTerrain"
-	terrain.scale = Vector3.ONE * MoonGeometry.VOXEL_SCALE
-	terrain.generator = MoonSphereGeneratorFactory.create()
-	terrain.mesher = VoxelMesherTransvoxel.new()
-	terrain.material = load("res://resources/terrain_material_smooth.tres")
-	terrain.generate_collisions = false
-	terrain.voxel_bounds = MoonGeometry.voxel_bounds_aabb()
-	terrain.view_distance = int(ceili(MoonGeometry.radius_voxels() * 2.2))
-	terrain.full_load_mode_enabled = true
-	terrain.lod_distance = 220.0
-	world_root.add_child(terrain)
+	var gen := MoonSphereGeneratorFactory.create() as MoonTerrainGenerator
+	var mesh := _build_displaced_sphere(gen)
+	print(
+		"SPACE_SHOT: mesh aabb=",
+		mesh.get_aabb(),
+		" surfaces=",
+		mesh.get_surface_count()
+	)
+
+	var mesh_instance := MeshInstance3D.new()
+	mesh_instance.mesh = mesh
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.55, 0.54, 0.52)
+	var albedo: Texture2D = load("res://resources/moon_regolith_albedo.jpg")
+	if albedo != null:
+		mat.albedo_texture = albedo
+		mat.uv1_triplanar = true
+		mat.uv1_triplanar_sharpness = 4.0
+		mat.uv1_scale = Vector3(0.02, 0.02, 0.02)
+	mat.roughness = 0.92
+	mat.metallic = 0.0
+	mesh_instance.material_override = mat
+	world_root.add_child(mesh_instance)
 
 	var env := WorldEnvironment.new()
 	var environment := Environment.new()
@@ -47,103 +54,108 @@ func _run() -> void:
 	if sky_tex != null:
 		var sky_mat := PanoramaSkyMaterial.new()
 		sky_mat.panorama = sky_tex
-		sky_mat.energy_multiplier = 1.15
+		sky_mat.energy_multiplier = 1.35
 		var sky := Sky.new()
 		sky.sky_material = sky_mat
 		environment.background_mode = Environment.BG_SKY
 		environment.sky = sky
-	else:
-		environment.background_mode = Environment.BG_COLOR
-		environment.background_color = Color(0.01, 0.01, 0.02)
-	# Color ambient (not sky-only) so the night limb stays above black.
 	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	environment.ambient_light_color = Color(0.22, 0.24, 0.3)
-	environment.ambient_light_energy = 0.85
+	environment.ambient_light_color = Color(0.18, 0.19, 0.22)
+	environment.ambient_light_energy = 0.55
 	environment.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	environment.tonemap_exposure = 1.05
+	environment.tonemap_exposure = 1.2
 	env.environment = environment
 	world_root.add_child(env)
 
 	var sun := DirectionalLight3D.new()
-	sun.name = "Sun"
-	sun.light_energy = 1.7
-	sun.shadow_enabled = false
-	sun.rotation_degrees = Vector3(-20.0, 50.0, 0.0)
+	sun.light_energy = 2.8
+	sun.rotation_degrees = Vector3(-20.0, 115.0, 0.0)
 	world_root.add_child(sun)
 
-	# Primary rim: opposite the key light — defines the night limb.
+	var fill := DirectionalLight3D.new()
+	fill.light_energy = 0.4
+	fill.light_color = Color(0.55, 0.62, 0.85)
+	fill.rotation_degrees = Vector3(25.0, -50.0, 0.0)
+	world_root.add_child(fill)
+
 	var rim := DirectionalLight3D.new()
-	rim.name = "Rim"
-	rim.light_energy = 2.4
+	rim.light_energy = 1.4
 	rim.light_color = Color(0.75, 0.82, 1.0)
-	rim.shadow_enabled = false
-	rim.rotation_degrees = Vector3(25.0, 50.0 - 180.0, 0.0)
+	rim.rotation_degrees = Vector3(15.0, 115.0 - 180.0, 0.0)
 	world_root.add_child(rim)
 
-	# Secondary wrap so the terminator does not punch a black bite out of the disk.
-	var wrap := DirectionalLight3D.new()
-	wrap.name = "Wrap"
-	wrap.light_energy = 0.75
-	wrap.light_color = Color(0.55, 0.6, 0.75)
-	wrap.shadow_enabled = false
-	wrap.rotation_degrees = Vector3(5.0, 50.0 - 110.0, 0.0)
-	world_root.add_child(wrap)
-
+	var cam_dir := Vector3(0.7, 0.35, 0.62).normalized()
 	var camera := Camera3D.new()
 	camera.current = true
-	# Perspective keeps PanoramaSky looking like stars (ortho collapses it
-	# into radial white streaks through the planet).
-	camera.projection = Camera3D.PROJECTION_PERSPECTIVE
 	camera.fov = CAMERA_FOV_DEG
 	camera.far = 8000.0
-	camera.near = 1.0
 	world_root.add_child(camera)
-	var cam_pos := Vector3(0.75, 0.25, 1.0).normalized() * CAMERA_DISTANCE_M
-	camera.look_at_from_position(cam_pos, Vector3.ZERO, Vector3.UP)
+	camera.look_at_from_position(cam_dir * CAMERA_DISTANCE_M, Vector3.ZERO, Vector3.UP)
 
-	# Drive meshing from the planet center so the full sphere (including the
-	# night limb) exists — a camera-only viewer tends to omit the far side,
-	# and a lit half-disk reads as an egg against black space.
-	var viewer := VoxelViewer.new()
-	viewer.view_distance = terrain.view_distance
-	viewer.requires_visuals = true
-	viewer.requires_collisions = false
-	world_root.add_child(viewer)
-	viewer.global_position = Vector3.ZERO
-
-	print(
-		"SPACE_SHOT: perspective fov=%s cam=%s"
-		% [CAMERA_FOV_DEG, str(cam_pos)]
-	)
-	for i in SETTLE_FRAMES:
+	print("SPACE_SHOT: displaced sphere ready")
+	for i in 20:
 		await get_tree().process_frame
-		if i % 60 == 0:
-			print("SPACE_SHOT: frame=", i)
 
 	await RenderingServer.frame_post_draw
-	var tex: ViewportTexture = viewport.get_texture()
-	if tex == null:
-		push_error("SPACE_SHOT: no viewport texture")
-		get_tree().quit()
-		return
-	var img: Image = tex.get_image()
-	if img == null:
-		push_error("SPACE_SHOT: get_image failed")
-		get_tree().quit()
-		return
+	var img: Image = viewport.get_texture().get_image()
 	img.flip_y()
-	var err := img.save_png(OUTPUT_USER)
-	print("SPACE_SHOT: save_user err=", err, " img=", img.get_width(), "x", img.get_height())
+	img.save_png(OUTPUT_USER)
 	var abs_user := ProjectSettings.globalize_path(OUTPUT_USER)
 	DirAccess.make_dir_recursive_absolute("/opt/cursor/artifacts/assets")
-	var copy_err := DirAccess.copy_absolute(abs_user, OUTPUT_ARTIFACT)
+	DirAccess.copy_absolute(abs_user, OUTPUT_ARTIFACT)
 	DirAccess.copy_absolute(abs_user, "/opt/cursor/artifacts/assets/moon_from_space.png")
+	DirAccess.copy_absolute(
+		abs_user,
+		"/opt/cursor/artifacts/assets/moon_from_space_perspective.png"
+	)
 	print(
-		"SPACE_SHOT: copy_err=",
-		copy_err,
-		" artifact=",
+		"SPACE_SHOT: artifact=",
 		OUTPUT_ARTIFACT,
 		" bytes=",
 		FileAccess.get_file_as_bytes(OUTPUT_ARTIFACT).size()
 	)
 	get_tree().quit()
+
+
+func _build_displaced_sphere(gen: MoonTerrainGenerator) -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var r0 := MoonGeometry.SURFACE_RADIUS_M
+	for ring in SPHERE_RINGS:
+		var phi0 := float(ring) / float(SPHERE_RINGS) * PI
+		var phi1 := float(ring + 1) / float(SPHERE_RINGS) * PI
+		for seg in SPHERE_SEGMENTS:
+			var th0 := float(seg) / float(SPHERE_SEGMENTS) * TAU
+			var th1 := float(seg + 1) / float(SPHERE_SEGMENTS) * TAU
+			var n00 := _sphere_point(th0, phi0)
+			var n10 := _sphere_point(th1, phi0)
+			var n01 := _sphere_point(th0, phi1)
+			var n11 := _sphere_point(th1, phi1)
+			var d00 := _displaced(gen, n00, r0)
+			var d10 := _displaced(gen, n10, r0)
+			var d01 := _displaced(gen, n01, r0)
+			var d11 := _displaced(gen, n11, r0)
+			## CCW when viewed from outside.
+			_add_tri(st, d00, d01, d11)
+			_add_tri(st, d00, d11, d10)
+	st.generate_normals()
+	return st.commit()
+
+
+func _sphere_point(theta: float, phi: float) -> Vector3:
+	return Vector3(
+		sin(phi) * cos(theta),
+		cos(phi),
+		sin(phi) * sin(theta)
+	).normalized()
+
+
+func _displaced(gen: MoonTerrainGenerator, n: Vector3, r0: float) -> Vector3:
+	var h_m := gen._height_voxels(n) * MoonGeometry.VOXEL_SCALE
+	return n * (r0 + h_m)
+
+
+func _add_tri(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3) -> void:
+	st.add_vertex(a)
+	st.add_vertex(b)
+	st.add_vertex(c)
