@@ -12,6 +12,9 @@ const SMALL_CRATER_COUNT := 340
 
 var _radius_voxels: float = MoonGeometry.radius_voxels()
 var _continent: RefCounted
+var _massif_mask: RefCounted
+var _ridge: RefCounted
+var _ridge_detail: RefCounted
 
 
 func _init() -> void:
@@ -27,6 +30,33 @@ func _setup_noise() -> void:
 	_continent.fractal_octaves = 2
 	_continent.fractal_lacunarity = 2.0
 	_continent.fractal_gain = 0.35
+
+	## Sparse massif patches (rare highland ranges).
+	_massif_mask = ClassDB.instantiate(&"ZN_FastNoiseLite")
+	_massif_mask.seed = MoonTerrainParams.SEED + 41
+	_massif_mask.period = MoonTerrainParams.meters_to_voxels(280.0)
+	_massif_mask.noise_type = 0
+	_massif_mask.fractal_type = 1
+	_massif_mask.fractal_octaves = 2
+	_massif_mask.fractal_gain = 0.4
+
+	## Angular ridged mountains (not soft blobs).
+	_ridge = ClassDB.instantiate(&"ZN_FastNoiseLite")
+	_ridge.seed = MoonTerrainParams.SEED + 42
+	_ridge.period = MoonTerrainParams.meters_to_voxels(70.0)
+	_ridge.noise_type = 0
+	_ridge.fractal_type = 2 ## ridged-style fractal on ZN
+	_ridge.fractal_octaves = 3
+	_ridge.fractal_lacunarity = 2.2
+	_ridge.fractal_gain = 0.5
+
+	_ridge_detail = ClassDB.instantiate(&"ZN_FastNoiseLite")
+	_ridge_detail.seed = MoonTerrainParams.SEED + 43
+	_ridge_detail.period = MoonTerrainParams.meters_to_voxels(28.0)
+	_ridge_detail.noise_type = 0
+	_ridge_detail.fractal_type = 2
+	_ridge_detail.fractal_octaves = 2
+	_ridge_detail.fractal_gain = 0.45
 
 
 func _get_used_channels_mask() -> int:
@@ -68,8 +98,28 @@ func _height_meters(n: Vector3) -> float:
 		MoonTerrainParams.HIGHLAND_LIFT_M,
 		highland
 	)
+	## Sparse angular highland ranges (kept modest — craters stay the hero).
+	h += _mountain_ranges(domain, highland)
 	h += _crater_field(n)
 	return h
+
+
+func _mountain_ranges(domain: Vector3, highland: float) -> float:
+	if highland < 0.05 or MoonTerrainParams.MOUNTAIN_AMP_M <= 0.001:
+		return 0.0
+	## Rare patches only.
+	var patch := float(_massif_mask.get_noise_3dv(domain * 0.55))
+	var mask := smoothstep(0.42, 0.72, patch)
+	if mask <= 0.001:
+		return 0.0
+	## Ridged peaks → sharper / more "mountainous" than soft FBM blobs.
+	var r0 := float(_ridge.get_noise_3dv(domain))
+	var ridged := 1.0 - absf(r0)
+	ridged = pow(ridged, 1.65)
+	var r1 := float(_ridge_detail.get_noise_3dv(domain * 1.35))
+	var detail := pow(1.0 - absf(r1), 1.9)
+	var shape := ridged * 0.78 + detail * 0.22
+	return highland * mask * shape * MoonTerrainParams.MOUNTAIN_AMP_M
 
 
 func _crater_field(n: Vector3) -> float:
