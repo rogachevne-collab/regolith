@@ -1,0 +1,17 @@
+[gd_resource type="ShaderMaterial" format=3]
+
+[ext_resource type="Shader" path="res://resources/sky/earth_body.gdshader" id="1"]
+[ext_resource type="Texture2D" path="res://resources/sky/earth_albedo_2k.jpg" id="2"]
+
+[resource]
+render_priority = 0
+shader = ExtResource("1")
+shader_parameter/albedo_tex = ExtResource("2")
+shader_parameter/ocean_tint = Color(0.08, 0.22, 0.55, 1)
+shader_parameter/ocean_boost = 0.12
+shader_parameter/night_glow = 0.03
+shader_parameter/night_color = Color(0.04, 0.06, 0.14, 1)
+shader_parameter/haze_color = Color(0.55, 0.62, 0.78, 1)
+shader_parameter/haze_amount = 0.4
+shader_parameter/soft_focus = 0.4
+shader_parameter/saturation = 0.75
