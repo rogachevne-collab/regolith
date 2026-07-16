@@ -7,7 +7,10 @@ enum Kind {
 	RIGID,
 	ANCHOR,
 	PISTON,
+	ROTOR,
 }
+
+const DRIVEN_KINDS: Array[Kind] = [Kind.PISTON, Kind.ROTOR]
 
 var joint_id: int = 0
 var assembly_id: int = 0
@@ -74,6 +77,29 @@ static func piston(
 	return joint
 
 
+static func rotor(
+	joint_id: int,
+	assembly_id: int,
+	base_element_id: int,
+	top_element_id: int,
+	definition: RotorDefinition
+) -> SimulationJoint:
+	var joint: SimulationJoint = _SCRIPT.new()
+	joint.joint_id = joint_id
+	joint.assembly_id = assembly_id
+	joint.kind = Kind.ROTOR
+	joint.element_a_id = base_element_id
+	joint.port_a_id = SimulationMotorState.ROTOR_DRIVE_PORT
+	joint.element_b_id = top_element_id
+	joint.port_b_id = SimulationMotorState.ROTOR_TOP_PORT
+	joint.motor = SimulationMotorState.from_rotor_definition(definition)
+	return joint
+
+
+func is_driven() -> bool:
+	return kind == Kind.PISTON or kind == Kind.ROTOR
+
+
 func endpoint_ids() -> Array[int]:
 	if kind == Kind.ANCHOR:
 		return [element_a_id]
@@ -85,7 +111,7 @@ func involves_element(element_id: int) -> bool:
 
 
 func canonical_key() -> String:
-	if kind == Kind.PISTON:
+	if is_driven():
 		return "%d|%s|%d|%s" % [
 			element_a_id,
 			port_a_id,
@@ -117,7 +143,7 @@ func to_dict() -> Dictionary:
 		"element_b_id": element_b_id,
 		"port_b_id": port_b_id,
 	}
-	if kind == Kind.PISTON and motor != null:
+	if is_driven() and motor != null:
 		row["motor"] = motor.to_dict()
 	return row
 
@@ -131,7 +157,7 @@ static func from_dict(data: Dictionary) -> SimulationJoint:
 	joint.port_a_id = str(data.get("port_a_id", ""))
 	joint.element_b_id = int(data.get("element_b_id", 0))
 	joint.port_b_id = str(data.get("port_b_id", ""))
-	if joint.kind == Kind.PISTON:
+	if joint.is_driven():
 		var motor_data: Variant = data.get("motor", {})
 		if motor_data is Dictionary:
 			joint.motor = SimulationMotorState.from_dict(motor_data)

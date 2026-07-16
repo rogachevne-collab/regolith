@@ -7,6 +7,8 @@ const _SCRIPT := preload(
 
 const PISTON_DRIVE_PORT := "piston_drive"
 const PISTON_CARRIAGE_PORT := "piston_carriage"
+const ROTOR_DRIVE_PORT := "rotor_drive"
+const ROTOR_TOP_PORT := "rotor_top"
 
 const OVERLOAD_ERROR_M := 0.02
 const OVERLOAD_VELOCITY_MPS := 0.003
@@ -50,6 +52,10 @@ var damping_n_s_per_m: float = 400.0
 var power_draw_w: float = 1500.0
 var enabled: bool = true
 var overload_policy: OverloadPolicy = OverloadPolicy.STOP
+## Angular motor (Rotor): positions are rad, velocities rad/s, force N·m.
+var angular: bool = false
+## Continuous rotation: travel limits unused, observed angle wraps (-PI, PI].
+var continuous: bool = false
 
 var observed_position_m: float = 0.0
 var observed_velocity_mps: float = 0.0
@@ -84,7 +90,41 @@ static func from_piston_definition(definition: PistonDefinition) -> SimulationMo
 	return motor
 
 
+static func from_rotor_definition(definition: RotorDefinition) -> SimulationMotorState:
+	var motor: SimulationMotorState = _SCRIPT.new()
+	motor.angular = true
+	motor.continuous = true
+	motor.target_position_m = 0.0
+	motor.observed_position_m = 0.0
+	motor.status_reference_position_m = 0.0
+	var forward_v := definition.forward_velocity_rad_s
+	var reverse_v := definition.reverse_velocity_rad_s
+	if forward_v <= 0.0 and reverse_v <= 0.0:
+		forward_v = definition.default_speed_limit_rad_s
+		reverse_v = definition.default_speed_limit_rad_s
+	motor.extend_velocity_mps = forward_v
+	motor.retract_velocity_mps = reverse_v
+	motor.speed_limit_mps = maxf(forward_v, reverse_v)
+	motor.force_limit_n = definition.torque_limit_nm
+	motor.lower_limit_m = 0.0
+	motor.upper_limit_m = 0.0
+	motor.stiffness_n_per_m = 0.0
+	motor.damping_n_s_per_m = definition.damping_nm_s_per_rad
+	motor.power_draw_w = definition.power_draw_w
+	motor.overload_policy = definition.overload_policy
+	return motor
+
+
+static func wrap_angle(angle_rad: float) -> float:
+	var wrapped := wrapf(angle_rad, -PI, PI)
+	if wrapped == -PI:
+		wrapped = PI
+	return wrapped
+
+
 func clamp_target_position() -> float:
+	if continuous:
+		return wrap_angle(target_position_m)
 	return clampf(target_position_m, lower_limit_m, upper_limit_m)
 
 
@@ -99,18 +139,32 @@ func clamp_target_velocity() -> float:
 
 
 func clamp_observed_position() -> float:
+	if continuous:
+		return wrap_angle(observed_position_m)
 	return clampf(observed_position_m, lower_limit_m, upper_limit_m)
 
 
 func position_error() -> float:
+	if continuous:
+		return wrap_angle(clamp_target_position() - observed_position_m)
 	return clamp_target_position() - observed_position_m
 
 
+func position_progress_from(reference_position: float) -> float:
+	if continuous:
+		return absf(wrap_angle(observed_position_m - reference_position))
+	return absf(observed_position_m - reference_position)
+
+
 func is_at_lower_limit() -> bool:
+	if continuous:
+		return false
 	return observed_position_m <= lower_limit_m + LIMIT_EPSILON_M
 
 
 func is_at_upper_limit() -> bool:
+	if continuous:
+		return false
 	return observed_position_m >= upper_limit_m - LIMIT_EPSILON_M
 
 
@@ -130,6 +184,8 @@ func to_dict() -> Dictionary:
 		"power_draw_w": power_draw_w,
 		"enabled": enabled,
 		"overload_policy": overload_policy,
+		"angular": angular,
+		"continuous": continuous,
 		"observed_position_m": observed_position_m,
 		"observed_velocity_mps": observed_velocity_mps,
 		"applied_force_n": applied_force_n,
@@ -163,6 +219,8 @@ static func from_dict(data: Dictionary) -> SimulationMotorState:
 	motor.overload_policy = int(
 		data.get("overload_policy", OverloadPolicy.STOP)
 	)
+	motor.angular = bool(data.get("angular", false))
+	motor.continuous = bool(data.get("continuous", false))
 	motor.observed_position_m = float(data.get("observed_position_m", 0.0))
 	motor.observed_velocity_mps = float(
 		data.get("observed_velocity_mps", 0.0)

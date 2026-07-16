@@ -265,6 +265,12 @@ static func _validate_archetype(
 		):
 			result.add_error(error_text)
 
+	if archetype.rotor_definition != null:
+		for error_text: String in archetype.rotor_definition.validate_base_archetype(
+			archetype
+		):
+			result.add_error(error_text)
+
 	var requirement_ids: Dictionary = {}
 	for requirement: BuildRequirement in archetype.build_requirements:
 		if requirement == null:

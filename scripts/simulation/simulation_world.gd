@@ -432,7 +432,7 @@ func tick_actuators(delta_s: float) -> void:
 	if delta_s <= 0.0:
 		return
 	for joint: SimulationJoint in list_joints():
-		if joint.kind != SimulationJoint.Kind.PISTON:
+		if not joint.is_driven():
 			continue
 		ActuatorSimulationService.tick_joint(self, joint, delta_s)
 
@@ -1077,8 +1077,11 @@ func preview_place_element(
 func _place_element(
 	command: PlaceElementCommand
 ) -> StructuralCommandResult:
-	if PistonPlacementUtil.is_piston_archetype(command.archetype):
-		return _place_piston_element(command)
+	if (
+		PistonPlacementUtil.is_piston_archetype(command.archetype)
+		or RotorPlacementUtil.is_rotor_archetype(command.archetype)
+	):
+		return _place_driven_element(command)
 	var validation := _validate_place_element(command)
 	if not validation.is_ok():
 		return validation
@@ -1188,8 +1191,11 @@ func _place_element(
 func _validate_place_element(
 	command: PlaceElementCommand
 ) -> StructuralCommandResult:
-	if PistonPlacementUtil.is_piston_archetype(command.archetype):
-		return _validate_piston_place_element(command)
+	if (
+		PistonPlacementUtil.is_piston_archetype(command.archetype)
+		or RotorPlacementUtil.is_rotor_archetype(command.archetype)
+	):
+		return _validate_driven_place_element(command)
 	if WheelPlacementUtil.is_wheel_archetype(command.archetype):
 		return _validate_wheel_place_element(command)
 	var archetype := command.archetype
@@ -1330,6 +1336,11 @@ func _validate_place_element(
 		)
 		if bridge_error != null:
 			return bridge_error
+		var moving_error := _validate_driven_head_construction_target(
+			connections
+		)
+		if moving_error != null:
+			return moving_error
 
 	return StructuralCommandResult.ok({
 		"placement_resource_id": first_requirement.resource_id,
@@ -1481,6 +1492,9 @@ func _validate_wheel_place_element(
 	)
 	if bridge_error != null:
 		return bridge_error
+	var moving_error := _validate_driven_head_construction_target(connections)
+	if moving_error != null:
+		return moving_error
 	return StructuralCommandResult.ok({
 		"placement_resource_id": first_requirement.resource_id,
 		"placement_resource_amount": placement_amount,
@@ -1489,26 +1503,42 @@ func _validate_wheel_place_element(
 	})
 
 
-func _validate_piston_place_element(
+func _validate_driven_place_element(
 	command: PlaceElementCommand
 ) -> StructuralCommandResult:
 	var base_archetype := command.archetype
+	var is_rotor := RotorPlacementUtil.is_rotor_archetype(base_archetype)
 	if (
 		base_archetype == null
-		or base_archetype.piston_definition == null
+		or (
+			base_archetype.piston_definition == null
+			and base_archetype.rotor_definition == null
+		)
 		or base_archetype.internal_archetype
 	):
 		return StructuralCommandResult.failed(
 			StructuralCommandResult.REASON_INVALID_TARGET
 		)
-	var head_archetype := _archetypes.get_archetype(
-		base_archetype.piston_definition.head_archetype_id
+	var head_archetype_id := (
+		base_archetype.rotor_definition.top_archetype_id
+		if is_rotor
+		else base_archetype.piston_definition.head_archetype_id
 	)
-	for error_text: String in PistonPlacementUtil.validate_piston_archetype(
-		base_archetype,
-		head_archetype,
-		_archetypes
-	):
+	var head_archetype := _archetypes.get_archetype(head_archetype_id)
+	var definition_errors := (
+		RotorPlacementUtil.validate_rotor_archetype(
+			base_archetype,
+			head_archetype,
+			_archetypes
+		)
+		if is_rotor
+		else PistonPlacementUtil.validate_piston_archetype(
+			base_archetype,
+			head_archetype,
+			_archetypes
+		)
+	)
+	for error_text: String in definition_errors:
 		return StructuralCommandResult.failed(
 			StructuralCommandResult.REASON_INVALID_TARGET,
 			{"detail": error_text}
@@ -1542,11 +1572,20 @@ func _validate_piston_place_element(
 		return StructuralCommandResult.failed(
 			StructuralCommandResult.REASON_INSUFFICIENT_MATERIAL
 		)
-	var previews := PistonPlacementUtil.preview_elements(
-		command,
-		head_archetype,
-		first_requirement.resource_id,
-		placement_amount
+	var previews := (
+		RotorPlacementUtil.preview_elements(
+			command,
+			head_archetype,
+			first_requirement.resource_id,
+			placement_amount
+		)
+		if is_rotor
+		else PistonPlacementUtil.preview_elements(
+			command,
+			head_archetype,
+			first_requirement.resource_id,
+			placement_amount
+		)
 	)
 	var base_preview: SimulationElement = previews["base"]
 	var head_preview: SimulationElement = previews["head"]
@@ -1556,7 +1595,13 @@ func _validate_piston_place_element(
 	):
 		return StructuralCommandResult.failed(
 			StructuralCommandResult.REASON_INVALID_TARGET,
-			{"detail": &"piston_home_rigid_conflict"}
+			{
+				"detail": (
+					&"rotor_home_rigid_conflict"
+					if is_rotor
+					else &"piston_home_rigid_conflict"
+				),
+			}
 		)
 
 	var base_connections: Array[Dictionary] = []
@@ -1619,7 +1664,7 @@ func _validate_piston_place_element(
 			)
 			if bridge_error != null:
 				return bridge_error
-		var moving_error := _validate_piston_head_construction_target(
+		var moving_error := _validate_driven_head_construction_target(
 			head_connections
 		)
 		if moving_error != null:
@@ -1635,10 +1680,11 @@ func _validate_piston_place_element(
 	})
 
 
-func _place_piston_element(
+func _place_driven_element(
 	command: PlaceElementCommand
 ) -> StructuralCommandResult:
-	var validation := _validate_piston_place_element(command)
+	var is_rotor := RotorPlacementUtil.is_rotor_archetype(command.archetype)
+	var validation := _validate_driven_place_element(command)
 	if not validation.is_ok():
 		return validation
 	var store := get_resource_store(command.store_id)
@@ -1684,10 +1730,18 @@ func _place_piston_element(
 		command.orientation_index,
 		{resource_id: resource_amount}
 	)
-	var head_origin := PistonPlacementUtil.head_origin_cell(
-		command.origin_cell,
-		command.orientation_index,
-		command.archetype.piston_definition
+	var head_origin := (
+		RotorPlacementUtil.top_origin_cell(
+			command.origin_cell,
+			command.orientation_index,
+			command.archetype.rotor_definition
+		)
+		if is_rotor
+		else PistonPlacementUtil.head_origin_cell(
+			command.origin_cell,
+			command.orientation_index,
+			command.archetype.piston_definition
+		)
 	)
 	var head_element := SimulationElement.frame(
 		head_element_id,
@@ -1701,16 +1755,26 @@ func _place_piston_element(
 	head_element.condition = base_element.condition
 
 	var joint_ids: Array[int] = []
-	var piston_joint_id := _allocator.allocate_joint_id()
-	var piston_joint := SimulationJoint.piston(
-		piston_joint_id,
-		assembly.assembly_id,
-		base_element_id,
-		head_element_id,
-		command.archetype.piston_definition
+	var driven_joint_id := _allocator.allocate_joint_id()
+	var driven_joint := (
+		SimulationJoint.rotor(
+			driven_joint_id,
+			assembly.assembly_id,
+			base_element_id,
+			head_element_id,
+			command.archetype.rotor_definition
+		)
+		if is_rotor
+		else SimulationJoint.piston(
+			driven_joint_id,
+			assembly.assembly_id,
+			base_element_id,
+			head_element_id,
+			command.archetype.piston_definition
+		)
 	)
-	_joints[piston_joint_id] = piston_joint
-	joint_ids.append(piston_joint_id)
+	_joints[driven_joint_id] = driven_joint
+	joint_ids.append(driven_joint_id)
 
 	if new_assembly:
 		var allocate_joint := func() -> int:
@@ -1763,6 +1827,7 @@ func _place_piston_element(
 	_notify_topology_changed()
 	joint_ids.sort()
 	var event_kind := &"assembly_spawned" if new_assembly else &"assembly_changed"
+	var joint_id_key := "rotor_joint_id" if is_rotor else "piston_joint_id"
 	_emit_structural_event({
 		"kind": event_kind,
 		"command_id": command.command_id,
@@ -1771,7 +1836,8 @@ func _place_piston_element(
 		"element_ids": assembly.element_ids.duplicate(),
 		"placed_element_id": base_element_id,
 		"placed_head_element_id": head_element_id,
-		"piston_joint_id": piston_joint_id,
+		joint_id_key: driven_joint_id,
+		"driven_joint_id": driven_joint_id,
 		"joint_ids": joint_ids,
 	})
 	return StructuralCommandResult.ok({
@@ -1780,7 +1846,8 @@ func _place_piston_element(
 		"topology_revision": assembly.topology_revision,
 		"element_id": base_element_id,
 		"head_element_id": head_element_id,
-		"piston_joint_id": piston_joint_id,
+		joint_id_key: driven_joint_id,
+		"driven_joint_id": driven_joint_id,
 		"state_revision": base_element.state_revision,
 		"build_progress": base_element.build_progress,
 		"joint_ids": joint_ids,
@@ -1823,7 +1890,7 @@ func _validate_new_rigid_connections(
 		touched_groups[group_id] = true
 	if touched_groups.size() <= 1:
 		return null
-	for spec_variant: Variant in compiled["piston_specs"]:
+	for spec_variant: Variant in compiled["driven_specs"]:
 		var spec: Dictionary = spec_variant
 		var left := int(spec["base_group_id"])
 		var right := int(spec["head_group_id"])
@@ -1834,7 +1901,7 @@ func _validate_new_rigid_connections(
 	return null
 
 
-func _validate_piston_head_construction_target(
+func _validate_driven_head_construction_target(
 	head_connections: Array[Dictionary]
 ) -> StructuralCommandResult:
 	if head_connections.is_empty():
@@ -1845,7 +1912,7 @@ func _validate_piston_head_construction_target(
 		if existing == null:
 			continue
 		for joint: SimulationJoint in _joints_for_assembly(existing.assembly_id):
-			if joint.kind != SimulationJoint.Kind.PISTON:
+			if not joint.is_driven():
 				continue
 			if (
 				joint.element_b_id != existing.element_id
@@ -1854,10 +1921,20 @@ func _validate_piston_head_construction_target(
 				continue
 			if joint.motor == null:
 				continue
-			if not is_equal_approx(
-				joint.motor.observed_position_m,
-				joint.motor.lower_limit_m
-			):
+			var at_home := true
+			if joint.kind == SimulationJoint.Kind.ROTOR:
+				at_home = (
+					absf(SimulationMotorState.wrap_angle(
+						joint.motor.observed_position_m
+					))
+					<= SimulationMotorState.OVERLOAD_ERROR_M
+				)
+			else:
+				at_home = is_equal_approx(
+					joint.motor.observed_position_m,
+					joint.motor.lower_limit_m
+				)
+			if not at_home:
 				return StructuralCommandResult.failed(
 					StructuralCommandResult.REASON_MOVING_TARGET_NOT_SUPPORTED
 				)

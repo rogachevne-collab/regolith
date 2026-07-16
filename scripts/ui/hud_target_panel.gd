@@ -38,6 +38,7 @@ var _machine_hints: Label
 var _machine_drill_info: Label
 var _actuator_tune_box: VBoxContainer
 var _actuator_tune_values: Dictionary = {}
+var _actuator_tune_mode := ""
 var _machine_progress_row: HBoxContainer
 var _machine_progress_name: Label
 var _machine_progress_mat: ShaderMaterial
@@ -165,8 +166,7 @@ func _build() -> void:
 	_actuator_tune_box.visible = false
 	_actuator_tune_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_machine_block.add_child(_actuator_tune_box)
-	for row: Dictionary in HudActuatorTuneUtil.TUNE_ROWS:
-		_build_actuator_readout_row(str(row["key"]), str(row["field"]))
+	_ensure_actuator_readout_rows(HudActuatorTuneUtil.TUNE_ROWS, "piston")
 
 	_machine_drill_info = Label.new()
 	_machine_drill_info.theme_type_variation = &"HudSmall"
@@ -263,6 +263,21 @@ func _add_info_row_keyed(parent: Node, key: String, value_color: Color) -> Array
 	v.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	row.add_child(v)
 	return [k, v]
+
+
+func _ensure_actuator_readout_rows(
+	rows: Array[Dictionary],
+	mode: String
+) -> void:
+	if _actuator_tune_mode == mode:
+		return
+	_actuator_tune_mode = mode
+	_actuator_tune_values.clear()
+	for child: Node in _actuator_tune_box.get_children():
+		_actuator_tune_box.remove_child(child)
+		child.queue_free()
+	for row: Dictionary in rows:
+		_build_actuator_readout_row(str(row["key"]), str(row["field"]))
 
 
 func _build_actuator_readout_row(key: String, field: String) -> void:
@@ -369,22 +384,37 @@ func _refresh_actuator_info(
 	meta: Dictionary,
 	status: StringName
 ) -> bool:
-	if not meta.has("piston_joint_id"):
+	if not HudActuatorTuneUtil.is_actuator_meta(meta):
 		return false
+	var is_rotor := HudActuatorTuneUtil.is_rotor_meta(meta)
 	_store_view.visible = false
 	_machine_block.visible = true
 	_actuator_tune_box.visible = true
 	_machine_drill_info.visible = false
 	_set_machine_progress_visible(false)
-	var observed := float(meta.get("piston_observed_position_m", 0.0))
-	var target := float(meta.get("piston_target_position_m", observed))
-	var target_velocity := float(meta.get("piston_target_velocity_mps", 0.0))
-	var powered := bool(meta.get("piston_powered", false))
-	var enabled := bool(meta.get("piston_motor_enabled", true))
+	var target_velocity: float
+	var powered: bool
+	var enabled: bool
+	if is_rotor:
+		target_velocity = float(meta.get("rotor_target_velocity_rad_s", 0.0))
+		powered = bool(meta.get("rotor_powered", false))
+		enabled = bool(meta.get("rotor_motor_enabled", true))
+	else:
+		target_velocity = float(meta.get("piston_target_velocity_mps", 0.0))
+		powered = bool(meta.get("piston_powered", false))
+		enabled = bool(meta.get("piston_motor_enabled", true))
 	var actuator_status := StringName(meta.get("actuator_status", status))
 	_refresh_actuator_tune_values(meta)
-	_metric_key.text = "ХОД"
-	_metric_val.text = "%.2f / %.2f М" % [observed, target]
+	if is_rotor:
+		_metric_key.text = "УГОЛ"
+		_metric_val.text = "%.0f°" % rad_to_deg(
+			float(meta.get("rotor_observed_angle_rad", 0.0))
+		)
+	else:
+		var observed := float(meta.get("piston_observed_position_m", 0.0))
+		var target := float(meta.get("piston_target_position_m", observed))
+		_metric_key.text = "ХОД"
+		_metric_val.text = "%.2f / %.2f М" % [observed, target]
 	_metric_val.add_theme_color_override(
 		"font_color",
 		HudTokens.color_for_status(actuator_status)
@@ -418,17 +448,28 @@ func _refresh_actuator_info(
 	_machine_cargo_val.get_parent().visible = false
 	_machine_recipe_box.visible = false
 	_machine_hints.visible = true
-	_machine_hints.text = "E — настройки · [+] выдв · [-] втяг · Y стоп"
+	if is_rotor:
+		_machine_hints.text = "E — настройки · [+] вращ+ · [-] вращ− · Y стоп"
+	else:
+		_machine_hints.text = "E — настройки · [+] выдв · [-] втяг · Y стоп"
 	if absf(target_velocity) > 0.0001:
 		_status_val.text = (
-			"%s · %.2f М/С"
-			% [_status_summary(meta, actuator_status), target_velocity]
+			"%s · %.2f %s"
+			% [
+				_status_summary(meta, actuator_status),
+				target_velocity,
+				"РАД/С" if is_rotor else "М/С",
+			]
 		)
 	return true
 
 
 func _refresh_actuator_tune_values(meta: Dictionary) -> void:
-	for row: Dictionary in HudActuatorTuneUtil.TUNE_ROWS:
+	_ensure_actuator_readout_rows(
+		HudActuatorTuneUtil.rows_for(meta),
+		HudActuatorTuneUtil.mode_for(meta)
+	)
+	for row: Dictionary in HudActuatorTuneUtil.rows_for(meta):
 		var field := str(row["field"])
 		_set_actuator_tune_value(
 			field,

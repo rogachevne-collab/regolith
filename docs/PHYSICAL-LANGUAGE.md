@@ -13,6 +13,7 @@ ADR. Интеграция в Erebus — через Erebus Lite addon, когда
 | Port (типы портов, совместимость) | «Примитивы» → «Port» |
 | Joint (соединения, прочность связи) | «Примитивы» → «Joint» |
 | Piston, Motor, overload | «Примитивы» → «Joint»; `specs/POC-ACTUATORS-V1.md` |
+| Rotor (непрерывное вращение) | «Примитивы» → «Joint»; `specs/POC-ACTUATORS-V2-ROTOR.md` |
 | Body, Field, Surface | «Примитивы» → одноимённые разделы |
 | Actuator, Wheel | «Примитивы» → «Actuator», «Wheel»; `specs/ROVER-MODULES-V1.md` |
 | Cable / Tether, Sensor | «Примитивы» → одноимённые разделы |
