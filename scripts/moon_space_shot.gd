@@ -5,8 +5,8 @@ extends Node3D
 const CAMERA_DISTANCE_M := 1600.0
 const CAMERA_FOV_DEG := 38.0
 const VIEWPORT_SIZE := 1280
-const SPHERE_SEGMENTS := 160
-const SPHERE_RINGS := 80
+const SPHERE_SEGMENTS := 512
+const SPHERE_RINGS := 256
 const OUTPUT_USER := "user://moon_from_space.png"
 const OUTPUT_ARTIFACT := "/opt/cursor/artifacts/assets/moon_from_space_relief.png"
 
@@ -139,6 +139,7 @@ func _build_displaced_sphere(gen: MoonTerrainGenerator) -> ArrayMesh:
 			_add_tri(st, d00, d01, d11)
 			_add_tri(st, d00, d11, d10)
 	st.generate_normals()
+	st.index()
 	return st.commit()
 
 

@@ -1,46 +1,25 @@
 class_name MoonTerrainParams
 extends RefCounted
 
-## Tunables for procedural lunar height field H(n) on the sphere.
-## Heights are in world meters; convert with meters_to_voxels().
-## Docs: Voxel Tools Generators → Planet (height-based sphere).
+## Structured lunar morphology (not a noise shell).
+## Heights in world meters; convert with meters_to_voxels().
 
-## Bump when relief formula changes — invalidates dig stream layout.
-const GENERATOR_VERSION := 3
+## Bump when relief formula changes — new stream directory.
+const GENERATOR_VERSION := 6
 
-const SEED := 0x4D004E # "MOON"
+const SEED := 0x4D004E
 
-## Continents / maria vs highlands.
-const CONTINENT_AMP_M := 11.0
-const CONTINENT_PERIOD_M := 180.0
+const MARIA_DEPTH_M := 14.0
+const HIGHLAND_LIFT_M := 10.0
+const MOUNTAIN_AMP_M := 0.0
+const PLATEAU_AMP_M := 0.0
 
-## Ridged massifs (docs: ridged + negate → eroded look).
-const MOUNTAIN_AMP_M := 28.0
-const MOUNTAIN_PERIOD_M := 90.0
+const CRATER_LARGE_AMP_M := 28.0
+const CRATER_MED_AMP_M := 12.0
+const CRATER_SMALL_AMP_M := 5.0
 
-## Terraced shelves.
-const PLATEAU_AMP_M := 8.0
-const PLATEAU_PERIOD_M := 120.0
-const PLATEAU_STEPS := 4.0
-
-## Valley / rille cuts.
-const CANYON_AMP_M := 14.0
-const CANYON_PERIOD_M := 70.0
-
-## Multi-scale craters (cellular distance bowls).
-const CRATER_LARGE_AMP_M := 22.0
-const CRATER_LARGE_PERIOD_M := 95.0
-const CRATER_MED_AMP_M := 9.0
-const CRATER_MED_PERIOD_M := 40.0
-const CRATER_SMALL_AMP_M := 3.5
-const CRATER_SMALL_PERIOD_M := 18.0
-
-## Fine regolith.
-const MICRO_AMP_M := 1.2
-const MICRO_PERIOD_M := 8.0
-
-## Soft clamp on |H| so spawn probes stay valid.
-const HEIGHT_CLAMP_M := 48.0
+const MICRO_AMP_M := 0.0
+const HEIGHT_CLAMP_M := 55.0
 
 
 static func meters_to_voxels(meters: float) -> float:
