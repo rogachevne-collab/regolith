@@ -107,18 +107,19 @@ func _height_meters(n: Vector3) -> float:
 func _mountain_ranges(domain: Vector3, highland: float) -> float:
 	if highland < 0.05 or MoonTerrainParams.MOUNTAIN_AMP_M <= 0.001:
 		return 0.0
-	## Rare patches only.
+	## Rare patches only — but not so rare they vanish from orbit.
 	var patch := float(_massif_mask.get_noise_3dv(domain * 0.55))
-	var mask := smoothstep(0.42, 0.72, patch)
+	var mask := smoothstep(0.28, 0.62, patch)
 	if mask <= 0.001:
 		return 0.0
 	## Ridged peaks → sharper / more "mountainous" than soft FBM blobs.
 	var r0 := float(_ridge.get_noise_3dv(domain))
 	var ridged := 1.0 - absf(r0)
-	ridged = pow(ridged, 1.65)
-	var r1 := float(_ridge_detail.get_noise_3dv(domain * 1.35))
-	var detail := pow(1.0 - absf(r1), 1.9)
-	var shape := ridged * 0.78 + detail * 0.22
+	ridged = pow(ridged, 2.2)
+	var r1 := float(_ridge_detail.get_noise_3dv(domain * 1.55))
+	var detail := pow(1.0 - absf(r1), 2.4)
+	## Keep only the sharp upper part of the ridge (cuts soft shoulders).
+	var shape := smoothstep(0.35, 0.95, ridged * 0.72 + detail * 0.28)
 	return highland * mask * shape * MoonTerrainParams.MOUNTAIN_AMP_M
 
 

@@ -8,7 +8,7 @@ const SEED := 0x4D004E
 const MARIA_DEPTH_M := 5.0
 const HIGHLAND_LIFT_M := 4.0
 ## Modest highland massifs (meters) — angular, uncommon.
-const MOUNTAIN_AMP_M := 11.0
+const MOUNTAIN_AMP_M := 14.0
 const PLATEAU_AMP_M := 0.0
 
 const CRATER_LARGE_AMP_M := 22.0
