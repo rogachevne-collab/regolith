@@ -1,20 +1,21 @@
 class_name MoonTerrainParams
 extends RefCounted
 
-const GENERATOR_VERSION := 7
+const GENERATOR_VERSION := 9
 const SEED := 0x4D004E
 
-const MARIA_DEPTH_M := 16.0
-const HIGHLAND_LIFT_M := 12.0
+## Keep crust almost spherical — relief is craters, not tumors.
+const MARIA_DEPTH_M := 5.0
+const HIGHLAND_LIFT_M := 4.0
 const MOUNTAIN_AMP_M := 0.0
 const PLATEAU_AMP_M := 0.0
 
-const CRATER_LARGE_AMP_M := 30.0
-const CRATER_MED_AMP_M := 13.0
-const CRATER_SMALL_AMP_M := 5.5
+const CRATER_LARGE_AMP_M := 22.0
+const CRATER_MED_AMP_M := 10.0
+const CRATER_SMALL_AMP_M := 4.0
 
 const MICRO_AMP_M := 0.0
-const HEIGHT_CLAMP_M := 58.0
+const HEIGHT_CLAMP_M := 40.0
 
 
 static func meters_to_voxels(meters: float) -> float:
