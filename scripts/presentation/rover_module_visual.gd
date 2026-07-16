@@ -201,9 +201,12 @@ static func update_runtime(
 	if spin != null and is_instance_valid(spin):
 		# Parking brake shares the service-brake tire path; spin follows
 		# runtime wheel_speed (≈0 when held). Do not hard-zero here.
+		# Physics wheel_speed > 0 means rolling along wheel forward (-Z local).
+		# Positive rotate around +X moves the contact patch the wrong way for
+		# that forward, so visual spin is negated.
 		spin.rotate_object_local(
 			Vector3.RIGHT,
-			float(runtime.get("wheel_speed", 0.0)) * delta
+			-float(runtime.get("wheel_speed", 0.0)) * delta
 		)
 
 
