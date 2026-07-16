@@ -751,7 +751,7 @@ func _exit_rover_seat(player: Node3D) -> Dictionary:
 			exit_position = (
 				seat_world
 				+ body.global_transform.basis.x * 1.2
-				+ Vector3.UP * 0.15
+				+ GravityField.resolve_up(body, seat_world) * 0.15
 			)
 	if player.has_method("exit_vehicle"):
 		player.call("exit_vehicle", exit_position)
@@ -1174,7 +1174,7 @@ func _apply_place_plan(plan: Dictionary) -> Dictionary:
 
 
 ## Reseats a first-on-ground placement so its footprint rests on the lowest
-## terrain sample beneath it. Only shifts the continuous root along world +Y/-Y;
+## terrain sample beneath it along Field down. Only shifts the continuous root;
 ## the discrete grid frame (topology) is untouched. Non-ground plans (attaching
 ## to an existing assembly) and invalid plans pass through unchanged.
 func _seat_ground_plan(plan: Dictionary) -> Dictionary:
@@ -1204,48 +1204,67 @@ func _seat_ground_plan(plan: Dictionary) -> Dictionary:
 			footprint = footprint.merge(box)
 	if not has_box:
 		return plan
-	var bottom_y := footprint.position.y
-	var probe_from_y := bottom_y + footprint.size.y + 1.0
-	var probe_distance := (probe_from_y - bottom_y) + 4.0
 	var center := footprint.position + footprint.size * 0.5
-	var lowest_surface := INF
+	var up := GravityField.resolve_up(self, center)
+	var down := -up
+	var half := footprint.size * 0.5
+	var half_along_up := (
+		absf(up.x) * half.x
+		+ absf(up.y) * half.y
+		+ absf(up.z) * half.z
+	)
+	var bottom_along_up := center.dot(up) - half_along_up
+	var probe_lift := half_along_up + 1.0
+	var probe_distance := probe_lift + 4.0
+	var field := GravityField.find_in_tree(self)
+	var frame: Basis = (
+		field.tangent_basis_at(center)
+		if field != null
+		else Basis.looking_at(Vector3.FORWARD, Vector3.UP)
+	)
+	var lowest_along_up := INF
 	for sample: Vector2 in _GROUND_SEAT_SAMPLES:
-		var sample_x := center.x + sample.x * footprint.size.x
-		var sample_z := center.z + sample.y * footprint.size.z
-		var sample_xz := Vector2(sample_x, sample_z)
-		var physics_y := VoxelSpaceUtil.physics_down_surface_y(
+		var sample_point := (
+			center
+			+ frame.x * (sample.x * footprint.size.x * 0.5)
+			+ frame.z * (sample.y * footprint.size.z * 0.5)
+		)
+		var probe_from := sample_point + up * probe_lift
+		var physics_point := VoxelSpaceUtil.physics_surface_along_ray(
 			_physics_space_state(),
-			sample_xz,
-			probe_from_y,
+			probe_from,
+			down,
 			probe_distance
 		)
-		if is_finite(physics_y):
-			lowest_surface = minf(lowest_surface, physics_y)
+		if (
+			is_finite(physics_point.x)
+			and is_finite(physics_point.y)
+			and is_finite(physics_point.z)
+		):
+			lowest_along_up = minf(lowest_along_up, physics_point.dot(up))
 			continue
 		var hit: VoxelRaycastResult = VoxelSpaceUtil.raycast_world(
 			_voxel_tool,
 			_terrain,
-			Vector3(
-				center.x + sample.x * footprint.size.x,
-				probe_from_y,
-				center.z + sample.y * footprint.size.z
-			),
-			Vector3.DOWN,
+			probe_from,
+			down,
 			probe_distance
 		)
 		if hit == null:
 			continue
-		lowest_surface = minf(
-			lowest_surface,
-			probe_from_y
-			- VoxelSpaceUtil.raycast_hit_world_distance(_terrain, hit)
+		var sdf_point := VoxelSpaceUtil.raycast_hit_world_point(
+			_terrain,
+			probe_from,
+			down,
+			hit
 		)
-	if is_inf(lowest_surface):
+		lowest_along_up = minf(lowest_along_up, sdf_point.dot(up))
+	if is_inf(lowest_along_up):
 		return plan
-	var delta_y := (lowest_surface - GROUND_SEAT_EMBED) - bottom_y
-	if absf(delta_y) < 0.0001:
+	var delta := (lowest_along_up - GROUND_SEAT_EMBED) - bottom_along_up
+	if absf(delta) < 0.0001:
 		return plan
-	var shift := Vector3(0.0, delta_y, 0.0)
+	var shift := up * delta
 	var seated := plan.duplicate(true)
 	var seated_root := root.translated(shift)
 	seated["assembly_world_transform"] = seated_root

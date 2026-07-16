@@ -147,15 +147,11 @@ func _spawn_demo_rover_near_player() -> void:
 		return
 	var tool: VoxelTool = _terrain.get_voxel_tool()
 	tool.channel = VoxelBuffer.CHANNEL_SDF
-	var center_xz := Vector2(
-		_base_spawn.global_position.x,
-		_base_spawn.global_position.z
-	)
 	var ground_variant: Variant = RoverDemoSpawn.find_flat_ground_near(
 		_terrain,
 		tool,
 		_physics_space_state(),
-		center_xz
+		_base_spawn.global_position
 	)
 	if not ground_variant is Vector3:
 		push_warning("Demo rover spawn failed: no flat ground near BaseSpawn")

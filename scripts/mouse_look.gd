@@ -46,7 +46,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				orbit_max_pitch
 			)
 		elif _target != null:
-			_target.rotate_y(deg_to_rad(-motion.x * sensitivity))
+			var up := GravityField.resolve_up(_target, _target.global_position)
+			_target.rotate(up, deg_to_rad(-motion.x * sensitivity))
 			_pitch = clampf(_pitch - motion.y * sensitivity, min_pitch, max_pitch)
 
 
@@ -79,13 +80,44 @@ func _process(_delta: float) -> void:
 
 
 func view_angles() -> Vector2:
-	var yaw := _target.rotation.y if _target != null else 0.0
+	if _target == null:
+		return Vector2(_orbit_yaw if _orbit_mode else 0.0, _pitch)
+	var up := GravityField.resolve_up(_target, _target.global_position)
+	var forward := GravityField.project_on_tangent(
+		-_target.global_transform.basis.z,
+		up
+	)
+	var yaw := 0.0
+	if forward.length_squared() > 0.0001:
+		var tangent := GravityField.find_in_tree(_target)
+		var reference := Vector3.FORWARD
+		if tangent != null and tangent.mode == GravityField.Mode.RADIAL:
+			reference = GravityField.project_on_tangent(Vector3.FORWARD, up)
+			if reference.length_squared() <= 0.0001:
+				reference = GravityField.project_on_tangent(Vector3.RIGHT, up)
+		else:
+			reference = Vector3.FORWARD
+		if reference.length_squared() > 0.0001:
+			reference = reference.normalized()
+			forward = forward.normalized()
+			yaw = atan2(
+				reference.cross(forward).dot(up),
+				reference.dot(forward)
+			)
 	return Vector2(yaw, _pitch)
 
 
 func apply_view_angles(yaw_rad: float, pitch_deg: float) -> void:
 	if _target != null:
-		_target.rotation.y = yaw_rad
+		var up := GravityField.resolve_up(_target, _target.global_position)
+		var basis := GravityField.find_in_tree(_target)
+		var frame: Basis
+		if basis != null:
+			frame = basis.tangent_basis_at(_target.global_position)
+		else:
+			frame = Basis.looking_at(Vector3.FORWARD, Vector3.UP)
+		var yawed := Basis(up, yaw_rad) * frame
+		_target.global_transform.basis = yawed
 	_pitch = clampf(pitch_deg, min_pitch, max_pitch)
 	if _target == null:
 		return
@@ -162,19 +194,33 @@ func _set_orbit_mode(enabled: bool) -> void:
 func _init_orbit_from_vehicle() -> void:
 	var vehicle := _current_vehicle()
 	if vehicle == null:
-		_orbit_yaw = _target.rotation.y if _target != null else 0.0
+		_orbit_yaw = 0.0
 		_orbit_pitch = 15.0
 		return
-	var forward := -vehicle.global_transform.basis.z
-	forward.y = 0.0
+	var up := GravityField.resolve_up(vehicle, vehicle.global_position)
+	var forward := GravityField.project_on_tangent(
+		-vehicle.global_transform.basis.z,
+		up
+	)
 	if forward.length_squared() < 0.0001:
-		forward = -_target_follow_transform().basis.z
-		forward.y = 0.0
+		forward = GravityField.project_on_tangent(
+			-_target_follow_transform().basis.z,
+			up
+		)
 	if forward.length_squared() < 0.0001:
-		forward = Vector3.FORWARD
+		forward = GravityField.project_on_tangent(Vector3.FORWARD, up)
+	if forward.length_squared() < 0.0001:
+		_orbit_yaw = 0.0
 	else:
 		forward = forward.normalized()
-	_orbit_yaw = atan2(forward.x, forward.z) + PI
+		var reference := GravityField.project_on_tangent(Vector3.FORWARD, up)
+		if reference.length_squared() < 0.0001:
+			reference = GravityField.project_on_tangent(Vector3.RIGHT, up)
+		reference = reference.normalized()
+		_orbit_yaw = atan2(
+			reference.cross(forward).dot(up),
+			reference.dot(forward)
+		) + PI
 	_orbit_pitch = clampf(15.0, orbit_min_pitch, orbit_max_pitch)
 
 
@@ -219,20 +265,22 @@ func _camera_transform(
 	)
 	# Tip past ~70°: body-up head offset buries the camera in terrain.
 	# Upright drive keeps body-up so suspension bounce matches look.
+	var field_up := GravityField.resolve_up(self, target_position)
 	var head_offset := target_basis.y
 	if (
 		_is_in_vehicle()
-		and head_offset.normalized().dot(Vector3.UP) < 0.35
+		and head_offset.normalized().dot(field_up) < 0.35
 	):
-		head_offset = Vector3.UP
+		head_offset = field_up
 	var camera_position := target_position + head_offset * head_height
 	return Transform3D(look_basis, camera_position)
 
 
 func _orbit_camera_transform() -> Transform3D:
 	var vehicle_xf := _vehicle_follow_transform()
-	var pivot := vehicle_xf.origin + Vector3.UP * orbit_height
-	var yaw_basis := Basis(Vector3.UP, _orbit_yaw)
+	var up := GravityField.resolve_up(self, vehicle_xf.origin)
+	var pivot := vehicle_xf.origin + up * orbit_height
+	var yaw_basis := Basis(up, _orbit_yaw)
 	# Positive orbit pitch raises the camera (look down at the vehicle).
 	var pitch_basis := Basis(Vector3.RIGHT, -deg_to_rad(_orbit_pitch))
 	var orbit_basis := yaw_basis * pitch_basis
@@ -241,10 +289,14 @@ func _orbit_camera_transform() -> Transform3D:
 	var look_dir := pivot - camera_position
 	if look_dir.length_squared() < 0.0001:
 		return Transform3D(Basis.IDENTITY, camera_position)
-	var up := Vector3.UP
-	if absf(look_dir.normalized().dot(up)) > 0.99:
-		up = Vector3.RIGHT
-	return Transform3D(Basis.looking_at(look_dir, up), camera_position)
+	var look_up := up
+	if absf(look_dir.normalized().dot(look_up)) > 0.99:
+		look_up = GravityField.project_on_tangent(Vector3.RIGHT, up)
+		if look_up.length_squared() < 0.0001:
+			look_up = Vector3.RIGHT
+		else:
+			look_up = look_up.normalized()
+	return Transform3D(Basis.looking_at(look_dir, look_up), camera_position)
 
 
 func _spring_orbit_position(pivot: Vector3, desired: Vector3) -> Vector3:

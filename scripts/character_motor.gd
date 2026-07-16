@@ -40,68 +40,66 @@ func move_character(
 	jump_requested: bool,
 	delta: float
 ) -> void:
-	var desired_direction: Vector3 = move_direction
-	desired_direction.y = 0.0
+	var up := _resolve_up()
+	up_direction = up
+	_align_body_to_up(up)
+
+	var desired_direction := GravityField.project_on_tangent(move_direction, up)
 	if desired_direction.length_squared() > 1.0:
 		desired_direction = desired_direction.normalized()
 	var move_speed: float = (
 		speed * sprint_multiplier if sprint else speed
 	)
-	var desired_horizontal: Vector3 = (
-		desired_direction * move_speed
-	)
+	var desired_horizontal: Vector3 = desired_direction * move_speed
 	var was_on_floor: bool = is_on_floor()
-	var current_horizontal := Vector2(velocity.x, velocity.z)
-	var target_horizontal := Vector2(
-		desired_horizontal.x,
-		desired_horizontal.z
-	)
+
+	var vertical := velocity.dot(up)
+	var horizontal := velocity - up * vertical
 
 	if was_on_floor:
 		if jump_requested:
-			velocity.y = jump_velocity
+			vertical = jump_velocity
 		else:
-			velocity.y = -ground_adhesion
+			vertical = -ground_adhesion
 		var acceleration: float = (
 			ground_acceleration
-			if not target_horizontal.is_zero_approx()
+			if not desired_horizontal.is_zero_approx()
 			else ground_deceleration
 		)
-		current_horizontal = current_horizontal.move_toward(
-			target_horizontal,
+		horizontal = horizontal.move_toward(
+			desired_horizontal,
 			acceleration * delta
 		)
 	else:
-		velocity.y = maxf(
-			velocity.y - gravity * delta,
-			-terminal_velocity
-		)
+		var gravity_accel := _resolve_gravity_accel(up)
+		velocity += gravity_accel * delta
+		vertical = velocity.dot(up)
+		horizontal = velocity - up * vertical
+		var fall_speed := -vertical
+		if fall_speed > terminal_velocity:
+			vertical = -terminal_velocity
 		if desired_direction.length_squared() > 0.0001:
-			current_horizontal = current_horizontal.move_toward(
-				target_horizontal,
+			horizontal = horizontal.move_toward(
+				desired_horizontal,
 				air_acceleration * delta
 			)
 
-	velocity.x = current_horizontal.x
-	velocity.z = current_horizontal.y
+	velocity = horizontal + up * vertical
 	_last_step_height = 0.0
-	var move_start_y := global_position.y
+	var move_start := global_position
 	var stepped := false
 	if was_on_floor and not jump_requested:
-		stepped = _try_step(
-			Vector3(velocity.x, 0.0, velocity.z) * delta
-		)
-	var stepped_horizontal := Vector2(velocity.x, velocity.z)
+		stepped = _try_step(horizontal * delta, up)
+	var stepped_horizontal := horizontal
 	if stepped:
-		velocity.x = 0.0
-		velocity.z = 0.0
+		velocity = up * velocity.dot(up)
 	move_and_slide()
 	if stepped:
-		velocity.x = stepped_horizontal.x
-		velocity.z = stepped_horizontal.y
+		var new_vertical := velocity.dot(up)
+		velocity = stepped_horizontal + up * new_vertical
 		_passive_step_height = 0.0
 	elif was_on_floor and not jump_requested:
-		var passive_rise := global_position.y - move_start_y
+		var passive_rise := (global_position - move_start).dot(up)
 		if passive_rise > 0.0001:
 			_passive_step_height = minf(
 				_passive_step_height + passive_rise,
@@ -114,7 +112,44 @@ func move_character(
 		_support_frame.call("update_from_character", self)
 
 
-func _try_step(horizontal_motion: Vector3) -> bool:
+func _resolve_up() -> Vector3:
+	return GravityField.resolve_up(self, global_position)
+
+
+func _resolve_gravity_accel(up: Vector3) -> Vector3:
+	# Prefer PhysicsServer total_gravity so CharacterBody matches Area3D Field.
+	var direct := PhysicsServer3D.body_get_direct_state(get_rid())
+	if direct != null:
+		var total: Vector3 = direct.total_gravity
+		if total.length_squared() > 0.000001:
+			return total
+	var field_accel := GravityField.resolve_gravity_accel(self, global_position)
+	if field_accel.length_squared() > 0.000001:
+		return field_accel
+	return -up * gravity
+
+
+func _align_body_to_up(up: Vector3) -> void:
+	if up.length_squared() <= 0.000001:
+		return
+	var current_up := global_transform.basis.y
+	if current_up.normalized().dot(up) > 0.9995:
+		return
+	var forward := -global_transform.basis.z
+	var projected := GravityField.project_on_tangent(forward, up)
+	if projected.length_squared() <= 0.000001:
+		projected = GravityField.project_on_tangent(
+			global_transform.basis.x,
+			up
+		)
+	if projected.length_squared() <= 0.000001:
+		projected = GravityField.project_on_tangent(Vector3.FORWARD, up)
+	if projected.length_squared() <= 0.000001:
+		return
+	global_transform.basis = Basis.looking_at(projected.normalized(), up)
+
+
+func _try_step(horizontal_motion: Vector3, up: Vector3) -> bool:
 	if horizontal_motion.length_squared() < 0.000001:
 		return false
 	# move_and_slide applies platform displacement separately. Combining that
@@ -128,7 +163,7 @@ func _try_step(horizontal_motion: Vector3) -> bool:
 	if not _body_test_motion(from, horizontal_motion, blocked_result):
 		return false
 
-	var up_motion := Vector3.UP * (step_height + step_probe_margin)
+	var up_motion := up * (step_height + step_probe_margin)
 	var up_result := PhysicsTestMotionResult3D.new()
 	if _body_test_motion(from, up_motion, up_result):
 		return false
@@ -146,7 +181,7 @@ func _try_step(horizontal_motion: Vector3) -> bool:
 		raised.origin + forward_motion
 	)
 
-	var down_motion := Vector3.DOWN * (
+	var down_motion := -up * (
 		step_height + floor_snap_length + step_probe_margin
 	)
 	var down_result := PhysicsTestMotionResult3D.new()
@@ -159,7 +194,7 @@ func _try_step(horizontal_motion: Vector3) -> bool:
 		return false
 
 	var landing_origin := advanced.origin + down_result.get_travel()
-	var rise := landing_origin.y - from.origin.y
+	var rise := (landing_origin - from.origin).dot(up)
 	if rise <= step_probe_margin or rise > step_height + step_probe_margin:
 		return false
 
@@ -177,9 +212,9 @@ func _try_step(horizontal_motion: Vector3) -> bool:
 		move_and_collide(-up_motion)
 		return false
 	var contact_rise := (
-		down_collision.get_position().y
-		- (from.origin.y - _collision_half_height())
-	)
+		down_collision.get_position()
+		- (from.origin - up * _collision_half_height())
+	).dot(up)
 	_last_step_height = maxf(rise, contact_rise)
 	return true
 

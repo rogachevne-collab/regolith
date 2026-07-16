@@ -90,11 +90,12 @@ static func _point_overlaps_terrain(
 	voxel_tool: VoxelTool = null,
 	terrain: Node3D = null
 ) -> bool:
+	var up := GravityField.resolve_up(terrain, world_point)
 	if space_state != null:
 		for offset: Vector3 in [
 			Vector3.ZERO,
-			Vector3.DOWN * SUPPORT_EPSILON,
-			Vector3.UP * SUPPORT_EPSILON * 0.5,
+			-up * SUPPORT_EPSILON,
+			up * SUPPORT_EPSILON * 0.5,
 		]:
 			if _physics_overlaps_terrain(
 				space_state,
@@ -182,11 +183,12 @@ static func _voxel_supports_point(
 	)
 	if voxel_tool.get_voxel_f(cell) <= SUPPORT_EPSILON:
 		return true
+	var up := GravityField.resolve_up(terrain, world_point)
 	var hit: VoxelRaycastResult = VoxelSpaceUtil.raycast_world(
 		voxel_tool,
 		terrain,
-		world_point + Vector3.UP * 2.0,
-		Vector3.DOWN,
+		world_point + up * 2.0,
+		-up,
 		2.0 + SUPPORT_EPSILON
 	)
 	return hit != null

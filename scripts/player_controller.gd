@@ -151,12 +151,17 @@ func _physics_process(delta: float) -> void:
 		return
 
 	var movement_basis: Basis = _head.call("movement_basis")
-	var forward := -movement_basis.z
-	forward.y = 0.0
-	forward = forward.normalized()
-	var right := movement_basis.x
-	right.y = 0.0
-	right = right.normalized()
+	var up := up_direction
+	var forward := GravityField.project_on_tangent(-movement_basis.z, up)
+	if forward.length_squared() > 0.0001:
+		forward = forward.normalized()
+	else:
+		forward = Vector3.ZERO
+	var right := GravityField.project_on_tangent(movement_basis.x, up)
+	if right.length_squared() > 0.0001:
+		right = right.normalized()
+	else:
+		right = Vector3.ZERO
 
 	var move: Vector3 = Vector3.ZERO
 	if _gameplay_input_enabled and Input.is_action_pressed("move_forward"):

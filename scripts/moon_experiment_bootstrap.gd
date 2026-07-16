@@ -20,7 +20,7 @@ const AUTOSAVE_INTERVAL_S := 90.0
 @export var debug_overlay := false
 @export var playtest_cargo := true
 ## Enable after radial rover seating (phase 6). Off for early shell bring-up.
-@export var spawn_demo_rover := false
+@export var spawn_demo_rover := true
 @export var demo_rover_phrase := "колбаса на 12 колес, низкая"
 @export var persist_digs := true
 
@@ -204,7 +204,7 @@ func _spawn_demo_rover_near_player() -> void:
 		_terrain,
 		tool,
 		_physics_space_state(),
-		Vector2(_base_spawn.global_position.x, _base_spawn.global_position.z)
+		_base_spawn.global_position
 	)
 	if not ground_variant is Vector3:
 		push_warning("Demo rover spawn failed: no flat ground near BaseSpawn")
@@ -234,6 +234,11 @@ func _spawn_demo_rover_near_player() -> void:
 		push_warning(
 			"Demo rover spawn failed: %s %s"
 			% [str(result.get("error", "unknown")), str(result.get("failures", []))]
+		)
+	else:
+		print(
+			"MoonExperiment: demo rover spawned assembly_id=%d at %s"
+			% [int(result.get("assembly_id", 0)), str(ground)]
 		)
 
 

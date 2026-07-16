@@ -1139,15 +1139,13 @@ func _tick_piston_actuators(delta: float) -> void:
 			)
 			if head_body is RigidBody3D:
 				head_mass = maxf((head_body as RigidBody3D).mass, head_mass)
-			var gravity := Vector3(
-				0.0,
-				-float(
-					ProjectSettings.get_setting(
-						"physics/3d/default_gravity",
-						9.8
-					)
-				),
-				0.0
+			var gravity := GravityField.resolve_gravity_accel(
+				self,
+				(
+					(head_body as Node3D).global_position
+					if head_body is Node3D
+					else Vector3.ZERO
+				)
 			)
 			var force_result: Dictionary = (
 				PistonProjectionUtil.compute_motor_force_scalar(

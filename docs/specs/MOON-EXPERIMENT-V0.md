@@ -136,10 +136,10 @@
 1. **Динамика RigidBody (машины, loot, assemblies)** — `Area3D` point gravity
    вокруг луны; project/scene default gravity = 0 или полностью перекрыт Area
    (`gravity_space_override`), чтобы не двойнить −Y.
-   На поверхности: `gravity = 1.62`, `gravity_point_unit_distance = 500`
-   (оф. семантика Area3D: сила = gravity на unit distance, дальше falloff
-   1/r² — зафиксировать в реализации, нужен ли falloff или константа на
-   оболочке; для геймплея у поверхности предпочтительна ≈константа 1.62).
+На поверхности: `gravity = 1.62`, **`gravity_point_unit_distance = 0.0`**
+(оф. семантика Area3D: при 0 — **константная** величина силы на любой
+дистанции; положительное значение даёт falloff 1/r²). Для геймплея у
+поверхности v0 использует константу 1.62 без falloff.
 2. **Игрок / camera / construction seat** — явный
    `up = (global_pos - moon_center).normalized()`; движение в касательной
    плоскости; jump вдоль up.

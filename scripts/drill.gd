@@ -78,7 +78,10 @@ func _physics_process(_delta: float) -> void:
 	)
 	if _drilling:
 		_sparks.global_position = contact
-		_sparks.look_at(contact + direction, Vector3.UP)
+		_sparks.look_at(
+			contact + direction,
+			GravityField.resolve_up(_sparks, contact)
+		)
 
 
 func _process(delta: float) -> void:
