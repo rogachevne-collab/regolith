@@ -31,7 +31,7 @@ var _world_ready := false
 var _autosave_accum := 0.0
 var _last_save_ms := 0
 var _save_load_attempted := false
-var _voxel_stream: VoxelStreamRegionFiles
+var _voxel_stream: VoxelStream
 
 
 func is_world_ready() -> bool:
@@ -39,7 +39,7 @@ func is_world_ready() -> bool:
 
 
 func _ready() -> void:
-	WorldPersistence.save_path_override = MoonGeometry.WORLD_SAVE_PATH
+	WorldPersistence.save_path_override = MoonGeometry.world_save_path()
 	_configure_terrain()
 	_configure_dig_stream()
 	for archetype: ElementArchetype in Slice01Archetypes.load_all_required():
@@ -109,12 +109,28 @@ func _configure_terrain() -> void:
 func _configure_dig_stream() -> void:
 	if not persist_digs or not (_terrain is VoxelLodTerrain):
 		return
-	var dir := MoonGeometry.DIG_STREAM_DIR
-	if not DirAccess.dir_exists_absolute(dir):
-		DirAccess.make_dir_recursive_absolute(dir)
-	_voxel_stream = VoxelStreamRegionFiles.new()
-	_voxel_stream.directory = dir
-	(_terrain as VoxelLodTerrain).stream = _voxel_stream
+	var dir := MoonGeometry.dig_stream_directory()
+	var abs_dir := ProjectSettings.globalize_path(dir)
+	if not DirAccess.dir_exists_absolute(abs_dir):
+		DirAccess.make_dir_recursive_absolute(abs_dir)
+	## RegionFiles + save_generator_output freezes generated SDF as chunks stream
+	## in (do not enable full_load_mode — RegionFiles rejects it).
+	var stream := VoxelStreamRegionFiles.new()
+	stream.directory = dir
+	stream.save_generator_output = true
+	_voxel_stream = stream
+	(_terrain as VoxelLodTerrain).stream = stream
+	if _terrain is VoxelLodTerrain:
+		(_terrain as VoxelLodTerrain).full_load_mode_enabled = false
+	var version_path := "%s/generator_version.txt" % abs_dir
+	var vf := FileAccess.open(version_path, FileAccess.WRITE)
+	if vf != null:
+		vf.store_string(str(MoonTerrainParams.GENERATOR_VERSION))
+		vf.close()
+	print(
+		"MoonExperiment: stream regions=%s save_generator_output=true gen_v%d"
+		% [dir, MoonTerrainParams.GENERATOR_VERSION]
+	)
 
 
 func _persist_world(force := false) -> void:

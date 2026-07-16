@@ -23,6 +23,14 @@ const DIG_STREAM_DIR := "user://moon_experiment"
 const WORLD_SAVE_PATH := "user://moon_experiment/world_save.json"
 
 
+static func dig_stream_directory() -> String:
+	return MoonTerrainParams.stream_directory()
+
+
+static func world_save_path() -> String:
+	return MoonTerrainParams.world_save_path()
+
+
 static func radius_voxels() -> float:
 	return SURFACE_RADIUS_M / VOXEL_SCALE
 
