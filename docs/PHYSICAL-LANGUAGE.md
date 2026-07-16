@@ -15,6 +15,7 @@ ADR. Интеграция в Erebus — через Erebus Lite addon, когда
 | Piston, Motor, overload | «Примитивы» → «Joint»; `specs/POC-ACTUATORS-V1.md` |
 | Rotor (непрерывное вращение) | «Примитивы» → «Joint»; `specs/POC-ACTUATORS-V2-ROTOR.md` |
 | Hinge / ServoHinge (сгибание с упорами) | «Примитивы» → «Joint»; `specs/POC-ACTUATORS-V3-HINGE.md` |
+| Machine compose (буровой манипулятор по фразе) | `specs/MACHINE-COMPOSE-V0.md`; cheatsheet `machine-compose` |
 | Body, Field, Surface | «Примитивы» → одноимённые разделы |
 | Actuator, Wheel | «Примитивы» → «Actuator», «Wheel»; `specs/ROVER-MODULES-V1.md` |
 | Cable / Tether, Sensor | «Примитивы» → одноимённые разделы |

@@ -11,6 +11,32 @@
 - `docs/specs/PLAYER-INTERACTION-V1.md`;
 - `docs/specs/HUD-UI-01.md`.
 
+## Индекс (для агентов: не читай файл целиком — найди термин и читай его раздел)
+
+| Термин / вопрос | Раздел |
+|---|---|
+| scope, что входит / не входит в v1 | «Границы» |
+| ItemType, ItemCatalog, категории предметов | «Система предметов» → «ItemType catalog» |
+| инструменты игрока, hotbar, instances | «Система предметов» → «Player tool instances и hotbar» |
+| raw_regolith, construction_component, ресурсы slice | «Ресурсы slice» |
+| ISRU цепочка, crush vs sinter, рецепты | «Dual-path ISRU» |
+| SimulationResourceStore, capacity, buffers | «Store model» |
+| cargo_pipe, auto-link, cargo graph, transfer | «Cargo Flow» |
+| connect_network, wires, 3D mesh | «Network links (electric wires)» |
+| power budget, supply/draw, SE on/off | «Electric Flow» |
+| stationary drill, contact, mining tick | «Stationary drill» |
+| voxel carve, excavation, hand drill, loot pile | «Terrain excavation» |
+| Voxel scale, VoxelSpaceUtil, raycast, spawn Y | «Terrain excavation» → «Voxel scale (v1)» |
+| Processor, Fabricator, recipe queue | «Processor / Fabricator runtime» |
+| status, reason, no_power, storage_full | «Functional status» |
+| player store vs machine stores | «Player store vs industry» |
+| industry_tick, порядок симуляции | «Simulation tick» |
+| snapshot fields для Industry | «Snapshot (Industry fields)» |
+| TransferResource, SetMachineEnabled, команды | «Commands (Industry)» |
+| HUD, wire projection, UX | «Presentation / UX» |
+| acceptance criteria, test_industry_v1 | «Acceptance» |
+| порядок реализации | «Implementation order» |
+
 ## Цель
 
 Замкнуть industrial core loop vertical slice: добыча реголита, переработка по
