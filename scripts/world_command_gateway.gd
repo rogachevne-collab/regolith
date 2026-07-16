@@ -20,7 +20,7 @@ const _GROUND_SEAT_SAMPLES: Array[Vector2] = [
 @export var placed_blocks_path: NodePath = NodePath("../PlacedBlocks")
 @export var simulation_session_path: NodePath = NodePath("../SimulationSession")
 
-var _terrain: VoxelTerrain
+var _terrain: Node3D
 var _placed_blocks: Node
 var _voxel_tool: VoxelTool
 var _session: SimulationSession
@@ -46,7 +46,7 @@ func _ready() -> void:
 	_terrain = get_node(terrain_path)
 	_placed_blocks = get_node(placed_blocks_path)
 	_session = get_node_or_null(simulation_session_path) as SimulationSession
-	_voxel_tool = _terrain.get_voxel_tool()
+	_voxel_tool = TerrainCompat.get_voxel_tool(_terrain)
 	_voxel_tool.channel = VoxelBuffer.CHANNEL_SDF
 	add_to_group(&"world_command_gateway")
 	for archetype_id: String in ToolController.CONSTRUCTION_ARCHETYPES:

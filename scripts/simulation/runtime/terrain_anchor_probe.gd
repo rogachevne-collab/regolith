@@ -26,7 +26,7 @@ static func touching_element_ids(
 	assembly: SimulationAssembly,
 	elements: Array[SimulationElement],
 	space_state: PhysicsDirectSpaceState3D = null,
-	terrain: VoxelTerrain = null
+	terrain: Node3D = null
 ) -> Array[int]:
 	var touching: Array[int] = []
 	if assembly == null or world == null:
@@ -54,7 +54,7 @@ static func element_touches_terrain(
 	element: SimulationElement,
 	space_state: PhysicsDirectSpaceState3D = null,
 	voxel_tool: VoxelTool = null,
-	terrain: VoxelTerrain = null
+	terrain: Node3D = null
 ) -> bool:
 	var archetype := element.get_archetype()
 	if archetype == null:
@@ -88,7 +88,7 @@ static func _point_overlaps_terrain(
 	space_state: PhysicsDirectSpaceState3D,
 	world_point: Vector3,
 	voxel_tool: VoxelTool = null,
-	terrain: VoxelTerrain = null
+	terrain: Node3D = null
 ) -> bool:
 	if space_state != null:
 		for offset: Vector3 in [
@@ -110,7 +110,7 @@ static func _point_overlaps_terrain(
 static func _physics_overlaps_terrain(
 	space_state: PhysicsDirectSpaceState3D,
 	world_point: Vector3,
-	terrain: VoxelTerrain
+	terrain: Node3D
 ) -> bool:
 	var shape := SphereShape3D.new()
 	shape.radius = SUPPORT_PROBE_RADIUS
@@ -130,7 +130,7 @@ static func _physics_overlaps_terrain(
 ## Returns the engine ray hit dict or `{}` when nothing terrain-like is struck.
 static func raycast_terrain(
 	space_state: PhysicsDirectSpaceState3D,
-	terrain: VoxelTerrain,
+	terrain: Node3D,
 	from: Vector3,
 	direction: Vector3,
 	max_distance: float,
@@ -161,27 +161,15 @@ static func raycast_terrain(
 
 static func _is_terrain_collider(
 	collider: Variant,
-	terrain: VoxelTerrain
+	terrain: Node3D
 ) -> bool:
-	if collider == null or not collider is Node:
-		return false
-	if collider is PhysicsBody3D:
-		if int((collider as PhysicsBody3D).get_meta("assembly_id", 0)) != 0:
-			return false
-	if terrain == null:
-		return collider is VoxelTerrain
-	var node := collider as Node
-	while node != null:
-		if node == terrain:
-			return true
-		node = node.get_parent()
-	return false
+	return TerrainCompat.is_terrain_collider(collider, terrain)
 
 
 static func _voxel_supports_point(
 	voxel_tool: VoxelTool,
 	world_point: Vector3,
-	terrain: VoxelTerrain = null
+	terrain: Node3D = null
 ) -> bool:
 	var cell: Vector3i = (
 		VoxelSpaceUtil.world_cell_from_point(terrain, world_point)

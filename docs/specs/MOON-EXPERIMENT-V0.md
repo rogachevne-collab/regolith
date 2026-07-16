@@ -260,9 +260,9 @@ player/projection за feature-flag / «если задан GravityField / moon_
 
 | Фаза | Статус |
 |---|---|
-| 0 Контракт | **in progress** (этот документ) |
-| 1 Сцена-оболочка | pending |
-| 2 Terrain API | pending |
+| 0 Контракт | **done** |
+| 1 Сцена-оболочка | **in progress** |
+| 2 Terrain API | **in progress** |
 | 3 Radial gravity (RB) | pending |
 | 4 Player local up | pending |
 | 5 Construction seat | pending |

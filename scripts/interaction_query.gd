@@ -17,7 +17,7 @@ var current_hit := InteractionHit.empty()
 var _player: CollisionObject3D
 var _camera: Camera3D
 var _tools: ToolController
-var _terrain: VoxelTerrain
+var _terrain: Node3D
 var _voxel_tool: VoxelTool
 var _session: SimulationSession
 
@@ -28,7 +28,7 @@ func _ready() -> void:
 	_tools = get_node_or_null(tool_controller_path) as ToolController
 	_terrain = get_node(terrain_path)
 	_session = get_node_or_null(simulation_session_path) as SimulationSession
-	_voxel_tool = _terrain.get_voxel_tool()
+	_voxel_tool = TerrainCompat.get_voxel_tool(_terrain)
 	_voxel_tool.channel = VoxelBuffer.CHANNEL_SDF
 
 
@@ -144,7 +144,7 @@ func _target_kind(
 		return InteractionHit.KIND_WORLD_LOOT
 	if metadata.has("electric_link_id"):
 		return InteractionHit.KIND_ELECTRIC_CABLE
-	if collider is VoxelTerrain:
+	if TerrainCompat.is_terrain(collider):
 		return InteractionHit.KIND_VOXEL
 	if collider is Node and collider.is_in_group("placed_blocks"):
 		return InteractionHit.KIND_PLACED_BLOCK

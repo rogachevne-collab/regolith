@@ -45,7 +45,7 @@ static func batch_key(
 static func partner_key_from_object(partner: Object) -> String:
 	if partner == null:
 		return "none"
-	if partner is VoxelTerrain:
+	if TerrainCompat.is_terrain(partner):
 		return "terrain"
 	var assembly_id := int(partner.get_meta("assembly_id", 0))
 	if assembly_id > 0:
@@ -56,14 +56,14 @@ static func partner_key_from_object(partner: Object) -> String:
 static func is_terrain_partner(partner: Object) -> bool:
 	if partner == null:
 		return false
-	if partner is VoxelTerrain:
+	if TerrainCompat.is_terrain(partner):
 		return true
 	if partner is PhysicsBody3D:
 		if int((partner as PhysicsBody3D).get_meta("assembly_id", 0)) != 0:
 			return false
 	var node := partner as Node
 	while node != null:
-		if node is VoxelTerrain:
+		if TerrainCompat.is_terrain(node):
 			return true
 		node = node.get_parent()
 	return false

@@ -11,7 +11,7 @@ const MAX_FLAT_SLOPE_M := 0.35
 
 
 static func find_flat_ground_near(
-	terrain: VoxelTerrain,
+	terrain: Node3D,
 	tool: VoxelTool,
 	space_state: PhysicsDirectSpaceState3D,
 	center_xz: Vector2,
@@ -67,7 +67,7 @@ static func spawn_on_terrain(
 	session: SimulationSession,
 	world_position: Vector3,
 	store_id: String = STORE_ID,
-	terrain: VoxelTerrain = null,
+	terrain: Node3D = null,
 	tool: VoxelTool = null,
 	space_state: PhysicsDirectSpaceState3D = null
 ) -> Dictionary:
@@ -168,7 +168,7 @@ static func spawn_on_terrain(
 static func assembly_transform_on_surface(
 	surface_point: Vector3,
 	basis: Basis = Basis.IDENTITY,
-	terrain: VoxelTerrain = null,
+	terrain: Node3D = null,
 	tool: VoxelTool = null,
 	space_state: PhysicsDirectSpaceState3D = null
 ) -> Transform3D:
@@ -184,7 +184,7 @@ static func assembly_transform_on_surface(
 static func _assembly_transform_on_surface(
 	surface_point: Vector3,
 	basis: Basis = Basis.IDENTITY,
-	terrain: VoxelTerrain = null,
+	terrain: Node3D = null,
 	tool: VoxelTool = null,
 	space_state: PhysicsDirectSpaceState3D = null
 ) -> Transform3D:
@@ -211,7 +211,7 @@ static func _assembly_transform_on_surface(
 
 static func _lowest_surface_y_near(
 	center: Vector3,
-	terrain: VoxelTerrain,
+	terrain: Node3D,
 	tool: VoxelTool,
 	space_state: PhysicsDirectSpaceState3D
 ) -> float:
@@ -246,7 +246,7 @@ static func _lowest_surface_y_near(
 ## After load: re-seat released locomotives to physics ground under the footprint.
 static func reseat_parked_locomotives(
 	session: SimulationSession,
-	terrain: VoxelTerrain,
+	terrain: Node3D,
 	tool: VoxelTool,
 	space_state: PhysicsDirectSpaceState3D
 ) -> void:
@@ -311,7 +311,7 @@ static func reseat_parked_locomotives(
 
 
 static func _ground_point_at_xz(
-	terrain: VoxelTerrain,
+	terrain: Node3D,
 	tool: VoxelTool,
 	space_state: PhysicsDirectSpaceState3D,
 	xz: Vector2
@@ -341,7 +341,7 @@ static func _ground_point_at_xz(
 
 
 static func _local_slope_m(
-	terrain: VoxelTerrain,
+	terrain: Node3D,
 	tool: VoxelTool,
 	space_state: PhysicsDirectSpaceState3D,
 	center: Vector3,

@@ -4,15 +4,24 @@ extends RefCounted
 const SAVE_PATH := "user://regolith_world_save.json"
 const SAVE_VERSION := 1
 
+## Optional override for alternate scenes (moon experiment). Empty → SAVE_PATH.
+static var save_path_override := ""
+
+
+static func active_save_path() -> String:
+	if save_path_override.is_empty():
+		return SAVE_PATH
+	return save_path_override
+
 
 static func has_save() -> bool:
-	return FileAccess.file_exists(SAVE_PATH)
+	return FileAccess.file_exists(active_save_path())
 
 
 static func read_payload() -> Dictionary:
 	if not has_save():
 		return {}
-	var file := FileAccess.open(SAVE_PATH, FileAccess.READ)
+	var file := FileAccess.open(active_save_path(), FileAccess.READ)
 	if file == null:
 		return {}
 	var parsed: Variant = JSON.parse_string(file.get_as_text())
@@ -37,16 +46,20 @@ static func save(world: SimulationWorld, player: Node3D) -> bool:
 		"player": _serialize_player(player),
 	}
 	var json := JSON.stringify(payload, "\t")
-	var tmp_path := "%s.tmp" % SAVE_PATH
+	var path := active_save_path()
+	var parent_dir := path.get_base_dir()
+	if not parent_dir.is_empty() and not DirAccess.dir_exists_absolute(parent_dir):
+		DirAccess.make_dir_recursive_absolute(parent_dir)
+	var tmp_path := "%s.tmp" % path
 	var file := FileAccess.open(tmp_path, FileAccess.WRITE)
 	if file == null:
 		push_warning("WorldPersistence: cannot write %s" % tmp_path)
 		return false
 	file.store_string(json)
 	file.close()
-	if FileAccess.file_exists(SAVE_PATH):
-		DirAccess.remove_absolute(SAVE_PATH)
-	var rename_error := DirAccess.rename_absolute(tmp_path, SAVE_PATH)
+	if FileAccess.file_exists(path):
+		DirAccess.remove_absolute(path)
+	var rename_error := DirAccess.rename_absolute(tmp_path, path)
 	if rename_error != OK:
 		push_warning(
 			"WorldPersistence: rename failed (%s)" % error_string(rename_error)
@@ -167,14 +180,15 @@ static func _backup_corrupt_save() -> void:
 
 
 static func _backup_save_with_suffix(suffix: String) -> String:
-	if not FileAccess.file_exists(SAVE_PATH):
+	var path := active_save_path()
+	if not FileAccess.file_exists(path):
 		return ""
 	var backup_path := "%s.%s.%d" % [
-		SAVE_PATH,
+		path,
 		suffix,
 		int(Time.get_unix_time_from_system()),
 	]
-	var rename_error := DirAccess.rename_absolute(SAVE_PATH, backup_path)
+	var rename_error := DirAccess.rename_absolute(path, backup_path)
 	if rename_error != OK:
 		push_warning(
 			"WorldPersistence: failed to backup save (%s)"

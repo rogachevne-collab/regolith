@@ -699,7 +699,7 @@ func _probe_terrain_surface_world(
 	if terrain == null or ray_direction.length_squared() <= 0.000001:
 		return probe_origin
 	var nudged_origin := _nudge_integer_ray_origin(probe_origin)
-	var voxel_terrain := terrain as VoxelTerrain
+	var voxel_terrain: Node3D = terrain if TerrainCompat.is_terrain(terrain) else null
 	var space_state: PhysicsDirectSpaceState3D = null
 	if striker_body != null:
 		space_state = striker_body.get_world_3d().direct_space_state
