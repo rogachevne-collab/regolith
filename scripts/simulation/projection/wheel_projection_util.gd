@@ -5,6 +5,10 @@ const RAYCAST_MASK := 3
 ## Below this body-up · world-up, suspension/tire forces are skipped.
 ## ~70° tip: sideways scrape must not inject max spring+traction torque.
 const MIN_UPRIGHT_DOT := 0.35
+## Reference bristle deflection: hold_stiffness = normal_force / this.
+## Load-scaled so parked hold deflection stays load-independent (~cm), and the
+## bristle saturates at ~ref·grip before the tire slips.
+const PARK_HOLD_DEFLECTION_REF_M := 0.02
 
 
 static func mount_pad_anchor_assembly_local(
@@ -141,9 +145,15 @@ static func tick_pair(
 
 	var drive_command := 0.0
 	var brake_command := 0.0
+	var parking_hold := locomotion != null and locomotion.is_parking_brake()
 	if locomotion != null:
 		drive_command = locomotion.drive_command
 		brake_command = locomotion.brake_command
+	if parking_hold:
+		drive_command = 0.0
+		brake_command = 1.0
+	var park_anchor_world: Vector3 = pair.get("park_anchor_world", Vector3.ZERO)
+	var park_anchor_valid := bool(pair.get("park_anchor_valid", false))
 	result["drive_command"] = drive_command
 	result["brake_command"] = brake_command
 	if not powered:
@@ -270,23 +280,46 @@ static func tick_pair(
 		var ground_speed := contact_velocity.dot(wheel_forward)
 		var lateral_speed := contact_velocity.dot(wheel_right)
 		var slip_speed := wheel_speed * radius_m - ground_speed
-		var desired_traction := slip_speed * slip_stiffness
-		var desired_lateral := -lateral_speed * lateral_stiffness
 		var longitudinal_limit := force_magnitude * longitudinal_grip
 		var lateral_limit := force_magnitude * lateral_grip
-		var traction_force := desired_traction
-		var lateral_force := desired_lateral
-		if longitudinal_limit > 0.0 and lateral_limit > 0.0:
-			var friction_usage := sqrt(
-				pow(desired_traction / longitudinal_limit, 2.0)
-				+ pow(desired_lateral / lateral_limit, 2.0)
+		var traction_force := 0.0
+		var lateral_force := 0.0
+		if parking_hold:
+			var hold := _parking_brush_tire_forces(
+				hit_normal,
+				hit_point,
+				wheel_forward,
+				wheel_right,
+				force_magnitude,
+				longitudinal_grip,
+				lateral_grip,
+				ground_speed,
+				lateral_speed,
+				slip_stiffness,
+				lateral_stiffness,
+				park_anchor_world,
+				park_anchor_valid
 			)
-			if friction_usage > 1.0:
-				traction_force /= friction_usage
-				lateral_force /= friction_usage
+			traction_force = hold["traction"]
+			lateral_force = hold["lateral"]
+			result["park_anchor_world"] = hold["anchor_world"]
+			result["park_anchor_valid"] = true
 		else:
-			traction_force = 0.0
-			lateral_force = 0.0
+			var desired_traction := slip_speed * slip_stiffness
+			var desired_lateral := -lateral_speed * lateral_stiffness
+			traction_force = desired_traction
+			lateral_force = desired_lateral
+			if longitudinal_limit > 0.0 and lateral_limit > 0.0:
+				var friction_usage := sqrt(
+					pow(desired_traction / longitudinal_limit, 2.0)
+					+ pow(desired_lateral / lateral_limit, 2.0)
+				)
+				if friction_usage > 1.0:
+					traction_force /= friction_usage
+					lateral_force /= friction_usage
+			else:
+				traction_force = 0.0
+				lateral_force = 0.0
 
 		var tire_force := (
 			wheel_forward * traction_force + wheel_right * lateral_force
@@ -398,6 +431,72 @@ static func _stabilize_wheel_speed(
 		-max_angular_speed,
 		max_angular_speed
 	)
+
+
+static func _parking_brush_tire_forces(
+	hit_normal: Vector3,
+	hit_point: Vector3,
+	wheel_forward: Vector3,
+	wheel_right: Vector3,
+	normal_force_n: float,
+	longitudinal_grip: float,
+	lateral_grip: float,
+	ground_speed: float,
+	lateral_speed: float,
+	slip_stiffness: float,
+	lateral_stiffness: float,
+	anchor_world: Vector3,
+	anchor_valid: bool
+) -> Dictionary:
+	# Static friction as a load-scaled bristle: a stiff spring pins the contact
+	# patch to a ground anchor, so gravity is held by deflection (no velocity
+	# creep). Damping settles residual motion. When demand exceeds the friction
+	# ellipse (a hard hit) the bristle saturates and the anchor slides with the
+	# contact — SE-style: the parked rover is shoved, then re-grips in place.
+	if not anchor_valid or not anchor_world.is_finite():
+		anchor_world = hit_point
+	var displacement := hit_point - anchor_world
+	displacement -= hit_normal * displacement.dot(hit_normal)
+	var disp_forward := displacement.dot(wheel_forward)
+	var disp_right := displacement.dot(wheel_right)
+	var hold_stiffness := normal_force_n / PARK_HOLD_DEFLECTION_REF_M
+	var desired_traction := (
+		-hold_stiffness * disp_forward - slip_stiffness * ground_speed
+	)
+	var desired_lateral := (
+		-hold_stiffness * disp_right - lateral_stiffness * lateral_speed
+	)
+	var long_limit := normal_force_n * longitudinal_grip
+	var lat_limit := normal_force_n * lateral_grip
+	var slipping := false
+	if long_limit > 0.0 and lat_limit > 0.0 and hold_stiffness > 0.0:
+		var friction_usage := sqrt(
+			pow(desired_traction / long_limit, 2.0)
+			+ pow(desired_lateral / lat_limit, 2.0)
+		)
+		if friction_usage > 1.0:
+			desired_traction /= friction_usage
+			desired_lateral /= friction_usage
+			slipping = true
+	else:
+		desired_traction = 0.0
+		desired_lateral = 0.0
+		slipping = true
+	if slipping and hold_stiffness > 0.0:
+		# Re-seat the anchor to the deflection that matches the transmissible
+		# (clamped) force, so the bristle drags along instead of snapping back.
+		var sat_disp := (
+			wheel_forward * (-desired_traction / hold_stiffness)
+			+ wheel_right * (-desired_lateral / hold_stiffness)
+		)
+		anchor_world = hit_point - sat_disp
+	if not anchor_world.is_finite():
+		anchor_world = hit_point
+	return {
+		"traction": desired_traction,
+		"lateral": desired_lateral,
+		"anchor_world": anchor_world,
+	}
 
 
 static func _apply_wheel_brake(

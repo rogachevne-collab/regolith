@@ -67,7 +67,7 @@ func _process(delta: float) -> void:
 
 func _prompt_for(hit: InteractionHit) -> String:
 	if _player.call("is_in_vehicle"):
-		return "E — выйти из кокпита"
+		return "E — выйти · P — стояночный"
 	if hit.valid and hit.distance <= 4.0:
 		if hit.target_kind == InteractionHit.KIND_WORLD_LOOT:
 			return "E — собрать %s" % HudTokens.resource_label(
@@ -231,8 +231,10 @@ func _reason_text(reason: StringName, data: Dictionary = {}) -> String:
 				StringName(data.get("detail", &""))
 				== &"mobile_construction_not_supported"
 			):
-				return "Выйди из кокпита — на ходу строить нельзя"
+				return "Останови транспорт — на ходу строить нельзя"
 			return "Неподходящая цель"
+		&"parking_brake_needs_stop":
+			return "Стояночный — только после полной остановки"
 		&"blocked":
 			if StringName(data.get("detail", &"")) == &"not_locomotive":
 				return "Ровер не готов — нужны колёса и подвеска"

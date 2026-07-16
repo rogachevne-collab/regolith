@@ -199,6 +199,8 @@ static func update_runtime(
 		)
 	var spin := spin_root(record)
 	if spin != null and is_instance_valid(spin):
+		# Parking brake shares the service-brake tire path; spin follows
+		# runtime wheel_speed (≈0 when held). Do not hard-zero here.
 		spin.rotate_object_local(
 			Vector3.RIGHT,
 			float(runtime.get("wheel_speed", 0.0)) * delta

@@ -517,13 +517,18 @@ func _project_assembly_single(
 		motion.angular_velocity = Vector3.ZERO
 		motion.sleeping = true
 	elif _is_locomotive_assembly(assembly_id):
-		# Floating chassis has no terrain anchors; keep parked until ControlSeat.
-		motion.frozen = true
-		motion.linear_velocity = Vector3.ZERO
-		motion.angular_velocity = Vector3.ZERO
-		motion.sleeping = true
+		# Floating loco: dynamic + parking_brake holds wheels (no freeze).
 		if not locomotion.has_released_from_anchor():
+			motion.transform.origin += (
+				motion.transform.basis.y.normalized()
+				* WheelSimulationService.activation_clearance_m(
+					_world,
+					assembly_id
+				)
+			)
 			locomotion.mark_released_from_anchor()
+		motion.frozen = false
+		motion.sleeping = false
 	else:
 		motion.frozen = seed_motion.frozen
 		if motion_override != null:
@@ -899,11 +904,25 @@ func _is_active_locomotive(assembly_id: int) -> bool:
 	)
 
 
+func _should_tick_wheels(assembly_id: int) -> bool:
+	if not _is_locomotive_assembly(assembly_id):
+		return false
+	var body := get_physics_body(assembly_id)
+	if body is RigidBody3D:
+		return not (body as RigidBody3D).freeze
+	var groups: Variant = _assembly_group_bodies.get(assembly_id)
+	if groups is Dictionary:
+		for body_variant: Variant in (groups as Dictionary).values():
+			if body_variant is RigidBody3D:
+				return not (body_variant as RigidBody3D).freeze
+	return false
+
+
 func _tick_wheel_pairs(delta: float) -> void:
 	if _world == null or delta <= 0.0:
 		return
 	for assembly_id: int in _sorted_int_keys(_bodies):
-		if not _is_active_locomotive(assembly_id):
+		if not _should_tick_wheels(assembly_id):
 			continue
 		WheelSimulationService.tick_assembly(
 			_world,

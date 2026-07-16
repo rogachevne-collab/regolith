@@ -319,6 +319,8 @@ static func _tick_context(
 		context["configured_brake_torque"] = wheel_state.brake_torque_n_m
 	context["wheel_speed"] = float(runtime.get("wheel_speed", 0.0))
 	context["steering_angle_rad"] = float(runtime.get("steering_angle_rad", 0.0))
+	context["park_anchor_world"] = runtime.get("park_anchor_world", Vector3.ZERO)
+	context["park_anchor_valid"] = bool(runtime.get("park_anchor_valid", false))
 	return context
 
 

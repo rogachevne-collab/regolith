@@ -123,7 +123,8 @@ Step solver использует motion tests `up → forward → down`; camera 
 - в `ControlSeat` допустим toggle FP ↔ free orbit 3P (`toggle_vehicle_camera`,
   клавиша V): орбита крутит собственные yaw/pitch вокруг vehicle pivot и
   **не** владеет gameplay yaw игрока; WASD остаётся locomotion InputMap;
-  `exit_vehicle` сбрасывает orbit в FP;
+  `toggle_parking_brake` (P) — стояночный (лок колёс) только после полной
+  остановки; `exit_vehicle` сбрасывает orbit в FP и не freeze’ит шасси;
 - procedural bob/sway воздействует только на visual rig и имеет малую амплитуду;
 - interaction ray использует согласованную aim pose и не дрожит из-за camera bob;
 - sensitivity и FOV доступны игроку и сохраняются в `user://`.

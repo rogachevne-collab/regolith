@@ -3300,14 +3300,21 @@ func _assembly_has_anchor(assembly_id: int) -> bool:
 	return false
 
 
-## Terrain-anchored builds always attach. Parked locomotives float on wheels
-## (no terrain anchors) but may still be expanded until ControlSeat activates.
+## Terrain-anchored builds always attach. Floating locomotives may expand only
+## while nearly stopped (parking brake or coast-to-stop).
 func _construction_attach_allowed(assembly_id: int) -> bool:
 	if _assembly_has_anchor(assembly_id):
 		return true
 	if not WheelSimulationService.is_locomotive_assembly(self, assembly_id):
 		return false
-	return not get_locomotion_controller(assembly_id).is_activated()
+	var assembly := get_assembly_raw(assembly_id)
+	if assembly == null:
+		return false
+	var eps := AssemblyLocomotionController.PARKING_BRAKE_SPEED_EPS
+	return (
+		assembly.motion.linear_velocity.length() < eps
+		and assembly.motion.angular_velocity.length() < eps
+	)
 
 
 func _sorted_keys(dictionary: Dictionary) -> Array[int]:

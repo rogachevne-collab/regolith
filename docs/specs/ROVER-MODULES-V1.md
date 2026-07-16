@@ -48,14 +48,15 @@ electric budget, что у Industry v1.
 4. Symulation владеет topology, per-instance настройками, drive/steer командой и
    status. Jolt владеет позами, скоростями, контактами.
 5. **Locomotive assembly** — та, что содержит хотя бы одну complete
-   `WheelPair` (подвеска + прикреплённое колесо). Пока игрок строит её, terrain
-   anchor сохраняется. В dynamic `RigidBody3D` она переходит только после
-   явной активации через `ControlSeat`; установка первого колеса не отпускает
-   недостроенное шасси.
-6. Строительство ровера ведётся на земле. После отпускания terrain anchors
-   (шасси на колёсах) **паркованный** locomotive (`!activated`) всё ещё можно
-   расширять. Пока кокпит активен / машина «на ходу» — attach запрещён
-   (`mobile_construction_not_supported`).
+   `WheelPair` (подвеска + прикреплённое колесо). Пока игрок строит её на
+   terrain/static якоре, assembly `frozen` (подпорка). Установка первого
+   колеса не отпускает недостроенное шасси с якорем. После отпила якоря
+   floating locomotive — всегда dynamic `RigidBody3D` (без freeze); держит
+   `parking_brake` (лок колёс). `ControlSeat` включает routing / drive, не
+   «отпускает freeze».
+6. Строительство ровера ведётся на земле. Floating locomotive можно расширять
+   при почти нулевой скорости (`|v|` / `|ω|` ниже порога). На ходу attach
+   запрещён (`mobile_construction_not_supported`).
 7. Управление в v1 — hardcoded mapping «кокпит владеет всеми колёсами своей
    assembly» (SE-подобный control block). Programmable `Binding` UI вне v1.
 8. Число `WheelPair` не ограничено и не кодируется в типе машины. Четыре колеса
@@ -81,7 +82,8 @@ electric budget, что у Industry v1.
   `configure_wheel`), включая переключаемый `steerable`;
 - locomotive compile override (dynamic body при anchor);
 - electric on/off budget: `drive_wheel` — consumer, без питания torque = 0;
-- cockpit `ControlSeat`: enter/exit, WASD routing, passenger support;
+- cockpit `ControlSeat`: enter/exit, WASD routing, `parking_brake` (P),
+  passenger support;
 - читаемый визуал ориентации (preview gizmos + асимметричные меши + runtime
   вращение колеса);
 - snapshot/restore per-instance настроек и `steerable`;
@@ -319,11 +321,12 @@ SuspensionInstanceState {  # ключ: element_id подвески
 `SimulationPhysicsProjection` при (пере)сборке assembly:
 
 - `_is_locomotive_assembly(assembly_id)` — есть ≥1 complete `WheelPair`;
-- если locomotive активирована `ControlSeat`: компилировать корень как
-  **`RigidBody3D`**, `motion.frozen = false`, `custom_integrator` **выключен**,
-  даже если `assembly_has_anchor` вернул true;
-- complete pairs без активации остаются anchored `StaticBody3D`, чтобы игрок
-  мог закончить любое число колёс, питание, piston и tool modules;
+- assembly **на terrain/static якоре** (ещё не released) → `frozen` /
+  `StaticBody3D`, чтобы достроить на подпорке;
+- **floating** locomotive (якорь снят / released) → всегда dynamic
+  `RigidBody3D`, `motion.frozen = false` — **без** freeze «до кокпита»;
+- `ControlSeat.activate` при ещё живом якоре: release + clearance lift, dynamic
+  даже если `assembly_has_anchor` ещё true;
 - если не locomotive: поведение без изменений (anchored → `StaticBody3D`).
 
 ### Wheel tick
@@ -331,7 +334,8 @@ SuspensionInstanceState {  # ключ: element_id подвески
 `_tick_wheel_pairs(delta)` вызывается в
 `SimulationPhysicsProjection._physics_process`, тем же образом и порядком, что
 `_tick_piston_actuators` (после compile, до/наряду с actuator tick). Для каждой
-locomotive assembly и каждой complete `WheelPair`:
+**floating** locomotive (`RigidBody3D`, не freeze) и каждой complete
+`WheelPair`:
 
 1. вычислить мировую точку и ось raycast из pose подвески (socket face pose),
    не из отдельного Marker3D;
@@ -420,11 +424,26 @@ element:
 ### Input routing
 
 `AssemblyLocomotionController` (per assembly) хранит `drive_command`,
-`brake_command`, `steering_command` (last-write-wins, frequent). Когда игрок
-seated и vehicle — locomotive assembly:
+`brake_command`, `steering_command`, `parking_brake` (default `true`).
+Когда игрок seated и vehicle — locomotive assembly:
 
-- input actions из `project.godot` (`move_forward`/`move_backward`,
+- input actions из `project.godot` (`move_forward`/`move_back`,
   поворот влево/вправо) → `set_drive_command` / `set_steering_command`;
+- `jump` (Space) → рабочий `brake_command` (service brake);
+- `toggle_parking_brake` (P) → toggle `parking_brake`; engage только при
+  почти нулевой скорости body, иначе отказ;
+- при `parking_brake`: gateway выставляет `drive=0`, `steer=0`, `brake=1`;
+  wheel tick на grounded паре держит колесо **bristle-моделью** статического
+  трения: жёсткая пружина, привязывающая контактный патч к якорю на грунте
+  (`park_anchor_world`, персистится per-wheel в wheel runtime) + демпфер,
+  clamp по фрикционному эллипсу μ·N. Держащая сила берётся из деформации
+  (позиционный член), а не из скорости → **нет creep** ни на ровном, ни на
+  склоне. Когда спрос превышает μ·N (сильный толчок) — bristle насыщается,
+  якорь съезжает вместе с контактом: транспорт сдвигается и заново
+  захватывается на новом месте (SE-style). Space/service brake не меняется;
+  body остаётся dynamic;
+- exit (E): снять routing / driver input; **не** freeze и не zero-vel;
+  без PB машина катится, с PB колёса держат;
 - обычный player locomotion выключается (`set_gameplay_input_enabled(false)`);
 - команды не идут через structural transaction — это frequent runtime state,
   читаемый `_tick_wheel_pairs`.
@@ -579,8 +598,9 @@ status            # ok | airborne | no_power | no_wheel
    (`wheel_socket_required`);
 2. второе колесо на занятый socket — отклоняется (`socket_occupied`);
 3. подвеска + колесо создают complete `WheelPair` и один socket `Rigid` joint;
-4. assembly с complete `WheelPair` остаётся anchored при строительстве и
-   компилируется как dynamic `RigidBody3D` после `ControlSeat.activate`;
+4. assembly с complete `WheelPair` остаётся anchored при строительстве на
+   якоре и становится dynamic `RigidBody3D` после release якоря /
+   `ControlSeat.activate`;
 5. при `powered` и drive-команде body набирает поступательную скорость за N
    ticks; при `no_power` — не набирает (torque = 0);
 6. steerable front pair меняет heading при steer-команде; fixed rear — нет;

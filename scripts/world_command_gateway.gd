@@ -517,6 +517,15 @@ func tick_rover_locomotion_input() -> void:
 	if assembly_id <= 0:
 		return
 	var locomotion := _session.world.get_locomotion_controller(assembly_id)
+	if Input.is_action_just_pressed(&"toggle_parking_brake"):
+		_toggle_rover_parking_brake(assembly_id, locomotion)
+	if locomotion.is_parking_brake():
+		# Latched Space: same commands every tick, no wheel-tick special cases.
+		locomotion.set_drive_command(0.0)
+		locomotion.set_steering_command(0.0)
+		locomotion.set_brake_command(1.0)
+		_wake_rover_body(assembly_id)
+		return
 	var drive := (
 		Input.get_action_strength(&"move_forward")
 		- Input.get_action_strength(&"move_back")
@@ -529,6 +538,29 @@ func tick_rover_locomotion_input() -> void:
 	)
 	if locomotion.has_active_input():
 		_wake_rover_body(assembly_id)
+
+
+func _toggle_rover_parking_brake(
+	assembly_id: int,
+	locomotion: AssemblyLocomotionController
+) -> void:
+	if locomotion.is_parking_brake():
+		locomotion.set_parking_brake(false)
+		_wake_rover_body(assembly_id)
+		return
+	var body := _session.projection.get_physics_body(assembly_id)
+	var linear := Vector3.ZERO
+	var angular := Vector3.ZERO
+	if body is RigidBody3D:
+		var rigid := body as RigidBody3D
+		linear = rigid.linear_velocity
+		angular = rigid.angular_velocity
+	var eps := AssemblyLocomotionController.PARKING_BRAKE_SPEED_EPS
+	if linear.length() >= eps or angular.length() >= eps:
+		command_completed.emit(0, _result(&"parking_brake_needs_stop"))
+		return
+	locomotion.set_parking_brake(true)
+	_wake_rover_body(assembly_id)
 
 
 func _resolve_active_rover_assembly_id() -> int:
@@ -726,13 +758,13 @@ func _exit_rover_seat(player: Node3D) -> Dictionary:
 	if player.has_method("set_gameplay_input_enabled"):
 		player.call("set_gameplay_input_enabled", true)
 	var locomotion := _session.world.get_locomotion_controller(assembly_id)
-	locomotion.deactivate()
-	if body is RigidBody3D:
-		var rigid := body as RigidBody3D
-		rigid.linear_velocity = Vector3.ZERO
-		rigid.angular_velocity = Vector3.ZERO
-		rigid.freeze = true
-		rigid.sleeping = true
+	locomotion.set_drive_command(0.0)
+	locomotion.set_steering_command(0.0)
+	if locomotion.is_parking_brake():
+		locomotion.set_brake_command(1.0)
+	else:
+		locomotion.set_brake_command(0.0)
+	# Keep activated so floating wheel phys continues (coast or parking lock).
 	_session.projection.sync_body_motion_now(assembly_id)
 	_rover_seat_player = null
 	_rover_seat_assembly_id = 0

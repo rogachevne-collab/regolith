@@ -140,13 +140,15 @@ static func spawn_on_terrain(
 	_wire_demo_power(world, module_ids)
 	_charge_demo_battery(world, int(module_ids.get("battery", 0)))
 	_configure_steerable(world, module_ids)
-	# Parked at spawn: expand while !activated; ControlSeat activates drive.
+	# Floating on wheels with parking brake; no freeze monolith.
 	world.get_locomotion_controller(assembly_id).mark_released_from_anchor()
+	var locomotion := world.get_locomotion_controller(assembly_id)
+	locomotion.set_parking_brake(true)
 	var motion := AssemblyMotionState.from_grid_frame(grid_frame)
 	# Keep terrain seating Y; grid snap alone can bury/float the chassis ±0.25 m.
 	motion.transform.origin.y = assembly_transform.origin.y
-	motion.frozen = true
-	motion.sleeping = true
+	motion.frozen = false
+	motion.sleeping = false
 	motion.linear_velocity = Vector3.ZERO
 	motion.angular_velocity = Vector3.ZERO
 	session.projection.project_assembly_now(assembly_id, motion)
@@ -281,13 +283,14 @@ static func reseat_parked_locomotives(
 			+ basis.y.normalized() * clearance
 		)
 		var delta_y := desired.y - origin.y
-		if absf(delta_y) < 0.02 and motion.frozen:
+		if absf(delta_y) < 0.02 and not motion.frozen:
 			continue
 		motion.transform.origin.y += delta_y
-		motion.frozen = true
-		motion.sleeping = true
+		motion.frozen = false
+		motion.sleeping = false
 		motion.linear_velocity = Vector3.ZERO
 		motion.angular_velocity = Vector3.ZERO
+		locomotion.set_parking_brake(true)
 		session.projection.project_assembly_now(assembly.assembly_id, motion)
 
 
