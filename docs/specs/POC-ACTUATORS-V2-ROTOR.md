@@ -68,8 +68,6 @@ Space Engineers) — в языке Assembly:
 - gear ratio, передача mechanical_power через Network;
 - merge двух Assembly через Rotor;
 - overload policies `fuse` и `break`;
-- HUD-панель настроек (E); управление v1 — target-interaction
-  spin+/spin−/stop;
 - programmable bindings, автоматика.
 
 ## Authoring
@@ -260,9 +258,20 @@ pose поворотом вокруг anchor оси на observed angle.
 
 Rotor top — отдельное physics body: element-визуалы top branch вращаются
 вместе с телом без специального visual-скрипта. Placement preview показывает
-base+top. Target panel: observed angle/velocity, статус, spin+ / spin− /
+base+top. Target panel: observed angle (градусы), статус, spin+ / spin− /
 stop через те же target-interaction actions, что extend/retract/stop
 поршня.
+
+**E** на прицеленном роторе открывает ту же центральную панель настроек,
+что у поршня, с ротор-набором строк:
+
+- ВПЕР / НАЗАД — forward/reverse velocity, шаг `0.1 rad/s`,
+  clamp `[0, max_velocity_rad_s]`;
+- МОМЕНТ — torque limit, шаг `1000 N·m`, clamp `[1, max_torque_limit_nm]`;
+- строки travel limits отсутствуют (continuous).
+
+Панель шлёт тот же `configure_actuator` (поля extend/retract/force читаются
+kernel'ом как angular); readout — угол в градусах и целевая скорость.
 
 ## Диагностика
 

@@ -1,6 +1,7 @@
 extends Control
-## Centered piston settings panel. Opens on E while targeting a piston; shows the
-## mouse cursor so +/- rows are clickable (FPS crosshair cannot reach corner HUD).
+## Centered actuator settings panel (piston or rotor). Opens on E while
+## targeting an actuator; shows the mouse cursor so +/- rows are clickable
+## (FPS crosshair cannot reach corner HUD).
 
 const PANEL_WIDTH := 320.0
 const INFO_ROW_HEIGHT := 18
@@ -12,9 +13,14 @@ var _player: Node
 
 var _panel: PanelContainer
 var _panel_overlay: ColorRect
+var _title: Label
 var _status_val: Label
+var _travel_key: Label
 var _travel_val: Label
+var _tune_box: VBoxContainer
+var _hints: Label
 var _tune_values: Dictionary = {}
+var _tune_mode := ""
 var _open := false
 var _target_hit: InteractionHit
 var _pending_command_ids: Dictionary = {}
@@ -50,7 +56,7 @@ func blocks_world_interact() -> bool:
 func try_open_on_target(hit: InteractionHit) -> bool:
 	if _open or hit == null or not hit.valid:
 		return false
-	if not hit.metadata.has("piston_joint_id"):
+	if not HudActuatorTuneUtil.is_actuator_meta(hit.metadata):
 		return false
 	_target_hit = hit
 	_open = true
@@ -85,9 +91,9 @@ func _current_hit() -> InteractionHit:
 	var hit := _query.current_hit
 	if (
 		hit.valid
-		and hit.metadata.has("piston_joint_id")
-		and int(hit.metadata.get("piston_joint_id", 0))
-		== int(_target_hit.metadata.get("piston_joint_id", 0))
+		and HudActuatorTuneUtil.is_actuator_meta(hit.metadata)
+		and HudActuatorTuneUtil.joint_id(hit.metadata)
+		== HudActuatorTuneUtil.joint_id(_target_hit.metadata)
 	):
 		return hit
 	return _target_hit
@@ -129,12 +135,12 @@ func _build() -> void:
 	title_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vb.add_child(title_row)
 	title_row.add_child(HudTokens.make_emblem(14.0))
-	var title := Label.new()
-	title.text = "ПОРШЕНЬ"
-	title.theme_type_variation = &"HudSmall"
-	title.add_theme_color_override("font_color", HudTokens.COL_TITLE)
-	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	title_row.add_child(title)
+	_title = Label.new()
+	_title.text = "ПОРШЕНЬ"
+	_title.theme_type_variation = &"HudSmall"
+	_title.add_theme_color_override("font_color", HudTokens.COL_TITLE)
+	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title_row.add_child(_title)
 	var close_hint := Label.new()
 	close_hint.text = "E / Esc — закрыть"
 	close_hint.theme_type_variation = &"HudSmall"
@@ -145,21 +151,46 @@ func _build() -> void:
 	vb.add_child(HudTokens.make_divider())
 	_status_val = _add_info_row(vb, "СОСТОЯНИЕ", HudTokens.COL_OK)
 	_travel_val = _add_info_row(vb, "ХОД", HudTokens.COL_TEXT)
+	_travel_key = (_travel_val.get_parent().get_child(0) as Label)
 	vb.add_child(HudTokens.make_divider())
 
-	var tune_box := VBoxContainer.new()
-	tune_box.add_theme_constant_override("separation", 4)
-	tune_box.mouse_filter = Control.MOUSE_FILTER_STOP
-	vb.add_child(tune_box)
-	for row: Dictionary in HudActuatorTuneUtil.TUNE_ROWS:
-		_build_tune_row(tune_box, str(row["key"]), str(row["field"]))
+	_tune_box = VBoxContainer.new()
+	_tune_box.add_theme_constant_override("separation", 4)
+	_tune_box.mouse_filter = Control.MOUSE_FILTER_STOP
+	vb.add_child(_tune_box)
+	_ensure_tune_rows(HudActuatorTuneUtil.TUNE_ROWS, "piston")
 
-	var hints := Label.new()
-	hints.theme_type_variation = &"HudSmall"
-	hints.add_theme_color_override("font_color", HudTokens.COL_DIM)
-	hints.text = "[+] выдв · [-] втяг · Y стоп"
-	hints.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vb.add_child(hints)
+	_hints = Label.new()
+	_hints.theme_type_variation = &"HudSmall"
+	_hints.add_theme_color_override("font_color", HudTokens.COL_DIM)
+	_hints.text = "[+] выдв · [-] втяг · Y стоп"
+	_hints.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vb.add_child(_hints)
+
+
+func _ensure_tune_rows(rows: Array[Dictionary], mode: String) -> void:
+	if _tune_mode == mode:
+		return
+	_tune_mode = mode
+	_tune_values.clear()
+	for child: Node in _tune_box.get_children():
+		_tune_box.remove_child(child)
+		child.queue_free()
+	for row: Dictionary in rows:
+		_build_tune_row(_tune_box, str(row["key"]), str(row["field"]))
+
+
+func _configure_for_meta(meta: Dictionary) -> void:
+	if HudActuatorTuneUtil.is_rotor_meta(meta):
+		_title.text = "РОТОР"
+		_travel_key.text = "УГОЛ"
+		_hints.text = "[+] вращ+ · [-] вращ− · Y стоп"
+		_ensure_tune_rows(HudActuatorTuneUtil.ROTOR_TUNE_ROWS, "rotor")
+	else:
+		_title.text = "ПОРШЕНЬ"
+		_travel_key.text = "ХОД"
+		_hints.text = "[+] выдв · [-] втяг · Y стоп"
+		_ensure_tune_rows(HudActuatorTuneUtil.TUNE_ROWS, "piston")
 
 
 func _add_info_row(parent: Node, key: String, value_color: Color) -> Label:
@@ -215,16 +246,26 @@ func _refresh_from_hit(hit: InteractionHit) -> void:
 	if hit == null or not hit.valid:
 		return
 	var meta := hit.metadata
+	_configure_for_meta(meta)
 	var actuator_status := StringName(meta.get("actuator_status", &"idle"))
 	_status_val.text = HudTokens.status_label(actuator_status)
 	_status_val.add_theme_color_override(
 		"font_color",
 		HudTokens.color_for_status(actuator_status)
 	)
-	var observed := float(meta.get("piston_observed_position_m", 0.0))
-	var target := float(meta.get("piston_target_position_m", observed))
-	_travel_val.text = "%.2f / %.2f М" % [observed, target]
-	for row: Dictionary in HudActuatorTuneUtil.TUNE_ROWS:
+	if HudActuatorTuneUtil.is_rotor_meta(meta):
+		var angle_deg := rad_to_deg(
+			float(meta.get("rotor_observed_angle_rad", 0.0))
+		)
+		var target_velocity := float(
+			meta.get("rotor_target_velocity_rad_s", 0.0)
+		)
+		_travel_val.text = "%.0f° · ЦЕЛЬ %.2f РАД/С" % [angle_deg, target_velocity]
+	else:
+		var observed := float(meta.get("piston_observed_position_m", 0.0))
+		var target := float(meta.get("piston_target_position_m", observed))
+		_travel_val.text = "%.2f / %.2f М" % [observed, target]
+	for row: Dictionary in HudActuatorTuneUtil.rows_for(meta):
 		var field := str(row["field"])
 		var label: Label = _tune_values.get(field)
 		if label != null:
@@ -239,7 +280,7 @@ func _on_tune_pressed(field: String, direction: int) -> void:
 	if new_value < 0.0:
 		return
 	var parameters := {
-		"joint_id": int(meta.get("piston_joint_id", 0)),
+		"joint_id": HudActuatorTuneUtil.joint_id(meta),
 		field: new_value,
 	}
 	var command_id := _gateway.submit({
