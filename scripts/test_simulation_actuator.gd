@@ -9,6 +9,12 @@ const PISTON_BASE := preload(
 const PISTON_HEAD := preload(
 	"res://resources/archetypes/slice01/piston_head.tres"
 )
+const ROTOR_BASE := preload(
+	"res://resources/archetypes/slice01/rotor_base.tres"
+)
+const ROTOR_TOP := preload(
+	"res://resources/archetypes/slice01/rotor_top.tres"
+)
 
 
 func _ready() -> void:
@@ -29,6 +35,13 @@ func _run_tests() -> void:
 		_test_overload_status,
 		_test_dismantle_splits_carriage,
 		_test_bridge_rejection,
+		_test_rotor_atomic_placement,
+		_test_rotor_body_groups_and_reconstruct,
+		_test_rotor_snapshot_roundtrip,
+		_test_rotor_target_and_configure,
+		_test_rotor_wrap_and_overload,
+		_test_rotor_dismantle_splits_top,
+		_test_rotor_moving_top_construction_rejected,
 	]
 	for test: Callable in tests:
 		if not bool(test.call()):
@@ -700,6 +713,397 @@ func _test_bridge_rejection() -> bool:
 		return _fail("bridge across piston groups was not rejected")
 	world.free()
 	return true
+
+
+func _test_rotor_atomic_placement() -> bool:
+	var world := _rotor_world_with_foundation()
+	var setup := _rotor_setup(world)
+	if setup.is_empty():
+		world.free()
+		return _fail("rotor setup failed")
+	var rotor: StructuralCommandResult = setup["rotor"]
+	var base_id := int(rotor.data["element_id"])
+	var top_id := int(rotor.data["head_element_id"])
+	var joint_id := int(rotor.data["rotor_joint_id"])
+	if int(rotor.data["driven_joint_id"]) != joint_id:
+		world.free()
+		return _fail("driven_joint_id mismatch")
+	if world.get_element(base_id) == null or world.get_element(top_id) == null:
+		world.free()
+		return _fail("rotor elements missing")
+	var joint := world.get_joint(joint_id)
+	if (
+		joint == null
+		or joint.kind != SimulationJoint.Kind.ROTOR
+		or joint.motor == null
+		or not joint.motor.angular
+		or not joint.motor.continuous
+	):
+		world.free()
+		return _fail("rotor joint missing angular motor state")
+	if world.get_resource_store("player").amount("construction_component") >= 100.0:
+		world.free()
+		return _fail("rotor placement did not spend materials")
+	world.free()
+	return true
+
+
+func _test_rotor_body_groups_and_reconstruct() -> bool:
+	var world := _rotor_world_with_foundation()
+	var setup := _rotor_setup(world)
+	if setup.is_empty():
+		world.free()
+		return _fail("rotor setup failed")
+	var rotor: StructuralCommandResult = setup["rotor"]
+	var assembly_id := int(setup["assembly_id"])
+	var top_id := int(rotor.data["head_element_id"])
+
+	var platform := PlaceElementCommand.new()
+	platform.assembly_id = assembly_id
+	platform.expected_assembly_revision = int(rotor.data["topology_revision"])
+	platform.archetype = Slice01Archetypes.frame()
+	platform.origin_cell = Vector3i(6, 1, 0)
+	platform.orientation_index = 0
+	platform.store_id = "player"
+	var platform_result := world.apply_structural_command_now(platform)
+	if not platform_result.is_ok():
+		world.free()
+		return _fail(
+			"platform attach to rotor top failed: %s %s"
+			% [platform_result.reason, platform_result.data]
+		)
+	var platform_id := int(platform_result.data["element_id"])
+	var top_group := world.body_group_id_for_element(top_id)
+	var platform_group := world.body_group_id_for_element(platform_id)
+	var root_group := world.root_body_group_id(assembly_id)
+	if top_group <= 0 or top_group != platform_group or top_group == root_group:
+		world.free()
+		return _fail("rotor top branch did not form its own body group")
+
+	var joint := world.get_joint(int(rotor.data["rotor_joint_id"]))
+	var cell_center_local := Vector3(0.25, 0.25, 0.25)
+	var home_top_tf := world.element_world_transform(top_id)
+	var home_platform_tf := world.element_world_transform(platform_id)
+	var home_top_center := home_top_tf * cell_center_local
+	var home_platform_center := home_platform_tf * cell_center_local
+	joint.motor.observed_position_m = PI / 2.0
+	var turned_top_tf := world.element_world_transform(top_id)
+	var turned_platform_tf := world.element_world_transform(platform_id)
+	var turned_top_center := turned_top_tf * cell_center_local
+	var turned_platform_center := turned_platform_tf * cell_center_local
+	if not turned_top_center.is_equal_approx(home_top_center):
+		world.free()
+		return _fail("rotor top center on the axis must not translate")
+	var rotation_delta := (
+		turned_top_tf.basis * home_top_tf.basis.inverse()
+	).get_rotation_quaternion().get_angle()
+	if absf(rotation_delta - PI / 2.0) > 0.01:
+		world.free()
+		return _fail(
+			"rotor top rotation %.3f expected ~%.3f" % [rotation_delta, PI / 2.0]
+		)
+	var pivot := home_top_center
+	var home_radius := Vector2(
+		home_platform_center.x - pivot.x,
+		home_platform_center.z - pivot.z
+	).length()
+	var turned_radius := Vector2(
+		turned_platform_center.x - pivot.x,
+		turned_platform_center.z - pivot.z
+	).length()
+	if absf(home_radius - turned_radius) > 0.01:
+		world.free()
+		return _fail("platform did not stay on the rotor radius")
+	if home_platform_center.is_equal_approx(turned_platform_center):
+		world.free()
+		return _fail("platform did not move around the rotor axis")
+	world.free()
+	return true
+
+
+func _test_rotor_snapshot_roundtrip() -> bool:
+	var world := _rotor_world_with_foundation()
+	var setup := _rotor_setup(world)
+	if setup.is_empty():
+		world.free()
+		return _fail("rotor setup failed")
+	var rotor: StructuralCommandResult = setup["rotor"]
+	var joint_id := int(rotor.data["rotor_joint_id"])
+	var base_id := int(rotor.data["element_id"])
+	var runtime := world.ensure_industry_element_runtime(base_id)
+	runtime.machine_enabled = true
+	runtime.powered = true
+	_weld_element(world, base_id)
+	_weld_element(world, int(rotor.data["head_element_id"]))
+
+	var command := SetActuatorTargetCommand.new()
+	command.joint_id = joint_id
+	command.mode = SimulationMotorState.ControlMode.VELOCITY
+	command.target_velocity_mps = 0.8
+	if StringName(world.apply_set_actuator_target(command).get("status", &"")) != &"ok":
+		world.free()
+		return _fail("rotor set_actuator_target failed before snapshot")
+	world.sync_actuator_observation(joint_id, 2.0, 0.4, 900.0, false)
+
+	var snapshot := world.capture_snapshot()
+	if int(snapshot.get("version", 0)) != SimulationSnapshot.VERSION:
+		world.free()
+		return _fail("snapshot version mismatch")
+	var restored: SimulationWorld = SimulationSnapshot.create_from_snapshot(
+		snapshot
+	)
+	if restored == null:
+		world.free()
+		return _fail(
+			"rotor snapshot restore failed: %s"
+			% SimulationSnapshot.last_validate_error
+		)
+	var joint := restored.get_joint(joint_id)
+	if (
+		joint == null
+		or joint.kind != SimulationJoint.Kind.ROTOR
+		or joint.motor == null
+		or not joint.motor.continuous
+		or not is_equal_approx(joint.motor.observed_position_m, 2.0)
+		or not is_equal_approx(joint.motor.target_velocity_mps, 0.8)
+		or joint.motor.control_mode != SimulationMotorState.ControlMode.VELOCITY
+	):
+		restored.free()
+		world.free()
+		return _fail("rotor motor state did not roundtrip")
+	if not SimulationSnapshot.semantic_equals(
+		snapshot,
+		restored.capture_snapshot()
+	):
+		restored.free()
+		world.free()
+		return _fail("rotor snapshot semantics changed on roundtrip")
+	restored.free()
+	world.free()
+	return true
+
+
+func _test_rotor_target_and_configure() -> bool:
+	var world := _rotor_world_with_foundation()
+	var setup := _rotor_setup(world)
+	if setup.is_empty():
+		world.free()
+		return _fail("rotor setup failed")
+	var rotor: StructuralCommandResult = setup["rotor"]
+	var joint_id := int(rotor.data["rotor_joint_id"])
+	var base_id := int(rotor.data["element_id"])
+	var runtime := world.ensure_industry_element_runtime(base_id)
+	runtime.machine_enabled = true
+	runtime.powered = true
+	_weld_element(world, base_id)
+	_weld_element(world, int(rotor.data["head_element_id"]))
+	var joint := world.get_joint(joint_id)
+	if ActuatorSimulationService.power_demand_w(joint) != 0.0:
+		world.free()
+		return _fail("stopped rotor should not draw actuator power")
+
+	var command := SetActuatorTargetCommand.new()
+	command.joint_id = joint_id
+	command.mode = SimulationMotorState.ControlMode.VELOCITY
+	command.target_velocity_mps = 5.0
+	if StringName(world.apply_set_actuator_target(command).get("status", &"")) != &"ok":
+		world.free()
+		return _fail("rotor set_actuator_target failed")
+	if not is_equal_approx(
+		joint.motor.clamp_target_velocity(),
+		joint.motor.extend_velocity_mps
+	):
+		world.free()
+		return _fail("rotor velocity target was not clamped to forward limit")
+	if not is_equal_approx(
+		ActuatorSimulationService.power_demand_w(joint),
+		joint.motor.power_draw_w
+	):
+		world.free()
+		return _fail("commanded rotor power demand was not published")
+
+	var configure := ConfigureActuatorCommand.new()
+	configure.joint_id = joint_id
+	configure.extend_velocity_mps = 2.0
+	configure.retract_velocity_mps = 0.25
+	configure.force_limit_n = 5000.0
+	configure.lower_limit_m = 0.5
+	configure.upper_limit_m = 1.5
+	if StringName(world.apply_configure_actuator(configure).get("status", &"")) != &"ok":
+		world.free()
+		return _fail("rotor configure_actuator failed")
+	if (
+		not is_equal_approx(joint.motor.extend_velocity_mps, 2.0)
+		or not is_equal_approx(joint.motor.retract_velocity_mps, 0.25)
+		or not is_equal_approx(joint.motor.force_limit_n, 5000.0)
+	):
+		world.free()
+		return _fail("rotor configure values not applied")
+	if (
+		not is_equal_approx(joint.motor.lower_limit_m, 0.0)
+		or not is_equal_approx(joint.motor.upper_limit_m, 0.0)
+	):
+		world.free()
+		return _fail("continuous rotor must ignore travel limit fields")
+	world.free()
+	return true
+
+
+func _test_rotor_wrap_and_overload() -> bool:
+	var world := _rotor_world_with_foundation()
+	var setup := _rotor_setup(world)
+	if setup.is_empty():
+		world.free()
+		return _fail("rotor setup failed")
+	var rotor: StructuralCommandResult = setup["rotor"]
+	var joint_id := int(rotor.data["rotor_joint_id"])
+	var base_id := int(rotor.data["element_id"])
+	var runtime := world.ensure_industry_element_runtime(base_id)
+	runtime.machine_enabled = true
+	runtime.powered = true
+	_weld_element(world, base_id)
+	_weld_element(world, int(rotor.data["head_element_id"]))
+	var joint := world.get_joint(joint_id)
+
+	world.sync_actuator_observation(joint_id, 3.5, 0.0, 0.0, false)
+	if absf(joint.motor.observed_position_m - (3.5 - TAU)) > 0.0001:
+		world.free()
+		return _fail(
+			"observed rotor angle was not wrapped: %.4f"
+			% joint.motor.observed_position_m
+		)
+	joint.motor.status_reference_position_m = 3.1
+	joint.motor.observed_position_m = -3.1
+	var progress := joint.motor.position_progress_from(3.1)
+	if progress > 0.1:
+		world.free()
+		return _fail("wrapped progress across PI is wrong: %.4f" % progress)
+
+	var command := SetActuatorTargetCommand.new()
+	command.joint_id = joint_id
+	command.mode = SimulationMotorState.ControlMode.VELOCITY
+	command.target_velocity_mps = 1.0
+	if StringName(world.apply_set_actuator_target(command).get("status", &"")) != &"ok":
+		world.free()
+		return _fail("rotor set_actuator_target failed before overload")
+	world.sync_actuator_observation(
+		joint_id,
+		joint.motor.observed_position_m,
+		0.0,
+		joint.motor.force_limit_n,
+		true
+	)
+	for _i: int in range(30):
+		world.tick_actuators(0.05)
+	if joint.motor.status != SimulationMotorState.Status.OVERLOADED:
+		world.free()
+		return _fail("expected overloaded rotor status")
+
+	runtime.powered = false
+	world.tick_actuators(0.05)
+	if joint.motor.status != SimulationMotorState.Status.NO_POWER:
+		world.free()
+		return _fail("expected no_power rotor status")
+	world.free()
+	return true
+
+
+func _test_rotor_dismantle_splits_top() -> bool:
+	var world := _rotor_world_with_foundation()
+	var setup := _rotor_setup(world)
+	if setup.is_empty():
+		world.free()
+		return _fail("rotor setup failed")
+	var rotor: StructuralCommandResult = setup["rotor"]
+	var assembly_id := int(setup["assembly_id"])
+
+	var platform := PlaceElementCommand.new()
+	platform.assembly_id = assembly_id
+	platform.expected_assembly_revision = int(rotor.data["topology_revision"])
+	platform.archetype = Slice01Archetypes.frame()
+	platform.origin_cell = Vector3i(6, 1, 0)
+	platform.orientation_index = 0
+	platform.store_id = "player"
+	if not world.apply_structural_command_now(platform).is_ok():
+		world.free()
+		return _fail("platform attach failed before dismantle")
+
+	var dismantle := DismantleElementCommand.new()
+	dismantle.element_id = int(rotor.data["element_id"])
+	dismantle.expected_assembly_revision = world.get_assembly_raw(
+		assembly_id
+	).topology_revision
+	dismantle.store_id = "player"
+	var result := world.apply_structural_command_now(dismantle)
+	if not result.is_ok() or not bool(result.data.get("split", false)):
+		world.free()
+		return _fail("dismantle rotor base did not split assembly")
+	world.free()
+	return true
+
+
+func _test_rotor_moving_top_construction_rejected() -> bool:
+	var world := _rotor_world_with_foundation()
+	var setup := _rotor_setup(world)
+	if setup.is_empty():
+		world.free()
+		return _fail("rotor setup failed")
+	var rotor: StructuralCommandResult = setup["rotor"]
+	var assembly_id := int(setup["assembly_id"])
+	var joint := world.get_joint(int(rotor.data["rotor_joint_id"]))
+	joint.motor.observed_position_m = 0.5
+
+	var platform := PlaceElementCommand.new()
+	platform.assembly_id = assembly_id
+	platform.expected_assembly_revision = world.get_assembly_raw(
+		assembly_id
+	).topology_revision
+	platform.archetype = Slice01Archetypes.frame()
+	platform.origin_cell = Vector3i(6, 1, 0)
+	platform.orientation_index = 0
+	platform.store_id = "player"
+	var result := world.apply_structural_command_now(platform)
+	if result.reason != StructuralCommandResult.REASON_MOVING_TARGET_NOT_SUPPORTED:
+		world.free()
+		return _fail("construction on turned rotor top was not rejected")
+	world.free()
+	return true
+
+
+func _rotor_world_with_foundation() -> SimulationWorld:
+	var world := SimulationWorld.new()
+	world.ensure_resource_store("player")
+	world.set_resource_amount("player", "construction_component", 100.0)
+	world.get_archetype_registry().register(ROTOR_TOP)
+	return world
+
+
+func _rotor_setup(world: SimulationWorld) -> Dictionary:
+	var foundation := _spawn(
+		world,
+		_single_blueprint(Slice01Archetypes.foundation()),
+		GridTransform.identity()
+	)
+	if not foundation.is_ok():
+		return {}
+	var assembly_id := int(foundation.data["assembly_id"])
+	var frame := _place_frame(world, assembly_id, Vector3i(4, 0, 0), foundation)
+	if not frame.is_ok():
+		return {}
+	var place := PlaceElementCommand.new()
+	place.assembly_id = assembly_id
+	place.expected_assembly_revision = int(frame.data["topology_revision"])
+	place.archetype = ROTOR_BASE
+	place.origin_cell = Vector3i(5, 0, 0)
+	place.orientation_index = 0
+	place.store_id = "player"
+	var rotor := world.apply_structural_command_now(place)
+	if not rotor.is_ok():
+		return {}
+	return {
+		"assembly_id": assembly_id,
+		"rotor": rotor,
+	}
 
 
 func _place_frame(

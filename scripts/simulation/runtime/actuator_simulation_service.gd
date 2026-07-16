@@ -9,7 +9,7 @@ static func apply_set_actuator_target(
 	if world == null or command == null:
 		return {"status": &"failed", "reason": &"not_ready"}
 	var joint := world.get_joint(command.joint_id)
-	if joint == null or joint.kind != SimulationJoint.Kind.PISTON:
+	if joint == null or not joint.is_driven():
 		return {"status": &"failed", "reason": &"invalid_reference"}
 	if joint.motor == null:
 		return {"status": &"failed", "reason": &"invalid_reference"}
@@ -60,7 +60,7 @@ static func apply_configure_actuator(
 	if world == null or command == null:
 		return {"status": &"failed", "reason": &"not_ready"}
 	var joint := world.get_joint(command.joint_id)
-	if joint == null or joint.kind != SimulationJoint.Kind.PISTON:
+	if joint == null or not joint.is_driven():
 		return {"status": &"failed", "reason": &"invalid_reference"}
 	if joint.motor == null:
 		return {"status": &"failed", "reason": &"invalid_reference"}
@@ -71,6 +71,8 @@ static func apply_configure_actuator(
 			"reason": &"element_incomplete",
 			"joint_id": joint.joint_id,
 		}
+	if joint.kind == SimulationJoint.Kind.ROTOR:
+		return _apply_configure_rotor(world, joint, base_element, command)
 	var definition := _piston_definition_for_element(base_element)
 	if definition == null:
 		return {"status": &"failed", "reason": &"invalid_reference"}
@@ -137,6 +139,61 @@ static func apply_configure_actuator(
 	}
 
 
+static func _apply_configure_rotor(
+	world: SimulationWorld,
+	joint: SimulationJoint,
+	base_element: SimulationElement,
+	command: ConfigureActuatorCommand
+) -> Dictionary:
+	var archetype := base_element.get_archetype()
+	var definition: RotorDefinition = (
+		archetype.rotor_definition if archetype != null else null
+	)
+	if definition == null:
+		return {"status": &"failed", "reason": &"invalid_reference"}
+	var motor := joint.motor
+	if command.extend_velocity_mps >= 0.0:
+		motor.extend_velocity_mps = clampf(
+			command.extend_velocity_mps,
+			0.0,
+			definition.max_velocity_rad_s
+		)
+	if command.retract_velocity_mps >= 0.0:
+		motor.retract_velocity_mps = clampf(
+			command.retract_velocity_mps,
+			0.0,
+			definition.max_velocity_rad_s
+		)
+	if (
+		command.extend_velocity_mps >= 0.0
+		or command.retract_velocity_mps >= 0.0
+	):
+		motor.speed_limit_mps = maxf(
+			motor.extend_velocity_mps,
+			motor.retract_velocity_mps
+		)
+	if command.force_limit_n >= 0.0:
+		motor.force_limit_n = clampf(
+			command.force_limit_n,
+			1.0,
+			definition.max_torque_limit_nm
+		)
+	# Continuous rotor has no travel limits: lower/upper fields stay unchanged.
+	motor.target_velocity_mps = motor.clamp_target_velocity()
+	if motor.status in [
+		SimulationMotorState.Status.STUCK,
+		SimulationMotorState.Status.OVERLOADED,
+	]:
+		motor.status = SimulationMotorState.Status.IDLE
+	_update_joint_status(world, joint)
+	return {
+		"status": &"ok",
+		"reason": &"ok",
+		"joint_id": joint.joint_id,
+		"status_name": _status_name(joint.motor.status),
+	}
+
+
 static func _piston_definition_for_element(
 	element: SimulationElement
 ) -> PistonDefinition:
@@ -160,11 +217,14 @@ static func sync_observation(
 	if joint == null or joint.motor == null:
 		return
 	var motor := joint.motor
-	motor.observed_position_m = clampf(
-		position_m,
-		motor.lower_limit_m,
-		motor.upper_limit_m
-	)
+	if motor.continuous:
+		motor.observed_position_m = SimulationMotorState.wrap_angle(position_m)
+	else:
+		motor.observed_position_m = clampf(
+			position_m,
+			motor.lower_limit_m,
+			motor.upper_limit_m
+		)
 	motor.observed_velocity_mps = velocity_mps
 	motor.applied_force_n = applied_force_n
 	motor.force_saturated = force_saturated
@@ -184,15 +244,12 @@ static func sync_power_demand(world: SimulationWorld) -> void:
 	if world == null:
 		return
 	for element: SimulationElement in world.list_elements():
-		if element.archetype_id == "piston_base":
+		if element.archetype_id in ["piston_base", "rotor_base"]:
 			world.ensure_industry_element_runtime(
 				element.element_id
 			).dynamic_power_w = 0.0
 	for joint: SimulationJoint in world.list_joints():
-		if (
-			joint.kind != SimulationJoint.Kind.PISTON
-			or joint.motor == null
-		):
+		if not joint.is_driven() or joint.motor == null:
 			continue
 		var base_element := world.get_element(joint.element_a_id)
 		if base_element == null or not base_element.is_operational():
@@ -233,8 +290,8 @@ static func _update_joint_status(
 	if motor.status == SimulationMotorState.Status.OVERLOADED:
 		return
 
-	var position_progress_m := absf(
-		motor.observed_position_m - motor.status_reference_position_m
+	var position_progress_m := motor.position_progress_from(
+		motor.status_reference_position_m
 	)
 	var moving := (
 		absf(motor.observed_velocity_mps)

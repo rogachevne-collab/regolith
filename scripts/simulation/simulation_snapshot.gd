@@ -1,7 +1,7 @@
 class_name SimulationSnapshot
 extends RefCounted
 
-const VERSION := 6
+const VERSION := 7
 
 static var last_validate_error: String = ""
 
@@ -330,6 +330,18 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 				or joint.motor == null
 			):
 				return false
+		elif joint.kind == SimulationJoint.Kind.ROTOR:
+			if (
+				joint.element_b_id <= 0
+				or joint.element_b_id == joint.element_a_id
+				or not elements.has(joint.element_b_id)
+				or (elements[joint.element_b_id] as SimulationElement).assembly_id
+				!= joint.assembly_id
+				or joint.port_a_id != SimulationMotorState.ROTOR_DRIVE_PORT
+				or joint.port_b_id != SimulationMotorState.ROTOR_TOP_PORT
+				or joint.motor == null
+			):
+				return false
 		else:
 			return false
 		var canonical_key := "%d|%s" % [joint.kind, joint.canonical_key()]
@@ -369,7 +381,7 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 					joint.port_a_id
 				):
 					return false
-			elif joint.kind != SimulationJoint.Kind.PISTON:
+			elif not joint.is_driven():
 				return false
 		if assembly.element_ids.size() > 1:
 			var components := RuntimeConnectivity.mechanical_connected_components(

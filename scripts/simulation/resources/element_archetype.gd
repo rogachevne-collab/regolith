@@ -22,6 +22,7 @@ enum StructuralSurfacePolicy {
 @export var structural_mount_pads: Array[StructuralMountPad] = []
 @export var build_requirements: Array[BuildRequirement] = []
 @export var piston_definition: PistonDefinition
+@export var rotor_definition: RotorDefinition
 @export var suspension_definition: SuspensionDefinition
 @export var wheel_definition: WheelDefinition
 @export var internal_archetype: bool = false
@@ -29,6 +30,10 @@ enum StructuralSurfacePolicy {
 
 func is_piston_base() -> bool:
 	return piston_definition != null
+
+
+func is_rotor_base() -> bool:
+	return rotor_definition != null
 
 
 func resolved_structural_surface_policy() -> StructuralSurfacePolicy:

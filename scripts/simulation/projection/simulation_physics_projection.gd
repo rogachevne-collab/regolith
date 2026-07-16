@@ -4,6 +4,7 @@ extends Node3D
 const BODY_NAME_PREFIX := "AssemblyBody_"
 const GROUP_BODY_NAME_PREFIX := "AssemblyGroupBody_"
 const PISTON_JOINT_NAME_PREFIX := "PistonJoint_"
+const ROTOR_JOINT_NAME_PREFIX := "RotorJoint_"
 const MIN_MASS := 0.001
 const SUSTAINED_V_EPS := 0.05
 const FragmentBodyScript := preload(
@@ -11,6 +12,9 @@ const FragmentBodyScript := preload(
 )
 const PistonProjectionUtil := preload(
 	"res://scripts/simulation/projection/piston_projection_util.gd"
+)
+const RotorProjectionUtil := preload(
+	"res://scripts/simulation/projection/rotor_projection_util.gd"
 )
 const WheelSimulationService := preload(
 	"res://scripts/simulation/runtime/wheel_simulation_service.gd"
@@ -32,6 +36,7 @@ var _collision_profiles: Dictionary = {}
 var _body_groups: Dictionary = {}
 var _assembly_group_bodies: Dictionary = {}
 var _piston_constraints: Dictionary = {}
+var _rotor_constraints: Dictionary = {}
 var _root_group_ids: Dictionary = {}
 var _impact_service: ImpactResolverService
 
@@ -83,6 +88,15 @@ func list_piston_constraint_records(assembly_id: int) -> Array:
 	if not _piston_constraints.has(assembly_id):
 		return []
 	var records: Variant = _piston_constraints[assembly_id]
+	if records is Array:
+		return (records as Array).duplicate()
+	return []
+
+
+func list_rotor_constraint_records(assembly_id: int) -> Array:
+	if not _rotor_constraints.has(assembly_id):
+		return []
+	var records: Variant = _rotor_constraints[assembly_id]
 	if records is Array:
 		return (records as Array).duplicate()
 	return []
@@ -180,6 +194,7 @@ func align_body_motion(
 func _physics_process(delta: float) -> void:
 	if _world == null:
 		return
+	_tick_rotor_actuators(delta)
 	_tick_piston_actuators(delta)
 	_tick_wheel_pairs(delta)
 	for assembly_id: int in _sorted_int_keys(_bodies):
@@ -418,10 +433,10 @@ func _project_assembly(
 	):
 		return
 	var compiled := _compile_assembly_groups(assembly)
-	var piston_specs: Array = compiled.get("piston_specs", [])
+	var driven_specs: Array = compiled.get("driven_specs", [])
 	if (
 		bool(compiled.get("valid", false))
-		and not piston_specs.is_empty()
+		and not driven_specs.is_empty()
 		and not _mounted_bodies.has(assembly_id)
 	):
 		_project_assembly_multibody(
@@ -627,7 +642,7 @@ func _project_assembly_multibody(
 	)
 	var groups_map: Dictionary = {}
 	var carriage_group_ids: Dictionary = {}
-	for spec_variant: Variant in compiled.get("piston_specs", []):
+	for spec_variant: Variant in compiled.get("driven_specs", []):
 		if spec_variant is Dictionary:
 			carriage_group_ids[int(spec_variant.get("head_group_id", 0))] = true
 	for group_id: int in _sorted_int_keys(groups):
@@ -712,7 +727,8 @@ func _project_assembly_multibody(
 		_bodies[assembly_id] = groups_map[root_group_id]
 
 	var piston_records: Array[Dictionary] = []
-	for spec_variant: Variant in compiled.get("piston_specs", []):
+	var rotor_records: Array[Dictionary] = []
+	for spec_variant: Variant in compiled.get("driven_specs", []):
 		if not spec_variant is Dictionary:
 			continue
 		var spec: Dictionary = spec_variant
@@ -738,6 +754,54 @@ func _project_assembly_multibody(
 			int(spec.get("head_element_id", 0))
 		)
 		if base_element == null or head_element == null:
+			continue
+		if sim_joint.kind == SimulationJoint.Kind.ROTOR:
+			var rotor_definition: RotorDefinition = (
+				base_element.get_archetype().rotor_definition
+			)
+			if rotor_definition == null:
+				continue
+			var rotor_axis_local: Vector3 = (
+				RotorProjectionUtil.rotor_axis_assembly_local(
+					base_element,
+					rotor_definition
+				)
+			)
+			var rotor_axis_world: Vector3 = (
+				base_body.global_transform.basis * rotor_axis_local
+			).normalized()
+			var rotor_anchor: Vector3 = (
+				PistonProjectionUtil.port_anchor_assembly_local(
+					base_element,
+					SimulationMotorState.ROTOR_DRIVE_PORT
+				)
+			)
+			var rotor_joint_node := Generic6DOFJoint3D.new()
+			rotor_joint_node.name = "%s%d_%d" % [
+				ROTOR_JOINT_NAME_PREFIX,
+				assembly_id,
+				sim_joint.joint_id,
+			]
+			add_child(rotor_joint_node)
+			rotor_joint_node.global_transform = Transform3D(
+				PistonProjectionUtil.basis_from_axis(rotor_axis_world),
+				base_body.global_transform * rotor_anchor
+			)
+			rotor_joint_node.node_a = rotor_joint_node.get_path_to(base_body)
+			rotor_joint_node.node_b = rotor_joint_node.get_path_to(head_body)
+			RotorProjectionUtil.configure_hinge_joint(rotor_joint_node)
+			rotor_records.append({
+				"joint_id": sim_joint.joint_id,
+				"sim_joint": sim_joint,
+				"constraint": rotor_joint_node,
+				"base_body": base_body,
+				"head_body": head_body,
+				"axis_local": rotor_axis_local,
+				"top_element_ids": groups.get(
+					int(spec.get("head_group_id", 0)),
+					[]
+				),
+			})
 			continue
 		var definition: PistonDefinition = (
 			base_element.get_archetype().piston_definition
@@ -797,6 +861,7 @@ func _project_assembly_multibody(
 			),
 		})
 	_piston_constraints[assembly_id] = piston_records
+	_rotor_constraints[assembly_id] = rotor_records
 	var motion: AssemblyMotionState = seed_motion.duplicate_state()
 	if _world.assembly_has_anchor(assembly_id):
 		if not active_locomotive:
@@ -952,6 +1017,76 @@ func _wheel_exclude_rids(assembly_id: int) -> Array[RID]:
 	if body != null:
 		result.append(body.get_rid())
 	return result
+
+
+func _tick_rotor_actuators(delta: float) -> void:
+	if _world == null or delta <= 0.0:
+		return
+	for assembly_id: int in _sorted_int_keys(_rotor_constraints):
+		var assembly: SimulationAssembly = _world.get_assembly_raw(assembly_id)
+		if assembly == null or assembly.tombstoned:
+			continue
+		for record_variant: Variant in _rotor_constraints[assembly_id]:
+			if not record_variant is Dictionary:
+				continue
+			var record: Dictionary = record_variant
+			var sim_joint: SimulationJoint = record.get("sim_joint")
+			if sim_joint == null or sim_joint.motor == null:
+				continue
+			var base_body: PhysicsBody3D = record.get("base_body")
+			var head_body: PhysicsBody3D = record.get("head_body")
+			if base_body == null or head_body == null:
+				continue
+			var axis_world: Vector3 = (
+				base_body.global_transform.basis
+				* record.get("axis_local", Vector3.UP)
+			).normalized()
+			var measured: Dictionary = RotorProjectionUtil.measure_angular_state(
+				base_body,
+				head_body,
+				axis_world
+			)
+			var observed_velocity := float(
+				measured.get("relative_velocity_rad_s", 0.0)
+			)
+			_world.sync_actuator_observation(
+				int(record.get("joint_id", 0)),
+				float(measured.get("angle_rad", 0.0)),
+				observed_velocity,
+				sim_joint.motor.applied_force_n,
+				sim_joint.motor.force_saturated
+			)
+			var powered: bool = PistonProjectionUtil.is_piston_powered(
+				_world,
+				sim_joint.element_a_id
+			)
+			var top_inertia := RotorProjectionUtil.top_inertia_about_axis(
+				head_body,
+				axis_world
+			)
+			var torque_result: Dictionary = (
+				RotorProjectionUtil.compute_motor_torque_scalar(
+					sim_joint.motor,
+					observed_velocity,
+					powered,
+					top_inertia
+				)
+			)
+			var torque_nm := float(torque_result.get("torque_nm", 0.0))
+			var saturated := bool(torque_result.get("saturated", false))
+			sim_joint.motor.applied_force_n = absf(torque_nm)
+			sim_joint.motor.force_saturated = saturated
+			if head_body is RigidBody3D:
+				(head_body as RigidBody3D).apply_torque(axis_world * torque_nm)
+			if base_body is RigidBody3D and not base_body is StaticBody3D:
+				(base_body as RigidBody3D).apply_torque(-axis_world * torque_nm)
+			_world.sync_actuator_observation(
+				int(record.get("joint_id", 0)),
+				float(measured.get("angle_rad", 0.0)),
+				observed_velocity,
+				absf(torque_nm),
+				saturated
+			)
 
 
 func _tick_piston_actuators(delta: float) -> void:
@@ -1145,17 +1280,18 @@ func _carriage_touches_terrain(
 
 
 func _clear_piston_constraints(assembly_id: int) -> void:
-	var records: Variant = _piston_constraints.get(assembly_id, [])
-	if records is Array:
-		for record_variant: Variant in records:
-			if not record_variant is Dictionary:
-				continue
-			var constraint: Generic6DOFJoint3D = (
-				record_variant.get("constraint") as Generic6DOFJoint3D
-			)
-			if constraint != null and is_instance_valid(constraint):
-				constraint.queue_free()
-	_piston_constraints.erase(assembly_id)
+	for constraints: Dictionary in [_piston_constraints, _rotor_constraints]:
+		var records: Variant = constraints.get(assembly_id, [])
+		if records is Array:
+			for record_variant: Variant in records:
+				if not record_variant is Dictionary:
+					continue
+				var constraint: Generic6DOFJoint3D = (
+					record_variant.get("constraint") as Generic6DOFJoint3D
+				)
+				if constraint != null and is_instance_valid(constraint):
+					constraint.queue_free()
+		constraints.erase(assembly_id)
 	_root_group_ids.erase(assembly_id)
 
 
@@ -1331,6 +1467,8 @@ func _remove_element_records_for_assembly(
 func _clear_all_bodies() -> void:
 	for assembly_id: int in _sorted_int_keys(_piston_constraints):
 		_clear_piston_constraints(assembly_id)
+	for assembly_id: int in _sorted_int_keys(_rotor_constraints):
+		_clear_piston_constraints(assembly_id)
 	for assembly_id: int in _sorted_int_keys(_bodies):
 		_remove_body(assembly_id)
 	_bodies.clear()
@@ -1339,6 +1477,7 @@ func _clear_all_bodies() -> void:
 	_assembly_group_bodies.clear()
 	_root_group_ids.clear()
 	_piston_constraints.clear()
+	_rotor_constraints.clear()
 
 
 func _sorted_int_keys(dictionary: Dictionary) -> Array[int]:

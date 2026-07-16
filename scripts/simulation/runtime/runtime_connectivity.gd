@@ -194,7 +194,11 @@ static func mechanical_connected_components(
 	return _connected_components(
 		element_ids,
 		joints,
-		[SimulationJoint.Kind.RIGID, SimulationJoint.Kind.PISTON]
+		[
+			SimulationJoint.Kind.RIGID,
+			SimulationJoint.Kind.PISTON,
+			SimulationJoint.Kind.ROTOR,
+		]
 	)
 
 

@@ -1492,7 +1492,10 @@ func _set_actuator_target(
 	actuator.joint_id = int(
 		parameters.get(
 			"joint_id",
-			metadata.get("piston_joint_id", 0)
+			metadata.get(
+				"piston_joint_id",
+				metadata.get("rotor_joint_id", 0)
+			)
 		)
 	)
 	actuator.mode = int(
@@ -1533,7 +1536,10 @@ func _configure_actuator(
 	configure.joint_id = int(
 		parameters.get(
 			"joint_id",
-			metadata.get("piston_joint_id", 0)
+			metadata.get(
+				"piston_joint_id",
+				metadata.get("rotor_joint_id", 0)
+			)
 		)
 	)
 	configure.extend_velocity_mps = float(

@@ -22,16 +22,17 @@ static func compile(
 		for element_id: int in component:
 			element_to_group[element_id] = group_id
 
-	var piston_specs: Array[Dictionary] = []
+	var driven_specs: Array[Dictionary] = []
 	for joint: SimulationJoint in joints:
-		if joint.kind != SimulationJoint.Kind.PISTON:
+		if not joint.is_driven():
 			continue
 		var base_group := int(element_to_group.get(joint.element_a_id, 0))
 		var head_group := int(element_to_group.get(joint.element_b_id, 0))
 		if base_group <= 0 or head_group <= 0 or base_group == head_group:
 			return {"valid": false, "reason": &"invalid_piston_groups"}
-		piston_specs.append({
+		driven_specs.append({
 			"joint_id": joint.joint_id,
+			"joint_kind": joint.kind,
 			"base_element_id": joint.element_a_id,
 			"head_element_id": joint.element_b_id,
 			"base_group_id": base_group,
@@ -47,7 +48,7 @@ static func compile(
 	if groups.size() > 1 and root_group_id <= 0:
 		return {"valid": false, "reason": &"ambiguous_root_group"}
 
-	var cycle := _validate_acyclic_piston_graph(piston_specs)
+	var cycle := _validate_acyclic_piston_graph(driven_specs)
 	if not bool(cycle.get("valid", false)):
 		return cycle
 
@@ -56,7 +57,7 @@ static func compile(
 		"groups": groups,
 		"element_to_group": element_to_group,
 		"root_group_id": root_group_id,
-		"piston_specs": piston_specs,
+		"driven_specs": driven_specs,
 	}
 
 
@@ -75,7 +76,7 @@ static func would_rigid_bridge_piston_groups(
 	var group_b := int(element_to_group.get(element_b_id, 0))
 	if group_a <= 0 or group_b <= 0 or group_a == group_b:
 		return false
-	for spec: Dictionary in compiled["piston_specs"]:
+	for spec: Dictionary in compiled["driven_specs"]:
 		var left := int(spec["base_group_id"])
 		var right := int(spec["head_group_id"])
 		if (
@@ -110,9 +111,9 @@ static func _pick_root_group_id(
 	if anchored_ids.size() == 1:
 		return anchored_ids[0]
 	# Carriage groups can pick up terrain anchors while the base group is also
-	# anchored. Prefer the piston-base rigid group as the motion root.
+	# anchored. Prefer the driven-base rigid group as the motion root.
 	for joint: SimulationJoint in joints:
-		if joint.kind != SimulationJoint.Kind.PISTON:
+		if not joint.is_driven():
 			continue
 		var base_group := _group_for_element(joint.element_a_id, groups)
 		if base_group > 0 and anchored_groups.has(base_group):
@@ -138,12 +139,12 @@ static func _component_group_id(component: Array) -> int:
 
 
 static func _validate_acyclic_piston_graph(
-	piston_specs: Array[Dictionary]
+	driven_specs: Array[Dictionary]
 ) -> Dictionary:
-	if piston_specs.is_empty():
+	if driven_specs.is_empty():
 		return {"valid": true}
 	var adjacency: Dictionary = {}
-	for spec: Dictionary in piston_specs:
+	for spec: Dictionary in driven_specs:
 		var left := int(spec["base_group_id"])
 		var right := int(spec["head_group_id"])
 		if not adjacency.has(left):

@@ -113,6 +113,9 @@ static func _fingerprint_from_schema(
 			archetype.piston_definition,
 			include_piston_tuning
 		),
+		"rotor_definition": _rotor_definition_row(
+			archetype.rotor_definition
+		),
 		"wheel_definition": _wheel_definition_row(
 			archetype.wheel_definition
 		),
@@ -191,6 +194,19 @@ static func _suspension_definition_row(
 		"min_travel_m": definition.min_travel_m,
 		"max_travel_m": definition.max_travel_m,
 		"max_wheels_per_socket": definition.max_wheels_per_socket,
+	}
+
+
+static func _rotor_definition_row(
+	definition: RotorDefinition
+) -> Dictionary:
+	if definition == null:
+		return {}
+	return {
+		"top_archetype_id": definition.top_archetype_id,
+		"axis_face": definition.axis_face,
+		"power_draw_w": definition.power_draw_w,
+		"overload_policy": definition.overload_policy,
 	}
 
 

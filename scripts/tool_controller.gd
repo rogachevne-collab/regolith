@@ -76,6 +76,7 @@ const CONSTRUCTION_ARCHETYPES: PackedStringArray = [
 	"processor",
 	"fabricator",
 	"piston_base",
+	"rotor_base",
 	"rover_frame",
 	"wheel_suspension",
 	"drive_wheel",
@@ -125,6 +126,7 @@ const TOOLBAR_PAGES: Array = [
 		{"type": &"block", "archetype_id": "cockpit"},
 		{"type": &"block", "archetype_id": "power_battery_small"},
 		{"type": &"block", "archetype_id": "power_distributor_small"},
+		{"type": &"block", "archetype_id": "rotor_base"},
 	],
 ]
 
@@ -1218,18 +1220,37 @@ func _is_actuator_target_hit(hit: InteractionHit) -> bool:
 		or hit.distance > 4.5
 	):
 		return false
-	return hit.metadata.has("piston_joint_id")
+	return (
+		hit.metadata.has("piston_joint_id")
+		or hit.metadata.has("rotor_joint_id")
+	)
+
+
+func _actuator_hit_joint_id(hit: InteractionHit) -> int:
+	var joint_id := int(hit.metadata.get("piston_joint_id", 0))
+	if joint_id > 0:
+		return joint_id
+	return int(hit.metadata.get("rotor_joint_id", 0))
+
+
+func _actuator_hit_forward_velocity(hit: InteractionHit) -> float:
+	if hit.metadata.has("rotor_joint_id"):
+		return float(hit.metadata.get("rotor_forward_velocity_rad_s", 0.5))
+	return float(hit.metadata.get("piston_extend_velocity_mps", 0.25))
+
+
+func _actuator_hit_reverse_velocity(hit: InteractionHit) -> float:
+	if hit.metadata.has("rotor_joint_id"):
+		return float(hit.metadata.get("rotor_reverse_velocity_rad_s", 0.5))
+	return float(hit.metadata.get("piston_retract_velocity_mps", 0.25))
 
 
 func _try_actuator_extend(hit: InteractionHit) -> bool:
 	if not _is_actuator_target_hit(hit):
 		return false
-	var joint_id := int(hit.metadata.get("piston_joint_id", 0))
+	var joint_id := _actuator_hit_joint_id(hit)
 	if joint_id <= 0:
 		return false
-	var extend_velocity := float(
-		hit.metadata.get("piston_extend_velocity_mps", 0.25)
-	)
 	command_requested.emit({
 		"kind": &"set_actuator_target",
 		"source": get_parent(),
@@ -1237,7 +1258,7 @@ func _try_actuator_extend(hit: InteractionHit) -> bool:
 		"parameters": {
 			"joint_id": joint_id,
 			"mode": SimulationMotorState.ControlMode.VELOCITY,
-			"target_velocity_mps": extend_velocity,
+			"target_velocity_mps": _actuator_hit_forward_velocity(hit),
 			"enabled": true,
 		},
 	})
@@ -1247,12 +1268,9 @@ func _try_actuator_extend(hit: InteractionHit) -> bool:
 func _try_actuator_retract(hit: InteractionHit) -> bool:
 	if not _is_actuator_target_hit(hit):
 		return false
-	var joint_id := int(hit.metadata.get("piston_joint_id", 0))
+	var joint_id := _actuator_hit_joint_id(hit)
 	if joint_id <= 0:
 		return false
-	var retract_velocity := float(
-		hit.metadata.get("piston_retract_velocity_mps", 0.25)
-	)
 	command_requested.emit({
 		"kind": &"set_actuator_target",
 		"source": get_parent(),
@@ -1260,7 +1278,7 @@ func _try_actuator_retract(hit: InteractionHit) -> bool:
 		"parameters": {
 			"joint_id": joint_id,
 			"mode": SimulationMotorState.ControlMode.VELOCITY,
-			"target_velocity_mps": -retract_velocity,
+			"target_velocity_mps": -_actuator_hit_reverse_velocity(hit),
 			"enabled": true,
 		},
 	})
@@ -1270,7 +1288,7 @@ func _try_actuator_retract(hit: InteractionHit) -> bool:
 func _try_actuator_stop(hit: InteractionHit) -> bool:
 	if not _is_actuator_target_hit(hit):
 		return false
-	var joint_id := int(hit.metadata.get("piston_joint_id", 0))
+	var joint_id := _actuator_hit_joint_id(hit)
 	if joint_id <= 0:
 		return false
 	command_requested.emit({

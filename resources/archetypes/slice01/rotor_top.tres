@@ -1,0 +1,46 @@
+[gd_resource type="Resource" script_class="ElementArchetype" format=3]
+
+[ext_resource type="Script" uid="uid://b6d2jhfw581hb" path="res://scripts/simulation/resources/collider_definition.gd" id="1"]
+[ext_resource type="Script" uid="uid://c4hgnuqnf2up8" path="res://scripts/simulation/resources/port_definition.gd" id="2"]
+[ext_resource type="Script" uid="uid://bfuxth8e6lccw" path="res://scripts/simulation/resources/structural_mount_pad.gd" id="3"]
+[ext_resource type="Script" uid="uid://bxidpb3tep3ih" path="res://scripts/simulation/resources/element_archetype.gd" id="4"]
+
+[sub_resource type="Resource" id="Collider"]
+script = ExtResource("1")
+
+[sub_resource type="Resource" id="TopPort"]
+script = ExtResource("2")
+port_id = "rotor_top"
+local_face = 3
+compatibility_tags = PackedStringArray("rotor", "internal")
+
+[sub_resource type="Resource" id="MountPy"]
+script = ExtResource("3")
+local_face = 2
+
+[sub_resource type="Resource" id="MountPx"]
+script = ExtResource("3")
+
+[sub_resource type="Resource" id="MountNx"]
+script = ExtResource("3")
+local_face = 1
+
+[sub_resource type="Resource" id="MountPz"]
+script = ExtResource("3")
+local_face = 4
+
+[sub_resource type="Resource" id="MountNz"]
+script = ExtResource("3")
+local_face = 5
+
+[resource]
+script = ExtResource("4")
+archetype_id = "rotor_top"
+display_name = "Rotor Top"
+roles = PackedStringArray("Frame")
+mass_kg = 20.0
+colliders = Array[ExtResource("1")]([SubResource("Collider")])
+ports = Array[ExtResource("2")]([SubResource("TopPort")])
+structural_surface_policy = 2
+structural_mount_pads = Array[ExtResource("3")]([SubResource("MountPy"), SubResource("MountPx"), SubResource("MountNx"), SubResource("MountPz"), SubResource("MountNz")])
+internal_archetype = true

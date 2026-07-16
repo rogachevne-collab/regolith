@@ -46,7 +46,7 @@ static func reconstruct_all_group_motions(world, assembly_id: int) -> Dictionary
 		if int(group_id) == root_group_id:
 			continue
 		result[int(group_id)] = root_motion.duplicate_state()
-	for spec_variant: Variant in compiled.get("piston_specs", []):
+	for spec_variant: Variant in compiled.get("driven_specs", []):
 		if not spec_variant is Dictionary:
 			continue
 		var spec: Dictionary = spec_variant
@@ -55,7 +55,11 @@ static func reconstruct_all_group_motions(world, assembly_id: int) -> Dictionary
 		var base_motion: AssemblyMotionState = result.get(base_group_id)
 		if base_motion == null:
 			continue
-		var head_motion := _reconstruct_head_from_base(world, spec, base_motion)
+		var head_motion: AssemblyMotionState
+		if int(spec.get("joint_kind", -1)) == SimulationJoint.Kind.ROTOR:
+			head_motion = _reconstruct_top_from_rotor_base(world, spec, base_motion)
+		else:
+			head_motion = _reconstruct_head_from_base(world, spec, base_motion)
 		if head_motion != null:
 			result[head_group_id] = head_motion
 	return result
@@ -132,6 +136,65 @@ static func _reconstruct_head_from_base(
 	head.sleeping = base_motion.sleeping
 	head.frozen = false
 	return head
+
+
+static func _reconstruct_top_from_rotor_base(
+	world,
+	spec: Dictionary,
+	base_motion: AssemblyMotionState
+) -> AssemblyMotionState:
+	var joint = world.get_joint(int(spec.get("joint_id", 0)))
+	var base_element = world.get_element(int(spec.get("base_element_id", 0)))
+	if joint == null or joint.motor == null or base_element == null:
+		return base_motion.duplicate_state()
+	var definition: RotorDefinition = null
+	var archetype = base_element.get_archetype()
+	if archetype != null:
+		definition = archetype.rotor_definition
+	if definition == null:
+		return base_motion.duplicate_state()
+	var axis_local := _rotor_axis_assembly_local(base_element, definition)
+	if axis_local.length_squared() <= 0.000001:
+		return base_motion.duplicate_state()
+	var pivot_local := _port_anchor_assembly_local(
+		base_element,
+		SimulationMotorState.ROTOR_DRIVE_PORT
+	)
+	var angle: float = joint.motor.clamp_observed_position()
+	var axis_world: Vector3 = (
+		base_motion.transform.basis * axis_local
+	).normalized()
+	var pivot_world: Vector3 = base_motion.transform * pivot_local
+	var spin := Basis(axis_world, angle)
+	var top: AssemblyMotionState = base_motion.duplicate_state()
+	top.transform = Transform3D(
+		spin * base_motion.transform.basis,
+		pivot_world + spin * (base_motion.transform.origin - pivot_world)
+	)
+	if base_motion.frozen:
+		top.linear_velocity = Vector3.ZERO
+		top.angular_velocity = Vector3.ZERO
+	else:
+		var omega_rel: Vector3 = axis_world * joint.motor.observed_velocity_mps
+		top.angular_velocity = base_motion.angular_velocity + omega_rel
+		top.linear_velocity = (
+			base_motion.linear_velocity
+			+ omega_rel.cross(top.transform.origin - pivot_world)
+		)
+	top.sleeping = base_motion.sleeping
+	top.frozen = false
+	return top
+
+
+static func _rotor_axis_assembly_local(
+	base_element: SimulationElement,
+	definition: RotorDefinition
+) -> Vector3:
+	var axis_cell: Vector3i = OrientationUtil.rotate_cell(
+		definition.top_axis_offset_cell(),
+		base_element.orientation_index
+	)
+	return Vector3(axis_cell).normalized()
 
 
 static func _piston_axis_assembly_local(

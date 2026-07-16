@@ -421,21 +421,30 @@ func _build_mesh_nodes(
 			)
 		)
 		return nodes
-	for collider: ColliderDefinition in archetype.colliders:
-		if collider.shape_kind != ColliderDefinition.ShapeKind.BOX:
-			continue
-		var mesh := BoxMesh.new()
-		mesh.size = collider.size * 1.015
-		var instance := MeshInstance3D.new()
-		instance.mesh = mesh
-		instance.material_override = material
-		instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		instance.transform = GridPoseUtil.collider_local_transform(
+	if archetype.rotor_definition != null:
+		var top_archetype := Slice01Archetypes.rotor_top()
+		if top_archetype != null:
+			var top_origin := RotorPlacementUtil.top_origin_cell(
+				origin_cell,
+				orientation_index,
+				archetype.rotor_definition
+			)
+			nodes.append_array(
+				_build_collider_box_nodes(
+					top_archetype,
+					top_origin,
+					orientation_index,
+					material
+				)
+			)
+	nodes.append_array(
+		_build_collider_box_nodes(
+			archetype,
 			origin_cell,
 			orientation_index,
-			collider
+			material
 		)
-		nodes.append(instance)
+	)
 	nodes.append_array(
 		_build_preview_port_markers(
 			archetype,
@@ -454,6 +463,31 @@ func _build_mesh_nodes(
 			material
 		)
 		nodes.append(drill_visual)
+	return nodes
+
+
+func _build_collider_box_nodes(
+	archetype: ElementArchetype,
+	origin_cell: Vector3i,
+	orientation_index: int,
+	material: Material
+) -> Array[Node]:
+	var nodes: Array[Node] = []
+	for collider: ColliderDefinition in archetype.colliders:
+		if collider.shape_kind != ColliderDefinition.ShapeKind.BOX:
+			continue
+		var mesh := BoxMesh.new()
+		mesh.size = collider.size * 1.015
+		var instance := MeshInstance3D.new()
+		instance.mesh = mesh
+		instance.material_override = material
+		instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		instance.transform = GridPoseUtil.collider_local_transform(
+			origin_cell,
+			orientation_index,
+			collider
+		)
+		nodes.append(instance)
 	return nodes
 
 
