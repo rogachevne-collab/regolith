@@ -165,6 +165,22 @@ static func spawn_on_terrain(
 	}
 
 
+static func assembly_transform_on_surface(
+	surface_point: Vector3,
+	basis: Basis = Basis.IDENTITY,
+	terrain: VoxelTerrain = null,
+	tool: VoxelTool = null,
+	space_state: PhysicsDirectSpaceState3D = null
+) -> Transform3D:
+	return _assembly_transform_on_surface(
+		surface_point,
+		basis,
+		terrain,
+		tool,
+		space_state
+	)
+
+
 static func _assembly_transform_on_surface(
 	surface_point: Vector3,
 	basis: Basis = Basis.IDENTITY,

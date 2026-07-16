@@ -17,8 +17,10 @@ const AUTOSAVE_INTERVAL_S := 90.0
 @export var debug_overlay := false
 ## Fills player cargo with a large playtest mix on every world entry (fresh or loaded).
 @export var playtest_cargo := true
-## Spawns a welded demo rover on the flattest ground patch near BaseSpawn.
+## Spawns a welded rover on the flattest ground patch near BaseSpawn.
 @export var spawn_demo_rover := true
+## Phrase for RoverComposer (N wheels, long/short/…). Empty → hardcoded demo layout.
+@export var demo_rover_phrase := "колбаса на 12 колес, низкая"
 
 @onready var _loading: Label = $CanvasLayer/Loading
 @onready var _coordinates: Label = $CanvasLayer/Coordinates
@@ -158,17 +160,40 @@ func _spawn_demo_rover_near_player() -> void:
 	if not ground_variant is Vector3:
 		push_warning("Demo rover spawn failed: no flat ground near BaseSpawn")
 		return
-	var result := RoverDemoSpawn.spawn_on_terrain(
-		_session,
-		ground_variant as Vector3,
-		RoverDemoSpawn.STORE_ID,
-		_terrain,
-		tool,
-		_physics_space_state()
-	)
+	var ground := ground_variant as Vector3
+	var result: Dictionary
+	if demo_rover_phrase.strip_edges().is_empty():
+		result = RoverDemoSpawn.spawn_on_terrain(
+			_session,
+			ground,
+			RoverDemoSpawn.STORE_ID,
+			_terrain,
+			tool,
+			_physics_space_state()
+		)
+	else:
+		result = RoverComposer.spawn_on_terrain_from_phrase(
+			_session,
+			ground,
+			demo_rover_phrase,
+			RoverDemoSpawn.STORE_ID,
+			_terrain,
+			tool,
+			_physics_space_state()
+		)
 	if not bool(result.get("ok", false)):
 		push_warning(
-			"Demo rover spawn failed: %s" % str(result.get("error", "unknown"))
+			"Demo rover spawn failed: %s %s"
+			% [str(result.get("error", "unknown")), str(result.get("failures", []))]
+		)
+	else:
+		print(
+			"Demo rover spawned: phrase='%s' assembly_id=%d intent=%s"
+			% [
+				demo_rover_phrase,
+				int(result.get("assembly_id", 0)),
+				str(result.get("intent", {})),
+			]
 		)
 
 
