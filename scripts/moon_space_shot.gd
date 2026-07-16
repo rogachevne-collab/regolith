@@ -49,16 +49,34 @@ func _run() -> void:
 	add_child(env)
 
 	var sun := DirectionalLight3D.new()
-	sun.light_energy = 2.2
+	sun.name = "Sun"
+	sun.light_energy = 2.0
 	sun.shadow_enabled = false
+	# Key light from camera-right / slightly above.
 	sun.rotation_degrees = Vector3(-25.0, 55.0, 0.0)
 	add_child(sun)
 
 	var fill := DirectionalLight3D.new()
-	fill.light_energy = 0.35
+	fill.name = "Fill"
+	fill.light_energy = 0.28
 	fill.light_color = Color(0.55, 0.62, 0.85)
 	fill.rotation_degrees = Vector3(15.0, -130.0, 0.0)
 	add_child(fill)
+
+	# Rim on the night limb so the disk stays circular against black space
+	# (otherwise the unlit side vanishes and the moon reads as an egg).
+	var rim := DirectionalLight3D.new()
+	rim.name = "Rim"
+	rim.light_energy = 1.15
+	rim.light_color = Color(0.72, 0.78, 0.95)
+	rim.shadow_enabled = false
+	rim.rotation_degrees = Vector3(20.0, 55.0 - 180.0, 0.0)
+	add_child(rim)
+
+	# Soft bounce so the dark hemisphere still separates from the sky.
+	environment.ambient_light_energy = maxf(environment.ambient_light_energy, 0.45)
+	if environment.ambient_light_source == Environment.AMBIENT_SOURCE_COLOR:
+		environment.ambient_light_color = Color(0.18, 0.2, 0.26)
 
 	var camera := Camera3D.new()
 	camera.current = true
@@ -99,10 +117,8 @@ func _run() -> void:
 	print("SPACE_SHOT: save_user err=", err)
 	var abs_user := ProjectSettings.globalize_path(OUTPUT_USER)
 	DirAccess.make_dir_recursive_absolute("/opt/cursor/artifacts/assets")
-	# Immutable artifacts: write a new filename, don't overwrite if policy cares.
-	var artifact := "/opt/cursor/artifacts/assets/moon_from_space_v2.png"
+	var artifact := "/opt/cursor/artifacts/assets/moon_from_space_rim.png"
 	var copy_err := DirAccess.copy_absolute(abs_user, artifact)
-	# Also refresh the canonical name for the walkthrough.
 	DirAccess.copy_absolute(abs_user, OUTPUT_ARTIFACT)
 	print(
 		"SPACE_SHOT: copy_err=",
