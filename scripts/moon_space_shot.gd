@@ -5,11 +5,11 @@ extends Node3D
 ## hemispheres look egg-shaped against black space).
 
 const CAMERA_DISTANCE_M := 2000.0
-const ORTHO_SIZE_M := 1200.0
+const CAMERA_FOV_DEG := 38.0
 const VIEWPORT_SIZE := 1024
 const SETTLE_FRAMES := 360
 const OUTPUT_USER := "user://moon_from_space.png"
-const OUTPUT_ARTIFACT := "/opt/cursor/artifacts/assets/moon_from_space_disk.png"
+const OUTPUT_ARTIFACT := "/opt/cursor/artifacts/assets/moon_from_space_perspective.png"
 
 
 func _ready() -> void:
@@ -91,8 +91,10 @@ func _run() -> void:
 
 	var camera := Camera3D.new()
 	camera.current = true
-	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
-	camera.size = ORTHO_SIZE_M
+	# Perspective keeps PanoramaSky looking like stars (ortho collapses it
+	# into radial white streaks through the planet).
+	camera.projection = Camera3D.PROJECTION_PERSPECTIVE
+	camera.fov = CAMERA_FOV_DEG
 	camera.far = 8000.0
 	camera.near = 1.0
 	world_root.add_child(camera)
@@ -110,8 +112,8 @@ func _run() -> void:
 	viewer.global_position = Vector3.ZERO
 
 	print(
-		"SPACE_SHOT: ortho disk capture size=%s cam=%s"
-		% [ORTHO_SIZE_M, str(cam_pos)]
+		"SPACE_SHOT: perspective fov=%s cam=%s"
+		% [CAMERA_FOV_DEG, str(cam_pos)]
 	)
 	for i in SETTLE_FRAMES:
 		await get_tree().process_frame
