@@ -1,25 +1,20 @@
 class_name MoonTerrainParams
 extends RefCounted
 
-## Structured lunar morphology (not a noise shell).
-## Heights in world meters; convert with meters_to_voxels().
-
-## Bump when relief formula changes — new stream directory.
-const GENERATOR_VERSION := 6
-
+const GENERATOR_VERSION := 7
 const SEED := 0x4D004E
 
-const MARIA_DEPTH_M := 14.0
-const HIGHLAND_LIFT_M := 10.0
+const MARIA_DEPTH_M := 16.0
+const HIGHLAND_LIFT_M := 12.0
 const MOUNTAIN_AMP_M := 0.0
 const PLATEAU_AMP_M := 0.0
 
-const CRATER_LARGE_AMP_M := 28.0
-const CRATER_MED_AMP_M := 12.0
-const CRATER_SMALL_AMP_M := 5.0
+const CRATER_LARGE_AMP_M := 30.0
+const CRATER_MED_AMP_M := 13.0
+const CRATER_SMALL_AMP_M := 5.5
 
 const MICRO_AMP_M := 0.0
-const HEIGHT_CLAMP_M := 55.0
+const HEIGHT_CLAMP_M := 58.0
 
 
 static func meters_to_voxels(meters: float) -> float:
