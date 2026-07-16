@@ -237,6 +237,18 @@ func _on_body_shape_entered(
 	)
 	if striker_element_id <= 0:
 		return
+	var partner_element_id := 0
+	if other_body is PhysicsBody3D:
+		partner_element_id = ImpactResolver.element_id_from_shape_index(
+			other_body as PhysicsBody3D,
+			_other_shape_index
+		)
+	if ImpactResolver.same_driven_hub_pair(
+		_world,
+		striker_element_id,
+		partner_element_id
+	):
+		return
 	var inbound_velocity := pre_step_velocity(body)
 	var contact_world := _contact_point_on_body(
 		body,
@@ -276,6 +288,7 @@ func _on_body_shape_entered(
 		"striker_body": body,
 		"local_shape_index": local_shape_index,
 		"partner": other_body,
+		"partner_element_id": partner_element_id,
 		"impulse_length": impulse_length,
 		"contact_world": contact_world,
 		"contact_normal": contact_normal,
@@ -332,6 +345,18 @@ func integrate_contacts(
 		# ROVER-MODULES-V1: locomotive ↔ terrain carve/damage off (wheels only).
 		if _locomotive_ignores_terrain_partner(assembly_id, partner):
 			continue
+		var partner_element_id := 0
+		if partner is PhysicsBody3D:
+			partner_element_id = ImpactResolver.element_id_from_shape_index(
+				partner as PhysicsBody3D,
+				state.get_contact_collider_shape(contact_index)
+			)
+		if ImpactResolver.same_driven_hub_pair(
+			_world,
+			striker_element_id,
+			partner_element_id
+		):
+			continue
 		var partner_key := ImpactResolver.partner_key_from_object(partner)
 		var batch_key := ImpactResolver.batch_key(
 			striker_element_id,
@@ -367,6 +392,7 @@ func integrate_contacts(
 			"striker_body": body,
 			"local_shape_index": local_shape_index,
 			"partner": partner,
+			"partner_element_id": partner_element_id,
 			"impulse_length": effective_impulse,
 			"contact_world": contact_world,
 			"contact_normal": world_normal,
@@ -492,6 +518,13 @@ func _apply_entry(
 		striker_assembly_id = int(striker_body.get_meta("assembly_id", 0))
 	var partner: Object = entry.get("partner")
 	if ImpactResolver.same_assembly_subgrid(striker_body, partner):
+		return 0.0
+	var partner_element_id := int(entry.get("partner_element_id", 0))
+	if ImpactResolver.same_driven_hub_pair(
+		_world,
+		striker_element_id,
+		partner_element_id
+	):
 		return 0.0
 	# ROVER-MODULES-V1: locomotive ↔ terrain carve/damage off (wheels only).
 	if _locomotive_ignores_terrain_partner(striker_assembly_id, partner):

@@ -24,6 +24,7 @@ func _run_tests() -> void:
 		_test_assembly_contact_damages_both,
 		_test_shape_enter_carves_terrain,
 		_test_cross_group_same_assembly_damages,
+		_test_driven_hub_pair_immune,
 		_test_subgrid_immunity_same_body_group,
 		_test_sustained_actuator_carves_terrain,
 		_test_sustained_actuator_damages_striker,
@@ -82,20 +83,20 @@ func _test_cross_group_same_assembly_damages() -> bool:
 		_free_fixture(fixture)
 		return _fail("cross-group piston spawn failed")
 	var head_id := int(piston["head_element_id"])
-	var base_id := int(piston["base_element_id"])
+	var frame_id := int(piston["frame_element_id"])
 	var head_body: PhysicsBody3D = (
 		fixture.projection.get_element_projection(head_id).get("body")
 	)
-	var base_body: PhysicsBody3D = (
-		fixture.projection.get_element_projection(base_id).get("body")
+	var frame_body: PhysicsBody3D = (
+		fixture.projection.get_element_projection(frame_id).get("body")
 	)
-	if head_body == null or base_body == null:
+	if head_body == null or frame_body == null:
 		_free_fixture(fixture)
 		return _fail("cross-group bodies missing")
-	if head_body == base_body:
+	if head_body == frame_body:
 		_free_fixture(fixture)
-		return _fail("piston base/head must be separate body groups")
-	if ImpactResolver.same_assembly_subgrid(head_body, base_body):
+		return _fail("piston head and base-side frame must be separate groups")
+	if ImpactResolver.same_assembly_subgrid(head_body, frame_body):
 		_free_fixture(fixture)
 		return _fail("different body groups must not be subgrid-immune")
 	var integrity_before: float = (
@@ -106,7 +107,8 @@ func _test_cross_group_same_assembly_damages() -> bool:
 		"striker_element_id": head_id,
 		"striker_body": head_body,
 		"local_shape_index": 0,
-		"partner": base_body,
+		"partner": frame_body,
+		"partner_element_id": frame_id,
 		"impulse_length": 48.0,
 		"contact_world": head_body.global_position,
 		"contact_points": PackedVector3Array([head_body.global_position]),
@@ -116,6 +118,52 @@ func _test_cross_group_same_assembly_damages() -> bool:
 	_free_fixture(fixture)
 	if integrity_after >= integrity_before:
 		return _fail("cross-group same-assembly hit should damage striker")
+	return true
+
+
+func _test_driven_hub_pair_immune() -> bool:
+	var fixture := await _new_fixture()
+	var piston := await _spawn_piston_on_ground(fixture)
+	if piston.is_empty():
+		_free_fixture(fixture)
+		return _fail("hub-pair piston spawn failed")
+	var head_id := int(piston["head_element_id"])
+	var base_id := int(piston["base_element_id"])
+	var head_body: PhysicsBody3D = (
+		fixture.projection.get_element_projection(head_id).get("body")
+	)
+	var base_body: PhysicsBody3D = (
+		fixture.projection.get_element_projection(base_id).get("body")
+	)
+	if head_body == null or base_body == null:
+		_free_fixture(fixture)
+		return _fail("hub-pair bodies missing")
+	if not ImpactResolver.same_driven_hub_pair(
+		fixture.world,
+		head_id,
+		base_id
+	):
+		_free_fixture(fixture)
+		return _fail("piston base/head must count as driven hub pair")
+	var integrity_before: float = (
+		fixture.world.get_element(head_id).integrity
+	)
+	fixture.impact_service.apply_entry_for_test({
+		"batch_key": "hub_pair_test",
+		"striker_element_id": head_id,
+		"striker_body": head_body,
+		"local_shape_index": 0,
+		"partner": base_body,
+		"partner_element_id": base_id,
+		"impulse_length": 48.0,
+		"contact_world": head_body.global_position,
+		"contact_points": PackedVector3Array([head_body.global_position]),
+		"contact_impulses": PackedFloat32Array([48.0]),
+	})
+	var integrity_after: float = fixture.world.get_element(head_id).integrity
+	_free_fixture(fixture)
+	if integrity_after < integrity_before:
+		return _fail("driven hub pair contact damaged striker")
 	return true
 
 
@@ -785,6 +833,7 @@ func _spawn_piston_on_ground(fixture: Dictionary) -> Dictionary:
 		await get_tree().physics_frame
 	return {
 		"assembly_id": assembly_id,
+		"frame_element_id": int(frame_result.data["element_id"]),
 		"base_element_id": int(piston_result.data["element_id"]),
 		"head_element_id": int(piston_result.data["head_element_id"]),
 	}

@@ -171,6 +171,37 @@ static func same_assembly_subgrid(
 	return striker_group_id == partner_group_id
 
 
+## Driven joint hub interface (piston_base↔head / rotor_base↔top): no kinetic
+## self-damage from resting contact at the hinge. Attached frames still hit.
+static func same_driven_hub_pair(
+	world,
+	element_a_id: int,
+	element_b_id: int
+) -> bool:
+	if (
+		world == null
+		or element_a_id <= 0
+		or element_b_id <= 0
+		or element_a_id == element_b_id
+	):
+		return false
+	for joint: SimulationJoint in world.list_joints():
+		if joint == null or not joint.is_driven():
+			continue
+		if (
+			(
+				joint.element_a_id == element_a_id
+				and joint.element_b_id == element_b_id
+			)
+			or (
+				joint.element_a_id == element_b_id
+				and joint.element_b_id == element_a_id
+			)
+		):
+			return true
+	return false
+
+
 ## Reduced mass of the contact pair: m1·m2/(m1+m2); terrain/static ⇒ m1.
 static func effective_mass(body: RigidBody3D, partner: Object) -> float:
 	if body == null:

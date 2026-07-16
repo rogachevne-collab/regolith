@@ -186,7 +186,8 @@ Jolt contact listener).
 | `VoxelTerrain` / `StaticBody3D` без `assembly_id` (world surface) | carve + damage ударяющего `element_id` |
 | Другой `PhysicsBody3D` с `assembly_id` meta (**иной** assembly) | damage обоим `element_id` (каждая сторона эмитит свой entry) |
 | Тот же `assembly_id` и тот же `body_group_id` | **игнор** (subgrid immunity) |
-| Тот же `assembly_id`, **другой** `body_group_id` | damage обоим `element_id` (subgrid hit) |
+| Тот же driven joint: hub endpoints (`base`↔`top`/`head`) | **игнор** (стык шарнира) |
+| Тот же `assembly_id`, **другой** `body_group_id` (иначе) | damage (стрела↔корпус и т.п.) |
 | Игрок (`CharacterBody3D`) / rigid-пропсы без `assembly_id` / прочие тела | игнор в v1 |
 
 `StaticBody3D` anchored assembly не источник удара (frozen, без integrate) — v0.

@@ -228,8 +228,9 @@ consumer по правилам Piston v1: demand = `power_draw_w`, пока moto
 - angular Y (ось ротора) свободен — непрерывное вращение без limits;
 - base и top **body groups сталкиваются** в Jolt (нет group-wide exception);
   clearance стыка — authored меньший box collider у `rotor_base` /
-  `rotor_top` (чуть ниже cell), чтобы hub’ы не интернетрировали на шарнире.
-  Навешенные фреймы сохраняют полный collider и бьют корпус/друг друга.
+  `rotor_top` (0.4 m при cell 0.5);
+  kinetic ignore только для пары hub endpoints (см. KINETIC-INTERACTION);
+  навешенные фреймы бьют корпус на общих правах.
 
 ### Motor
 
