@@ -134,6 +134,13 @@ static func battery_discharge_w(element: SimulationElement) -> float:
 	)
 
 
+static func archetype_default(archetype_id: String, key: String, fallback: Variant = null) -> Variant:
+	var defaults: Variant = _ARCHETYPE_DEFAULTS.get(archetype_id, {})
+	if defaults is Dictionary and (defaults as Dictionary).has(key):
+		return (defaults as Dictionary)[key]
+	return fallback
+
+
 static func _empty_profile() -> Dictionary:
 	return {
 		"is_source": false,
