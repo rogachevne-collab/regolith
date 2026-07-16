@@ -78,6 +78,7 @@ const CONSTRUCTION_ARCHETYPES: PackedStringArray = [
 	"piston_base",
 	"rotor_base",
 	"rotor_base_large",
+	"hinge_base",
 	"rover_frame",
 	"wheel_suspension",
 	"drive_wheel",
@@ -129,6 +130,7 @@ const TOOLBAR_PAGES: Array = [
 		{"type": &"block", "archetype_id": "power_distributor_small"},
 		{"type": &"block", "archetype_id": "rotor_base"},
 		{"type": &"block", "archetype_id": "rotor_base_large"},
+		{"type": &"block", "archetype_id": "hinge_base"},
 	],
 ]
 
@@ -1225,6 +1227,7 @@ func _is_actuator_target_hit(hit: InteractionHit) -> bool:
 	return (
 		hit.metadata.has("piston_joint_id")
 		or hit.metadata.has("rotor_joint_id")
+		or hit.metadata.has("hinge_joint_id")
 	)
 
 
@@ -1232,18 +1235,25 @@ func _actuator_hit_joint_id(hit: InteractionHit) -> int:
 	var joint_id := int(hit.metadata.get("piston_joint_id", 0))
 	if joint_id > 0:
 		return joint_id
-	return int(hit.metadata.get("rotor_joint_id", 0))
+	joint_id = int(hit.metadata.get("rotor_joint_id", 0))
+	if joint_id > 0:
+		return joint_id
+	return int(hit.metadata.get("hinge_joint_id", 0))
 
 
 func _actuator_hit_forward_velocity(hit: InteractionHit) -> float:
 	if hit.metadata.has("rotor_joint_id"):
 		return float(hit.metadata.get("rotor_forward_velocity_rad_s", 0.5))
+	if hit.metadata.has("hinge_joint_id"):
+		return float(hit.metadata.get("hinge_forward_velocity_rad_s", 0.5))
 	return float(hit.metadata.get("piston_extend_velocity_mps", 0.25))
 
 
 func _actuator_hit_reverse_velocity(hit: InteractionHit) -> float:
 	if hit.metadata.has("rotor_joint_id"):
 		return float(hit.metadata.get("rotor_reverse_velocity_rad_s", 0.5))
+	if hit.metadata.has("hinge_joint_id"):
+		return float(hit.metadata.get("hinge_reverse_velocity_rad_s", 0.5))
 	return float(hit.metadata.get("piston_retract_velocity_mps", 0.25))
 
 

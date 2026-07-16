@@ -116,6 +116,9 @@ static func _fingerprint_from_schema(
 		"rotor_definition": _rotor_definition_row(
 			archetype.rotor_definition
 		),
+		"hinge_definition": _hinge_definition_row(
+			archetype.hinge_definition
+		),
 		"wheel_definition": _wheel_definition_row(
 			archetype.wheel_definition
 		),
@@ -206,6 +209,23 @@ static func _rotor_definition_row(
 		"top_archetype_id": definition.top_archetype_id,
 		"axis_face": definition.axis_face,
 		"top_offset_cells": definition.top_offset_cells,
+		"power_draw_w": definition.power_draw_w,
+		"overload_policy": definition.overload_policy,
+	}
+
+
+static func _hinge_definition_row(
+	definition: HingeDefinition
+) -> Dictionary:
+	if definition == null:
+		return {}
+	return {
+		"top_archetype_id": definition.top_archetype_id,
+		"axis_face": definition.axis_face,
+		"top_offset_cells": definition.top_offset_cells,
+		"bend_axis_face": definition.bend_axis_face,
+		"min_angle_rad": definition.min_angle_rad,
+		"max_angle_rad": definition.max_angle_rad,
 		"power_draw_w": definition.power_draw_w,
 		"overload_policy": definition.overload_policy,
 	}

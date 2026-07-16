@@ -58,6 +58,8 @@ static func reconstruct_all_group_motions(world, assembly_id: int) -> Dictionary
 		var head_motion: AssemblyMotionState
 		if int(spec.get("joint_kind", -1)) == SimulationJoint.Kind.ROTOR:
 			head_motion = _reconstruct_top_from_rotor_base(world, spec, base_motion)
+		elif int(spec.get("joint_kind", -1)) == SimulationJoint.Kind.HINGE:
+			head_motion = _reconstruct_top_from_hinge_base(world, spec, base_motion)
 		else:
 			head_motion = _reconstruct_head_from_base(world, spec, base_motion)
 		if head_motion != null:
@@ -159,6 +161,57 @@ static func _reconstruct_top_from_rotor_base(
 	var pivot_local := _port_anchor_assembly_local(
 		base_element,
 		SimulationMotorState.ROTOR_DRIVE_PORT
+	)
+	var angle: float = joint.motor.clamp_observed_position()
+	var axis_world: Vector3 = (
+		base_motion.transform.basis * axis_local
+	).normalized()
+	var pivot_world: Vector3 = base_motion.transform * pivot_local
+	var spin := Basis(axis_world, angle)
+	var top: AssemblyMotionState = base_motion.duplicate_state()
+	top.transform = Transform3D(
+		spin * base_motion.transform.basis,
+		pivot_world + spin * (base_motion.transform.origin - pivot_world)
+	)
+	if base_motion.frozen:
+		top.linear_velocity = Vector3.ZERO
+		top.angular_velocity = Vector3.ZERO
+	else:
+		var omega_rel: Vector3 = axis_world * joint.motor.observed_velocity_mps
+		top.angular_velocity = base_motion.angular_velocity + omega_rel
+		top.linear_velocity = (
+			base_motion.linear_velocity
+			+ omega_rel.cross(top.transform.origin - pivot_world)
+		)
+	top.sleeping = base_motion.sleeping
+	top.frozen = false
+	return top
+
+
+static func _reconstruct_top_from_hinge_base(
+	world,
+	spec: Dictionary,
+	base_motion: AssemblyMotionState
+) -> AssemblyMotionState:
+	var joint = world.get_joint(int(spec.get("joint_id", 0)))
+	var base_element = world.get_element(int(spec.get("base_element_id", 0)))
+	if joint == null or joint.motor == null or base_element == null:
+		return base_motion.duplicate_state()
+	var definition: HingeDefinition = null
+	var archetype = base_element.get_archetype()
+	if archetype != null:
+		definition = archetype.hinge_definition
+	if definition == null:
+		return base_motion.duplicate_state()
+	var axis_local := HingePlacementUtil.bend_axis_assembly_local(
+		base_element,
+		definition
+	)
+	if axis_local.length_squared() <= 0.000001:
+		return base_motion.duplicate_state()
+	var pivot_local := HingePlacementUtil.pivot_assembly_local(
+		base_element,
+		definition
 	)
 	var angle: float = joint.motor.clamp_observed_position()
 	var axis_world: Vector3 = (

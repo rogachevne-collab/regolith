@@ -50,6 +50,10 @@ const _ARCHETYPE_DEFAULTS := {
 		"is_consumer": true,
 		"idle_w": 0.0,
 	},
+	"hinge_base": {
+		"is_consumer": true,
+		"idle_w": 0.0,
+	},
 	"drive_wheel": {
 		"is_consumer": true,
 		"idle_w": 20.0,
