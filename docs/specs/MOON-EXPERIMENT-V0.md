@@ -112,25 +112,24 @@
 
 ## Terrain
 
+Цель визуала: **SE-like moon** (круглые ударные кратеры, цельная кора).
+В Space Engineers планеты — заранее подготовленные voxel/heightmap данные;
+у нас тот же контракт через bake.
+
 - Узел: **`VoxelLodTerrain`** (планеты / большие smooth volumes — путь доки).
-- Generator: **`MoonTerrainGenerator`** (`VoxelGeneratorScript`) — height-based
-  lunar SDF по формуле доки Planet:
-  `sdf = length(p) - (R0 + H(normalize(p)))`.
-  Слои `H`: continents, ridged mountains, plateaus, canyons/rilles,
-  multi-scale cellular craters, micro-regolith
-  (`MoonTerrainParams`, `GENERATOR_VERSION`).
+- **Play (канон Voxel Tools):** `VoxelGeneratorGraph` как в
+  [Generators → Planet](https://voxel-tools.readthedocs.io/en/latest/generators/) —
+  **`SdfSphere` + height noise** на `normalize(p)` (native C++). Без bake коры.
+- Digs: `VoxelStreamRegionFiles` modified-only (`save_generator_output=false`).
+- **Нельзя:** live GDScript 565-кратеров; неполный RegionFiles-bake + plain fallback
+  (дырявые дальние LOD, исчезающие при приближении).
 - Mesher: `VoxelMesherTransvoxel`.
 - Material: `transvoxel_terrain` / moon albedo (как main).
 - `transform.basis` uniform scale **0.65**.
 - Collisions: on; streaming вокруг viewer (**не** `full_load` с RegionFiles —
   плагин отвергает).
-- Persistence:
-  - `VoxelStreamRegionFiles` → `user://moon_experiment/gen_v{N}/`
-  - **`save_generator_output = true`** — сгенерированные чанки пишутся в stream
-    (фиксация ландшафта; копки не ломаются при смене кода, пока `N` тот же)
-  - после carve — `save_modified_blocks` + flush
-  - смена рельефа → bump `GENERATOR_VERSION` (новый каталог)
-  - опциональный bake: `./run.sh res://scenes/moon_bake_stream.tscn`
+- Spawn: ждать meshed + physics; temp landing pad — только fallback.
+- Смена рельефа → bump `GENERATOR_VERSION` + повторный bake.
 - Мир-сейв сборок: `gen_v{N}/world_save.json` (не смешивать с flat `main`).
 
 Типизация в коде сегодня: много `VoxelTerrain`. Для Lod нужен **тонкий адаптер**
@@ -249,7 +248,9 @@ player/projection за feature-flag / «если задан GravityField / moon_
 ## Анти-цели v0
 
 - Не заменять `main` луной.
-- Не делать мульти-тело solar system / atmosphere / orbital flight.
+- Не делать мульти-тело solar system / orbital flight.
+  Презентационное небо (Земля + atmospheric limb с поверхности) — ок;
+  это не симуляция орбит и не жизненная атмосфера на Луне.
 - Не вводить новую GDExtension-зависимость (R6).
 - Не писать headless геймплей-тесты сцены луны (R2).
 
@@ -279,6 +280,6 @@ player/projection за feature-flag / «если задан GravityField / moon_
 | 4 Player local up | **done** |
 | 5 Construction seat | **done** |
 | 6 Wheels / joints parity | **done** (rover spawn + field-aware wheels) |
-| 7 Dig persistence | **done** (RegionFiles + `save_generator_output`, gen_vN) |
-| Lunar relief H(n) | **done** (`MoonTerrainGenerator` layered height-based SDF) |
-| Landscape bake | **done** (`moon_bake_stream.tscn`, versioned stream) |
+| 7 Dig persistence | **done** (bake RegionFiles + play modified-only digs) |
+| Lunar relief H(n) | **done** (HQ `MoonTerrainGenerator` — bake only) |
+| Landscape bake | **done** (required: `moon_bake_stream.tscn` → play stream) |

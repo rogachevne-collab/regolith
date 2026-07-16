@@ -18,7 +18,8 @@ const SPAWN_CLEARANCE_M := 1.05
 const GRAVITY_M_S2 := 1.62
 ## Area shell beyond surface so near-surface bodies stay inside override.
 const GRAVITY_AREA_RADIUS_FACTOR := 1.35
-const DEFAULT_VIEW_DISTANCE_VOXELS := 256
+## Keep short on M1 — long LodTerrain view shows half-baked distant scraps.
+const DEFAULT_VIEW_DISTANCE_VOXELS := 140
 const DIG_STREAM_DIR := "user://moon_experiment"
 const WORLD_SAVE_PATH := "user://moon_experiment/world_save.json"
 

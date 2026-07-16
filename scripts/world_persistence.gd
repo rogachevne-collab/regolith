@@ -33,6 +33,13 @@ static func read_payload() -> Dictionary:
 	if int(payload.get("save_version", 0)) != SAVE_VERSION:
 		push_warning("WorldPersistence: save version mismatch")
 		return {}
+	if not save_path_override.is_empty():
+		if (
+			int(payload.get("generator_version", -1))
+			!= MoonTerrainParams.GENERATOR_VERSION
+		):
+			push_warning("WorldPersistence: generator version mismatch")
+			return {}
 	return payload
 
 
@@ -45,6 +52,8 @@ static func save(world: SimulationWorld, player: Node3D) -> bool:
 		"simulation": world.capture_snapshot(),
 		"player": _serialize_player(player),
 	}
+	if not save_path_override.is_empty():
+		payload["generator_version"] = MoonTerrainParams.GENERATOR_VERSION
 	var json := JSON.stringify(payload, "\t")
 	var path := active_save_path()
 	var parent_dir := path.get_base_dir()

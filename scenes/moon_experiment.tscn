@@ -3,29 +3,27 @@
 [ext_resource type="Script" path="res://scripts/moon_experiment_bootstrap.gd" id="1"]
 [ext_resource type="PackedScene" uid="uid://player001" path="res://scenes/player.tscn" id="2"]
 [ext_resource type="Material" path="res://resources/terrain_material_smooth.tres" id="4"]
-[ext_resource type="Texture2D" uid="uid://wb282s8lece5" path="res://resources/starfield_panorama.png" id="5"]
 [ext_resource type="Script" path="res://scripts/placed_blocks.gd" id="6"]
 [ext_resource type="Script" path="res://scripts/world_command_gateway.gd" id="10"]
 [ext_resource type="PackedScene" path="res://scenes/simulation_session.tscn" id="11"]
 [ext_resource type="Script" path="res://scripts/simulation/runtime/gravity_field.gd" id="12"]
-
-[sub_resource type="PanoramaSkyMaterial" id="PanoramaSkyMaterial_stars"]
-panorama = ExtResource("5")
-energy_multiplier = 1.35
+[ext_resource type="VoxelGeneratorGraph" path="res://resources/moon_planet_generator.tres" id="13"]
+[ext_resource type="PackedScene" uid="uid://lunarskydecor001" path="res://scenes/lunar_sky_decor.tscn" id="14"]
+[ext_resource type="Material" path="res://resources/sky/lunar_starfield_sky_material.tres" id="15"]
 
 [sub_resource type="Sky" id="Sky_env"]
-sky_material = SubResource("PanoramaSkyMaterial_stars")
-radiance_size = 4
+sky_material = ExtResource("15")
+radiance_size = 3
 
 [sub_resource type="Environment" id="Environment_moon"]
 background_mode = 2
 sky = SubResource("Sky_env")
 ambient_light_source = 2
-ambient_light_color = Color(0.22, 0.24, 0.32, 1)
-ambient_light_sky_contribution = 0.3
-ambient_light_energy = 0.24
+ambient_light_color = Color(0.16, 0.18, 0.26, 1)
+ambient_light_sky_contribution = 0.45
+ambient_light_energy = 0.2
 tonemap_mode = 2
-tonemap_exposure = 0.88
+tonemap_exposure = 0.92
 ssao_enabled = true
 ssao_radius = 1.2
 ssao_intensity = 0.65
@@ -33,10 +31,10 @@ ssao_power = 1.4
 sdfgi_enabled = false
 fog_enabled = true
 fog_mode = 1
-fog_light_color = Color(0.12, 0.14, 0.2, 1)
-fog_density = 0.0002
-fog_aerial_perspective = 0.22
-fog_sky_affect = 0.35
+fog_light_color = Color(0.2, 0.24, 0.36, 1)
+fog_density = 0.00022
+fog_aerial_perspective = 0.55
+fog_sky_affect = 0.55
 
 [sub_resource type="VoxelMesherTransvoxel" id="VoxelMesherTransvoxel_moon"]
 
@@ -62,6 +60,12 @@ directional_shadow_max_distance = 256.0
 transform = Transform3D(-0.866025, 0.25, -0.433013, 0, 0.866025, 0.5, 0.5, 0.433013, -0.75, 0, 400, 0)
 light_color = Color(0.55, 0.62, 0.82, 1)
 light_energy = 0.28
+
+[node name="LunarSkyDecor" parent="." instance=ExtResource("14")]
+sun_light_path = NodePath("../DirectionalLight3D")
+earth_direction = Vector3(0.28, 0.92, 0.28)
+angular_diameter_deg = 5.8
+distance_m = 12000.0
 
 [node name="GravityField" type="Node" parent="."]
 script = ExtResource("12")

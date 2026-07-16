@@ -117,15 +117,16 @@ func _resolve_up() -> Vector3:
 
 
 func _resolve_gravity_accel(up: Vector3) -> Vector3:
-	# Prefer PhysicsServer total_gravity so CharacterBody matches Area3D Field.
+	# CharacterBody ignores Area3D gravity; with SPACE_OVERRIDE_REPLACE the
+	# Area can zero space gravity in total_gravity. Prefer explicit Field.
+	var field := GravityField.find_in_tree(self)
+	if field != null:
+		return field.gravity_accel_at(global_position)
 	var direct := PhysicsServer3D.body_get_direct_state(get_rid())
 	if direct != null:
 		var total: Vector3 = direct.total_gravity
 		if total.length_squared() > 0.000001:
 			return total
-	var field_accel := GravityField.resolve_gravity_accel(self, global_position)
-	if field_accel.length_squared() > 0.000001:
-		return field_accel
 	return -up * gravity
 
 
