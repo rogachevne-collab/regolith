@@ -20,7 +20,7 @@ const AUTOSAVE_INTERVAL_S := 90.0
 ## Spawns a welded rover on the flattest ground patch near BaseSpawn.
 @export var spawn_demo_rover := true
 ## Phrase for RoverComposer (N wheels, long/short/…). Empty → hardcoded demo layout.
-@export var demo_rover_phrase := "колбаса на 12 колес, низкая"
+@export var demo_rover_phrase := "большой широкий длинный низкий ровер-платформа с 12 колесами, кокпит в центре"
 
 @onready var _loading: Label = $CanvasLayer/Loading
 @onready var _coordinates: Label = $CanvasLayer/Coordinates
