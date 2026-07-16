@@ -2,8 +2,8 @@ extends Node3D
 
 ## HQ orbital preview: precomputed H lat/lon map → dense mesh + shadow graze.
 
-const CAMERA_DISTANCE_M := 2000.0
-const CAMERA_FOV_DEG := 40.0
+const CAMERA_DISTANCE_M := 2600.0
+const CAMERA_FOV_DEG := 42.0
 const VIEWPORT_SIZE := 1536
 const HEIGHT_W := 768
 const HEIGHT_H := 384
