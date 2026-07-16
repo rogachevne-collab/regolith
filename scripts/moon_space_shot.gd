@@ -1,11 +1,15 @@
 extends Node3D
 
-## One-shot: render the moon from outside and save a PNG, then quit.
+## One-shot: render the moon from outside into a square SubViewport PNG.
+## Uses strong night-limb rim so the full disk reads circular (lit-only
+## hemispheres look egg-shaped against black space).
 
-const CAMERA_DISTANCE_M := 1800.0
-const SETTLE_FRAMES := 300
+const CAMERA_DISTANCE_M := 2000.0
+const ORTHO_SIZE_M := 1200.0
+const VIEWPORT_SIZE := 1024
+const SETTLE_FRAMES := 360
 const OUTPUT_USER := "user://moon_from_space.png"
-const OUTPUT_ARTIFACT := "/opt/cursor/artifacts/assets/moon_from_space.png"
+const OUTPUT_ARTIFACT := "/opt/cursor/artifacts/assets/moon_from_space_disk.png"
 
 
 func _ready() -> void:
@@ -13,6 +17,17 @@ func _ready() -> void:
 
 
 func _run() -> void:
+	var viewport := SubViewport.new()
+	viewport.name = "CaptureViewport"
+	viewport.size = Vector2i(VIEWPORT_SIZE, VIEWPORT_SIZE)
+	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	viewport.transparent_bg = false
+	add_child(viewport)
+
+	var world_root := Node3D.new()
+	world_root.name = "World"
+	viewport.add_child(world_root)
+
 	var terrain := VoxelLodTerrain.new()
 	terrain.name = "VoxelTerrain"
 	terrain.scale = Vector3.ONE * MoonGeometry.VOXEL_SCALE
@@ -23,7 +38,8 @@ func _run() -> void:
 	terrain.voxel_bounds = MoonGeometry.voxel_bounds_aabb()
 	terrain.view_distance = int(ceili(MoonGeometry.radius_voxels() * 2.2))
 	terrain.full_load_mode_enabled = true
-	add_child(terrain)
+	terrain.lod_distance = 220.0
+	world_root.add_child(terrain)
 
 	var env := WorldEnvironment.new()
 	var environment := Environment.new()
@@ -31,70 +47,71 @@ func _run() -> void:
 	if sky_tex != null:
 		var sky_mat := PanoramaSkyMaterial.new()
 		sky_mat.panorama = sky_tex
-		sky_mat.energy_multiplier = 1.2
+		sky_mat.energy_multiplier = 1.15
 		var sky := Sky.new()
 		sky.sky_material = sky_mat
 		environment.background_mode = Environment.BG_SKY
 		environment.sky = sky
-		environment.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-		environment.ambient_light_sky_contribution = 0.25
-		environment.ambient_light_energy = 0.3
 	else:
 		environment.background_mode = Environment.BG_COLOR
 		environment.background_color = Color(0.01, 0.01, 0.02)
-		environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-		environment.ambient_light_color = Color(0.15, 0.16, 0.2)
-		environment.ambient_light_energy = 0.35
+	# Color ambient (not sky-only) so the night limb stays above black.
+	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	environment.ambient_light_color = Color(0.22, 0.24, 0.3)
+	environment.ambient_light_energy = 0.85
+	environment.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	environment.tonemap_exposure = 1.05
 	env.environment = environment
-	add_child(env)
+	world_root.add_child(env)
 
 	var sun := DirectionalLight3D.new()
 	sun.name = "Sun"
-	sun.light_energy = 2.0
+	sun.light_energy = 1.7
 	sun.shadow_enabled = false
-	# Key light from camera-right / slightly above.
-	sun.rotation_degrees = Vector3(-25.0, 55.0, 0.0)
-	add_child(sun)
+	sun.rotation_degrees = Vector3(-20.0, 50.0, 0.0)
+	world_root.add_child(sun)
 
-	var fill := DirectionalLight3D.new()
-	fill.name = "Fill"
-	fill.light_energy = 0.28
-	fill.light_color = Color(0.55, 0.62, 0.85)
-	fill.rotation_degrees = Vector3(15.0, -130.0, 0.0)
-	add_child(fill)
-
-	# Rim on the night limb so the disk stays circular against black space
-	# (otherwise the unlit side vanishes and the moon reads as an egg).
+	# Primary rim: opposite the key light — defines the night limb.
 	var rim := DirectionalLight3D.new()
 	rim.name = "Rim"
-	rim.light_energy = 1.15
-	rim.light_color = Color(0.72, 0.78, 0.95)
+	rim.light_energy = 2.4
+	rim.light_color = Color(0.75, 0.82, 1.0)
 	rim.shadow_enabled = false
-	rim.rotation_degrees = Vector3(20.0, 55.0 - 180.0, 0.0)
-	add_child(rim)
+	rim.rotation_degrees = Vector3(25.0, 50.0 - 180.0, 0.0)
+	world_root.add_child(rim)
 
-	# Soft bounce so the dark hemisphere still separates from the sky.
-	environment.ambient_light_energy = maxf(environment.ambient_light_energy, 0.45)
-	if environment.ambient_light_source == Environment.AMBIENT_SOURCE_COLOR:
-		environment.ambient_light_color = Color(0.18, 0.2, 0.26)
+	# Secondary wrap so the terminator does not punch a black bite out of the disk.
+	var wrap := DirectionalLight3D.new()
+	wrap.name = "Wrap"
+	wrap.light_energy = 0.75
+	wrap.light_color = Color(0.55, 0.6, 0.75)
+	wrap.shadow_enabled = false
+	wrap.rotation_degrees = Vector3(5.0, 50.0 - 110.0, 0.0)
+	world_root.add_child(wrap)
 
 	var camera := Camera3D.new()
 	camera.current = true
-	camera.fov = 42.0
+	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
+	camera.size = ORTHO_SIZE_M
 	camera.far = 8000.0
-	add_child(camera)
+	camera.near = 1.0
+	world_root.add_child(camera)
 	var cam_pos := Vector3(0.75, 0.25, 1.0).normalized() * CAMERA_DISTANCE_M
 	camera.look_at_from_position(cam_pos, Vector3.ZERO, Vector3.UP)
 
+	# Drive meshing from the planet center so the full sphere (including the
+	# night limb) exists — a camera-only viewer tends to omit the far side,
+	# and a lit half-disk reads as an egg against black space.
 	var viewer := VoxelViewer.new()
 	viewer.view_distance = terrain.view_distance
 	viewer.requires_visuals = true
 	viewer.requires_collisions = false
-	camera.add_child(viewer)
+	world_root.add_child(viewer)
+	viewer.global_position = Vector3.ZERO
 
 	print(
-		"SPACE_SHOT: waiting mesh view_distance=%d cam=%s"
-		% [terrain.view_distance, str(cam_pos)]
+		"SPACE_SHOT: ortho disk capture size=%s cam=%s"
+		% [ORTHO_SIZE_M, str(cam_pos)]
 	)
 	for i in SETTLE_FRAMES:
 		await get_tree().process_frame
@@ -102,7 +119,7 @@ func _run() -> void:
 			print("SPACE_SHOT: frame=", i)
 
 	await RenderingServer.frame_post_draw
-	var tex := get_viewport().get_texture()
+	var tex: ViewportTexture = viewport.get_texture()
 	if tex == null:
 		push_error("SPACE_SHOT: no viewport texture")
 		get_tree().quit()
@@ -114,18 +131,17 @@ func _run() -> void:
 		return
 	img.flip_y()
 	var err := img.save_png(OUTPUT_USER)
-	print("SPACE_SHOT: save_user err=", err)
+	print("SPACE_SHOT: save_user err=", err, " img=", img.get_width(), "x", img.get_height())
 	var abs_user := ProjectSettings.globalize_path(OUTPUT_USER)
 	DirAccess.make_dir_recursive_absolute("/opt/cursor/artifacts/assets")
-	var artifact := "/opt/cursor/artifacts/assets/moon_from_space_rim.png"
-	var copy_err := DirAccess.copy_absolute(abs_user, artifact)
-	DirAccess.copy_absolute(abs_user, OUTPUT_ARTIFACT)
+	var copy_err := DirAccess.copy_absolute(abs_user, OUTPUT_ARTIFACT)
+	DirAccess.copy_absolute(abs_user, "/opt/cursor/artifacts/assets/moon_from_space.png")
 	print(
 		"SPACE_SHOT: copy_err=",
 		copy_err,
 		" artifact=",
-		artifact,
-		" size=",
-		FileAccess.get_file_as_bytes(artifact).size()
+		OUTPUT_ARTIFACT,
+		" bytes=",
+		FileAccess.get_file_as_bytes(OUTPUT_ARTIFACT).size()
 	)
 	get_tree().quit()
