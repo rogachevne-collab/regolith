@@ -150,8 +150,7 @@ func emit_actuator_sustained_entry(
 	var impulse_length := force_n * delta
 	if impulse_length < ImpactResolver.I_MIN:
 		return
-	var assembly_id := int(striker_body.get_meta("assembly_id", 0))
-	if ImpactResolver.same_assembly_subgrid(assembly_id, partner):
+	if ImpactResolver.same_assembly_subgrid(striker_body, partner):
 		return
 	var partner_key := ImpactResolver.partner_key_from_object(partner)
 	var batch_key := ImpactResolver.batch_key(
@@ -225,7 +224,7 @@ func _on_body_shape_entered(
 	var assembly_id := int(body.get_meta("assembly_id", 0))
 	if assembly_id <= 0:
 		return
-	if ImpactResolver.same_assembly_subgrid(assembly_id, other_body):
+	if ImpactResolver.same_assembly_subgrid(body, other_body):
 		return
 	# ROVER-MODULES-V1: locomotive ↔ terrain carve/damage off (wheels only).
 	if _locomotive_ignores_terrain_partner(assembly_id, other_body):
@@ -328,7 +327,7 @@ func integrate_contacts(
 			and ImpactResolver.player_suit_state(partner) == null
 		):
 			continue
-		if ImpactResolver.same_assembly_subgrid(assembly_id, partner):
+		if ImpactResolver.same_assembly_subgrid(body, partner):
 			continue
 		# ROVER-MODULES-V1: locomotive ↔ terrain carve/damage off (wheels only).
 		if _locomotive_ignores_terrain_partner(assembly_id, partner):
@@ -492,7 +491,7 @@ func _apply_entry(
 	if striker_body != null:
 		striker_assembly_id = int(striker_body.get_meta("assembly_id", 0))
 	var partner: Object = entry.get("partner")
-	if ImpactResolver.same_assembly_subgrid(striker_assembly_id, partner):
+	if ImpactResolver.same_assembly_subgrid(striker_body, partner):
 		return 0.0
 	# ROVER-MODULES-V1: locomotive ↔ terrain carve/damage off (wheels only).
 	if _locomotive_ignores_terrain_partner(striker_assembly_id, partner):

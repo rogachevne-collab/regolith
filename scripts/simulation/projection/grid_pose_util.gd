@@ -103,7 +103,7 @@ static func collider_world_aabb(
 		orientation_index,
 		collider
 	)
-	var half_extents: Vector3 = collider.size * 0.5
+	var half_extents: Vector3 = collider.aabb_half_extents()
 	var bounds := AABB()
 	for sx: int in [-1, 1]:
 		for sy: int in [-1, 1]:
@@ -128,8 +128,6 @@ static func projected_element_collider_transforms(
 	if archetype == null:
 		return transforms
 	for collider: ColliderDefinition in archetype.colliders:
-		if collider.shape_kind != ColliderDefinition.ShapeKind.BOX:
-			continue
 		transforms.append(
 			collider_world_transform(
 				assembly_world_transform,
@@ -264,14 +262,12 @@ static func ground_contact_local(
 	var min_y := INF
 	var bottom_points: Array[Vector3] = []
 	for collider: ColliderDefinition in archetype.colliders:
-		if collider.shape_kind != ColliderDefinition.ShapeKind.BOX:
-			continue
 		var local_transform: Transform3D = collider_local_transform(
 			Vector3i.ZERO,
 			orientation_index,
 			collider
 		)
-		var half_extents: Vector3 = collider.size * 0.5
+		var half_extents: Vector3 = collider.aabb_half_extents()
 		for sx: int in [-1, 1]:
 			for sy: int in [-1, 1]:
 				for sz: int in [-1, 1]:

@@ -170,10 +170,7 @@ func _rebuild_assembly(assembly_id: int) -> void:
 			continue
 		for collider_index: int in range(archetype.colliders.size()):
 			var collider: ColliderDefinition = archetype.colliders[collider_index]
-			if collider.shape_kind != ColliderDefinition.ShapeKind.BOX:
-				continue
-			var mesh := BoxMesh.new()
-			mesh.size = collider.size * 0.96
+			var mesh := collider.make_preview_mesh(0.96)
 			var visual := MeshInstance3D.new()
 			visual.name = "%s%d_%d" % [
 				VISUAL_PREFIX,

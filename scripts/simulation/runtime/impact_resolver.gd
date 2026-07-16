@@ -146,18 +146,29 @@ static func shape_index_for_element(
 	return -1
 
 
+## Immune only inside one body group. Different driven groups of the same
+## assembly (rotor/piston base ↔ top) collide and deal kinetic damage.
 static func same_assembly_subgrid(
-	striker_assembly_id: int,
+	striker_body: PhysicsBody3D,
 	partner: Object
 ) -> bool:
-	if striker_assembly_id <= 0 or partner == null:
+	if striker_body == null or partner == null:
 		return false
-	if partner is PhysicsBody3D:
-		var partner_assembly_id := int(
-			(partner as PhysicsBody3D).get_meta("assembly_id", 0)
-		)
-		return partner_assembly_id > 0 and partner_assembly_id == striker_assembly_id
-	return false
+	if not partner is PhysicsBody3D:
+		return false
+	var partner_body := partner as PhysicsBody3D
+	if partner_body == striker_body:
+		return true
+	var striker_assembly_id := int(striker_body.get_meta("assembly_id", 0))
+	var partner_assembly_id := int(partner_body.get_meta("assembly_id", 0))
+	if (
+		striker_assembly_id <= 0
+		or partner_assembly_id != striker_assembly_id
+	):
+		return false
+	var striker_group_id := int(striker_body.get_meta("body_group_id", 0))
+	var partner_group_id := int(partner_body.get_meta("body_group_id", 0))
+	return striker_group_id == partner_group_id
 
 
 ## Reduced mass of the contact pair: m1·m2/(m1+m2); terrain/static ⇒ m1.

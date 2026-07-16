@@ -41,11 +41,7 @@ static func element_center_of_mass_local(
 	var weighted := Vector3.ZERO
 	var total_volume := 0.0
 	for collider: ColliderDefinition in archetype.colliders:
-		if collider.shape_kind != ColliderDefinition.ShapeKind.BOX:
-			continue
-		var volume: float = (
-			collider.size.x * collider.size.y * collider.size.z
-		)
+		var volume: float = collider.volume_m3()
 		if volume <= 0.0:
 			continue
 		var local_transform: Transform3D = (
@@ -98,10 +94,9 @@ static func build_collision_shapes(
 			continue
 		for collider_index: int in range(archetype.colliders.size()):
 			var collider: ColliderDefinition = archetype.colliders[collider_index]
-			if collider.shape_kind != ColliderDefinition.ShapeKind.BOX:
+			var shape := collider.make_physics_shape()
+			if shape == null:
 				continue
-			var shape := BoxShape3D.new()
-			shape.size = collider.size
 			var local_transform: Transform3D = (
 				GridPoseUtil.collider_local_transform(
 					element.origin_cell,
@@ -129,10 +124,25 @@ static func estimate_inertia_diagonal(
 	var min_point := Vector3(INF, INF, INF)
 	var max_point := Vector3(-INF, -INF, -INF)
 	for record: Dictionary in collision_records:
-		var shape: BoxShape3D = record["shape"]
+		var shape: Shape3D = record["shape"]
 		var local_transform: Transform3D = record["local_transform"]
-		var half: Vector3 = shape.size * 0.5
-		for corner: Vector3 in _box_corners(local_transform, half):
+		var corners: Array[Vector3] = []
+		if shape is BoxShape3D:
+			corners = _box_corners(
+				local_transform,
+				(shape as BoxShape3D).size * 0.5
+			)
+		elif shape is CylinderShape3D:
+			var cylinder := shape as CylinderShape3D
+			var half := Vector3(
+				cylinder.radius,
+				cylinder.height * 0.5,
+				cylinder.radius
+			)
+			corners = _box_corners(local_transform, half)
+		else:
+			continue
+		for corner: Vector3 in corners:
 			min_point = min_point.min(corner)
 			max_point = max_point.max(corner)
 	var size: Vector3 = max_point - min_point

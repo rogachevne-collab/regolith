@@ -98,8 +98,9 @@ archetype, grid pose, grid frame новой Assembly и `store_id`.
 
 ### Масштаб production archetypes
 
-Все размеры заданы в общей grid 0.5 m. Footprint определяет occupancy, а один
-box-collider может покрывать несколько cells.
+Все размеры заданы в общей grid 0.5 m. Footprint определяет occupancy; один
+collider (`BOX` или `CYLINDER`) может покрывать несколько cells. Для
+`CYLINDER`: `size.x` = diameter, `size.y` = height, `size.z` = diameter.
 
 | Archetype | Footprint cells | Физический габарит |
 |---|---:|---:|
@@ -116,6 +117,7 @@ box-collider может покрывать несколько cells.
 | `power_source`, `cargo_store` | 3×3×3 | 1.5×1.5×1.5 m |
 | `processor`, `fabricator` | 4×3×3 | 2×1.5×1.5 m |
 | `large_frame` | 5×5×5 | 2.5×2.5×2.5 m test cube |
+| `rotor_base_large` + `rotor_top_large` | 5×4×5 + 5×1×5 | cylinder Ø2.5×2.0 m + head 2.5×0.5×2.5 m (stack 2.5 m) |
 
 ### Unified grid structural surface
 

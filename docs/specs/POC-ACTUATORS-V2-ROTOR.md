@@ -81,13 +81,14 @@ Space Engineers) — в языке Assembly:
 RotorDefinition {
   top_archetype_id
   axis_face
+  top_offset_cells         # home pose: top origin = base origin + axis_face * N cells
   default_speed_limit_rad_s
   forward_velocity_rad_s
   reverse_velocity_rad_s
   torque_limit_nm
   max_velocity_rad_s
   max_torque_limit_nm
-  damping_nm_s_per_rad
+  damping_nm_s_per_rad   # STOP braking (N·m·s/rad), not cruise feedforward
   power_draw_w
   overload_policy
 }
@@ -123,6 +124,29 @@ overload policy         stop
 Числа — initial tuning fixture. `rotor_top` — internal archetype
 (как `piston_head`): свой `ElementId`, mass, integrity, colliders, но не
 отдельный toolbar item.
+
+### Large rotor fixture
+
+```text
+construction item       rotor (large)
+base archetype          rotor_base_large
+top archetype           rotor_top_large
+base collider           CYLINDER Ø2.5 × H2.0 m (axis local +Y)
+top collider            BOX 2.5 × 0.5 × 2.5 m
+stack height            2.5 m (base 2.0 + head 0.5)
+top_offset_cells        4 (base footprint 5×4×5, top 5×1×5)
+default speed limit     2.5 rad/s
+forward / reverse       5.0 rad/s / 5.0 rad/s
+torque limit            15000 N·m
+max velocity            15.7 rad/s
+max torque limit        100000 N·m
+damping                 250 N·m·s/rad
+power draw              4000 W while commanded
+overload policy         stop
+```
+
+`ColliderDefinition.ShapeKind.CYLINDER`: `size.x` = diameter, `size.y` = height,
+`size.z` = diameter (authoring symmetry). Ось цилиндра — local +Y (Godot default).
 
 ## Topology и identity
 
@@ -202,33 +226,42 @@ consumer по правилам Piston v1: demand = `power_draw_w`, пока moto
 - все три linear DOF заблокированы;
 - angular X/Z заблокированы;
 - angular Y (ось ротора) свободен — непрерывное вращение без limits;
-- collision exception между base и top groups.
+- base и top **body groups сталкиваются** в Jolt (нет group-wide exception);
+  clearance стыка — authored меньший box collider у `rotor_base` /
+  `rotor_top` (чуть ниже cell), чтобы hub’ы не интернетрировали на шарнире.
+  Навешенные фреймы сохраняют полный collider и бьют корпус/друг друга.
 
 ### Motor
 
 Torque-limited velocity tracker вокруг свободной оси (модель ротора SE:
-signed velocity, без пружины):
+signed velocity, без пружины). Канал — `RigidBody3D.apply_torque` (world
+space); joint `angular_motor_*` не используется. Jolt владеет интеграцией
+позы/ω; `custom_integrator` на actuator bodies запрещён (иначе torque
+молча дропается).
 
 ```text
 desired_velocity = по mode (velocity/position/stop), рад/с
+  # лимиты скорости — только authored forward/reverse / mode logic
 
-I_eff = 1 / (axis · (I⁻¹_top · axis))      # inverse inertia tensor top body
+I_top  = 1 / (axis · (I⁻¹_top · axis))
+I_base = ∞ если base static/frozen, иначе 1 / (axis · (I⁻¹_base · axis))
+I_eff  = 1 / (1/I_top + 1/I_base)
 
-torque = clamp(
-  I_eff * (desired_velocity - observed_velocity) / response_time
-  + damping_nm_s_per_rad * observed_velocity,
-  -torque_limit_nm,
-  +torque_limit_nm
-)
+tau_track = I_eff * (desired_velocity - observed_velocity) / response_time
+tau_brake = -damping_nm_s_per_rad * observed_velocity
+            только в ControlMode.STOP
+            (response_time усилен STOP_BRAKE_DAMPING_SCALE)
+
+torque = clamp(tau_track + tau_brake, ±torque_limit_nm)
 ```
 
-`desired_velocity` предварительно ограничивается моментным бюджетом:
-`torque_limit / (damping + I_eff / response_time)`. Гравитационная
-компенсация не применяется: несбалансированный груз честно проседает в
-пределах torque limit.
+`damping_nm_s_per_rad` — braking torque в STOP (аналог SE Braking Torque),
+не cruise-feedforward. Гравитационная компенсация не применяется:
+несбалансированный груз честно проседает в пределах torque limit.
 
-Момент прикладывается к top (+axis·τ) и к dynamic base (−axis·τ); для static
-base — только к top. Motor никогда не пишет transform или angular velocity.
+Момент прикладывается к top (+axis·τ) и к unfrozen dynamic base (−axis·τ);
+для static/frozen base — только к top. Motor никогда не пишет transform или
+angular velocity.
 
 ### Observation
 

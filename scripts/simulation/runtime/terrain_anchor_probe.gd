@@ -60,15 +60,13 @@ static func element_touches_terrain(
 	if archetype == null:
 		return false
 	for collider: ColliderDefinition in archetype.colliders:
-		if collider.shape_kind != ColliderDefinition.ShapeKind.BOX:
-			continue
 		var collider_transform := GridPoseUtil.collider_world_transform(
 			assembly_transform,
 			element.origin_cell,
 			element.orientation_index,
 			collider
 		)
-		var half := collider.size * 0.5
+		var half := collider.aabb_half_extents()
 		for sample: Vector2 in _BOTTOM_SAMPLES:
 			var local_point := Vector3(
 				sample.x * half.x,

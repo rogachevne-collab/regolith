@@ -23,7 +23,8 @@ func _run_tests() -> void:
 		_test_sustained_grind_carves_trench,
 		_test_assembly_contact_damages_both,
 		_test_shape_enter_carves_terrain,
-		_test_subgrid_immunity_ignores_same_assembly,
+		_test_cross_group_same_assembly_damages,
+		_test_subgrid_immunity_same_body_group,
 		_test_sustained_actuator_carves_terrain,
 		_test_sustained_actuator_damages_striker,
 		_test_kinetic_loot_threshold,
@@ -74,12 +75,12 @@ func _test_fallback_impulse_uses_separating_velocity() -> bool:
 	return true
 
 
-func _test_subgrid_immunity_ignores_same_assembly() -> bool:
+func _test_cross_group_same_assembly_damages() -> bool:
 	var fixture := await _new_fixture()
 	var piston := await _spawn_piston_on_ground(fixture)
 	if piston.is_empty():
 		_free_fixture(fixture)
-		return _fail("subgrid piston spawn failed")
+		return _fail("cross-group piston spawn failed")
 	var head_id := int(piston["head_element_id"])
 	var base_id := int(piston["base_element_id"])
 	var head_body: PhysicsBody3D = (
@@ -90,12 +91,18 @@ func _test_subgrid_immunity_ignores_same_assembly() -> bool:
 	)
 	if head_body == null or base_body == null:
 		_free_fixture(fixture)
-		return _fail("subgrid bodies missing")
+		return _fail("cross-group bodies missing")
+	if head_body == base_body:
+		_free_fixture(fixture)
+		return _fail("piston base/head must be separate body groups")
+	if ImpactResolver.same_assembly_subgrid(head_body, base_body):
+		_free_fixture(fixture)
+		return _fail("different body groups must not be subgrid-immune")
 	var integrity_before: float = (
 		fixture.world.get_element(head_id).integrity
 	)
 	fixture.impact_service.apply_entry_for_test({
-		"batch_key": "subgrid_test",
+		"batch_key": "cross_group_test",
 		"striker_element_id": head_id,
 		"striker_body": head_body,
 		"local_shape_index": 0,
@@ -107,8 +114,45 @@ func _test_subgrid_immunity_ignores_same_assembly() -> bool:
 	})
 	var integrity_after: float = fixture.world.get_element(head_id).integrity
 	_free_fixture(fixture)
+	if integrity_after >= integrity_before:
+		return _fail("cross-group same-assembly hit should damage striker")
+	return true
+
+
+func _test_subgrid_immunity_same_body_group() -> bool:
+	var fixture := await _new_fixture()
+	var piston := await _spawn_piston_on_ground(fixture)
+	if piston.is_empty():
+		_free_fixture(fixture)
+		return _fail("same-group piston spawn failed")
+	var head_id := int(piston["head_element_id"])
+	var head_body: PhysicsBody3D = (
+		fixture.projection.get_element_projection(head_id).get("body")
+	)
+	if head_body == null:
+		_free_fixture(fixture)
+		return _fail("same-group head body missing")
+	if not ImpactResolver.same_assembly_subgrid(head_body, head_body):
+		_free_fixture(fixture)
+		return _fail("same body must stay subgrid-immune")
+	var integrity_before: float = (
+		fixture.world.get_element(head_id).integrity
+	)
+	fixture.impact_service.apply_entry_for_test({
+		"batch_key": "same_group_test",
+		"striker_element_id": head_id,
+		"striker_body": head_body,
+		"local_shape_index": 0,
+		"partner": head_body,
+		"impulse_length": 48.0,
+		"contact_world": head_body.global_position,
+		"contact_points": PackedVector3Array([head_body.global_position]),
+		"contact_impulses": PackedFloat32Array([48.0]),
+	})
+	var integrity_after: float = fixture.world.get_element(head_id).integrity
+	_free_fixture(fixture)
 	if integrity_after < integrity_before:
-		return _fail("same-assembly contact damaged striker")
+		return _fail("same body-group contact damaged striker")
 	return true
 
 

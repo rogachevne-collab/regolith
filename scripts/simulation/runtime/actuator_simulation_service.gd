@@ -244,7 +244,13 @@ static func sync_power_demand(world: SimulationWorld) -> void:
 	if world == null:
 		return
 	for element: SimulationElement in world.list_elements():
-		if element.archetype_id in ["piston_base", "rotor_base"]:
+		var archetype := element.get_archetype()
+		if archetype == null:
+			continue
+		if (
+			archetype.piston_definition != null
+			or archetype.rotor_definition != null
+		):
 			world.ensure_industry_element_runtime(
 				element.element_id
 			).dynamic_power_w = 0.0

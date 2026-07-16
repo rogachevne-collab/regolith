@@ -422,7 +422,9 @@ func _build_mesh_nodes(
 		)
 		return nodes
 	if archetype.rotor_definition != null:
-		var top_archetype := Slice01Archetypes.rotor_top()
+		var top_archetype := Slice01Archetypes.load_required(
+			archetype.rotor_definition.top_archetype_id
+		)
 		if top_archetype != null:
 			var top_origin := RotorPlacementUtil.top_origin_cell(
 				origin_cell,
@@ -430,7 +432,7 @@ func _build_mesh_nodes(
 				archetype.rotor_definition
 			)
 			nodes.append_array(
-				_build_collider_box_nodes(
+				_build_collider_preview_nodes(
 					top_archetype,
 					top_origin,
 					orientation_index,
@@ -438,7 +440,7 @@ func _build_mesh_nodes(
 				)
 			)
 	nodes.append_array(
-		_build_collider_box_nodes(
+		_build_collider_preview_nodes(
 			archetype,
 			origin_cell,
 			orientation_index,
@@ -466,7 +468,7 @@ func _build_mesh_nodes(
 	return nodes
 
 
-func _build_collider_box_nodes(
+func _build_collider_preview_nodes(
 	archetype: ElementArchetype,
 	origin_cell: Vector3i,
 	orientation_index: int,
@@ -474,10 +476,7 @@ func _build_collider_box_nodes(
 ) -> Array[Node]:
 	var nodes: Array[Node] = []
 	for collider: ColliderDefinition in archetype.colliders:
-		if collider.shape_kind != ColliderDefinition.ShapeKind.BOX:
-			continue
-		var mesh := BoxMesh.new()
-		mesh.size = collider.size * 1.015
+		var mesh := collider.make_preview_mesh(1.015)
 		var instance := MeshInstance3D.new()
 		instance.mesh = mesh
 		instance.material_override = material
@@ -489,6 +488,20 @@ func _build_collider_box_nodes(
 		)
 		nodes.append(instance)
 	return nodes
+
+
+func _build_collider_box_nodes(
+	archetype: ElementArchetype,
+	origin_cell: Vector3i,
+	orientation_index: int,
+	material: Material
+) -> Array[Node]:
+	return _build_collider_preview_nodes(
+		archetype,
+		origin_cell,
+		orientation_index,
+		material
+	)
 
 
 func _build_preview_port_markers(

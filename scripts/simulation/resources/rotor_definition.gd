@@ -3,6 +3,7 @@ extends Resource
 
 @export var top_archetype_id: String = ""
 @export var axis_face: OrientationUtil.Face = OrientationUtil.Face.POS_Y
+@export var top_offset_cells: int = 1
 @export var default_speed_limit_rad_s: float = 0.5
 @export var forward_velocity_rad_s: float = 1.0
 @export var reverse_velocity_rad_s: float = 1.0
@@ -17,7 +18,7 @@ extends Resource
 
 
 func top_axis_offset_cell() -> Vector3i:
-	return OrientationUtil.face_to_vector(axis_face)
+	return OrientationUtil.face_to_vector(axis_face) * top_offset_cells
 
 
 func validate(
@@ -53,6 +54,8 @@ func validate_base_archetype(base_archetype: ElementArchetype) -> Array[String]:
 	var errors: Array[String] = []
 	if top_archetype_id.is_empty():
 		errors.append("top_archetype_id is empty")
+	if top_offset_cells < 1:
+		errors.append("top_offset_cells must be >= 1")
 	if (
 		default_speed_limit_rad_s < 0.0
 		or forward_velocity_rad_s < 0.0

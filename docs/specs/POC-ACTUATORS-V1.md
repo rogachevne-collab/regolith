@@ -321,7 +321,9 @@ Dynamic head position не меняет topology electric graph. Electric wire
 4. создаёт один `Generic6DOFJoint3D` на `Piston`;
 5. блокирует три angular DOF и две linear DOF;
 6. оставляет translation только вдоль piston axis с authored limits;
-7. исключает collision между непосредственно связанными base/head groups;
+7. base/head body groups **сталкиваются** (нет group-wide collision
+   exception); clearance стыка — authored меньший box collider у
+   `piston_base` / `piston_head` (чуть ниже cell);
 8. сохраняет lookup `AssemblyId + body_group_id → PhysicsBody3D` и
    `ElementId → body/collider`.
 

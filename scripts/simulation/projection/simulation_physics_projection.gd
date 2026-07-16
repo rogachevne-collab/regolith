@@ -745,8 +745,6 @@ func _project_assembly_multibody(
 		)
 		if base_body == null or head_body == null:
 			continue
-		base_body.add_collision_exception_with(head_body)
-		head_body.add_collision_exception_with(base_body)
 		var base_element: SimulationElement = _world.get_element(
 			int(spec.get("base_element_id", 0))
 		)
@@ -1060,16 +1058,19 @@ func _tick_rotor_actuators(delta: float) -> void:
 				_world,
 				sim_joint.element_a_id
 			)
-			var top_inertia := RotorProjectionUtil.top_inertia_about_axis(
-				head_body,
-				axis_world
+			var effective_inertia := (
+				RotorProjectionUtil.reduced_inertia_about_axis(
+					head_body,
+					base_body,
+					axis_world
+				)
 			)
 			var torque_result: Dictionary = (
 				RotorProjectionUtil.compute_motor_torque_scalar(
 					sim_joint.motor,
 					observed_velocity,
 					powered,
-					top_inertia
+					effective_inertia
 				)
 			)
 			var torque_nm := float(torque_result.get("torque_nm", 0.0))
@@ -1078,7 +1079,7 @@ func _tick_rotor_actuators(delta: float) -> void:
 			sim_joint.motor.force_saturated = saturated
 			if head_body is RigidBody3D:
 				(head_body as RigidBody3D).apply_torque(axis_world * torque_nm)
-			if base_body is RigidBody3D and not base_body is StaticBody3D:
+			if RotorProjectionUtil.is_dynamic_rigid(base_body):
 				(base_body as RigidBody3D).apply_torque(-axis_world * torque_nm)
 			_world.sync_actuator_observation(
 				int(record.get("joint_id", 0)),

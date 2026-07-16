@@ -205,6 +205,7 @@ static func _rotor_definition_row(
 	return {
 		"top_archetype_id": definition.top_archetype_id,
 		"axis_face": definition.axis_face,
+		"top_offset_cells": definition.top_offset_cells,
 		"power_draw_w": definition.power_draw_w,
 		"overload_policy": definition.overload_policy,
 	}

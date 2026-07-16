@@ -1194,8 +1194,6 @@ func _seat_ground_plan(plan: Dictionary) -> Dictionary:
 	var footprint := AABB()
 	var has_box := false
 	for collider: ColliderDefinition in archetype.colliders:
-		if collider.shape_kind != ColliderDefinition.ShapeKind.BOX:
-			continue
 		var box := GridPoseUtil.collider_world_aabb(
 			root, origin_cell, orientation_index, collider
 		)

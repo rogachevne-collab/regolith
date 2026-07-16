@@ -77,6 +77,7 @@ const CONSTRUCTION_ARCHETYPES: PackedStringArray = [
 	"fabricator",
 	"piston_base",
 	"rotor_base",
+	"rotor_base_large",
 	"rover_frame",
 	"wheel_suspension",
 	"drive_wheel",
@@ -127,6 +128,7 @@ const TOOLBAR_PAGES: Array = [
 		{"type": &"block", "archetype_id": "power_battery_small"},
 		{"type": &"block", "archetype_id": "power_distributor_small"},
 		{"type": &"block", "archetype_id": "rotor_base"},
+		{"type": &"block", "archetype_id": "rotor_base_large"},
 	],
 ]
 

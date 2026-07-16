@@ -455,8 +455,9 @@ element:
 
 Стоящий на палубе игрок наследует движение через существующий `SupportFrame` +
 layer 2 (POC-3). Wheel raycasts исключают собственный body RID; контакты внутри
-одной assembly не наносят impact/carve (subgrid immunity,
-KINETIC-INTERACTION). **Locomotive assembly ↔ terrain:** carve и damage
+одного body group не наносят impact/carve (subgrid immunity,
+KINETIC-INTERACTION); разные groups одной assembly бьют друг друга.
+**Locomotive assembly ↔ terrain:** carve и damage
 отключены в `ImpactResolverService` — грунт обрабатывают только wheel
 raycasts; piston/frame kinetic carve не затрагивается. После правки
 террейна будят locomotive `RigidBody3D`, иначе sleeping Jolt-тело не

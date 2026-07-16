@@ -15,6 +15,12 @@ const ROTOR_BASE := preload(
 const ROTOR_TOP := preload(
 	"res://resources/archetypes/slice01/rotor_top.tres"
 )
+const ROTOR_BASE_LARGE := preload(
+	"res://resources/archetypes/slice01/rotor_base_large.tres"
+)
+const ROTOR_TOP_LARGE := preload(
+	"res://resources/archetypes/slice01/rotor_top_large.tres"
+)
 
 
 func _ready() -> void:
@@ -36,6 +42,7 @@ func _run_tests() -> void:
 		_test_dismantle_splits_carriage,
 		_test_bridge_rejection,
 		_test_rotor_atomic_placement,
+		_test_rotor_large_atomic_placement,
 		_test_rotor_body_groups_and_reconstruct,
 		_test_rotor_snapshot_roundtrip,
 		_test_rotor_target_and_configure,
@@ -746,6 +753,104 @@ func _test_rotor_atomic_placement() -> bool:
 		return _fail("rotor placement did not spend materials")
 	world.free()
 	return true
+
+
+func _test_rotor_large_atomic_placement() -> bool:
+	var world := _rotor_large_world_with_top()
+	var setup := _rotor_large_setup(world)
+	if setup.is_empty():
+		world.free()
+		return _fail("large rotor setup failed")
+	var rotor: StructuralCommandResult = setup["rotor"]
+	var base_id := int(rotor.data["element_id"])
+	var top_id := int(rotor.data["head_element_id"])
+	var joint_id := int(rotor.data["rotor_joint_id"])
+	if int(rotor.data["driven_joint_id"]) != joint_id:
+		world.free()
+		return _fail("large rotor driven_joint_id mismatch")
+	if world.get_element(base_id) == null or world.get_element(top_id) == null:
+		world.free()
+		return _fail("large rotor elements missing")
+	var joint := world.get_joint(joint_id)
+	if (
+		joint == null
+		or joint.kind != SimulationJoint.Kind.ROTOR
+		or joint.motor == null
+		or not joint.motor.angular
+		or not joint.motor.continuous
+	):
+		world.free()
+		return _fail("large rotor joint missing angular motor state")
+	var validation := RotorPlacementUtil.validate_rotor_archetype(
+		ROTOR_BASE_LARGE,
+		ROTOR_TOP_LARGE,
+		world.get_archetype_registry()
+	)
+	if not validation.is_empty():
+		world.free()
+		return _fail(
+			"large rotor archetype validation failed: %s"
+			% ", ".join(validation)
+		)
+	if joint.motor.extend_velocity_mps != 5.0:
+		world.free()
+		return _fail("large rotor forward velocity not scaled")
+	if joint.motor.force_limit_n != 15000.0:
+		world.free()
+		return _fail("large rotor torque limit not scaled")
+	world.free()
+	return true
+
+
+func _rotor_large_world_with_top() -> SimulationWorld:
+	var world := SimulationWorld.new()
+	world.ensure_resource_store("player")
+	world.set_resource_amount("player", "construction_component", 200.0)
+	world.get_archetype_registry().register(ROTOR_TOP_LARGE)
+	return world
+
+
+func _rotor_large_setup(world: SimulationWorld) -> Dictionary:
+	var foundation := _spawn(
+		world,
+		_single_blueprint(Slice01Archetypes.foundation()),
+		GridTransform.identity()
+	)
+	if not foundation.is_ok():
+		return {}
+	var assembly_id := int(foundation.data["assembly_id"])
+	var platform := PlaceElementCommand.new()
+	platform.assembly_id = assembly_id
+	platform.expected_assembly_revision = int(foundation.data["topology_revision"])
+	platform.archetype = Slice01Archetypes.large_frame()
+	platform.origin_cell = Vector3i(0, 1, 0)
+	platform.orientation_index = 0
+	platform.store_id = "player"
+	var platform_result := world.apply_structural_command_now(platform)
+	if not platform_result.is_ok():
+		push_error(
+			"large rotor platform placement failed: %s %s"
+			% [platform_result.reason, platform_result.data]
+		)
+		return {}
+	var place := PlaceElementCommand.new()
+	place.assembly_id = assembly_id
+	place.expected_assembly_revision = int(platform_result.data["topology_revision"])
+	place.archetype = ROTOR_BASE_LARGE
+	place.origin_cell = Vector3i(0, 6, 0)
+	place.orientation_index = 0
+	place.store_id = "player"
+	var rotor := world.apply_structural_command_now(place)
+	if not rotor.is_ok():
+		push_error(
+			"large rotor placement failed: %s %s"
+			% [rotor.reason, rotor.data]
+		)
+		return {}
+	return {
+		"assembly_id": assembly_id,
+		"rotor": rotor,
+	}
 
 
 func _test_rotor_body_groups_and_reconstruct() -> bool:
