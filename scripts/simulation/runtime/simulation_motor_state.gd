@@ -9,6 +9,8 @@ const PISTON_DRIVE_PORT := "piston_drive"
 const PISTON_CARRIAGE_PORT := "piston_carriage"
 const ROTOR_DRIVE_PORT := "rotor_drive"
 const ROTOR_TOP_PORT := "rotor_top"
+const HINGE_DRIVE_PORT := "hinge_drive"
+const HINGE_TOP_PORT := "hinge_top"
 
 const OVERLOAD_ERROR_M := 0.02
 const OVERLOAD_VELOCITY_MPS := 0.003
@@ -108,6 +110,31 @@ static func from_rotor_definition(definition: RotorDefinition) -> SimulationMoto
 	motor.force_limit_n = definition.torque_limit_nm
 	motor.lower_limit_m = 0.0
 	motor.upper_limit_m = 0.0
+	motor.stiffness_n_per_m = 0.0
+	motor.damping_n_s_per_m = definition.damping_nm_s_per_rad
+	motor.power_draw_w = definition.power_draw_w
+	motor.overload_policy = definition.overload_policy
+	return motor
+
+
+static func from_hinge_definition(definition: HingeDefinition) -> SimulationMotorState:
+	var motor: SimulationMotorState = _SCRIPT.new()
+	motor.angular = true
+	motor.continuous = false
+	motor.target_position_m = 0.0
+	motor.observed_position_m = 0.0
+	motor.status_reference_position_m = 0.0
+	var forward_v := definition.forward_velocity_rad_s
+	var reverse_v := definition.reverse_velocity_rad_s
+	if forward_v <= 0.0 and reverse_v <= 0.0:
+		forward_v = definition.default_speed_limit_rad_s
+		reverse_v = definition.default_speed_limit_rad_s
+	motor.extend_velocity_mps = forward_v
+	motor.retract_velocity_mps = reverse_v
+	motor.speed_limit_mps = maxf(forward_v, reverse_v)
+	motor.force_limit_n = definition.torque_limit_nm
+	motor.lower_limit_m = definition.min_angle_rad
+	motor.upper_limit_m = definition.max_angle_rad
 	motor.stiffness_n_per_m = 0.0
 	motor.damping_n_s_per_m = definition.damping_nm_s_per_rad
 	motor.power_draw_w = definition.power_draw_w

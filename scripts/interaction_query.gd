@@ -286,6 +286,11 @@ func _target_metadata(
 				int(metadata["element_id"]),
 				metadata
 			)
+			HingePlacementUtil.enrich_interaction_metadata(
+				_session.world,
+				int(metadata["element_id"]),
+				metadata
+			)
 			WheelPlacementUtil.enrich_interaction_metadata(
 				_session.world,
 				int(metadata["element_id"]),

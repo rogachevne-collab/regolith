@@ -14,6 +14,7 @@ ADR. Интеграция в Erebus — через Erebus Lite addon, когда
 | Joint (соединения, прочность связи) | «Примитивы» → «Joint» |
 | Piston, Motor, overload | «Примитивы» → «Joint»; `specs/POC-ACTUATORS-V1.md` |
 | Rotor (непрерывное вращение) | «Примитивы» → «Joint»; `specs/POC-ACTUATORS-V2-ROTOR.md` |
+| Hinge / ServoHinge (сгибание с упорами) | «Примитивы» → «Joint»; `specs/POC-ACTUATORS-V3-HINGE.md` |
 | Body, Field, Surface | «Примитивы» → одноимённые разделы |
 | Actuator, Wheel | «Примитивы» → «Actuator», «Wheel»; `specs/ROVER-MODULES-V1.md` |
 | Cable / Tether, Sensor | «Примитивы» → одноимённые разделы |
@@ -841,7 +842,8 @@ slice по `docs/specs/VERTICAL-SLICE-01-INDUSTRIAL-BASE.md`:
 После первого slice лестница доменных возможностей продолжается:
 
 1. Piston с нагрузкой и overload —
-   `docs/specs/POC-ACTUATORS-V1.md`; затем ServoHinge.
+   `docs/specs/POC-ACTUATORS-V1.md`; затем ServoHinge —
+   `docs/specs/POC-ACTUATORS-V3-HINGE.md`.
 2. Расширенная логистика и автоматизация.
 3. Volume/Atmosphere: герметичная кабина → пробоина.
 4. Host-authoritative сетевой PoC.

@@ -23,6 +23,7 @@ enum StructuralSurfacePolicy {
 @export var build_requirements: Array[BuildRequirement] = []
 @export var piston_definition: PistonDefinition
 @export var rotor_definition: RotorDefinition
+@export var hinge_definition: HingeDefinition
 @export var suspension_definition: SuspensionDefinition
 @export var wheel_definition: WheelDefinition
 @export var internal_archetype: bool = false
@@ -34,6 +35,10 @@ func is_piston_base() -> bool:
 
 func is_rotor_base() -> bool:
 	return rotor_definition != null
+
+
+func is_hinge_base() -> bool:
+	return hinge_definition != null
 
 
 func resolved_structural_surface_policy() -> StructuralSurfacePolicy:

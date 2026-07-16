@@ -198,6 +198,7 @@ static func mechanical_connected_components(
 			SimulationJoint.Kind.RIGID,
 			SimulationJoint.Kind.PISTON,
 			SimulationJoint.Kind.ROTOR,
+			SimulationJoint.Kind.HINGE,
 		]
 	)
 

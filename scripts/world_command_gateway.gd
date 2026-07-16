@@ -1492,7 +1492,10 @@ func _set_actuator_target(
 			"joint_id",
 			metadata.get(
 				"piston_joint_id",
-				metadata.get("rotor_joint_id", 0)
+				metadata.get(
+					"rotor_joint_id",
+					metadata.get("hinge_joint_id", 0)
+				)
 			)
 		)
 	)
@@ -1536,7 +1539,10 @@ func _configure_actuator(
 			"joint_id",
 			metadata.get(
 				"piston_joint_id",
-				metadata.get("rotor_joint_id", 0)
+				metadata.get(
+					"rotor_joint_id",
+					metadata.get("hinge_joint_id", 0)
+				)
 			)
 		)
 	)
@@ -1549,6 +1555,8 @@ func _configure_actuator(
 	configure.force_limit_n = float(parameters.get("force_limit_n", -1.0))
 	configure.lower_limit_m = float(parameters.get("lower_limit_m", -1.0))
 	configure.upper_limit_m = float(parameters.get("upper_limit_m", -1.0))
+	configure.lower_limit_set = parameters.has("lower_limit_m")
+	configure.upper_limit_set = parameters.has("upper_limit_m")
 	var result := _session.apply_configure_actuator(configure)
 	return _result(
 		StringName(result.get("reason", &"invalid_target")),

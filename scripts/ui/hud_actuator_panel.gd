@@ -186,6 +186,11 @@ func _configure_for_meta(meta: Dictionary) -> void:
 		_travel_key.text = "УГОЛ"
 		_hints.text = "[+] вращ+ · [-] вращ− · Y стоп"
 		_ensure_tune_rows(HudActuatorTuneUtil.ROTOR_TUNE_ROWS, "rotor")
+	elif HudActuatorTuneUtil.is_hinge_meta(meta):
+		_title.text = "ШАРНИР"
+		_travel_key.text = "УГОЛ"
+		_hints.text = "[+] сгиб+ · [-] сгиб− · Y стоп"
+		_ensure_tune_rows(HudActuatorTuneUtil.HINGE_TUNE_ROWS, "hinge")
 	else:
 		_title.text = "ПОРШЕНЬ"
 		_travel_key.text = "ХОД"
@@ -261,6 +266,17 @@ func _refresh_from_hit(hit: InteractionHit) -> void:
 			meta.get("rotor_target_velocity_rad_s", 0.0)
 		)
 		_travel_val.text = "%.0f° · ЦЕЛЬ %.2f РАД/С" % [angle_deg, target_velocity]
+	elif HudActuatorTuneUtil.is_hinge_meta(meta):
+		var hinge_angle_deg := rad_to_deg(
+			float(meta.get("hinge_observed_angle_rad", 0.0))
+		)
+		var hinge_target_velocity := float(
+			meta.get("hinge_target_velocity_rad_s", 0.0)
+		)
+		_travel_val.text = "%.0f° · ЦЕЛЬ %.2f РАД/С" % [
+			hinge_angle_deg,
+			hinge_target_velocity,
+		]
 	else:
 		var observed := float(meta.get("piston_observed_position_m", 0.0))
 		var target := float(meta.get("piston_target_position_m", observed))
@@ -277,7 +293,11 @@ func _on_tune_pressed(field: String, direction: int) -> void:
 		return
 	var meta := _current_hit().metadata
 	var new_value := HudActuatorTuneUtil.next_value(meta, field, direction)
-	if new_value < 0.0:
+	if is_nan(new_value):
+		return
+	# Hinge angle limits are legitimately negative; other actuators keep the
+	# "-1 means invalid field" sentinel.
+	if not HudActuatorTuneUtil.is_hinge_meta(meta) and new_value < 0.0:
 		return
 	var parameters := {
 		"joint_id": HudActuatorTuneUtil.joint_id(meta),

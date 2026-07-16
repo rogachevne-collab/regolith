@@ -439,6 +439,24 @@ func _build_mesh_nodes(
 					material
 				)
 			)
+	if archetype.hinge_definition != null:
+		var hinge_top_archetype := Slice01Archetypes.load_required(
+			archetype.hinge_definition.top_archetype_id
+		)
+		if hinge_top_archetype != null:
+			var hinge_top_origin := HingePlacementUtil.top_origin_cell(
+				origin_cell,
+				orientation_index,
+				archetype.hinge_definition
+			)
+			nodes.append_array(
+				_build_collider_preview_nodes(
+					hinge_top_archetype,
+					hinge_top_origin,
+					orientation_index,
+					material
+				)
+			)
 	nodes.append_array(
 		_build_collider_preview_nodes(
 			archetype,

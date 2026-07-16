@@ -5,6 +5,7 @@ const BODY_NAME_PREFIX := "AssemblyBody_"
 const GROUP_BODY_NAME_PREFIX := "AssemblyGroupBody_"
 const PISTON_JOINT_NAME_PREFIX := "PistonJoint_"
 const ROTOR_JOINT_NAME_PREFIX := "RotorJoint_"
+const HINGE_JOINT_NAME_PREFIX := "HingeJoint_"
 const MIN_MASS := 0.001
 const SUSTAINED_V_EPS := 0.05
 const FragmentBodyScript := preload(
@@ -15,6 +16,9 @@ const PistonProjectionUtil := preload(
 )
 const RotorProjectionUtil := preload(
 	"res://scripts/simulation/projection/rotor_projection_util.gd"
+)
+const HingeProjectionUtil := preload(
+	"res://scripts/simulation/projection/hinge_projection_util.gd"
 )
 const WheelSimulationService := preload(
 	"res://scripts/simulation/runtime/wheel_simulation_service.gd"
@@ -753,6 +757,58 @@ func _project_assembly_multibody(
 		)
 		if base_element == null or head_element == null:
 			continue
+		if sim_joint.kind == SimulationJoint.Kind.HINGE:
+			var hinge_definition: HingeDefinition = (
+				base_element.get_archetype().hinge_definition
+			)
+			if hinge_definition == null:
+				continue
+			var hinge_axis_local: Vector3 = (
+				HingePlacementUtil.bend_axis_assembly_local(
+					base_element,
+					hinge_definition
+				)
+			)
+			var hinge_axis_world: Vector3 = (
+				base_body.global_transform.basis * hinge_axis_local
+			).normalized()
+			var hinge_pivot: Vector3 = (
+				HingePlacementUtil.pivot_assembly_local(
+					base_element,
+					hinge_definition
+				)
+			)
+			var hinge_joint_node := Generic6DOFJoint3D.new()
+			hinge_joint_node.name = "%s%d_%d" % [
+				HINGE_JOINT_NAME_PREFIX,
+				assembly_id,
+				sim_joint.joint_id,
+			]
+			add_child(hinge_joint_node)
+			hinge_joint_node.global_transform = Transform3D(
+				HingeProjectionUtil.basis_with_x_axis(hinge_axis_world),
+				base_body.global_transform * hinge_pivot
+			)
+			hinge_joint_node.node_a = hinge_joint_node.get_path_to(base_body)
+			hinge_joint_node.node_b = hinge_joint_node.get_path_to(head_body)
+			HingeProjectionUtil.configure_hinge_limit_joint(
+				hinge_joint_node,
+				sim_joint.motor
+			)
+			# Hinge shares the rotor's angular record shape and tick loop.
+			rotor_records.append({
+				"joint_id": sim_joint.joint_id,
+				"sim_joint": sim_joint,
+				"constraint": hinge_joint_node,
+				"base_body": base_body,
+				"head_body": head_body,
+				"axis_local": hinge_axis_local,
+				"top_element_ids": groups.get(
+					int(spec.get("head_group_id", 0)),
+					[]
+				),
+			})
+			continue
 		if sim_joint.kind == SimulationJoint.Kind.ROTOR:
 			var rotor_definition: RotorDefinition = (
 				base_element.get_archetype().rotor_definition
@@ -1035,6 +1091,16 @@ func _tick_rotor_actuators(delta: float) -> void:
 			var head_body: PhysicsBody3D = record.get("head_body")
 			if base_body == null or head_body == null:
 				continue
+			if sim_joint.kind == SimulationJoint.Kind.HINGE:
+				# configure_actuator can retune angle limits on a live joint.
+				var hinge_constraint: Generic6DOFJoint3D = (
+					record.get("constraint") as Generic6DOFJoint3D
+				)
+				if hinge_constraint != null:
+					HingeProjectionUtil.configure_hinge_limit_joint(
+						hinge_constraint,
+						sim_joint.motor
+					)
 			var axis_world: Vector3 = (
 				base_body.global_transform.basis
 				* record.get("axis_local", Vector3.UP)
