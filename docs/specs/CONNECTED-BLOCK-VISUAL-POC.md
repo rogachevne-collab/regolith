@@ -17,7 +17,7 @@ connected armor в Space Engineers: на свободных рёбрах — pro
 
 | Archetype | Envelope | Merge family |
 |---|---|---|
-| `frame`, `frame_basalt` | 0.5³ m (1 cell) | только свой `archetype_id` |
+| `frame`, `frame_basalt`, `rover_frame` | 0.5³ m (1 cell) | только свой `archetype_id` |
 | `large_frame` | 2.5³ m (5³ cells) | только `large_frame` |
 
 Не трогаем: beam/foundation/machines, physics colliders, topology.
@@ -42,5 +42,5 @@ connected armor в Space Engineers: на свободных рёбрах — pro
 ## Верификация
 
 - Headless: `test_connected_block_visual` (маска + число граней/рёбер).
-- В игре: поставить два `frame` / два `large_frame` в ряд — шов без рамки и
-  без щели; одиночный блок — рамка по всем 12 рёбрам.
+- В игре: поставить два `frame` / два `large_frame` / два `rover_frame` в ряд —
+  шов без рамки и без щели; одиночный блок — рамка по всем 12 рёбрам.

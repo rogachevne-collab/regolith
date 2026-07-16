@@ -17,6 +17,7 @@ const CONNECTED_ARCHETYPES := {
 	"frame": true,
 	"frame_basalt": true,
 	"large_frame": true,
+	"rover_frame": true,
 }
 
 const FACE_INSET_M := 0.0005

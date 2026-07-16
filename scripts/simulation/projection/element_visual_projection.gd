@@ -345,6 +345,13 @@ func _material_for(element: SimulationElement) -> StandardMaterial3D:
 
 
 func _rim_material_for(element: SimulationElement) -> StandardMaterial3D:
+	if (
+		element.archetype_id.begins_with("rover_")
+		or element.archetype_id.begins_with("wheel_")
+		or element.archetype_id == "drive_wheel"
+		or element.archetype_id == "cockpit"
+	):
+		return _materials["rim_rover"]
 	var reason := element.status_reason()
 	if reason == &"element_broken":
 		return _materials["rim_broken"]
@@ -408,6 +415,12 @@ func _create_materials() -> void:
 		0.3,
 		false,
 		0.6
+	)
+	_materials["rim_rover"] = _material(
+		Color(0.05, 0.055, 0.065, 1.0),
+		0.7,
+		false,
+		0.55
 	)
 
 
