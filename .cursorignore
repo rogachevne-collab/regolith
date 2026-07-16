@@ -1,0 +1,9 @@
+# Scratch: cloned repos, screenshots, logs — not source
+.tmp/
+
+# Godot cache (rebuilt on import)
+.godot/
+
+# Local editor / platform bundles
+bin/
+*.zip

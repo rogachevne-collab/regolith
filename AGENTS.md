@@ -16,6 +16,13 @@ Rule 1 - отвечай коротко, по делу и понятным язы
 `docs/cheatsheets/rover-compose.md` и skill `rover-compose` — не угадывать
 клетки вручную.
 
+Сборка actuator-rig по фразе («буровой манипулятор», reach/wrist): сначала
+`docs/cheatsheets/machine-compose.md` и skill `machine-compose` — не угадывать
+клетки вручную.
+
+Задачи на kernel/runtime/`SimulationWorld`: сначала
+`docs/cheatsheets/simulation-world.md` — не читать монолит целиком.
+
 ## Инварианты (нарушать НЕЛЬЗЯ)
 
 - **R1** — новые типы машин/элементов сначала в `PHYSICAL-LANGUAGE.md` или

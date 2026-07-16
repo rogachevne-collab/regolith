@@ -1,0 +1,13 @@
+---
+description: Git, PR, код, общение — глобально для всех чатов
+alwaysApply: true
+---
+Проектные инварианты и верификация — `AGENTS.md`. Домен — индекс в `docs/PHYSICAL-LANGUAGE.md`, не читать целиком.
+
+Git: коммиты только по явному запросу. Перед коммитом — `git status`, `git diff`, `git log -5`; message через HEREDOC. Не трогать git config; без `--no-verify`; без force-push на main; amend — только если HEAD твой и не pushed.
+
+PR: только по запросу, через `gh`. Перед create — status, diff vs base, история ветки.
+
+Код: минимальный diff, существующие конвенции. Реальная среда — команды выполняй сам.
+
+Общение: коротко. Code citations — ` ```startLine:endLine:path ` `. Ссылки полные.

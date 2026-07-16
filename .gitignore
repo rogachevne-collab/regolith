@@ -1,3 +1,6 @@
+# Agent / bootstrap scratch (cloned sources, screenshots, logs)
+.tmp/
+
 # Godot cache (rebuilt on import)
 .godot/
 
