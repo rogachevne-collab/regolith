@@ -1,0 +1,4 @@
+Lunar Rock PBR Material
+Source: https://freepbr.com/product/lunar-rock-pbr-material/
+License: free use in games/3D work (see FreePBR terms). Do not re-upload as a texture pack.
+Roughness map generated for Regolith (pack ships metalness.psd only).

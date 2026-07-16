@@ -1,16 +1,41 @@
-[gd_resource type="ShaderMaterial" load_steps=4 format=3]
+[gd_resource type="ShaderMaterial" load_steps=14 format=3]
 
 [ext_resource type="Shader" path="res://resources/transvoxel_terrain.gdshader" id="1"]
-[ext_resource type="Texture2D" path="res://resources/moon_regolith_albedo.jpg" id="2"]
-[ext_resource type="Texture2D" path="res://resources/moon_regolith_normal.jpg" id="3"]
+[ext_resource type="Texture2D" path="res://resources/textures/lunar_rock/albedo.png" id="2"]
+[ext_resource type="Texture2D" path="res://resources/textures/lunar_rock/normal.png" id="3"]
+[ext_resource type="Texture2D" path="res://resources/textures/lunar_rock/ao.png" id="4"]
+[ext_resource type="Texture2D" path="res://resources/textures/lunar_rock/roughness.png" id="5"]
+[ext_resource type="Texture2D" path="res://resources/textures/cratered_rock/albedo.png" id="6"]
+[ext_resource type="Texture2D" path="res://resources/textures/cratered_rock/normal.png" id="7"]
+[ext_resource type="Texture2D" path="res://resources/textures/cratered_rock/ao.png" id="8"]
+[ext_resource type="Texture2D" path="res://resources/textures/cratered_rock/roughness.png" id="9"]
+[ext_resource type="Texture2D" path="res://resources/textures/dark_rough_rock/albedo.png" id="10"]
+[ext_resource type="Texture2D" path="res://resources/textures/dark_rough_rock/normal.png" id="11"]
+[ext_resource type="Texture2D" path="res://resources/textures/dark_rough_rock/ao.png" id="12"]
+[ext_resource type="Texture2D" path="res://resources/textures/dark_rough_rock/roughness.png" id="13"]
 
 [resource]
 render_priority = 0
 shader = ExtResource("1")
-shader_parameter/u_texture_top = ExtResource("2")
-shader_parameter/u_texture_sides = ExtResource("2")
-shader_parameter/u_normal_map = ExtResource("3")
-shader_parameter/u_macro_scale = 0.035
-shader_parameter/u_detail_scale = 0.3
-shader_parameter/u_macro_strength = 0.2
-shader_parameter/u_normal_strength = 0.8
+shader_parameter/u_rock_albedo = ExtResource("2")
+shader_parameter/u_rock_normal = ExtResource("3")
+shader_parameter/u_rock_ao = ExtResource("4")
+shader_parameter/u_rock_roughness = ExtResource("5")
+shader_parameter/u_dust_albedo = ExtResource("6")
+shader_parameter/u_dust_normal = ExtResource("7")
+shader_parameter/u_dust_ao = ExtResource("8")
+shader_parameter/u_dust_roughness = ExtResource("9")
+shader_parameter/u_mare_albedo = ExtResource("10")
+shader_parameter/u_mare_normal = ExtResource("11")
+shader_parameter/u_mare_ao = ExtResource("12")
+shader_parameter/u_mare_roughness = ExtResource("13")
+shader_parameter/u_detail_scale = 0.11
+shader_parameter/u_large_scale = 0.045
+shader_parameter/u_biome_scale = 0.018
+shader_parameter/u_macro_strength = 0.32
+shader_parameter/u_normal_strength = 1.3
+shader_parameter/u_ao_strength = 0.22
+shader_parameter/u_mare_amount = 0.32
+shader_parameter/u_detail_fade_start = 30.0
+shader_parameter/u_detail_fade_end = 75.0
+shader_parameter/u_specular = 0.17
