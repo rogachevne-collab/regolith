@@ -18,8 +18,19 @@ const SPAWN_CLEARANCE_M := 1.05
 const GRAVITY_M_S2 := 1.62
 ## Area shell beyond surface so near-surface bodies stay inside override.
 const GRAVITY_AREA_RADIUS_FACTOR := 1.35
-## Keep short on M1 — long LodTerrain view shows half-baked distant scraps.
-const DEFAULT_VIEW_DISTANCE_VOXELS := 140
+## Finite planet: cover the default Camera.far (~20 km) so the shell LODs
+## down instead of unloading. World metres ≈ value * VOXEL_SCALE.
+## Do NOT push Camera.far to orbital scales — Godot's light culler breaks
+## (create_frustum_points) when near/far ratio is extreme.
+const DEFAULT_VIEW_DISTANCE_VOXELS := 50_000
+## More LODs → larger far blocks so a long view_distance stays cheap.
+const DEFAULT_LOD_COUNT := 8
+const DEFAULT_LOD_DISTANCE := 64.0
+## Beyond this distance from planet center, show a camera-relative impostor
+## (real mesh would be clipped by Camera.far ≈ 20 km).
+const FAR_IMPOSTOR_START_M := 16_000.0
+## Place the impostor this far in front of the camera (must be < Camera.far).
+const FAR_IMPOSTOR_VISUAL_DIST_M := 8_000.0
 const DIG_STREAM_DIR := "user://moon_experiment"
 const WORLD_SAVE_PATH := "user://moon_experiment/world_save.json"
 

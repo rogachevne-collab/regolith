@@ -134,6 +134,12 @@
 - `transform.basis` uniform scale **0.65**.
 - Collisions: on; streaming вокруг viewer (**не** `full_load` с SQLite —
   плагин отвергает).
+- **Дальняя видимость (планета):** конечные `voxel_bounds` +
+  `view_distance`/`lod_count` на бюджет `Camera.far` (~20 км) — оболочка
+  LODит, а не unload'ится. `VoxelViewer.view_distance` синхронизируется в
+  bootstrap. Орбитальные дистанции — camera-relative impostor (не раздувать
+  `Camera.far`: ломает Godot light culler / `create_frustum_points`). Туман
+  выключен (вакуум).
 - Spawn: ждать meshed + physics; temp landing pad — только fallback.
 - Смена рельефа → bump `GENERATOR_VERSION` + повторный bake.
 - Мир-сейв сборок: `gen_v{N}/world_save.json` (не смешивать с flat `main`).
@@ -244,9 +250,9 @@
 3. **Collider lag LOD / scale ≠ 1** — aim = physics; spawn = settle (VT issues).
 4. **Area gravity ≠ CharacterBody** — легко получить «машины ок / игрок нет».
 5. **Память `VoxelLodTerrain`** — по доке нет дефолтного cache как у
-   `VoxelTerrain`; тюнить view distance / stream.
-6. **Precision Ø 1 км** — на v0 центр в origin; origin shifting не нужен, пока
-   игрок не уходит на десятки км от origin.
+   `VoxelTerrain`; у конечной Ø1 км оболочки объём ограничен `voxel_bounds`.
+6. **Precision / clip** — `Camera.far` остаётся ~20 км; дальше — impostor,
+   не экстремальный far (light culler). Origin shifting — позже.
 
 Регрессии `main`: **низкие**, пока moon — отдельный entrypoint, а правки
 player/projection за feature-flag / «если задан GravityField / moon_center».

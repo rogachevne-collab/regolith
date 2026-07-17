@@ -73,6 +73,8 @@ var _last_save_ms := 0
 var _save_load_attempted := false
 var _voxel_stream: VoxelStream
 var _landing_pad: StaticBody3D
+var _far_impostor: MeshInstance3D
+var _player_camera: Camera3D
 
 
 func is_world_ready() -> bool:
@@ -88,6 +90,7 @@ func _ready() -> void:
 	_configure_terrain()
 	_configure_dig_stream()
 	_configure_boulder_instancer()
+	_configure_far_impostor()
 	for archetype: ElementArchetype in Slice01Archetypes.load_all_required():
 		_session.world.get_archetype_registry().register(archetype)
 	for archetype: ElementArchetype in Slice01Archetypes.load_actuator_archetypes():
@@ -122,6 +125,7 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	_update_far_impostor()
 	if _world_ready:
 		_autosave_accum += delta
 		if _autosave_accum >= AUTOSAVE_INTERVAL_S:
@@ -163,8 +167,8 @@ func _configure_terrain() -> void:
 		lod.view_distance = MoonGeometry.DEFAULT_VIEW_DISTANCE_VOXELS
 		lod.generate_collisions = true
 		lod.collision_lod_count = 1
-		lod.lod_count = 4
-		lod.lod_distance = 56.0
+		lod.lod_count = MoonGeometry.DEFAULT_LOD_COUNT
+		lod.lod_distance = MoonGeometry.DEFAULT_LOD_DISTANCE
 		lod.lod_fade_duration = TERRAIN_LOD_FADE_DURATION_S
 		lod.normalmap_enabled = true
 		lod.normalmap_begin_lod_index = TERRAIN_NORMALMAP_BEGIN_LOD
@@ -179,7 +183,7 @@ func _configure_terrain() -> void:
 			shader_mat.set_shader_parameter("u_radial_up", 1.0)
 			shader_mat.set_shader_parameter("u_planet_radius", MoonGeometry.SURFACE_RADIUS_M)
 	_terrain.scale = Vector3.ONE * MoonGeometry.VOXEL_SCALE
-	_ensure_player_viewer_wants_collisions()
+	_ensure_player_viewer_for_planet()
 
 
 func _make_planet_generator() -> VoxelGenerator:
@@ -648,12 +652,66 @@ func _spawn_base_when_terrain_ready() -> void:
 		await get_tree().physics_frame
 
 
-func _ensure_player_viewer_wants_collisions() -> void:
+func _ensure_player_viewer_for_planet() -> void:
 	var viewer := _player.get_node_or_null("VoxelViewer") as VoxelViewer
 	if viewer == null:
 		return
 	viewer.requires_collisions = true
 	viewer.requires_visuals = true
+	## Effective range is min(terrain, viewer) — keep both at planet budget.
+	viewer.view_distance = MoonGeometry.DEFAULT_VIEW_DISTANCE_VOXELS
+	_player_camera = _player.get_node_or_null("Camera") as Camera3D
+
+
+func _configure_far_impostor() -> void:
+	## Cheap sphere kept inside Camera.far, scaled to the real angular size.
+	## Extreme Camera.far is not an option — breaks directional light culling.
+	_far_impostor = MeshInstance3D.new()
+	_far_impostor.name = "MoonFarImpostor"
+	var sphere := SphereMesh.new()
+	sphere.radius = MoonGeometry.SURFACE_RADIUS_M
+	sphere.height = MoonGeometry.SURFACE_RADIUS_M * 2.0
+	sphere.radial_segments = 48
+	sphere.rings = 24
+	_far_impostor.mesh = sphere
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.55, 0.55, 0.52)
+	mat.roughness = 0.96
+	mat.metallic = 0.0
+	_far_impostor.material_override = mat
+	_far_impostor.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_far_impostor.visible = false
+	add_child(_far_impostor)
+	if _player_camera == null and _player != null:
+		_player_camera = _player.get_node_or_null("Camera") as Camera3D
+
+
+func _update_far_impostor() -> void:
+	if _far_impostor == null:
+		return
+	if _player_camera == null:
+		if _player != null:
+			_player_camera = _player.get_node_or_null("Camera") as Camera3D
+		if _player_camera == null:
+			_far_impostor.visible = false
+			return
+	var cam_pos := _player_camera.global_position
+	var real_dist := cam_pos.length()
+	if real_dist < MoonGeometry.FAR_IMPOSTOR_START_M or real_dist < 1.0:
+		_far_impostor.visible = false
+		return
+	var visual_dist: float = minf(
+		MoonGeometry.FAR_IMPOSTOR_VISUAL_DIST_M,
+		_player_camera.far * 0.45,
+	)
+	if visual_dist < 1.0:
+		_far_impostor.visible = false
+		return
+	## Angular size match: R_vis / d_vis = R_real / d_real → scale = d_vis / d_real.
+	var toward_planet := -cam_pos / real_dist
+	_far_impostor.global_position = cam_pos + toward_planet * visual_dist
+	_far_impostor.scale = Vector3.ONE * (visual_dist / real_dist)
+	_far_impostor.visible = true
 
 
 func _peek_saved_player_position() -> Vector3:

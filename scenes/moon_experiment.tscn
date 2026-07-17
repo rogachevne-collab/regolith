@@ -30,12 +30,7 @@ ssao_radius = 1.2
 ssao_intensity = 0.65
 ssao_power = 1.4
 sdfgi_enabled = false
-fog_enabled = true
-fog_mode = 1
-fog_light_color = Color(0.2, 0.24, 0.36, 1)
-fog_density = 0.00022
-fog_aerial_perspective = 0.55
-fog_sky_affect = 0.55
+fog_enabled = false
 
 [sub_resource type="VoxelMesherTransvoxel" id="VoxelMesherTransvoxel_moon"]
 
@@ -89,7 +84,7 @@ shape = SubResource("SphereShape_gravity")
 [node name="VoxelTerrain" type="VoxelLodTerrain" parent="."]
 transform = Transform3D(0.65, 0, 0, 0, 0.65, 0, 0, 0, 0.65, 0, 0, 0)
 mesher = SubResource("VoxelMesherTransvoxel_moon")
-view_distance = 256
+view_distance = 50000
 generate_collisions = true
 material = ExtResource("4")
 
