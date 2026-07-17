@@ -741,7 +741,7 @@ func _basis_orientation_index(basis: Basis) -> int:
 	return selected_orientation_index
 
 
-func _action_hit(action: StringName, profile: Dictionary) -> InteractionHit:
+func _action_hit(action: StringName, _profile: Dictionary) -> InteractionHit:
 	if _tracks_live_target_while_holding(action):
 		return _query.current_hit
 	if _locked_hit != null:
@@ -814,7 +814,7 @@ func _resolved_placement_hit() -> InteractionHit:
 
 func _live_target_matches_lock(
 	profile: Dictionary,
-	action: StringName
+	_action: StringName
 ) -> bool:
 	if active_tool == &"build" and _construction_mode == &"place":
 		return true
@@ -891,16 +891,16 @@ func _append_connect_waypoint(hit: InteractionHit) -> void:
 
 ## Last routed point: the final скоба, or the pending element's nearest
 ## electric port anchor when no скобы are placed yet.
-func _connect_route_tail(reference: Vector3) -> Vector3:
+func _connect_route_tail(anchor_ref: Vector3) -> Vector3:
 	if not _connect_waypoints.is_empty():
 		return _connect_waypoints[_connect_waypoints.size() - 1]
-	return connect_anchor_position(reference)
+	return connect_anchor_position(anchor_ref)
 
 
-## Nearest electric port anchor of the pending element to `reference`; the
+## Nearest electric port anchor of the pending element to `anchor_ref`; the
 ## ghost preview and obstruction checks both start the route here. Falls back
 ## to the element position when no anchor resolves.
-func connect_anchor_position(reference: Vector3) -> Vector3:
+func connect_anchor_position(anchor_ref: Vector3) -> Vector3:
 	var world := _simulation_world()
 	if world == null or _connect_pending_element_id <= 0:
 		return Vector3(INF, INF, INF)
@@ -917,7 +917,7 @@ func connect_anchor_position(reference: Vector3) -> Vector3:
 			element,
 			port.port_id
 		)
-		var distance := anchor.distance_to(reference)
+		var distance := anchor.distance_to(anchor_ref)
 		if distance < best_distance:
 			best_distance = distance
 			best = anchor

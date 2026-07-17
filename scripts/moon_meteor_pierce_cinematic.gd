@@ -229,18 +229,18 @@ func _place_meteor(path_t: float) -> void:
 	_meteor.global_position = _meteor_start.lerp(_meteor_end, eased)
 
 
-func _spawn_burst(at: Vector3, normal: Vector3, chunk_count: int, seed: int) -> void:
+func _spawn_burst(at: Vector3, normal: Vector3, chunk_count: int, rng_seed: int) -> void:
 	var burst: Node3D = _IMPACT_VFX.instantiate()
 	_world_root.add_child(burst)
 	burst.global_position = at
 	burst.look_at(at + normal, Vector3.UP)
 	_prime_vfx(burst)
-	_spawn_debris(at, normal, chunk_count, seed)
+	_spawn_debris(at, normal, chunk_count, rng_seed)
 
 
-func _spawn_debris(at: Vector3, normal: Vector3, count: int, seed: int) -> void:
+func _spawn_debris(at: Vector3, normal: Vector3, count: int, rng_seed: int) -> void:
 	var rng := RandomNumberGenerator.new()
-	rng.seed = seed
+	rng.seed = rng_seed
 	for i in count:
 		var chunk := MeshInstance3D.new()
 		chunk.mesh = _make_rock_chunk_mesh(rng)
@@ -327,8 +327,8 @@ func _prime_vfx(root: Node) -> void:
 	if root is GPUParticles3D and root.one_shot:
 		root.restart()
 		root.emitting = true
-	for child in root.get_children():
-		_prime_vfx(child)
+	for child_node in root.get_children():
+		_prime_vfx(child_node)
 
 
 func _make_environment() -> Environment:

@@ -124,16 +124,16 @@ func _update_preview() -> void:
 	preview_root.set_meta("_edit_lock_", true)
 	add_child(preview_root, false, Node.INTERNAL_MODE_BACK)
 
-	var material := StandardMaterial3D.new()
-	material.albedo_color = Color(0.2, 0.65, 0.95, 0.35)
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.2, 0.65, 0.95, 0.35)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	for center: Vector3 in preview_local_centers():
 		var mesh_instance := MeshInstance3D.new()
 		var mesh := BoxMesh.new()
 		mesh.size = Vector3.ONE * GridMetric.CELL_SIZE_M
 		mesh_instance.mesh = mesh
 		mesh_instance.position = center
-		mesh_instance.material_override = material
+		mesh_instance.material_override = mat
 		preview_root.add_child(
 			mesh_instance,
 			false,

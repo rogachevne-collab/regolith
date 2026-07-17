@@ -53,8 +53,8 @@ func drag_payload(half: bool = false) -> Dictionary:
 
 
 func _build() -> void:
-	for child in get_children():
-		child.queue_free()
+	for child_node in get_children():
+		child_node.queue_free()
 	var icon := HudTokens.make_item_icon(item_id, _slot_size.x)
 	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(icon)

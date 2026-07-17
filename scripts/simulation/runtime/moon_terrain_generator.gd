@@ -44,8 +44,8 @@ func _setup_noise() -> void:
 	_mare_field = ClassDB.instantiate(&"ZN_FastNoiseLite")
 	_mare_field.seed = MoonTerrainParams.SEED + 11
 	_mare_field.period = MoonTerrainParams.meters_to_voxels(480.0)
-	_mare_field.noise_type = 0
-	_mare_field.fractal_type = 1
+	_mare_field.set("noise_type", 0)
+	_mare_field.set("fractal_type", 1)
 	_mare_field.fractal_octaves = 2
 	_mare_field.fractal_lacunarity = 2.0
 	_mare_field.fractal_gain = 0.32
@@ -54,8 +54,8 @@ func _setup_noise() -> void:
 	_highland_rough = ClassDB.instantiate(&"ZN_FastNoiseLite")
 	_highland_rough.seed = MoonTerrainParams.SEED + 41
 	_highland_rough.period = MoonTerrainParams.meters_to_voxels(55.0)
-	_highland_rough.noise_type = 0
-	_highland_rough.fractal_type = 1
+	_highland_rough.set("noise_type", 0)
+	_highland_rough.set("fractal_type", 1)
 	_highland_rough.fractal_octaves = 3
 	_highland_rough.fractal_gain = 0.42
 
@@ -63,8 +63,8 @@ func _setup_noise() -> void:
 	_surface = ClassDB.instantiate(&"ZN_FastNoiseLite")
 	_surface.seed = MoonTerrainParams.SEED + 73
 	_surface.period = MoonTerrainParams.meters_to_voxels(20.0)
-	_surface.noise_type = 0
-	_surface.fractal_type = 1
+	_surface.set("noise_type", 0)
+	_surface.set("fractal_type", 1)
 	_surface.fractal_octaves = 2
 	_surface.fractal_lacunarity = 2.0
 	_surface.fractal_gain = 0.45
@@ -73,8 +73,8 @@ func _setup_noise() -> void:
 	_regolith = ClassDB.instantiate(&"ZN_FastNoiseLite")
 	_regolith.seed = MoonTerrainParams.SEED + 67
 	_regolith.period = MoonTerrainParams.meters_to_voxels(4.5)
-	_regolith.noise_type = 0
-	_regolith.fractal_type = 1
+	_regolith.set("noise_type", 0)
+	_regolith.set("fractal_type", 1)
 	_regolith.fractal_octaves = 2
 	_regolith.fractal_gain = 0.5
 
@@ -217,7 +217,7 @@ func _highland_meso_roughness(domain: Vector3, highland: float) -> float:
 	return highland * r * MoonTerrainParams.HIGHLAND_ROUGH_AMP_M
 
 
-func _surface_texture(domain: Vector3, mare: float, highland: float) -> float:
+func _surface_texture(domain: Vector3, _mare: float, highland: float) -> float:
 	## Mid-band + fine crunch applied everywhere (gentler on maria) so the
 	## surface reads as regolith terrain, not a smooth soap sphere. Periods are
 	## kept above voxel/texel size so this adds variety without ribbing.

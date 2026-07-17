@@ -895,10 +895,10 @@ func _run_electric_link_dormancy_scenario() -> bool:
 		world.free()
 		return _fail("revived link must be the original, not a new connection")
 
-	var disconnect := world.disconnect_network(0, "", 0, "", link_id)
-	if not disconnect.is_ok():
+	var disconnect_result := world.disconnect_network(0, "", 0, "", link_id)
+	if not disconnect_result.is_ok():
 		world.free()
-		return _fail("disconnect by link_id failed: %s" % disconnect.reason)
+		return _fail("disconnect by link_id failed: %s" % disconnect_result.reason)
 	if not world.list_electric_links().is_empty():
 		world.free()
 		return _fail("disconnect must remove the stored link")

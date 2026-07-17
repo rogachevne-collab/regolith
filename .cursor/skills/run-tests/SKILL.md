@@ -2,8 +2,8 @@
 name: run-tests
 description: >-
   Runs Regolith headless kernel tests from repo root. Use when the user asks to
-  run tests, прогон тестов, run_tests, verify kernel logic, or validate before
-  commit.
+  run tests, прогон тестов, run_tests, or verify kernel logic (pre-commit only
+  when kernel code/tests changed; see AGENTS.md).
 ---
 
 # Run Regolith Tests
@@ -29,7 +29,7 @@ Run from repo root `~/Desktop/regolith`.
 
 | Goal | Command |
 |------|---------|
-| Kernel gate (default, pre-commit) | `./tests/run_tests.sh` |
+| Kernel gate (only if kernel logic changed) | `./tests/run_tests.sh` |
 | Single test, noise filtered | `./tests/run_one.sh test_simulation_kernel` |
 | Everything incl. legacy gameplay scenes (slow) | `./tests/run_tests.sh --all` |
 | Shader compile smoke | `./run.sh --headless res://scenes/main.tscn` |
@@ -47,7 +47,10 @@ physics/gameplay/UI scenes are in `EXTRA=()` and run only with `--all`.
 
 1. `cd` to repo root
 2. Iterate with `./tests/run_one.sh test_<name>` (never claim pass without executing)
-3. Before "done": `./tests/run_tests.sh` once
+3. Before "done"/commit: `./tests/run_tests.sh` once **only if** the change
+   touched simulation-kernel logic (or added/changed a kernel test). Skip for
+   gameplay, bake, HUD, VFX, docs-only, etc. — use the matching DoD row in
+   `AGENTS.md` instead.
 4. On shader changes, also run the shader compile smoke
 5. Report PASS/FAIL per scene; on failure, paste the filtered output that
    `run_one.sh` already prints (engine noise is stripped)

@@ -155,8 +155,8 @@ func clamp_target_position() -> float:
 	return clampf(target_position_m, lower_limit_m, upper_limit_m)
 
 
-func velocity_limit_for_sign(sign: float) -> float:
-	return extend_velocity_mps if sign >= 0.0 else retract_velocity_mps
+func velocity_limit_for_sign(direction_sign: float) -> float:
+	return extend_velocity_mps if direction_sign >= 0.0 else retract_velocity_mps
 
 
 func clamp_target_velocity() -> float:
@@ -226,7 +226,7 @@ func to_dict() -> Dictionary:
 
 static func from_dict(data: Dictionary) -> SimulationMotorState:
 	var motor: SimulationMotorState = _SCRIPT.new()
-	motor.control_mode = int(data.get("control_mode", ControlMode.STOP))
+	motor.control_mode = int(data.get("control_mode", ControlMode.STOP)) as ControlMode
 	motor.target_position_m = float(data.get("target_position_m", 0.0))
 	motor.target_velocity_mps = float(data.get("target_velocity_mps", 0.0))
 	motor.speed_limit_mps = float(data.get("speed_limit_mps", 0.25))
@@ -245,7 +245,7 @@ static func from_dict(data: Dictionary) -> SimulationMotorState:
 	motor.enabled = bool(data.get("enabled", true))
 	motor.overload_policy = int(
 		data.get("overload_policy", OverloadPolicy.STOP)
-	)
+	) as OverloadPolicy
 	motor.angular = bool(data.get("angular", false))
 	motor.continuous = bool(data.get("continuous", false))
 	motor.observed_position_m = float(data.get("observed_position_m", 0.0))
@@ -253,7 +253,7 @@ static func from_dict(data: Dictionary) -> SimulationMotorState:
 		data.get("observed_velocity_mps", 0.0)
 	)
 	motor.applied_force_n = float(data.get("applied_force_n", 0.0))
-	motor.status = int(data.get("status", Status.IDLE))
+	motor.status = int(data.get("status", Status.IDLE)) as Status
 	motor.saturation_time_s = float(data.get("saturation_time_s", 0.0))
 	motor.stuck_time_s = float(data.get("stuck_time_s", 0.0))
 	motor.force_saturated = bool(data.get("force_saturated", false))

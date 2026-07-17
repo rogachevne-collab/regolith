@@ -172,7 +172,7 @@ static func from_dict(data: Dictionary) -> SimulationJoint:
 	var joint: SimulationJoint = _SCRIPT.new()
 	joint.joint_id = int(data.get("joint_id", 0))
 	joint.assembly_id = int(data.get("assembly_id", 0))
-	joint.kind = int(data.get("kind", Kind.RIGID))
+	joint.kind = int(data.get("kind", Kind.RIGID)) as Kind
 	joint.element_a_id = int(data.get("element_a_id", 0))
 	joint.port_a_id = str(data.get("port_a_id", ""))
 	joint.element_b_id = int(data.get("element_b_id", 0))

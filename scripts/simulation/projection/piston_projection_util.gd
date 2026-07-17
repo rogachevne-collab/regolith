@@ -161,7 +161,7 @@ static func effective_desired_axial_velocity_mps(
 	var commanded := desired_axial_velocity_mps(motor)
 	if commanded == 0.0:
 		return 0.0
-	var sign := signf(commanded)
+	var motion_sign := signf(commanded)
 	var nominal_abs := absf(commanded)
 	var hold_n := axial_load_hold_force_n(
 		carriage_mass_kg,
@@ -169,7 +169,7 @@ static func effective_desired_axial_velocity_mps(
 		gravity
 	)
 	var motion_budget := motor.force_limit_n
-	if sign > 0.0:
+	if motion_sign > 0.0:
 		motion_budget -= maxf(hold_n, 0.0)
 	else:
 		motion_budget -= maxf(-hold_n, 0.0)
@@ -182,7 +182,7 @@ static func effective_desired_axial_velocity_mps(
 	if denom <= 0.0001:
 		return commanded
 	var velocity_cap := motion_budget / denom
-	return sign * minf(nominal_abs, velocity_cap)
+	return motion_sign * minf(nominal_abs, velocity_cap)
 
 
 static func axial_load_hold_force_n(

@@ -97,11 +97,11 @@ func _build() -> void:
 	_panel.add_child(HudTokens.make_panel_overlay(PANEL_SIZE))
 
 
-func _add_bar(parent: Node, key: String, label_text: String) -> void:
+func _add_bar(parent_node: Node, key: String, label_text: String) -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	parent.add_child(row)
+	parent_node.add_child(row)
 
 	var name_label := Label.new()
 	name_label.text = label_text

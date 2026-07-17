@@ -411,7 +411,7 @@ func _complete_job(
 
 
 func _cancel_active_job(
-	world: SimulationWorld,
+	_world: SimulationWorld,
 	element: SimulationElement,
 	runtime: IndustryElementRuntime
 ) -> bool:

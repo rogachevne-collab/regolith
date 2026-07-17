@@ -132,7 +132,7 @@ func _raw_amount_from_volume(volume_m3: float) -> float:
 
 
 func _credit_raw_regolith(
-	world: SimulationWorld,
+	_world: SimulationWorld,
 	element: SimulationElement,
 	volume_m3: float
 ) -> float:

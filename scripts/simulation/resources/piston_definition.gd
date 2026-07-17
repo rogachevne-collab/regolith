@@ -34,7 +34,7 @@ func validate(
 	elif not head_archetype.internal_archetype:
 		errors.append("head archetype must be internal")
 	else:
-		var base_cells := _footprint_set(base_archetype)
+		var _base_cells := _footprint_set(base_archetype)
 		var head_cells := _footprint_set(head_archetype)
 		var offset := head_axis_offset_cell()
 		for base_cell: Vector3i in base_archetype.footprint_cells:

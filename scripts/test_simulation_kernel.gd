@@ -296,7 +296,7 @@ func _test_overlap_and_local_id_diagnostics() -> bool:
 	)
 	if overlap.ok or not _errors_contain(overlap, "cell overlap"):
 		return _fail("overlap diagnostic missing")
-	var duplicate: BlueprintValidationResult = _validate(
+	var duplicate_result: BlueprintValidationResult = _validate(
 		"duplicate",
 		[
 			_make_placement(
@@ -313,7 +313,7 @@ func _test_overlap_and_local_id_diagnostics() -> bool:
 			),
 		]
 	)
-	if duplicate.ok or not _errors_contain(duplicate, "duplicate local_id"):
+	if duplicate_result.ok or not _errors_contain(duplicate_result, "duplicate local_id"):
 		return _fail("duplicate local_id diagnostic missing")
 	var invalid_orientation: BlueprintValidationResult = _validate(
 		"bad_orientation",

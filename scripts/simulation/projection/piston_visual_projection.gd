@@ -188,8 +188,8 @@ func _find_body_for_record(
 	var root := root_variant as Node3D
 	if not is_instance_valid(root):
 		return null
-	var parent := root.get_parent()
-	return parent as PhysicsBody3D
+	var parent_node := root.get_parent()
+	return parent_node as PhysicsBody3D
 
 
 func _clear_assembly(assembly_id: int) -> void:

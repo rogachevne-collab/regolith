@@ -67,7 +67,7 @@ static func find_mergeable_loot_pile(world,
 			best_dist_sq = dist_sq
 	return best
 
-static func merge_loot_pile(world, 
+static func merge_loot_pile(_world, 
 	target: WorldLootPile,
 	new_position: Vector3,
 	add_amount_kg: float

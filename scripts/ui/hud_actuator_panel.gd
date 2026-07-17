@@ -173,9 +173,9 @@ func _ensure_tune_rows(rows: Array[Dictionary], mode: String) -> void:
 		return
 	_tune_mode = mode
 	_tune_values.clear()
-	for child: Node in _tune_box.get_children():
-		_tune_box.remove_child(child)
-		child.queue_free()
+	for child_node: Node in _tune_box.get_children():
+		_tune_box.remove_child(child_node)
+		child_node.queue_free()
 	for row: Dictionary in rows:
 		_build_tune_row(_tune_box, str(row["key"]), str(row["field"]))
 
@@ -198,11 +198,11 @@ func _configure_for_meta(meta: Dictionary) -> void:
 		_ensure_tune_rows(HudActuatorTuneUtil.TUNE_ROWS, "piston")
 
 
-func _add_info_row(parent: Node, key: String, value_color: Color) -> Label:
+func _add_info_row(parent_node: Node, key: String, value_color: Color) -> Label:
 	var row := HBoxContainer.new()
 	row.custom_minimum_size.y = INFO_ROW_HEIGHT
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	parent.add_child(row)
+	parent_node.add_child(row)
 	var k := Label.new()
 	k.text = key
 	k.theme_type_variation = &"HudSmall"
@@ -216,11 +216,11 @@ func _add_info_row(parent: Node, key: String, value_color: Color) -> Label:
 	return v
 
 
-func _build_tune_row(parent: Node, key: String, field: String) -> void:
+func _build_tune_row(parent_node: Node, key: String, field: String) -> void:
 	var row := HBoxContainer.new()
 	row.custom_minimum_size.y = INFO_ROW_HEIGHT
 	row.mouse_filter = Control.MOUSE_FILTER_STOP
-	parent.add_child(row)
+	parent_node.add_child(row)
 	var k := Label.new()
 	k.text = key
 	k.theme_type_variation = &"HudSmall"

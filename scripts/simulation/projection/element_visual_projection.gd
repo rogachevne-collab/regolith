@@ -144,16 +144,16 @@ func _update_element_visual(element_id: int) -> void:
 	var prefix := "%s%d_" % [VISUAL_PREFIX, element_id]
 	var material := _material_for(element)
 	var rim_material := _rim_material_for(element)
-	for child: Node in body.get_children():
-		if child is MeshInstance3D and child.name.begins_with(prefix):
-			(child as MeshInstance3D).material_override = material
+	for child_node: Node in body.get_children():
+		if child_node is MeshInstance3D and child_node.name.begins_with(prefix):
+			(child_node as MeshInstance3D).material_override = material
 		elif (
-			child is Node3D
-			and child.has_meta("connected_block_visual")
-			and String(child.name).begins_with(prefix)
+			child_node is Node3D
+			and child_node.has_meta("connected_block_visual")
+			and String(child_node.name).begins_with(prefix)
 		):
-			var fill := child.get_node_or_null("Fill") as MeshInstance3D
-			var rim := child.get_node_or_null("Rim") as MeshInstance3D
+			var fill := child_node.get_node_or_null("Fill") as MeshInstance3D
+			var rim := child_node.get_node_or_null("Rim") as MeshInstance3D
 			if fill != null:
 				fill.material_override = material
 			if rim != null:
@@ -268,16 +268,16 @@ func _add_stationary_drill_visual(
 
 
 func _clear_visuals(body: PhysicsBody3D, assembly_id: int = 0) -> void:
-	for child: Node in body.get_children():
+	for child_node: Node in body.get_children():
 		if (
-			child.has_meta("element_visual")
+			child_node.has_meta("element_visual")
 			and (
 				assembly_id == 0
-				or int(child.get_meta("assembly_id", 0)) == assembly_id
+				or int(child_node.get_meta("assembly_id", 0)) == assembly_id
 			)
 		):
-			body.remove_child(child)
-			child.queue_free()
+			body.remove_child(child_node)
+			child_node.queue_free()
 
 
 func _clear_known_body(assembly_id: int) -> void:

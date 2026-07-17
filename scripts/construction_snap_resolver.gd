@@ -571,7 +571,7 @@ static func _score_geometric(
 
 
 static func _has_compatible_connection(
-	world: SimulationWorld,
+	_world: SimulationWorld,
 	target_element: SimulationElement,
 	plan: Dictionary
 ) -> bool:

@@ -92,8 +92,8 @@ static func would_rigid_bridge_piston_groups(
 
 static func _pick_root_group_id(
 	groups: Dictionary,
-	element_ids: Array[int],
-	elements_by_id: Dictionary,
+	_element_ids: Array[int],
+	_elements_by_id: Dictionary,
 	joints: Array[SimulationJoint]
 ) -> int:
 	var anchored_groups: Dictionary = {}

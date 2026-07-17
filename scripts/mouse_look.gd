@@ -97,19 +97,19 @@ func view_angles() -> Vector2:
 	var yaw := 0.0
 	if forward.length_squared() > 0.0001:
 		var tangent := GravityField.find_in_tree(_target)
-		var reference := Vector3.FORWARD
+		var forward_ref := Vector3.FORWARD
 		if tangent != null and tangent.mode == GravityField.Mode.RADIAL:
-			reference = GravityField.project_on_tangent(Vector3.FORWARD, up)
-			if reference.length_squared() <= 0.0001:
-				reference = GravityField.project_on_tangent(Vector3.RIGHT, up)
+			forward_ref = GravityField.project_on_tangent(Vector3.FORWARD, up)
+			if forward_ref.length_squared() <= 0.0001:
+				forward_ref = GravityField.project_on_tangent(Vector3.RIGHT, up)
 		else:
-			reference = Vector3.FORWARD
-		if reference.length_squared() > 0.0001:
-			reference = reference.normalized()
+			forward_ref = Vector3.FORWARD
+		if forward_ref.length_squared() > 0.0001:
+			forward_ref = forward_ref.normalized()
 			forward = forward.normalized()
 			yaw = atan2(
-				reference.cross(forward).dot(up),
-				reference.dot(forward)
+				forward_ref.cross(forward).dot(up),
+				forward_ref.dot(forward)
 			)
 	return Vector2(yaw, _pitch)
 
@@ -236,13 +236,13 @@ func _init_orbit_from_vehicle() -> void:
 		_orbit_yaw = 0.0
 	else:
 		forward = forward.normalized()
-		var reference := GravityField.project_on_tangent(Vector3.FORWARD, up)
-		if reference.length_squared() < 0.0001:
-			reference = GravityField.project_on_tangent(Vector3.RIGHT, up)
-		reference = reference.normalized()
+		var forward_ref := GravityField.project_on_tangent(Vector3.FORWARD, up)
+		if forward_ref.length_squared() < 0.0001:
+			forward_ref = GravityField.project_on_tangent(Vector3.RIGHT, up)
+		forward_ref = forward_ref.normalized()
 		_orbit_yaw = atan2(
-			reference.cross(forward).dot(up),
-			reference.dot(forward)
+			forward_ref.cross(forward).dot(up),
+			forward_ref.dot(forward)
 		) + PI
 	_orbit_pitch = clampf(15.0, orbit_min_pitch, orbit_max_pitch)
 

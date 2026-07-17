@@ -359,9 +359,9 @@ func _apply_cached_mesh(
 	origin_cell: Vector3i,
 	valid: bool
 ) -> void:
-	for child: Node in get_children():
-		remove_child(child)
-		child.queue_free()
+	for child_node: Node in get_children():
+		remove_child(child_node)
+		child_node.queue_free()
 	var cache_key := _cache_key(
 		archetype.archetype_id,
 		orientation_index,
@@ -385,7 +385,7 @@ func _build_mesh_nodes(
 	origin_cell: Vector3i,
 	valid: bool
 ) -> Array[Node]:
-	var material := _valid_material if valid else _invalid_material
+	var mat := _valid_material if valid else _invalid_material
 	var nodes: Array[Node] = []
 	if archetype.piston_definition != null:
 		var head_archetype := Slice01Archetypes.piston_head()
@@ -439,7 +439,7 @@ func _build_mesh_nodes(
 					top_archetype,
 					top_origin,
 					orientation_index,
-					material
+					mat
 				)
 			)
 	if archetype.hinge_definition != null:
@@ -457,7 +457,7 @@ func _build_mesh_nodes(
 					hinge_top_archetype,
 					hinge_top_origin,
 					orientation_index,
-					material
+					mat
 				)
 			)
 	nodes.append_array(
@@ -465,7 +465,7 @@ func _build_mesh_nodes(
 			archetype,
 			origin_cell,
 			orientation_index,
-			material
+			mat
 		)
 	)
 	nodes.append_array(
@@ -483,7 +483,7 @@ func _build_mesh_nodes(
 		)
 		STATIONARY_DRILL_VISUAL_SCRIPT.apply_preview_material(
 			drill_visual,
-			material
+			mat
 		)
 		nodes.append(drill_visual)
 	return nodes
@@ -493,13 +493,13 @@ func _build_collider_preview_nodes(
 	archetype: ElementArchetype,
 	origin_cell: Vector3i,
 	orientation_index: int,
-	material: Material
+	preview_material: Material
 ) -> Array[Node]:
 	var nodes: Array[Node] = []
 	var use_connected := CONNECTED_BLOCK_VISUAL_SCRIPT.is_connected_archetype(
 		archetype.archetype_id
 	)
-	var rim_material := _connected_rim_preview_material(material)
+	var rim_material := _connected_rim_preview_material(preview_material)
 	for collider: ColliderDefinition in archetype.colliders:
 		if (
 			use_connected
@@ -516,7 +516,7 @@ func _build_collider_preview_nodes(
 				collider.size,
 				0
 			)
-			fill.material_override = material
+			fill.material_override = preview_material
 			fill.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			root.add_child(fill)
 			var rim := MeshInstance3D.new()
@@ -532,7 +532,7 @@ func _build_collider_preview_nodes(
 		var mesh := collider.make_preview_mesh(1.015)
 		var instance := MeshInstance3D.new()
 		instance.mesh = mesh
-		instance.material_override = material
+		instance.material_override = preview_material
 		instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		instance.transform = GridPoseUtil.collider_local_transform(
 			origin_cell,
@@ -557,13 +557,13 @@ func _build_collider_box_nodes(
 	archetype: ElementArchetype,
 	origin_cell: Vector3i,
 	orientation_index: int,
-	material: Material
+	preview_material: Material
 ) -> Array[Node]:
 	return _build_collider_preview_nodes(
 		archetype,
 		origin_cell,
 		orientation_index,
-		material
+		preview_material
 	)
 
 
@@ -596,14 +596,14 @@ func _build_preview_port_markers(
 			if port.kind == PortDefinition.Kind.ELECTRIC
 			else Color(0.18, 0.82, 0.88, 0.92)
 		)
-		var material := _preview_material(color)
+		var mat := _preview_material(color)
 		var disc := MeshInstance3D.new()
 		var disc_mesh := CylinderMesh.new()
 		disc_mesh.top_radius = 0.14
 		disc_mesh.bottom_radius = 0.14
 		disc_mesh.height = 0.02
 		disc.mesh = disc_mesh
-		disc.material_override = material
+		disc.material_override = mat
 		disc.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		marker_root.add_child(disc)
 		var arrow := MeshInstance3D.new()
@@ -612,7 +612,7 @@ func _build_preview_port_markers(
 		arrow_mesh.bottom_radius = 0.035
 		arrow_mesh.height = 0.18
 		arrow.mesh = arrow_mesh
-		arrow.material_override = material
+		arrow.material_override = mat
 		arrow.position = Vector3(0.0, 0.1, 0.0)
 		arrow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		marker_root.add_child(arrow)
@@ -741,8 +741,8 @@ func _hide_preview() -> void:
 
 
 func _preview_material(color: Color) -> StandardMaterial3D:
-	var material := StandardMaterial3D.new()
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.albedo_color = color
-	return material
+	var mat := StandardMaterial3D.new()
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = color
+	return mat

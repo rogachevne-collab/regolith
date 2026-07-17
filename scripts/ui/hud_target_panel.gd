@@ -200,11 +200,11 @@ func _on_panel_resized() -> void:
 		_panel_overlay_mat.set_shader_parameter("rect_size", _panel.size)
 
 
-func _make_subsection(parent: Node, title: String) -> VBoxContainer:
+func _make_subsection(parent_node: Node, title: String) -> VBoxContainer:
 	var section := VBoxContainer.new()
 	section.add_theme_constant_override("separation", 4)
 	section.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	parent.add_child(section)
+	parent_node.add_child(section)
 	var header := Label.new()
 	header.text = title
 	header.theme_type_variation = &"HudSmall"
@@ -232,21 +232,21 @@ func _prefill_subsection_labels(section: VBoxContainer, count: int) -> void:
 
 func _subsection_line_labels(section: VBoxContainer) -> Array[Label]:
 	var labels: Array[Label] = []
-	for child: Node in section.get_children():
-		if child is Label and child.get_index() > 0:
-			labels.append(child as Label)
+	for child_node: Node in section.get_children():
+		if child_node is Label and child_node.get_index() > 0:
+			labels.append(child_node as Label)
 	return labels
 
 
-func _add_info_row(parent: Node, key: String, value_color: Color) -> Label:
-	return _add_info_row_keyed(parent, key, value_color)[1] as Label
+func _add_info_row(parent_node: Node, key: String, value_color: Color) -> Label:
+	return _add_info_row_keyed(parent_node, key, value_color)[1] as Label
 
 
-func _add_info_row_keyed(parent: Node, key: String, value_color: Color) -> Array:
+func _add_info_row_keyed(parent_node: Node, key: String, value_color: Color) -> Array:
 	var row := HBoxContainer.new()
 	row.custom_minimum_size.y = INFO_ROW_HEIGHT
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	parent.add_child(row)
+	parent_node.add_child(row)
 	var k := Label.new()
 	k.text = key
 	k.theme_type_variation = &"HudSmall"
@@ -273,9 +273,9 @@ func _ensure_actuator_readout_rows(
 		return
 	_actuator_tune_mode = mode
 	_actuator_tune_values.clear()
-	for child: Node in _actuator_tune_box.get_children():
-		_actuator_tune_box.remove_child(child)
-		child.queue_free()
+	for child_node: Node in _actuator_tune_box.get_children():
+		_actuator_tune_box.remove_child(child_node)
+		child_node.queue_free()
 	for row: Dictionary in rows:
 		_build_actuator_readout_row(str(row["key"]), str(row["field"]))
 
@@ -380,7 +380,7 @@ func _refresh_store_view(archetype_id: String, meta: Dictionary) -> void:
 
 
 func _refresh_actuator_info(
-	hit: InteractionHit,
+	_hit: InteractionHit,
 	meta: Dictionary,
 	status: StringName
 ) -> bool:
@@ -671,9 +671,9 @@ func _refresh_machine_progress(
 	_machine_progress_value.add_theme_color_override("font_color", bar_color)
 
 
-func _set_machine_progress_visible(visible: bool) -> void:
+func _set_machine_progress_visible(is_visible: bool) -> void:
 	if _machine_progress_row != null:
-		_machine_progress_row.visible = visible
+		_machine_progress_row.visible = is_visible
 
 
 func _integrity_fraction(archetype_id: String, meta: Dictionary) -> float:

@@ -54,14 +54,14 @@ func _test_layout_at_default_viewport() -> bool:
 	await get_tree().process_frame
 	await get_tree().process_frame
 	var panel_rect := panel.get_global_rect()
-	for child in grid.get_children():
-		if child is Control:
-			var entry_rect := (child as Control).get_global_rect()
+	for child_node in grid.get_children():
+		if child_node is Control:
+			var entry_rect := (child_node as Control).get_global_rect()
 			if entry_rect.position.y > panel_rect.end.y + 1.0:
 				continue
 			if not panel_rect.encloses(entry_rect):
 				palette.queue_free()
-				return _fail("visible entry %s escapes panel bounds" % child.name)
+				return _fail("visible entry %s escapes panel bounds" % child_node.name)
 	palette.queue_free()
 	return true
 
@@ -142,8 +142,8 @@ func _find_first_grid(root: Node) -> GridContainer:
 func _find_first_of(root: Node, type_variant: Variant) -> Node:
 	if is_instance_of(root, type_variant):
 		return root
-	for child in root.get_children():
-		var found := _find_first_of(child, type_variant)
+	for child_node in root.get_children():
+		var found := _find_first_of(child_node, type_variant)
 		if found != null:
 			return found
 	return null

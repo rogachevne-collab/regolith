@@ -1258,7 +1258,7 @@ func _construction_apply(
 
 
 func _weld_element(
-	command: Dictionary,
+	_command: Dictionary,
 	target: Dictionary
 ) -> Dictionary:
 	if (
@@ -1658,7 +1658,7 @@ func _set_actuator_target(
 			"mode",
 			SimulationMotorState.ControlMode.STOP
 		)
-	)
+	) as SimulationMotorState.ControlMode
 	actuator.target_position_m = float(
 		parameters.get("target_position_m", 0.0)
 	)

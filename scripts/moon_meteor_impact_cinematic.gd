@@ -299,8 +299,8 @@ func _prime_vfx(root: Node) -> void:
 	if root is GPUParticles3D and root.one_shot:
 		root.restart()
 		root.emitting = true
-	for child in root.get_children():
-		_prime_vfx(child)
+	for child_node in root.get_children():
+		_prime_vfx(child_node)
 
 
 func _make_environment() -> Environment:

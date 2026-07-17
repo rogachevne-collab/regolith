@@ -157,8 +157,8 @@ func _process(_delta: float) -> void:
 
 
 func _rebuild_slots(page: int) -> void:
-	for child: Node in _slots_root.get_children():
-		child.queue_free()
+	for child_node: Node in _slots_root.get_children():
+		child_node.queue_free()
 	_slots.clear()
 
 	var count := ToolController.TOOLBAR_SLOTS_PER_PAGE

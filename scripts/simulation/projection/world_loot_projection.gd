@@ -165,16 +165,16 @@ func _on_loot_body_entered(other_body: Node, pile_id: int) -> void:
 func _apply_mass_and_visual(body: RigidBody3D, amount_kg: float) -> void:
 	var radius := _collision_radius(amount_kg)
 	body.mass = maxf(amount_kg, 0.05)
-	for child: Node in body.get_children():
-		if child is CollisionShape3D:
-			var shape_node := child as CollisionShape3D
+	for child_node: Node in body.get_children():
+		if child_node is CollisionShape3D:
+			var shape_node := child_node as CollisionShape3D
 			var shape := shape_node.shape as SphereShape3D
 			if shape == null:
 				continue
 			shape.radius = radius
 			shape_node.position.y = radius * 0.5
-		elif child is MeshInstance3D:
-			var visual := child as MeshInstance3D
+		elif child_node is MeshInstance3D:
+			var visual := child_node as MeshInstance3D
 			var mesh := visual.mesh as SphereMesh
 			if mesh == null:
 				continue
@@ -201,16 +201,16 @@ func _rows_signature(rows: Array[Dictionary]) -> String:
 
 
 func _make_material() -> StandardMaterial3D:
-	var material := StandardMaterial3D.new()
-	material.albedo_color = LOOT_COLOR
-	material.roughness = 0.92
-	material.metallic = 0.08
-	return material
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = LOOT_COLOR
+	mat.roughness = 0.92
+	mat.metallic = 0.08
+	return mat
 
 
 func _make_physics_material() -> PhysicsMaterial:
-	var material := PhysicsMaterial.new()
-	material.friction = 0.55
-	material.bounce = 0.05
-	material.rough = true
-	return material
+	var phys_mat := PhysicsMaterial.new()
+	phys_mat.friction = 0.55
+	phys_mat.bounce = 0.05
+	phys_mat.rough = true
+	return phys_mat

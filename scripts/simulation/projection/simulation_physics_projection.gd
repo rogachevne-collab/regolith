@@ -192,12 +192,12 @@ func align_body_motion(
 	reference_assembly_id: int
 ) -> bool:
 	var target := get_physics_body(target_assembly_id) as RigidBody3D
-	var reference := get_physics_body(reference_assembly_id) as RigidBody3D
-	if target == null or reference == null:
+	var reference_body := get_physics_body(reference_assembly_id) as RigidBody3D
+	if target == null or reference_body == null:
 		return false
-	target.global_transform = reference.global_transform
-	target.linear_velocity = reference.linear_velocity
-	target.angular_velocity = reference.angular_velocity
+	target.global_transform = reference_body.global_transform
+	target.linear_velocity = reference_body.linear_velocity
+	target.angular_velocity = reference_body.angular_velocity
 	return sync_body_motion_now(target_assembly_id)
 
 
@@ -1554,9 +1554,9 @@ func _apply_body_groups(
 
 func _clear_body_colliders(body: PhysicsBody3D) -> void:
 	var stale: Array[CollisionShape3D] = []
-	for child: Node in body.get_children():
-		if child is CollisionShape3D:
-			stale.append(child as CollisionShape3D)
+	for child_node: Node in body.get_children():
+		if child_node is CollisionShape3D:
+			stale.append(child_node as CollisionShape3D)
 	for collider: CollisionShape3D in stale:
 		collider.disabled = true
 		collider.queue_free()
@@ -1600,9 +1600,9 @@ func _body_center_of_mass_world(
 
 func _estimate_body_inertia(body: PhysicsBody3D) -> Vector3:
 	var records: Array[Dictionary] = []
-	for child: Node in body.get_children():
-		if child is CollisionShape3D:
-			var collider: CollisionShape3D = child as CollisionShape3D
+	for child_node: Node in body.get_children():
+		if child_node is CollisionShape3D:
+			var collider: CollisionShape3D = child_node as CollisionShape3D
 			if collider.shape is BoxShape3D:
 				records.append({
 					"shape": collider.shape,

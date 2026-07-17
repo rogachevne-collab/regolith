@@ -197,14 +197,14 @@ func _target_metadata(
 		if shape_index >= 0:
 			var owner_id := collision_object.shape_find_owner(shape_index)
 			if owner_id >= 0:
-				var owner: Object = collision_object.shape_owner_get_owner(owner_id)
-				if owner is Node and owner.has_meta("element_id"):
-					metadata["element_id"] = int(owner.get_meta("element_id"))
+				var shape_owner: Object = collision_object.shape_owner_get_owner(owner_id)
+				if shape_owner is Node and shape_owner.has_meta("element_id"):
+					metadata["element_id"] = int(shape_owner.get_meta("element_id"))
 					metadata["shape_index"] = shape_index
 					metadata["collider_index"] = int(
-						owner.get_meta("collider_index", -1)
+						shape_owner.get_meta("collider_index", -1)
 					)
-					metadata["collider_local_cell"] = owner.get_meta(
+					metadata["collider_local_cell"] = shape_owner.get_meta(
 						"collider_local_cell",
 						Vector3i.ZERO
 					)

@@ -123,22 +123,22 @@ func _consumers_in_radius(
 			continue
 		if not IndustryElectricProfile.is_power_consumer(element):
 			continue
-		var position := IndustryElectricBudget.element_world_position(
+		var world_pos := IndustryElectricBudget.element_world_position(
 			world,
 			element
 		)
-		if center.distance_to(position) <= radius_m + 0.000001:
+		if center.distance_to(world_pos) <= radius_m + 0.000001:
 			result.append(element)
 	return result
 
 
 func _draw_ring(center: Vector3, radius_m: float, supplied: bool) -> void:
 	var color := COLOR_RING_SUPPLIED if supplied else COLOR_RING_UNSUPPLIED
-	var material: StandardMaterial3D = _materials["ring"]
-	material.albedo_color = color
-	material.emission = Color(color.r, color.g, color.b, 1.0)
+	var mat: StandardMaterial3D = _materials["ring"]
+	mat.albedo_color = color
+	mat.emission = Color(color.r, color.g, color.b, 1.0)
 	var y := center.y + RING_LIFT_M
-	_mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP, material)
+	_mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP, mat)
 	for segment: int in range(RING_SEGMENTS + 1):
 		var angle := TAU * float(segment) / float(RING_SEGMENTS)
 		_mesh.surface_add_vertex(
@@ -152,23 +152,23 @@ func _draw_ring(center: Vector3, radius_m: float, supplied: bool) -> void:
 
 
 func _draw_line(from: Vector3, to: Vector3, color: Color) -> void:
-	var material: StandardMaterial3D = _materials["line"]
-	material.albedo_color = color
-	material.emission = Color(color.r, color.g, color.b, 1.0)
-	_mesh.surface_begin(Mesh.PRIMITIVE_LINES, material)
+	var mat: StandardMaterial3D = _materials["line"]
+	mat.albedo_color = color
+	mat.emission = Color(color.r, color.g, color.b, 1.0)
+	_mesh.surface_begin(Mesh.PRIMITIVE_LINES, mat)
 	_mesh.surface_add_vertex(from + Vector3.UP * RING_LIFT_M)
 	_mesh.surface_add_vertex(to + Vector3.UP * RING_LIFT_M)
 	_mesh.surface_end()
 
 
-func _draw_consumer_marker(position: Vector3, color: Color) -> void:
-	var material: StandardMaterial3D = _materials["marker"]
-	material.albedo_color = color
-	material.emission = Color(color.r, color.g, color.b, 1.0)
-	var base := position + Vector3.UP * RING_LIFT_M
+func _draw_consumer_marker(world_pos: Vector3, color: Color) -> void:
+	var mat: StandardMaterial3D = _materials["marker"]
+	mat.albedo_color = color
+	mat.emission = Color(color.r, color.g, color.b, 1.0)
+	var base := world_pos + Vector3.UP * RING_LIFT_M
 	var top := base + Vector3.UP * MARKER_HALF_SIZE_M
 	var half := MARKER_HALF_SIZE_M * 0.65
-	_mesh.surface_begin(Mesh.PRIMITIVE_LINES, material)
+	_mesh.surface_begin(Mesh.PRIMITIVE_LINES, mat)
 	_mesh.surface_add_vertex(base)
 	_mesh.surface_add_vertex(top)
 	_mesh.surface_add_vertex(top + Vector3(half, 0.0, 0.0))
@@ -181,9 +181,9 @@ func _draw_consumer_marker(position: Vector3, color: Color) -> void:
 
 func _create_materials() -> void:
 	for key: String in ["ring", "line", "marker"]:
-		var material := StandardMaterial3D.new()
-		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		material.cull_mode = BaseMaterial3D.CULL_DISABLED
-		material.emission_enabled = true
-		_materials[key] = material
+		var mat := StandardMaterial3D.new()
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		mat.emission_enabled = true
+		_materials[key] = mat

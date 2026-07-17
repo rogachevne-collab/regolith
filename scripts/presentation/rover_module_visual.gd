@@ -381,7 +381,7 @@ static func _build_axis_arrow(
 static func _build_socket_halo(
 	center_local: Vector3,
 	axis_local: Vector3,
-	valid: bool,
+	_valid: bool,
 	color: Color
 ) -> MeshInstance3D:
 	var axis := axis_local.normalized()
@@ -414,8 +414,8 @@ static func _build_steering_arc(
 	)
 	var material := _preview_material(color)
 	var radius := DEFAULT_WHEEL_RADIUS_M * 0.85
-	for sign: int in [-1, 1]:
-		var angle := float(sign) * max_angle_rad
+	for side_sign: int in [-1, 1]:
+		var angle := float(side_sign) * max_angle_rad
 		var forward := neutral_forward.rotated(steering_axis, angle)
 		var arc := MeshInstance3D.new()
 		var arc_mesh := CylinderMesh.new()
@@ -439,10 +439,10 @@ static func _basis_from_axis(axis_local: Vector3) -> Basis:
 		return Basis.IDENTITY
 	if axis.is_equal_approx(Vector3.DOWN):
 		return Basis(Vector3.RIGHT, PI)
-	var reference := Vector3.FORWARD
-	if absf(axis.dot(reference)) > 0.95:
-		reference = Vector3.RIGHT
-	var side := axis.cross(reference).normalized()
+	var forward_ref := Vector3.FORWARD
+	if absf(axis.dot(forward_ref)) > 0.95:
+		forward_ref = Vector3.RIGHT
+	var side := axis.cross(forward_ref).normalized()
 	var forward := side.cross(axis).normalized()
 	return Basis(side, axis, forward)
 

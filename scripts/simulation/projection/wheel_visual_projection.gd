@@ -128,13 +128,13 @@ func _find_wheel_visual(
 ) -> Node3D:
 	if body == null:
 		return null
-	for child: Node in body.get_children():
+	for child_node: Node in body.get_children():
 		if (
-			child is Node3D
-			and child.has_meta("rover_module_visual")
-			and int(child.get_meta("element_id", 0)) == element_id
+			child_node is Node3D
+			and child_node.has_meta("rover_module_visual")
+			and int(child_node.get_meta("element_id", 0)) == element_id
 		):
-			return child as Node3D
+			return child_node as Node3D
 	return null
 
 

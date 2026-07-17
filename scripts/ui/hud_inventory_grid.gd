@@ -52,9 +52,9 @@ func configure_layout(
 	if _grid != null:
 		_grid.add_theme_constant_override("h_separation", int(_slot_gap))
 		_grid.add_theme_constant_override("v_separation", int(_slot_gap))
-		for child in _grid.get_children():
-			if child is HudInventorySlot:
-				(child as HudInventorySlot).configure(_slot_size)
+		for child_node in _grid.get_children():
+			if child_node is HudInventorySlot:
+				(child_node as HudInventorySlot).configure(_slot_size)
 	_update_columns()
 	_apply_height_budget()
 	_update_minimum_size()
@@ -133,8 +133,8 @@ func _notification(what: int) -> void:
 func _rebuild_grid() -> void:
 	if _grid == null:
 		return
-	for child in _grid.get_children():
-		child.queue_free()
+	for child_node in _grid.get_children():
+		child_node.queue_free()
 	var entries: Array = _snapshot.get("entries", [])
 	_empty_label.visible = entries.is_empty()
 	for entry: Variant in entries:

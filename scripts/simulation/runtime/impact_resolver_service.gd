@@ -906,13 +906,13 @@ func _spawn_impact_feedback(
 		return
 	_last_vfx_spawn_msec = now
 	var contact_world := Vector3(entry.get("contact_world", Vector3.ZERO))
-	var parent := _feedback_parent()
-	if parent == null:
+	var parent_node := _feedback_parent()
+	if parent_node == null:
 		return
 	var s := clampf(strength, 0.0, 1.0)
 	# Build a small burst node anchored to the terrain.
 	var burst := Node3D.new()
-	parent.add_child(burst)
+	parent_node.add_child(burst)
 	burst.global_position = contact_world
 	# Flash — brief orange/white spark, small sphere.
 	var flash := _make_particles(15, 0.28, Color(1.0, 0.82, 0.55, 0.9))
@@ -963,7 +963,7 @@ func _spawn_impact_feedback(
 		player.pitch_scale = randf_range(pitch_min, pitch_max)
 		player.volume_db = linear_to_db(clampf(s * 1.2, 0.0, 1.0))
 		player.max_distance = 40.0
-		parent.add_child(player)
+		parent_node.add_child(player)
 		player.global_position = contact_world
 		player.play()
 		var finish_duration := stream.get_length()

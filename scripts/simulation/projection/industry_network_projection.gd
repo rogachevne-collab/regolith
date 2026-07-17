@@ -59,8 +59,8 @@ func bind(
 func rebuild_all() -> void:
 	if _world == null or _links_root == null:
 		return
-	for child: Node in _links_root.get_children():
-		child.queue_free()
+	for child_node: Node in _links_root.get_children():
+		child_node.queue_free()
 	_tube_path_cache.clear()
 	for link: IndustryElectricLink in _world.get_industry_network().list_links():
 		var wire := _make_wire_body(link)
@@ -76,8 +76,8 @@ func _process(_delta: float) -> void:
 	if revision != _cached_network_revision:
 		rebuild_all()
 		return
-	for child: Node in _links_root.get_children():
-		var body := child as StaticBody3D
+	for child_node: Node in _links_root.get_children():
+		var body := child_node as StaticBody3D
 		if body == null:
 			continue
 		var link_id := int(body.get_meta("electric_link_id", 0))
@@ -348,8 +348,8 @@ func _ensure_wire_segments(body: StaticBody3D, count: int) -> void:
 
 
 func _set_segments_disabled(body: StaticBody3D, disabled: bool) -> void:
-	for child: Node in body.get_children():
-		var collision := child as CollisionShape3D
+	for child_node: Node in body.get_children():
+		var collision := child_node as CollisionShape3D
 		if collision != null:
 			collision.disabled = disabled
 
@@ -364,16 +364,16 @@ func _wire_basis(direction: Vector3) -> Basis:
 
 
 func _create_wire_material() -> StandardMaterial3D:
-	var material := StandardMaterial3D.new()
-	material.albedo_color = WIRE_COLOR
-	material.metallic = 0.3
-	material.roughness = 0.5
-	return material
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = WIRE_COLOR
+	mat.metallic = 0.3
+	mat.roughness = 0.5
+	return mat
 
 
 func _create_dormant_material() -> StandardMaterial3D:
-	var material := StandardMaterial3D.new()
-	material.albedo_color = WIRE_DORMANT_COLOR
-	material.metallic = 0.1
-	material.roughness = 0.8
-	return material
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = WIRE_DORMANT_COLOR
+	mat.metallic = 0.1
+	mat.roughness = 0.8
+	return mat

@@ -143,11 +143,12 @@ Legacy flat yard: `scenes/flat_moon.tscn` + `scripts/flat_moon_bootstrap.gd`.
 - Spawn: ждать meshed + physics; temp landing pad — только fallback.
 - Смена рельефа → bump `GENERATOR_VERSION` + повторный bake.
 - **Heightmap bake:** `MoonHeightmapUtil.bake_heightmap` (2048×1024 EXR) —
-  native `MoonHeightmapBake` (`addons/regolith_moon_bake/`): crater math in
-  C++, noise via Voxel Tools `ZN_FastNoiseLite` (same as
-  `MoonTerrainGenerator`). Main-thread only (Godot Object calls). Fallback —
-  GDScript `WorkerThreadPool`. Bump `GENERATOR_VERSION` on relief change.
-  Повторный play грузит `user://moon_experiment/gen_v{N}/crust_heightmap.exr`.
+  native `MoonHeightmapBake` (`addons/regolith_moon_bake/`): crater math +
+  local Auburn FastNoiseLite (ZN-equivalent: `period → freq = 1/period`,
+  same seeds/octaves as `MoonTerrainGenerator`), multithreaded workers.
+  Fallback — GDScript `WorkerThreadPool` + live ZN. Bump `GENERATOR_VERSION`
+  on relief change. Повторный play грузит
+  `user://moon_experiment/gen_v{N}/crust_heightmap.exr`.
 - Мир-сейв сборок: `gen_v{N}/world_save.json` (отдельно от flat_moon).
 
 Типизация в коде: **тонкий адаптер** `TerrainCompat`

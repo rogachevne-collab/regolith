@@ -145,9 +145,9 @@ static func port_marker_basis(face_dir: Vector3) -> Basis:
 	if face_dir.length_squared() <= 0.000001:
 		return Basis.IDENTITY
 	var normal := face_dir.normalized()
-	var reference := Vector3.FORWARD
-	if absf(normal.dot(reference)) > 0.999:
-		reference = Vector3.RIGHT
-	var tangent := reference.cross(normal).normalized()
+	var forward_ref := Vector3.FORWARD
+	if absf(normal.dot(forward_ref)) > 0.999:
+		forward_ref = Vector3.RIGHT
+	var tangent := forward_ref.cross(normal).normalized()
 	var bitangent := tangent.cross(normal).normalized()
 	return Basis(tangent, normal, bitangent)

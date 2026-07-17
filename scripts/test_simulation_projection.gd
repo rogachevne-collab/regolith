@@ -121,19 +121,19 @@ func _test_split_velocity_inheritance() -> bool:
 		GridTransform.identity()
 	)
 	var assembly_id: int = int(spawn.data["assembly_id"])
-	var parent: RigidBody3D = (
+	var parent_body: RigidBody3D = (
 		projection.get_physics_body(assembly_id) as RigidBody3D
 	)
-	parent.gravity_scale = 0.0
-	parent.global_transform = Transform3D(
+	parent_body.gravity_scale = 0.0
+	parent_body.global_transform = Transform3D(
 		Basis.IDENTITY.rotated(Vector3.UP, 0.37),
 		Vector3(3.2, 4.1, -1.7)
 	)
-	parent.linear_velocity = Vector3(2.0, -0.5, 0.25)
-	parent.angular_velocity = Vector3(0.0, 0.0, 2.0)
-	var parent_com: Vector3 = parent.to_global(parent.center_of_mass)
-	var parent_linear: Vector3 = parent.linear_velocity
-	var parent_angular: Vector3 = parent.angular_velocity
+	parent_body.linear_velocity = Vector3(2.0, -0.5, 0.25)
+	parent_body.angular_velocity = Vector3(0.0, 0.0, 2.0)
+	var parent_com: Vector3 = parent_body.to_global(parent_body.center_of_mass)
+	var parent_linear: Vector3 = parent_body.linear_velocity
+	var parent_angular: Vector3 = parent_body.angular_velocity
 	var joint_id: int = _first_rigid_joint(world, assembly_id)
 	var command := BreakRigidJointCommand.new()
 	command.joint_id = joint_id
@@ -150,22 +150,22 @@ func _test_split_velocity_inheritance() -> bool:
 		int(split.data["new_assembly_ids"][0]),
 	]
 	for split_id: int in split_ids:
-		var child: RigidBody3D = (
+		var child_body: RigidBody3D = (
 			projection.get_physics_body(split_id) as RigidBody3D
 		)
-		if child == null:
+		if child_body == null:
 			return _fail("split child body missing")
-		child.gravity_scale = 0.0
-		var child_com: Vector3 = child.to_global(child.center_of_mass)
+		child_body.gravity_scale = 0.0
+		var child_com: Vector3 = child_body.to_global(child_body.center_of_mass)
 		var expected: Vector3 = AssemblyPhysicsMath.velocity_at_point(
 			parent_linear,
 			parent_angular,
 			child_com,
 			parent_com
 		)
-		if not child.linear_velocity.is_equal_approx(expected):
+		if not child_body.linear_velocity.is_equal_approx(expected):
 			return _fail("split child did not inherit COM velocity")
-		if not child.angular_velocity.is_equal_approx(parent_angular):
+		if not child_body.angular_velocity.is_equal_approx(parent_angular):
 			return _fail("split child lost angular velocity")
 	_free_fixture(fixture)
 	return true

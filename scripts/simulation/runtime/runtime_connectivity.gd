@@ -180,7 +180,7 @@ static func connected_components(
 
 static func rigid_connected_components(
 	element_ids: Array[int],
-	elements_by_id: Dictionary,
+	_elements_by_id: Dictionary,
 	joints: Array[SimulationJoint]
 ) -> Array[Array]:
 	return _connected_components(element_ids, joints, [SimulationJoint.Kind.RIGID])
@@ -188,7 +188,7 @@ static func rigid_connected_components(
 
 static func mechanical_connected_components(
 	element_ids: Array[int],
-	elements_by_id: Dictionary,
+	_elements_by_id: Dictionary,
 	joints: Array[SimulationJoint]
 ) -> Array[Array]:
 	return _connected_components(

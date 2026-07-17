@@ -43,9 +43,9 @@ static func minimum_inward_offset_m(terrain: Node3D, radius: float) -> float:
 
 
 static func bite_depth_for_radius(radius: float) -> float:
-	var reference := IndustryArchetypeProfile.hand_drill_carve_radius_m()
+	var reference_radius_m := IndustryArchetypeProfile.hand_drill_carve_radius_m()
 	var depth := IndustryArchetypeProfile.hand_drill_bite_depth_m() * (
-		radius / reference
+		radius / reference_radius_m
 	)
 	return clampf(depth, 0.05, radius * 0.72)
 

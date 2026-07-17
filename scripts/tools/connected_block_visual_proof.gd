@@ -42,7 +42,7 @@ func _run() -> void:
 	get_tree().quit(0)
 
 
-func _capture_case(name: String, subject: Node3D, camera_pos: Vector3) -> void:
+func _capture_case(case_name: String, subject: Node3D, camera_pos: Vector3) -> void:
 	var viewport := SubViewport.new()
 	viewport.size = Vector2i(VIEWPORT_SIZE, VIEWPORT_SIZE)
 	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
@@ -96,7 +96,7 @@ func _capture_case(name: String, subject: Node3D, camera_pos: Vector3) -> void:
 
 	var img: Image = viewport.get_texture().get_image()
 	## Godot 4 SubViewport images are already upright with OpenGL; do not flip_y.
-	var path := "%s/%s.png" % [OUT_DIR, name]
+	var path := "%s/%s.png" % [OUT_DIR, case_name]
 	img.save_png(path)
 	print("PROOF: wrote ", path, " bytes=", FileAccess.get_file_as_bytes(path).size())
 	viewport.queue_free()
@@ -126,7 +126,7 @@ func _build_large_isolated_root() -> Node3D:
 
 
 func _attach_block(
-	parent: Node3D,
+	parent_node: Node3D,
 	size: Vector3,
 	face_mask: int,
 	origin: Vector3
@@ -145,7 +145,7 @@ func _attach_block(
 
 	var holder := Node3D.new()
 	holder.position = origin
-	parent.add_child(holder)
+	parent_node.add_child(holder)
 
 	var fill := MeshInstance3D.new()
 	fill.mesh = ConnectedBlockVisual.make_fill_mesh(size, face_mask)

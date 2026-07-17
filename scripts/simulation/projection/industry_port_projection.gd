@@ -52,7 +52,7 @@ func bind(
 
 
 func set_presentation_state(
-	visible: bool,
+	is_visible: bool,
 	highlight_element_ids: Array = [],
 	compatible_ports: Array = []
 ) -> void:
@@ -74,13 +74,13 @@ func set_presentation_state(
 			if not key.is_empty():
 				next_compatible_ports[key] = true
 	var next_signature := _presentation_signature(
-		visible,
+		is_visible,
 		next_element_ids,
 		next_compatible_ports
 	)
 	if next_signature == _state_signature:
 		return
-	_visible = visible
+	_visible = is_visible
 	_highlight_element_ids = next_element_ids
 	_compatible_ports = next_compatible_ports
 	_state_signature = next_signature
@@ -125,9 +125,9 @@ func _apply_marker_state() -> void:
 		var marker := _marker_nodes[key] as Node3D
 		_marker_nodes.erase(key)
 		if is_instance_valid(marker):
-			var parent := marker.get_parent()
-			if parent != null:
-				parent.remove_child(marker)
+			var parent_node := marker.get_parent()
+			if parent_node != null:
+				parent_node.remove_child(marker)
 			marker.queue_free()
 
 
@@ -187,9 +187,9 @@ func _update_marker(
 		port,
 		FACE_OFFSET
 	)
-	var material := _material_for(element, port)
-	(marker.get_node("Disc") as MeshInstance3D).material_override = material
-	(marker.get_node("Arrow") as MeshInstance3D).material_override = material
+	var mat := _material_for(element, port)
+	(marker.get_node("Disc") as MeshInstance3D).material_override = mat
+	(marker.get_node("Arrow") as MeshInstance3D).material_override = mat
 
 
 func _material_for(
@@ -281,7 +281,7 @@ func _create_meshes() -> void:
 
 
 func _presentation_signature(
-	visible: bool,
+	is_visible: bool,
 	element_ids: Dictionary,
 	compatible_ports: Dictionary
 ) -> String:
@@ -289,16 +289,16 @@ func _presentation_signature(
 	sorted_element_ids.sort()
 	var sorted_ports: Array = compatible_ports.keys()
 	sorted_ports.sort()
-	return "%s|%s|%s" % [visible, sorted_element_ids, sorted_ports]
+	return "%s|%s|%s" % [is_visible, sorted_element_ids, sorted_ports]
 
 
 func _marker_material(color: Color, emission_scale: float = 0.35) -> StandardMaterial3D:
-	var material := StandardMaterial3D.new()
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	material.albedo_color = color
-	material.emission_enabled = true
-	material.emission = Color(color.r, color.g, color.b, 1.0)
-	material.emission_energy_multiplier = emission_scale
-	material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	return material
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = color
+	mat.emission_enabled = true
+	mat.emission = Color(color.r, color.g, color.b, 1.0)
+	mat.emission_energy_multiplier = emission_scale
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	return mat

@@ -346,7 +346,7 @@ static func _plan_for_attach_origin(
 	archetype: ElementArchetype,
 	orientation_index: int,
 	store_id: String,
-	held_ground_pivot: Vector3,
+	_held_ground_pivot: Vector3,
 	snap_context: Dictionary,
 	origin_cell: Vector3i
 ) -> Dictionary:

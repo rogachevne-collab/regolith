@@ -249,8 +249,8 @@ func _test_port_projection_smoke() -> bool:
 	var element := world.get_element(int(fixture["element_id"]))
 	var body := physics.get_physics_body(element.assembly_id)
 	var marker_found := false
-	for child: Node in body.get_children():
-		if str(child.name).begins_with(IndustryPortProjection.MARKER_PREFIX):
+	for child_node: Node in body.get_children():
+		if str(child_node.name).begins_with(IndustryPortProjection.MARKER_PREFIX):
 			marker_found = true
 			break
 	if not marker_found:
@@ -356,9 +356,9 @@ func _test_port_marker_local_pose_after_motion() -> bool:
 		return _fail("power_out port missing for motion fixture")
 	var body := physics.get_physics_body(element.assembly_id)
 	var marker: Node3D = null
-	for child: Node in body.get_children():
-		if str(child.name).begins_with(IndustryPortProjection.MARKER_PREFIX):
-			marker = child as Node3D
+	for child_node: Node in body.get_children():
+		if str(child_node.name).begins_with(IndustryPortProjection.MARKER_PREFIX):
+			marker = child_node as Node3D
 			break
 	if marker == null:
 		_free_fixture(fixture)

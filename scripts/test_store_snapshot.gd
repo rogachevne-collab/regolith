@@ -281,10 +281,10 @@ func _find_entry(entries: Array, item_id: String) -> Dictionary:
 
 
 func _find_code_label(root: Node) -> Label:
-	for child in root.get_children():
-		if child is Label:
-			return child as Label
-		var nested := _find_code_label(child)
+	for child_node in root.get_children():
+		if child_node is Label:
+			return child_node as Label
+		var nested := _find_code_label(child_node)
 		if nested != null:
 			return nested
 	return null

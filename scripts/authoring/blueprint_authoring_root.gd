@@ -15,8 +15,8 @@ extends Node3D
 
 func collect_markers() -> Array[ElementMarker]:
 	var markers: Array[ElementMarker] = []
-	for child: Node in get_children():
-		var marker := child as ElementMarker
+	for child_node: Node in get_children():
+		var marker := child_node as ElementMarker
 		if marker != null:
 			markers.append(marker)
 	return markers
