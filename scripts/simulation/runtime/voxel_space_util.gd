@@ -183,17 +183,25 @@ static func raycast_world(
 	)
 
 
+## VoxelTool.raycast takes world-space origin/direction, but the returned
+## `hit.distance` comes back multiplied by the terrain node scale (measured:
+## ratio 0.65 at scale 0.65, ratio 1.0 at scale 1.0 against the SDF zero
+## crossing). Divide by voxel size to recover world meters, otherwise every
+## SDF-derived point lands short of the surface on the scaled moon terrain.
 static func raycast_hit_world_distance(
-	_terrain: Node3D,
+	terrain: Node3D,
 	hit: VoxelRaycastResult
 ) -> float:
 	if hit == null:
 		return 0.0
-	return hit.distance
+	var size := voxel_size_m(terrain)
+	if size <= EPSILON:
+		return hit.distance
+	return hit.distance / size
 
 
 static func raycast_hit_world_point(
-	_terrain: Node3D,
+	terrain: Node3D,
 	world_origin: Vector3,
 	world_direction: Vector3,
 	hit: VoxelRaycastResult
@@ -203,4 +211,7 @@ static func raycast_hit_world_point(
 	var direction := world_direction
 	if direction.length_squared() <= EPSILON:
 		return world_origin
-	return world_origin + direction.normalized() * hit.distance
+	return (
+		world_origin
+		+ direction.normalized() * raycast_hit_world_distance(terrain, hit)
+	)
