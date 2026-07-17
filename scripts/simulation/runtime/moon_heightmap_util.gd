@@ -8,6 +8,19 @@ const _Params := preload("res://scripts/simulation/runtime/moon_terrain_params.g
 const _HQ := preload("res://scripts/simulation/runtime/moon_terrain_generator.gd")
 
 
+static func _native_bake_available() -> bool:
+	return ClassDB.class_exists("MoonHeightmapBake")
+
+
+static func _bake_pixels_native(
+	width: int,
+	height: int,
+	radius_voxels: float
+) -> PackedFloat32Array:
+	var baker: Object = ClassDB.instantiate("MoonHeightmapBake")
+	return baker.call("bake_panorama", width, height, radius_voxels)
+
+
 static func heightmap_path() -> String:
 	return "%s/crust_heightmap.exr" % _Params.stream_directory()
 
@@ -54,35 +67,60 @@ static func bake_heightmap(
 	if not DirAccess.dir_exists_absolute(dir):
 		DirAccess.make_dir_recursive_absolute(dir)
 
-	print(
-		"MoonHeightmap: baking panoramic crust %dx%d (one-time)..."
-		% [width, height]
-	)
-	var gen = _HQ.new()
-	gen._radius_voxels = MoonGeometry.radius_voxels()
-	gen._setup_noise()
-
-	var img := Image.create(width, height, false, Image.FORMAT_RF)
+	var worker_count := clampi(OS.get_processor_count(), 1, height)
 	var t0 := Time.get_ticks_msec()
-	for y in height:
-		var v := (float(y) + 0.5) / float(height)
-		for x in width:
-			var u := (float(x) + 0.5) / float(width)
-			## Must match how NODE_SDF_SPHERE_HEIGHTMAP reads the panorama
-			## back at play time, or relief gets skewed near poles / mirrored.
-			var n := direction_from_node_uv(u, v)
-			## Height in local voxel units (SdfSphereHeightmap factor=1).
-			var h_voxels: float = gen._height_voxels(n)
-			img.set_pixel(x, y, Color(h_voxels, 0.0, 0.0))
-		if y % 64 == 0:
-			print("MoonHeightmap: row %d/%d" % [y, height])
+	var pixels := PackedFloat32Array()
+
+	if _native_bake_available():
+		print(
+			(
+				"MoonHeightmap: native bake %dx%d "
+				+ "(%d threads, one-time)..."
+			)
+			% [width, height, worker_count]
+		)
+		pixels = _bake_pixels_native(width, height, MoonGeometry.radius_voxels())
+	else:
+		print(
+			(
+				"MoonHeightmap: baking panoramic crust %dx%d "
+				+ "(%d threads GDScript, one-time)..."
+			)
+			% [width, height, worker_count]
+		)
+		pixels = _bake_pixels_gdscript(width, height, worker_count)
+
+	if pixels.is_empty() or pixels.size() != width * height:
+		push_error("MoonHeightmap: bake returned invalid pixel buffer")
+		return Image.create(width, height, false, Image.FORMAT_RF)
+
+	var t_merge := Time.get_ticks_msec()
+	var img := Image.create_from_data(
+		width,
+		height,
+		false,
+		Image.FORMAT_RF,
+		pixels.to_byte_array()
+	)
+	if img == null or img.get_width() <= 0:
+		push_error("MoonHeightmap: create_from_data failed; falling back to set_pixel")
+		img = Image.create(width, height, false, Image.FORMAT_RF)
+		for y in height:
+			var row := y * width
+			for x in width:
+				img.set_pixel(x, y, Color(pixels[row + x], 0.0, 0.0))
+	var merge_ms := Time.get_ticks_msec() - t_merge
+
 	var err := img.save_exr(abs_path, false)
 	if err != OK:
 		push_error("MoonHeightmap: save_exr failed (%s) → %s" % [str(err), abs_path])
 	else:
 		print(
-			"MoonHeightmap: saved %s in %d ms"
-			% [abs_path, Time.get_ticks_msec() - t0]
+			(
+				"MoonHeightmap: saved %s in %d ms "
+				+ "(merge %d ms, %d threads)"
+			)
+			% [abs_path, Time.get_ticks_msec() - t0, merge_ms, worker_count]
 		)
 	var vf := FileAccess.open(
 		"%s/generator_version.txt" % dir, FileAccess.WRITE
@@ -91,6 +129,98 @@ static func bake_heightmap(
 		vf.store_string(str(_Params.GENERATOR_VERSION))
 		vf.close()
 	return img
+
+
+static func _bake_pixels_gdscript(
+	width: int,
+	height: int,
+	worker_count: int
+) -> PackedFloat32Array:
+	var band_size := ceili(float(height) / float(worker_count))
+	var results: Array = []
+	results.resize(worker_count)
+	var progress_mutex := Mutex.new()
+	var generators: Array = []
+	generators.resize(worker_count)
+	for band_index in worker_count:
+		var gen = _HQ.new()
+		gen._radius_voxels = MoonGeometry.radius_voxels()
+		gen._setup_noise()
+		generators[band_index] = gen
+
+	var task_ids: Array[int] = []
+	for band_index in worker_count:
+		var y0 := band_index * band_size
+		var y1 := mini(y0 + band_size, height)
+		if y0 >= height:
+			break
+		var task_id := WorkerThreadPool.add_task(
+			_bake_heightmap_band.bind(
+				y0,
+				y1,
+				width,
+				height,
+				generators[band_index],
+				results,
+				band_index,
+				progress_mutex
+			),
+			false,
+			"MoonHeightmap band %d" % band_index
+		)
+		task_ids.append(task_id)
+
+	for task_id in task_ids:
+		WorkerThreadPool.wait_for_task_completion(task_id)
+
+	var pixels := PackedFloat32Array()
+	pixels.resize(width * height)
+	for band_index in results.size():
+		var band: Variant = results[band_index]
+		if band == null:
+			push_error("MoonHeightmap: missing band %d" % band_index)
+			continue
+		var y0: int = band["y0"]
+		var buffer: PackedFloat32Array = band["buffer"]
+		var offset := y0 * width
+		for i in buffer.size():
+			pixels[offset + i] = buffer[i]
+	return pixels
+
+
+static func _bake_heightmap_band(
+	y0: int,
+	y1: int,
+	width: int,
+	height: int,
+	gen: RefCounted,
+	results: Array,
+	band_index: int,
+	progress_mutex: Mutex
+) -> void:
+	var band_h := y1 - y0
+	var buffer := PackedFloat32Array()
+	buffer.resize(band_h * width)
+
+	for local_y in band_h:
+		var y := y0 + local_y
+		var v := (float(y) + 0.5) / float(height)
+		var row_offset := local_y * width
+		for x in width:
+			var u := (float(x) + 0.5) / float(width)
+			## Must match how NODE_SDF_SPHERE_HEIGHTMAP reads the panorama
+			## back at play time, or relief gets skewed near poles / mirrored.
+			var n := direction_from_node_uv(u, v)
+			## Height in local voxel units (SdfSphereHeightmap factor=1).
+			buffer[row_offset + x] = gen._height_voxels(n)
+		if y % 64 == 0:
+			progress_mutex.lock()
+			print("MoonHeightmap: row %d/%d" % [y, height])
+			progress_mutex.unlock()
+
+	progress_mutex.lock()
+	results[band_index] = {"y0": y0, "buffer": buffer}
+	progress_mutex.unlock()
 
 
 static func direction_from_panorama_uv(u: float, v: float) -> Vector3:
