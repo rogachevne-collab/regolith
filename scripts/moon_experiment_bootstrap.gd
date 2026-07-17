@@ -17,6 +17,7 @@ const LANDING_PAD_SIZE_M := Vector3(48.0, 4.0, 48.0)
 const TERRAIN_LOD_FADE_DURATION_S := 0.25
 ## Detail normalmaps from LOD 2+ — illusion of geometry on distant blocks.
 const TERRAIN_NORMALMAP_BEGIN_LOD := 2
+const DEMO_HOPPER_OFFSET_M := 14.0
 
 @onready var _terrain: Node3D = $VoxelTerrain
 @onready var _boulder_instancer: VoxelInstancer = $VoxelTerrain/VoxelInstancer
@@ -32,6 +33,8 @@ const TERRAIN_NORMALMAP_BEGIN_LOD := 2
 @export var playtest_cargo := true
 ## Enable after radial rover seating (phase 6). Off for early shell bring-up.
 @export var spawn_demo_rover := true
+## Flight hopper for POC-THRUSTERS-V0 manual hop/land checks.
+@export var spawn_demo_hopper := true
 @export var demo_rover_phrase := "колбаса на 12 колес, низкая"
 @export var persist_digs := true
 ## VoxelInstancer decorative rocks (streams with terrain chunks).
@@ -334,6 +337,8 @@ func _finish_world_entry(player_position: Vector3) -> void:
 	_apply_playtest_cargo_if_enabled()
 	if spawn_demo_rover:
 		await _spawn_demo_rover_near_player()
+	if spawn_demo_hopper:
+		await _spawn_demo_hopper_near_player()
 
 
 func _finish_loaded_world_entry(spawn_position: Vector3) -> void:
@@ -408,6 +413,56 @@ func _spawn_demo_rover_near_player() -> void:
 	else:
 		print(
 			"MoonExperiment: demo rover spawned assembly_id=%d at %s"
+			% [int(result.get("assembly_id", 0)), str(ground)]
+		)
+
+
+func _spawn_demo_hopper_near_player() -> void:
+	if _session == null or _base_spawn == null:
+		return
+	var tool: VoxelTool = TerrainCompat.get_voxel_tool(_terrain)
+	if tool == null:
+		return
+	tool.channel = VoxelBuffer.CHANNEL_SDF
+	var hint := _base_spawn.global_position + Vector3(DEMO_HOPPER_OFFSET_M, 0.0, 0.0)
+	var field := GravityField.find_in_tree(_terrain)
+	if field != null:
+		hint = (
+			_base_spawn.global_position
+			+ field.tangent_basis_at(_base_spawn.global_position).x
+			* DEMO_HOPPER_OFFSET_M
+		)
+	var ground: Vector3 = Vector3(NAN, NAN, NAN)
+	for _attempt in 90:
+		var ground_variant: Variant = RoverDemoSpawn.find_flat_ground_near(
+			_terrain,
+			tool,
+			_physics_space_state(),
+			hint
+		)
+		if ground_variant is Vector3:
+			ground = ground_variant as Vector3
+			break
+		await get_tree().physics_frame
+	if not _is_finite_vec3(ground):
+		push_warning("Demo hopper spawn failed: no flat ground near offset hint")
+		return
+	var result := HopperDemoSpawn.spawn_on_terrain(
+		_session,
+		ground,
+		HopperDemoSpawn.STORE_ID,
+		_terrain,
+		tool,
+		_physics_space_state()
+	)
+	if not bool(result.get("ok", false)):
+		push_warning(
+			"Demo hopper spawn failed: %s"
+			% str(result.get("error", "unknown"))
+		)
+	else:
+		print(
+			"MoonExperiment: demo hopper spawned assembly_id=%d at %s"
 			% [int(result.get("assembly_id", 0)), str(ground)]
 		)
 
