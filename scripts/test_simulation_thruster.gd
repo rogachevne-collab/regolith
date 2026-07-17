@@ -19,6 +19,12 @@ func _run_tests() -> void:
 	for test: Callable in tests:
 		if not bool(test.call()):
 			return
+	if not await _test_hopper_thruster_powered():
+		return
+	if not await _test_hopper_no_power_when_battery_empty():
+		return
+	if not await _test_hopper_lifts_off():
+		return
 	print("POC-THRUSTERS-V0: PASS")
 	get_tree().quit(0)
 
@@ -246,4 +252,128 @@ func _test_hopper_demo_spawn() -> bool:
 		if int(ids.get("leg_%d" % leg_index, 0)) <= 0:
 			return _fail("hopper missing landing leg %d" % leg_index)
 	session.queue_free()
+	return true
+
+
+func _boot_session() -> SimulationSession:
+	var session_scene: PackedScene = load("res://scenes/simulation_session.tscn")
+	var session := session_scene.instantiate() as SimulationSession
+	add_child(session)
+	for archetype: ElementArchetype in Slice01Archetypes.load_rover_archetypes():
+		session.world.get_archetype_registry().register(archetype)
+	for archetype: ElementArchetype in Slice01Archetypes.load_flight_archetypes():
+		session.world.get_archetype_registry().register(archetype)
+	return session
+
+
+func _spawn_hopper(session: SimulationSession) -> Dictionary:
+	return HopperDemoSpawn.spawn_at_transform(
+		session,
+		Transform3D(Basis.IDENTITY, Vector3(0.0, 12.0, 0.0))
+	)
+
+
+func _test_hopper_thruster_powered() -> bool:
+	var session := _boot_session()
+	var result := _spawn_hopper(session)
+	if not bool(result.get("ok", false)):
+		session.queue_free()
+		return _fail("hopper spawn failed: %s" % result.get("error", "?"))
+	var assembly_id := int(result.get("assembly_id", 0))
+	var locomotion := session.world.get_locomotion_controller(assembly_id)
+	locomotion.activate()
+	locomotion.set_translate_command(Vector3(0.0, 1.0, 0.0))
+	ThrusterSimulationService.sync_power_demand(session.world)
+	IndustryElectricBudget.apply_tick(session.world, 0.1)
+	var thruster_id := int(result.get("element_ids", {}).get("thruster", 0))
+	var thruster := session.world.get_element(thruster_id)
+	if not ThrusterSimulationService.is_element_powered(session.world, thruster):
+		session.queue_free()
+		return _fail("hopper thruster must be powered with battery linked")
+	session.queue_free()
+	return true
+
+
+func _test_hopper_no_power_when_battery_empty() -> bool:
+	var session := _boot_session()
+	var result := _spawn_hopper(session)
+	if not bool(result.get("ok", false)):
+		session.queue_free()
+		return _fail("hopper spawn failed: %s" % result.get("error", "?"))
+	var battery_id := int(result.get("element_ids", {}).get("battery", 0))
+	session.world.ensure_industry_element_runtime(battery_id).battery_kwh = 0.0
+	var assembly_id := int(result.get("assembly_id", 0))
+	var locomotion := session.world.get_locomotion_controller(assembly_id)
+	locomotion.activate()
+	locomotion.set_translate_command(Vector3(0.0, 1.0, 0.0))
+	ThrusterSimulationService.sync_power_demand(session.world)
+	IndustryElectricBudget.apply_tick(session.world, 0.1)
+	var thruster_id := int(result.get("element_ids", {}).get("thruster", 0))
+	var thruster := session.world.get_element(thruster_id)
+	if ThrusterSimulationService.is_element_powered(session.world, thruster):
+		session.queue_free()
+		return _fail("empty battery must leave thruster unpowered")
+	var thrust := ThrusterProjectionUtil.compute_thrust_n(
+		Slice01Archetypes.thruster().thruster_definition,
+		1.0,
+		false
+	)
+	if thrust != 0.0:
+		session.queue_free()
+		return _fail("unpowered thruster must produce 0 N")
+	session.queue_free()
+	return true
+
+
+func _test_hopper_lifts_off() -> bool:
+	var session := _boot_session()
+	var result := _spawn_hopper(session)
+	if not bool(result.get("ok", false)):
+		session.queue_free()
+		return _fail("hopper spawn failed: %s" % result.get("error", "?"))
+	var assembly_id := int(result.get("assembly_id", 0))
+	var locomotion := session.world.get_locomotion_controller(assembly_id)
+	locomotion.set_parking_brake(false)
+	locomotion.set_translate_command(Vector3(0.0, 1.0, 0.0))
+	HopperDemoSpawn.wake_flight_body(session, assembly_id)
+	var body := session.projection.get_physics_body(assembly_id) as RigidBody3D
+	if body == null:
+		session.queue_free()
+		return _fail("hopper physics body missing")
+	var thrusters := ThrusterSimulationService.list_thruster_elements(
+		session.world,
+		assembly_id
+	)
+	if thrusters.is_empty():
+		session.queue_free()
+		return _fail("hopper has no thruster elements")
+	var thruster: SimulationElement = thrusters[0]
+	var start := body.global_position
+	for _step: int in range(180):
+		IndustryElectricBudget.apply_tick(session.world, 1.0 / 60.0)
+		if not ThrusterSimulationService.is_element_powered(
+			session.world,
+			thruster
+		):
+			session.queue_free()
+			return _fail("thruster lost power during lift")
+		await get_tree().physics_frame
+	var lift_m := body.global_position.y - start.y
+	if lift_m < 2.0:
+		session.queue_free()
+		return _fail("hopper lifted only %.2f m in 3 s" % lift_m)
+	locomotion.set_attitude_commands(0.35, 0.0, 0.0)
+	var hop_start := body.global_position
+	for _step: int in range(360):
+		IndustryElectricBudget.apply_tick(session.world, 1.0 / 60.0)
+		await get_tree().physics_frame
+	var horizontal_m := Vector2(
+		body.global_position.x - hop_start.x,
+		body.global_position.z - hop_start.z
+	).length()
+	session.queue_free()
+	if horizontal_m < 5.0:
+		return _fail(
+			"hopper pitched hop only %.2f m horizontally" % horizontal_m
+		)
 	return true

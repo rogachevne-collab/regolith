@@ -81,6 +81,7 @@ static func spawn_at_transform(
 	session.world.get_locomotion_controller(helper.assembly_id).set_parking_brake(
 		false
 	)
+	session.world.get_locomotion_controller(helper.assembly_id).activate()
 	IndustryElectricBudget.apply_tick(session.world, 0.25)
 	if session.projection != null:
 		session.projection.rebuild_all()
@@ -89,6 +90,42 @@ static func spawn_at_transform(
 		"assembly_id": helper.assembly_id,
 		"element_ids": helper.element_ids.duplicate(),
 	}
+
+
+static func wake_flight_body(
+	session: SimulationSession,
+	assembly_id: int
+) -> void:
+	if (
+		session == null
+		or session.world == null
+		or session.projection == null
+		or assembly_id <= 0
+	):
+		return
+	if not ThrusterSimulationService.is_flight_assembly(
+		session.world,
+		assembly_id
+	):
+		push_warning(
+			"HopperDemoSpawn: assembly %d is not flight" % assembly_id
+		)
+		return
+	var body := session.projection.get_physics_body(assembly_id)
+	if body is StaticBody3D:
+		var assembly := session.world.get_assembly_raw(assembly_id)
+		if assembly != null:
+			var motion := assembly.motion.duplicate_state()
+			motion.frozen = false
+			motion.sleeping = false
+			session.projection.project_assembly_now(assembly_id, motion)
+			body = session.projection.get_physics_body(assembly_id)
+	if body is RigidBody3D:
+		var rigid := body as RigidBody3D
+		rigid.freeze = false
+		rigid.sleeping = false
+		rigid.linear_velocity = Vector3.ZERO
+		rigid.angular_velocity = Vector3.ZERO
 
 
 static func spawn_on_terrain(
