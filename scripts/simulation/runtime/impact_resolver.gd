@@ -4,6 +4,8 @@ extends RefCounted
 const I_MIN := 4.0
 const I_REF := 24.0
 const K_DAMAGE := 0.35
+## Landing legs absorb terrain touchdowns; keep crash lethality elsewhere.
+const K_LANDING_GEAR := 0.08
 const V_MAX_M3 := 2.0
 ## Kinetic loot threshold: below this impulse a carve yields nothing, so
 ## junk taps cannot be farmed (V2-4).
@@ -26,12 +28,24 @@ static func impulse_strength(impulse_length: float) -> float:
 
 static func damage_amount(
 	impulse_length: float,
-	max_integrity: float
+	max_integrity: float,
+	damage_scale: float = 1.0
 ) -> float:
 	var strength := impulse_strength(impulse_length)
 	if strength <= 0.0 or max_integrity <= 0.0:
 		return 0.0
-	return strength * strength * max_integrity * K_DAMAGE
+	var scale := maxf(damage_scale, 0.0)
+	return strength * strength * max_integrity * K_DAMAGE * scale
+
+
+static func is_landing_gear_archetype(archetype_id: String) -> bool:
+	return archetype_id == "landing_leg"
+
+
+static func terrain_damage_scale_for_archetype(archetype_id: String) -> float:
+	if is_landing_gear_archetype(archetype_id):
+		return K_LANDING_GEAR / K_DAMAGE
+	return 1.0
 
 
 static func batch_key(

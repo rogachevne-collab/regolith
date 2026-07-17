@@ -85,6 +85,9 @@ const CONSTRUCTION_ARCHETYPES: PackedStringArray = [
 	"cockpit",
 	"power_battery_small",
 	"power_distributor_small",
+	"thruster",
+	"gyro",
+	"landing_leg",
 ]
 
 const TOOLBAR_SLOTS_PER_PAGE := 9
@@ -135,12 +138,12 @@ const TOOLBAR_PAGES: Array = [
 	[
 		{"type": &"block", "archetype_id": "thruster"},
 		{"type": &"block", "archetype_id": "gyro"},
+		{"type": &"block", "archetype_id": "landing_leg"},
 		{"type": &"block", "archetype_id": "cockpit"},
 		{"type": &"block", "archetype_id": "rover_frame"},
 		{"type": &"block", "archetype_id": "power_battery_small"},
 		{"type": &"block", "archetype_id": "power_distributor_small"},
 		{"type": &"block", "archetype_id": "frame"},
-		{"type": &"block", "archetype_id": "power_source"},
 		{"type": &"connect"},
 	],
 ]

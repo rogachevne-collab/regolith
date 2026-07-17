@@ -69,6 +69,7 @@ const TOOL_CODES := {
 	"power_distributor_small": "DST",
 	"thruster": "THR",
 	"gyro": "GYR",
+	"landing_leg": "LEG",
 }
 
 ## Short Cyrillic chrome labels for construction archetypes shown in the Block
@@ -105,6 +106,7 @@ const ARCHETYPE_LABELS := {
 	"power_distributor_small": "РАСПРЕД М",
 	"thruster": "ДВИГАТЕЛЬ",
 	"gyro": "ГИРОСКОП",
+	"landing_leg": "НОГА",
 }
 
 ## Short orientation hints shown in build mode for rover modules.

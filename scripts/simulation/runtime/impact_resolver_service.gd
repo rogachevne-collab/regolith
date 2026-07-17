@@ -545,14 +545,12 @@ func _apply_entry(
 		_apply_player_hit(partner, suit, impulse_length)
 		return 0.0
 	var used_volume := 0.0
-	if (
-		volume_budget_m3 > 0.0
-		and ImpactResolver.is_world_surface_partner(partner)
-	):
+	var world_surface := ImpactResolver.is_world_surface_partner(partner)
+	if volume_budget_m3 > 0.0 and world_surface:
 		used_volume = _apply_terrain_carve(entry, strength, volume_budget_m3)
 		if used_volume > 0.0 and ImpactResolver.is_terrain_partner(partner):
 			_drop_kinetic_loot(entry, impulse_length, used_volume)
-	_apply_element_damage(striker_element_id, impulse_length)
+	_apply_element_damage(striker_element_id, impulse_length, world_surface)
 	return used_volume
 
 
@@ -770,7 +768,8 @@ func _apply_player_hit(
 
 func _apply_element_damage(
 	element_id: int,
-	impulse_length: float
+	impulse_length: float,
+	terrain_contact: bool = false
 ) -> void:
 	var element := _world.get_element(element_id)
 	if element == null:
@@ -778,9 +777,15 @@ func _apply_element_damage(
 	var archetype := element.get_archetype()
 	if archetype == null:
 		return
+	var scale := 1.0
+	if terrain_contact:
+		scale = ImpactResolver.terrain_damage_scale_for_archetype(
+			element.archetype_id
+		)
 	var amount := ImpactResolver.damage_amount(
 		impulse_length,
-		archetype.max_integrity
+		archetype.max_integrity,
+		scale
 	)
 	if amount <= 0.0:
 		return

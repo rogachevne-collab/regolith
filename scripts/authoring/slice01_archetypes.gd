@@ -13,6 +13,7 @@ const ROVER_IDS: PackedStringArray = [
 const FLIGHT_IDS: PackedStringArray = [
 	"thruster",
 	"gyro",
+	"landing_leg",
 ]
 const REQUIRED_IDS: PackedStringArray = [
 	"foundation",
@@ -178,6 +179,10 @@ static func thruster() -> ElementArchetype:
 
 static func gyro() -> ElementArchetype:
 	return load_required("gyro")
+
+
+static func landing_leg() -> ElementArchetype:
+	return load_required("landing_leg")
 
 
 static func rover_frame() -> ElementArchetype:

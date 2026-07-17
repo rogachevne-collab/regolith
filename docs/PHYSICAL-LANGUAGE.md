@@ -19,6 +19,7 @@ ADR. Интеграция в Erebus — через Erebus Lite addon, когда
 | Body, Field, Surface | «Примитивы» → одноимённые разделы |
 | Actuator, Wheel | «Примитивы» → «Actuator», «Wheel»; `specs/ROVER-MODULES-V1.md` |
 | Thruster, Gyro (flight hop) | «Примитивы» → «Actuator»; `specs/POC-THRUSTERS-V0.md` |
+| Landing leg (посадочная нога) | «Примитивы» → роли `Support`; `specs/POC-THRUSTERS-V0.md` |
 | Cable / Tether, Sensor | «Примитивы» → одноимённые разделы |
 | ControlSeat, Binding (управление) | «Примитивы» → «ControlSeat и Binding» |
 | Network, Flow, Store (сети и потоки) | «Примитивы» → «Network, Flow и Store» |

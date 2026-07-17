@@ -43,7 +43,8 @@ func _boot_world() -> SimulationWorld:
 func _test_archetypes_validate() -> bool:
 	var thruster := Slice01Archetypes.thruster()
 	var gyro := Slice01Archetypes.gyro()
-	if thruster == null or gyro == null:
+	var leg := Slice01Archetypes.landing_leg()
+	if thruster == null or gyro == null or leg == null:
 		return _fail("flight archetypes failed to load")
 	var thruster_result := BlueprintValidator.validate_archetype(thruster)
 	if not thruster_result.ok:
@@ -51,10 +52,21 @@ func _test_archetypes_validate() -> bool:
 	var gyro_result := BlueprintValidator.validate_archetype(gyro)
 	if not gyro_result.ok:
 		return _fail("gyro archetype invalid: %s" % str(gyro_result.errors))
+	var leg_result := BlueprintValidator.validate_archetype(leg)
+	if not leg_result.ok:
+		return _fail("landing_leg archetype invalid: %s" % str(leg_result.errors))
 	if thruster.thruster_definition == null or thruster.thruster_definition.max_thrust_n <= 0.0:
 		return _fail("thruster_definition missing")
 	if gyro.gyro_definition == null or gyro.gyro_definition.max_torque_nm <= 0.0:
 		return _fail("gyro_definition missing")
+	if leg.max_integrity < 200.0:
+		return _fail("landing_leg should be high-integrity")
+	if not ImpactResolver.is_landing_gear_archetype("landing_leg"):
+		return _fail("landing_leg not recognized as landing gear")
+	var soft := ImpactResolver.damage_amount(24.0, 400.0, 0.08 / 0.35)
+	var hard := ImpactResolver.damage_amount(24.0, 400.0, 1.0)
+	if soft >= hard * 0.5:
+		return _fail("landing gear terrain scale should soften damage")
 	return true
 
 
@@ -196,5 +208,8 @@ func _test_hopper_demo_spawn() -> bool:
 		return _fail("hopper missing thruster/gyro ids")
 	if int(ids.get("cockpit", 0)) <= 0:
 		return _fail("hopper missing cockpit")
+	for leg_index: int in range(4):
+		if int(ids.get("leg_%d" % leg_index, 0)) <= 0:
+			return _fail("hopper missing landing leg %d" % leg_index)
 	session.queue_free()
 	return true

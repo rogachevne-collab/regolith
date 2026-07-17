@@ -1,7 +1,7 @@
 class_name HopperDemoSpawn
 extends RefCounted
 
-## Minimal flight craft for POC-THRUSTERS-V0: deck + thruster + gyro + seat + power.
+## Flight craft for POC-THRUSTERS-V0: deck + thruster + gyro + seat + power + legs.
 
 const STORE_ID := "player"
 
@@ -18,7 +18,7 @@ static func spawn_at_transform(
 	for archetype: ElementArchetype in Slice01Archetypes.load_flight_archetypes():
 		session.world.get_archetype_registry().register(archetype)
 	var helper := AssemblyBuildHelper.new(session.world, store_id)
-	helper.ensure_materials(400.0)
+	helper.ensure_materials(500.0)
 	var grid_frame := GridSpawnUtil.grid_frame_from_transform(assembly_transform)
 	if not helper.spawn_anchor(Slice01Archetypes.rover_frame(), grid_frame):
 		return {"ok": false, "error": helper.last_error}
@@ -29,9 +29,25 @@ static func spawn_at_transform(
 	# Cockpit forward (3×2×2 footprint).
 	if not helper.place(Slice01Archetypes.cockpit(), Vector3i(0, 0, 1), 0, "cockpit"):
 		return {"ok": false, "error": helper.last_error}
-	# Thruster under deck center — force +Y.
+	# Thruster under deck center — force +Y; feet sit lower than its collider.
 	if not helper.place(Slice01Archetypes.thruster(), Vector3i(1, -1, 0), 0, "thruster"):
 		return {"ok": false, "error": helper.last_error}
+	# Four landing legs at deck corners — sacrificial Support feet.
+	var leg_cells: Array[Vector3i] = [
+		Vector3i(0, -1, 0),
+		Vector3i(2, -1, 0),
+		Vector3i(0, -1, 1),
+		Vector3i(2, -1, 1),
+	]
+	for index: int in range(leg_cells.size()):
+		var cell: Vector3i = leg_cells[index]
+		if not helper.place(
+			Slice01Archetypes.landing_leg(),
+			cell,
+			0,
+			"leg_%d" % index
+		):
+			return {"ok": false, "error": helper.last_error}
 	# Gyro on port side.
 	if not helper.place(Slice01Archetypes.gyro(), Vector3i(-1, 0, 0), 0, "gyro"):
 		return {"ok": false, "error": helper.last_error}
@@ -90,6 +106,6 @@ static func spawn_on_terrain(
 		tool,
 		space_state
 	)
-	# Lift so thruster under the deck clears the ground.
-	assembly_transform.origin += assembly_transform.basis.y * 1.2
+	# Lift so landing feet clear the ground at spawn.
+	assembly_transform.origin += assembly_transform.basis.y * 1.35
 	return spawn_at_transform(session, assembly_transform, store_id)

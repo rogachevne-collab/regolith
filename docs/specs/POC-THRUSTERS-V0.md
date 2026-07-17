@@ -48,13 +48,13 @@
 ### Входит
 
 - `ThrusterDefinition` / `GyroDefinition` на `ElementArchetype`;
-- archetypes `thruster`, `gyro`;
+- archetypes `thruster`, `gyro`, `landing_leg` (Support / посадочная нога);
 - assembly flight fields на `AssemblyLocomotionController`;
 - projection tick: thruster `apply_force`, gyro `apply_torque`;
 - electric consumer + `dynamic_power_w` от throttle / attitude;
 - ControlSeat flight bindings;
 - kernel tests: validate, flight detection, power demand, force/torque math;
-- demo hopper spawn для ручной проверки в игре.
+- demo hopper spawn с 4 landing legs для ручной проверки в игре.
 
 ### Не входит
 
@@ -64,7 +64,17 @@
 - per-thruster override и thrust vectoring joints;
 - ion/hydrogen variants, afterburner;
 - LCD / in-world thrust readout;
+- retractable landing gear / powered legs;
 - замена legacy `scripts/launch_vehicle.gd` (остаётся изолированным демо).
+
+### Landing leg
+
+`landing_leg` — placeable `Support` под палубой:
+
+- высокий `max_integrity` (посадочный расходник, не fragile thruster);
+- collider-«стопа» у низа клетки — ниже центра thruster, бьётся о грунт первой;
+- terrain impact damage × `K_LANDING_GEAR` (мягче обычного `K_DAMAGE`);
+- без actuator/joint — жёсткая нога, не подвеска ровера.
 
 ## Authoring
 
