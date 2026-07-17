@@ -81,8 +81,10 @@ unzip -o bin/GodotVoxelExtension.zip -d .
 
 | Путь | Назначение |
 |------|------------|
-| `scenes/main.tscn` | yard: terrain, player, cart, rover, launch vehicle |
-| `scripts/bootstrap.gd` | spawn gate (SDF + physics collider + settle) |
+| `scenes/main.tscn` | planetoid Ø1 km: LodTerrain, radial gravity, dig persistence |
+| `scenes/flat_moon.tscn` | legacy flat yard (infinite noise terrain) |
+| `scripts/bootstrap.gd` | planetoid spawn gate (SDF + physics collider + settle) |
+| `scripts/flat_moon_bootstrap.gd` | legacy flat yard bootstrap |
 | `scripts/drill.gd` | SDF `MODE_REMOVE do_sphere()` |
 | `addons/zylann.voxel/` | Voxel Tools GDExtension (macOS in git) |
 | `docs/specs/POC-*.md` | acceptance criteria PoC 1–3 |

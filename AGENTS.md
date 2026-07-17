@@ -110,7 +110,8 @@ Rule 1 - отвечай коротко, по делу и понятным язы
 ## Команды
 
 ```bash
-./run.sh res://scenes/main.tscn      # игра
+./run.sh res://scenes/main.tscn      # игра (planetoid Ø1 km, default)
+./run.sh res://scenes/flat_moon.tscn # legacy flat yard
 ./run.sh --editor                    # редактор
 ./run.sh --headless --import         # первый запуск / reimport
 ./tests/run_one.sh test_<name>       # один тест, шум отфильтрован

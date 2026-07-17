@@ -1,9 +1,10 @@
-# Спека — Moon Experiment v0 (отдельная сцена)
+# Спека — Moon Experiment v0 (promoted → main)
 
-Эксперимент в отдельной ветке/сцене: небольшая редактируемая луна
-Ø **1 км** как основной ландшафт сцены, с **полным геймплейным паритетом**
-текущего `main` (стройка, физика, шарниры, колёса, бур, impact carve) и
-**persistence копок**. `scenes/main.tscn` не подменять.
+Канонический мир Regolith: редактируемая луна Ø **1 км** как основной ландшафт
+[`scenes/main.tscn`](../../scenes/main.tscn), с **полным геймплейным паритетом**
+legacy flat yard (стройка, физика, шарниры, колёса, бур, impact carve) и
+**persistence копок**. Плоский бесконечный yard сохранён как legacy:
+[`scenes/flat_moon.tscn`](../../scenes/flat_moon.tscn).
 
 Родительские контракты: `docs/PHYSICAL-LANGUAGE.md` («Граница владения»,
 `Field`), `docs/cheatsheets/voxel-tools.md`, `docs/specs/INDUSTRY-V1.md`
@@ -14,18 +15,18 @@
 - Godot 4.5+, Voxel Tools 1.6x (`addons/zylann.voxel/`), физика Jolt
   (встроенный модуль, не legacy `godot-jolt`).
 - Гравитация PoC: **1.62 m/s²** (`Field`, не `gravity_scale` на телах).
-- Запуск эксперимента: `./run.sh res://scenes/moon_experiment.tscn`
-  (сцена появится в фазе 1; до этого документ — контракт).
-- Kernel-тесты / `main` не ломать. Headless `test_*.tscn` не плодить под
-  геймплей луны (R2) — верификация в запущенной moon-сцене.
+- Запуск: `./run.sh` или `./run.sh res://scenes/main.tscn` (default run-scene).
+- Legacy flat yard: `./run.sh res://scenes/flat_moon.tscn`.
+- Kernel-тесты не ломать. Headless `test_*.tscn` не плодить под
+  геймплей планеты (R2) — верификация в запущенной main-сцене.
 
 ## Зачем
 
-Текущий `main`: бесконечный процедурный `VoxelTerrain` + `VoxelGeneratorNoise2D`
+Текущий `flat_moon`: бесконечный процедурный `VoxelTerrain` + `VoxelGeneratorNoise2D`
 без `VoxelStream` → копки не переживают рестарт; неудобно якорить транспорт и
 структуры на «бесконечном» шуме.
 
-Цель эксперимента: конечная луна + сохранение SDF-правок + тот же геймплейный
+Цель (достигнута): конечная луна + сохранение SDF-правок + тот же геймплейный
 стек, что на плоском террейне.
 
 ## Геометрия и scale
@@ -92,10 +93,11 @@
 
 ## Архитектура сцены
 
-Новая сцена: `scenes/moon_experiment.tscn` (+ bootstrap, например
-`scripts/moon_experiment_bootstrap.gd`).
+Канон: `scenes/main.tscn` + `scripts/bootstrap.gd` (planetoid).
 
-Минимальный паритет wiring с `main.tscn`:
+Legacy flat yard: `scenes/flat_moon.tscn` + `scripts/flat_moon_bootstrap.gd`.
+
+Минимальный паритет wiring (main ↔ flat_moon):
 
 - terrain node (Lod, см. ниже);
 - `Player` (+ drill / interaction);
@@ -106,9 +108,6 @@
 - `VoxelViewer` (под камерой / игроком) с view distance, согласованным с
   `max_view_distance` terrain;
 - `Area3D` радиальной гравитации (фаза 3).
-
-**Не** менять default run-scene проекта на moon без явного решения после
-паритет-чеклиста.
 
 ## Terrain
 
@@ -142,13 +141,12 @@
   выключен (вакуум).
 - Spawn: ждать meshed + physics; temp landing pad — только fallback.
 - Смена рельефа → bump `GENERATOR_VERSION` + повторный bake.
-- Мир-сейв сборок: `gen_v{N}/world_save.json` (не смешивать с flat `main`).
+- Мир-сейв сборок: `gen_v{N}/world_save.json` (отдельно от flat_moon).
 
-Типизация в коде сегодня: много `VoxelTerrain`. Для Lod нужен **тонкий адаптер**
-(интерфейс/`Node` contract: `get_voxel_tool()`, collider check, ground probe),
-чтобы moon-сцена не кастила к `VoxelTerrain`, а `main` не ломался.
+Типизация в коде: **тонкий адаптер** `TerrainCompat`
+(`VoxelTerrain` | `VoxelLodTerrain`).
 
-Известные call sites (не исчерпывающе): `bootstrap.gd`,
+Известные call sites (не исчерпывающе): `bootstrap.gd`, `flat_moon_bootstrap.gd`,
 `world_command_gateway.gd`, `interaction_query.gd`, `terrain_anchor_probe.gd`,
 `impact_resolver*.gd`, `rover_*`, `world_loot_projection.gd`.
 
@@ -182,12 +180,12 @@
 - Зафиксировать геометрию, scale, паритет, ссылки на доки.
 - **DoD:** спека в `docs/specs/`, согласована с R1.
 
-### Фаза 1 — сцена-оболочка (ещё без смены up)
+### Фаза 1 — сцена-оболочка
 
-- `moon_experiment.tscn`: LodTerrain sphere + wiring из main.
+- `main.tscn`: LodTerrain sphere + wiring из flat_moon.
 - Spawn на «северном полюсе»; пока достаточно project −Y.
 - **DoD:** mesh + collider; стоять/ходить у полюса;
-  `./run.sh --headless res://scenes/moon_experiment.tscn --quit-after 300`
+  `./run.sh --headless res://scenes/main.tscn --quit-after 300`
   без ошибок компиляции шейдеров/скриптов.
 
 ### Фаза 2 — Terrain API / адаптер
@@ -239,7 +237,7 @@
 | Rover N-wheels | едет по дуге, не улетает к −Y |
 | Joints (hinge / slider / piston) | стабильны под point gravity |
 | Loot / projection write-back | падает к центру луны |
-| Dig persistence | переживает рестарт moon-сцены |
+| Dig persistence | переживает рестарт main-сцены |
 | Scale 0.65 | контракт шпаргалки соблюдён |
 
 ## Риски
@@ -254,12 +252,11 @@
 6. **Precision / clip** — `Camera.far` остаётся ~20 км; дальше — impostor,
    не экстремальный far (light culler). Origin shifting — позже.
 
-Регрессии `main`: **низкие**, пока moon — отдельный entrypoint, а правки
-player/projection за feature-flag / «если задан GravityField / moon_center».
+Регрессии `flat_moon`: **низкие** — отдельный legacy entrypoint;
+правки player/projection за `GravityField` / moon_center.
 
 ## Анти-цели v0
 
-- Не заменять `main` луной.
 - Не делать мульти-тело solar system / orbital flight.
   Презентационное небо (Земля + atmospheric limb с поверхности) — ок;
   это не симуляция орбит и не жизненная атмосфера на Луне.
@@ -271,17 +268,19 @@ player/projection за feature-flag / «если задан GravityField / moon_
 | Что | Как |
 |---|---|
 | Логика ядра после правок адаптера | `./tests/run_tests.sh` один раз перед «готово» ветки |
-| Шейдеры / скрипты moon-сцены | headless `--quit-after` |
-| Геймплейный паритет | play moon-сцены: settle → screenshot / remote tree / logs |
+| Шейдеры / скрипты main-сцены | headless `--quit-after` |
+| Геймплейный паритет | play main: settle → screenshot / remote tree / logs |
 | Voxel / Jolt семантика | сверка с доками выше + issues; не выводить из старого кода |
 
 ## Ветвление
 
-- Ветка эксперимента: `cursor/moon-experiment-3dc6`.
+- Promoted в `main` (planetoid default).
 - Один коммит ≈ одна фаза / одно проверяемое изменение.
 - Спека и код фазы — вместе, если меняют контракт.
 
 ## Статус
+
+**Promoted** — planetoid = `scenes/main.tscn`, flat yard = `flat_moon` (legacy).
 
 | Фаза | Статус |
 |---|---|
