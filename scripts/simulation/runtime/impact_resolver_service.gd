@@ -384,17 +384,24 @@ func integrate_contacts(
 			- state.get_contact_collider_velocity_at_position(contact_index)
 		)
 		var inbound_velocity := pre_step_velocity(body)
-		var effective_impulse := maxf(
-			impulse_length,
-			ImpactResolver.fallback_impulse_length(
-				body,
-				partner,
-				world_normal,
-				contact_relative_velocity
-			)
+		var j_fallback := ImpactResolver.fallback_impulse_length(
+			body,
+			partner,
+			world_normal,
+			contact_relative_velocity
 		)
+		var effective_impulse := maxf(impulse_length, j_fallback)
 		if effective_impulse < ImpactResolver.I_MIN:
 			continue
+		# Terrain: ignore resting gravity-support impulses. Jolt reports
+		# contact_impulse ≈ m·g·Δt every step while sat; that used to pass
+		# I_MIN on heavy flight/assembly bodies and dig endless shafts.
+		if ImpactResolver.is_world_surface_partner(partner):
+			var v_sep := 0.0
+			if world_normal.length_squared() > 0.000001:
+				v_sep = absf(contact_relative_velocity.dot(world_normal))
+			if not ImpactResolver.passes_terrain_kinetic_gate(j_fallback, v_sep):
+				continue
 		_queue_entry({
 			"batch_key": batch_key,
 			"striker_element_id": striker_element_id,

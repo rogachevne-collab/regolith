@@ -16,6 +16,7 @@ func _run_tests() -> void:
 	var tests: Array[Callable] = [
 		_test_damage_scales_with_impulse,
 		_test_weak_impulse_ignored,
+		_test_terrain_kinetic_gate_rejects_resting,
 		_test_fallback_impulse_uses_separating_velocity,
 		_test_terrain_carve_changes_sdf,
 		_test_carve_respects_volume_budget,
@@ -53,6 +54,20 @@ func _test_damage_scales_with_impulse() -> bool:
 func _test_weak_impulse_ignored() -> bool:
 	if ImpactResolver.damage_amount(2.0, 100.0) != 0.0:
 		return _fail("sub-threshold impulse applied damage")
+	return true
+
+
+func _test_terrain_kinetic_gate_rejects_resting() -> bool:
+	# Heavy body sitting: Jolt support impulse would clear I_MIN, but
+	# velocity-derived J and closing speed are near zero.
+	if ImpactResolver.passes_terrain_kinetic_gate(10.5, 0.0):
+		return _fail("resting support impulse must not pass terrain gate")
+	if ImpactResolver.passes_terrain_kinetic_gate(20.0, 0.1):
+		return _fail("micro-bounce below V_SEP_MIN must not pass terrain gate")
+	if not ImpactResolver.passes_terrain_kinetic_gate(40.0, 2.0):
+		return _fail("real slam must pass terrain kinetic gate")
+	if ImpactResolver.passes_terrain_kinetic_gate(2.0, 2.0):
+		return _fail("sub-I_MIN fallback must not pass terrain gate")
 	return true
 
 

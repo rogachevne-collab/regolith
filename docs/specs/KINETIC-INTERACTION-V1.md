@@ -225,6 +225,9 @@ entries от carriage-контактов независимо от `machine_enab
 - Падающий frame — как v0 (не регрессировать).
 - Base ↔ head одной сборки — без self-damage.
 - Слабое касание / качение ниже `I_MIN` — тишина.
+- Resting на terrain: `get_contact_impulse` ≈ m·g·Δt **не** считается ударом;
+  terrain-реакция из `_integrate_forces` требует ещё `J_fallback ≥ I_MIN` и
+  `|v_rel · n| ≥ V_SEP_MIN` (иначе тяжёлые assembly копают шахту сидя).
 - Каскад: lethal drill → split → падающий обломок бьёт базу как чужая assembly.
 
 ## Модули (целевая раскладка)

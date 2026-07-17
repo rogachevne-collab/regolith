@@ -3,6 +3,10 @@ extends RefCounted
 
 const I_MIN := 4.0
 const I_REF := 24.0
+## Closing speed below this is resting / micro-bounce, not a kinetic slam.
+## Needed because Jolt contact_impulse includes gravity support (≈ m·g·Δt),
+## so I_MIN alone is defeated on heavy assemblies that are merely sitting.
+const V_SEP_MIN := 0.35
 const K_DAMAGE := 0.35
 ## Landing legs absorb terrain touchdowns; keep crash lethality elsewhere.
 const K_LANDING_GEAR := 0.08
@@ -24,6 +28,15 @@ static func impulse_strength(impulse_length: float) -> float:
 	if impulse_length < I_MIN:
 		return 0.0
 	return clampf(impulse_length / I_REF, 0.0, 1.0)
+
+
+## Terrain kinetic gate: velocity-derived J and closing speed must both clear
+## thresholds. Resting support impulses must not carve/damage.
+static func passes_terrain_kinetic_gate(
+	j_fallback: float,
+	separating_speed: float
+) -> bool:
+	return j_fallback >= I_MIN and separating_speed >= V_SEP_MIN
 
 
 static func damage_amount(
