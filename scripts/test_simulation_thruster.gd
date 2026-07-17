@@ -13,6 +13,7 @@ func _run_tests() -> void:
 		_test_flight_assembly_detection,
 		_test_thrust_and_gyro_math,
 		_test_power_demand_scales_with_throttle,
+		_test_locomotion_flight_snapshot_roundtrip,
 		_test_hopper_demo_spawn,
 	]
 	for test: Callable in tests:
@@ -187,6 +188,39 @@ func _test_power_demand_scales_with_throttle() -> bool:
 	var expected := Slice01Archetypes.thruster().thruster_definition.power_draw_w
 	if not is_equal_approx(full, expected):
 		return _fail("full translate demand %s != %s" % [full, expected])
+	return true
+
+
+func _test_locomotion_flight_snapshot_roundtrip() -> bool:
+	var locomotion := AssemblyLocomotionController.new()
+	locomotion.set_translate_command(Vector3(0.5, 1.0, -0.25))
+	locomotion.set_attitude_commands(0.1, -0.2, 0.3)
+	locomotion.set_dampeners(false)
+	var row := locomotion.to_dict()
+	if row.get("translate_command") is Vector3:
+		return _fail("translate_command must serialize JSON-safe, not Vector3")
+	# Saves go through JSON (WorldPersistence); the row must survive it.
+	var parsed: Variant = JSON.parse_string(JSON.stringify(row))
+	if not parsed is Dictionary:
+		return _fail("locomotion row is not JSON-serializable")
+	var restored := AssemblyLocomotionController.new()
+	restored.apply_dict(parsed)
+	if not restored.translate_command.is_equal_approx(Vector3(0.5, 1.0, -0.25)):
+		return _fail(
+			"translate_command lost in JSON roundtrip: %s"
+			% restored.translate_command
+		)
+	if restored.is_dampeners():
+		return _fail("dampeners=false lost in JSON roundtrip")
+	if not is_equal_approx(restored.pitch_command, 0.1):
+		return _fail("pitch_command lost in JSON roundtrip")
+	var legacy := AssemblyLocomotionController.new()
+	legacy.apply_dict({"thrust_command": 0.7})
+	if not is_equal_approx(legacy.translate_command.y, 0.7):
+		return _fail(
+			"legacy thrust_command must map to translate.y, got %s"
+			% legacy.translate_command
+		)
 	return true
 
 

@@ -14,7 +14,7 @@ var parking_brake: bool = true
 var released_from_anchor: bool = false
 
 ## Flight (POC-THRUSTERS-V0): SE-like 6DOF in body local space.
-## x = right, y = up, z = forward; each component −1..1.
+## Godot body axes: x = right, y = up, −z = forward; each component −1..1.
 var translate_command: Vector3 = Vector3.ZERO
 var pitch_command: float = 0.0
 var yaw_command: float = 0.0
@@ -135,7 +135,7 @@ func to_dict() -> Dictionary:
 		"drive_command": drive_command,
 		"brake_command": brake_command,
 		"steering_command": steering_command,
-		"translate_command": translate_command,
+		"translate_command": SnapshotCodec.vector3_to_array(translate_command),
 		"pitch_command": pitch_command,
 		"yaw_command": yaw_command,
 		"roll_command": roll_command,
@@ -150,19 +150,14 @@ func apply_dict(data: Dictionary) -> void:
 	drive_command = float(data.get("drive_command", 0.0))
 	brake_command = float(data.get("brake_command", 0.0))
 	steering_command = float(data.get("steering_command", 0.0))
-	var translate_variant: Variant = data.get("translate_command", Vector3.ZERO)
-	if translate_variant is Vector3:
-		translate_command = translate_variant
-	elif translate_variant is Array and translate_variant.size() >= 3:
-		translate_command = Vector3(
-			float(translate_variant[0]),
-			float(translate_variant[1]),
-			float(translate_variant[2])
+	if data.has("translate_command"):
+		set_translate_command(
+			SnapshotCodec.vector3_from_variant(data.get("translate_command"))
 		)
 	else:
 		# Legacy scalar thrust_command → +Y translate.
 		var legacy_thrust := float(data.get("thrust_command", 0.0))
-		translate_command = Vector3(0.0, legacy_thrust, 0.0)
+		set_translate_command(Vector3(0.0, legacy_thrust, 0.0))
 	pitch_command = float(data.get("pitch_command", 0.0))
 	yaw_command = float(data.get("yaw_command", 0.0))
 	roll_command = float(data.get("roll_command", 0.0))

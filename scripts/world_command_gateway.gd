@@ -586,14 +586,18 @@ func tick_rover_locomotion_input() -> void:
 		# SE 6DOF: flight consumes WASD/Space/C; wheels idle while thrusters present.
 		locomotion.set_drive_command(0.0)
 		locomotion.set_steering_command(0.0)
-		locomotion.set_brake_command(0.0)
+		locomotion.set_brake_command(
+			1.0 if is_loco and locomotion.is_parking_brake() else 0.0
+		)
+		# Seat forward is body −Z (seated player keeps rotation ZERO and the
+		# camera looks down −Z), so move_forward commands −z translate.
 		var translate := Vector3(
 			Input.get_action_strength(&"move_right")
 			- Input.get_action_strength(&"move_left"),
 			Input.get_action_strength(&"move_up")
 			- Input.get_action_strength(&"move_down"),
-			Input.get_action_strength(&"move_forward")
-			- Input.get_action_strength(&"move_back")
+			Input.get_action_strength(&"move_back")
+			- Input.get_action_strength(&"move_forward")
 		)
 		locomotion.set_translate_command(translate)
 		var look := _consume_flight_look_delta()
@@ -601,8 +605,9 @@ func tick_rover_locomotion_input() -> void:
 			Input.get_action_strength(&"roll_right")
 			- Input.get_action_strength(&"roll_left")
 		)
-		# Mouse right → yaw right (−Y in Godot); mouse up → pitch up (−X).
-		locomotion.set_attitude_commands(look.y, -look.x, roll)
+		# −Z forward: pitch up = +X torque (mouse up, like on-foot freelook),
+		# yaw right = −Y, roll right (E) = −Z.
+		locomotion.set_attitude_commands(-look.y, -look.x, -roll)
 	elif is_loco:
 		var drive := (
 			Input.get_action_strength(&"move_forward")

@@ -109,7 +109,7 @@ GyroDefinition {
 ### AssemblyLocomotionController (flight fields)
 
 ```text
-translate_command  # Vector3 body-local −1..1 (x=right, y=up, z=forward)
+translate_command  # Vector3 body-local −1..1 (x=right, y=up, −z=forward: Godot)
 pitch_command      # -1..1  (local +X torque)
 yaw_command        # -1..1  (local +Y)
 roll_command       # -1..1  (local +Z)
@@ -148,7 +148,7 @@ Legacy `thrust_command` в snapshot читается как `translate.y`.
 
 | Input action | Command |
 |---|---|
-| `move_forward` / `move_back` | `translate.z` (±forward) |
+| `move_forward` / `move_back` | `translate.z` (forward = −z, Godot camera axis) |
 | `move_left` / `move_right` | `translate.x` (±strafe) |
 | `move_up` / `move_down` | `translate.y` (Space / C) |
 | mouse X / Y (FP, not orbit) | `yaw` / `pitch` |
