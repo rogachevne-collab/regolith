@@ -11,7 +11,7 @@ shader_type spatial;
 #define TERRAIN_FEAT_ROUGHNESS   1
 #define TERRAIN_FEAT_AO          1
 #define TERRAIN_FEAT_MACRO       1
-#define TERRAIN_FEAT_ALBEDO_VAR  1
+#define TERRAIN_FEAT_ALBEDO_VAR  0 // OFF: procedural noise reads dated
 #define TERRAIN_FEAT_ALBEDO_LIFT 0 // OFF: портит базовые albedo
 #define TERRAIN_FEAT_UNDERSIDE   0 // OFF: затемняет низ/overhang, визуально неочевидно
 #define TERRAIN_FEAT_SPECULAR    1 // ← сейчас: specular от rock weight
@@ -47,6 +47,8 @@ uniform float u_mare_amount : hint_range(0.0, 1.0, 0.01) = 0.32;
 uniform float u_detail_fade_start : hint_range(10.0, 80.0, 0.5) = 30.0;
 uniform float u_detail_fade_end : hint_range(20.0, 160.0, 0.5) = 75.0;
 uniform float u_specular : hint_range(0.0, 0.5, 0.01) = 0.17;
+uniform float u_radial_up : hint_range(0.0, 1.0, 1.0) = 0.0;
+uniform float u_planet_radius : hint_range(0.0, 2000.0, 1.0) = 0.0;
 
 varying vec3 v_world_pos;
 varying vec3 v_vertex_pos_model;
@@ -115,8 +117,11 @@ void fragment() {
 	float view_dist = length(CAMERA_POSITION_WORLD - wpos);
 	float detail_fade = 1.0 - smoothstep(u_detail_fade_start, u_detail_fade_end, view_dist);
 
-	float flatness = smoothstep(0.20, 0.88, normal.y);
+	vec3 surface_up = u_radial_up > 0.5 ? normalize(wpos) : vec3(0.0, 1.0, 0.0);
+	float upness = dot(normal, surface_up);
+	float flatness = smoothstep(0.20, 0.88, upness);
 	float steep = 1.0 - flatness;
+	float tilt = length(normal - surface_up * upness);
 
 	vec3 blending = get_triplanar_blend(normal, 6.0);
 	int pmode = planar_mode(blending, PLANAR_THRESH);
@@ -127,10 +132,10 @@ void fragment() {
 	float ejecta_n = fbm(biome_uv * 1.65 + vec2(-31.0, 9.5));
 	float highland_n = fbm(biome_uv * 0.55 + vec2(3.3, 18.1));
 
-	// Mare — редкие бассейны на пологих участках; rock — база плато.
-	float mare_patch = smoothstep(0.62, 0.90, mare_n) * u_mare_amount;
-	float ejecta = smoothstep(0.52, 0.84, ejecta_n) * (1.0 - mare_patch) * 0.72;
-	float highland = smoothstep(0.38, 0.78, highland_n) * (1.0 - mare_patch);
+	// Mare — мягкие переходы, rock остаётся базой плато.
+	float mare_patch = smoothstep(0.68, 0.92, mare_n) * u_mare_amount;
+	float ejecta = smoothstep(0.58, 0.88, ejecta_n) * (1.0 - mare_patch) * 0.42;
+	float highland = smoothstep(0.45, 0.82, highland_n) * (1.0 - mare_patch);
 
 	float w_mare = mare_patch * flatness;
 	float w_dust = steep;
@@ -139,6 +144,23 @@ void fragment() {
 	w_dust /= w_sum;
 	w_rock /= w_sum;
 	w_mare /= w_sum;
+
+	// Микрорельеф плато: выступ над сферой + наклон (SDF-бугорки), не normal map.
+	float plateau = smoothstep(0.55, 0.94, upness);
+	float h_signal = u_planet_radius > 0.0
+		? (length(wpos) - u_planet_radius)
+		: wpos.y;
+	float h_grad = length(vec2(dFdx(h_signal), dFdy(h_signal)));
+	float protrusion = max(h_signal, 0.0);
+	float crest = 0.0;
+	float bump_side = 0.0;
+	if (u_planet_radius > 0.0 || u_radial_up > 0.5) {
+		crest = plateau * smoothstep(0.06, 1.6, protrusion)
+			* (1.0 - smoothstep(0.015, 0.10, h_grad));
+		bump_side = plateau * smoothstep(0.010, 0.11, tilt)
+			* (1.0 - smoothstep(0.22, 0.40, tilt))
+			* smoothstep(0.008, 0.22, h_grad + protrusion * 0.25);
+	}
 
 	vec3 tex_pos = detail_pos(wpos, u_detail_scale);
 
@@ -173,20 +195,20 @@ void fragment() {
 		}
 #endif
 	}
-	if (w_dust > LAYER_CULL) {
+	if (w_dust > LAYER_CULL || bump_side > 0.02) {
 		albedo_dust = sample_planar_rgb(u_dust_albedo, tex_pos, blending, pmode);
 #if TERRAIN_FEAT_NORMAL
-		if (fetch_pbr) {
+		if (fetch_pbr && w_dust > LAYER_CULL) {
 			n_dust = sample_planar_normal(u_dust_normal, tex_pos, normal, blending, pmode);
 		}
 #endif
 #if TERRAIN_FEAT_AO
-		if (fetch_pbr) {
+		if (fetch_pbr && w_dust > LAYER_CULL) {
 			ao_dust = sample_planar_r(u_dust_ao, tex_pos, blending, pmode);
 		}
 #endif
 #if TERRAIN_FEAT_ROUGHNESS
-		if (fetch_pbr) {
+		if (fetch_pbr && w_dust > LAYER_CULL) {
 			rough_dust = sample_planar_r(u_dust_roughness, tex_pos, blending, pmode);
 		}
 #endif
@@ -217,6 +239,8 @@ void fragment() {
 #endif
 
 	vec3 tex_col = albedo_dust * w_dust + albedo_rock * w_rock + albedo_mare * w_mare;
+	tex_col *= mix(vec3(1.0), vec3(1.12), crest * 0.95);
+	tex_col = mix(tex_col, albedo_dust, bump_side * 0.40);
 
 #if TERRAIN_FEAT_ALBEDO_VAR
 	float var_n = fbm(wpos.xz * u_detail_scale * 0.28 + vec2(11.0, 4.7));
@@ -225,17 +249,17 @@ void fragment() {
 
 #if TERRAIN_FEAT_MACRO
 	float large_n = fbm(wpos.xz * u_large_scale);
-	large_n = smoothstep(0.24, 0.76, large_n);
-	vec3 large_tint = mix(vec3(0.94, 0.93, 0.91), vec3(1.06, 1.03, 0.99), large_n);
-	tex_col *= mix(vec3(1.0), large_tint, u_macro_strength * 0.32);
+	large_n = smoothstep(0.28, 0.72, large_n);
+	vec3 large_tint = mix(vec3(0.97, 0.965, 0.96), vec3(1.03, 1.015, 1.0), large_n);
+	tex_col *= mix(vec3(1.0), large_tint, u_macro_strength * 0.22);
 
-	vec3 tint_highland = vec3(0.98, 0.99, 1.02);
-	vec3 tint_ejecta = vec3(1.06, 1.02, 0.97);
-	vec3 tint_mare = vec3(0.93, 0.94, 0.96);
-	vec3 macro_tint = vec3(1.02, 1.01, 1.0);
-	macro_tint = mix(macro_tint, tint_highland, highland * 0.55);
-	macro_tint = mix(macro_tint, tint_ejecta, ejecta * 0.65);
-	macro_tint = mix(macro_tint, tint_mare, mare_patch * flatness * 0.55);
+	vec3 tint_highland = vec3(0.99, 0.995, 1.01);
+	vec3 tint_ejecta = vec3(1.03, 1.01, 0.99);
+	vec3 tint_mare = vec3(0.97, 0.98, 0.99);
+	vec3 macro_tint = vec3(1.01, 1.005, 1.0);
+	macro_tint = mix(macro_tint, tint_highland, highland * 0.32);
+	macro_tint = mix(macro_tint, tint_ejecta, ejecta * 0.38);
+	macro_tint = mix(macro_tint, tint_mare, mare_patch * flatness * 0.32);
 	tex_col *= mix(vec3(1.0), macro_tint, u_macro_strength);
 #endif
 

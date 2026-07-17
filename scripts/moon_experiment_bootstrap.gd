@@ -156,6 +156,13 @@ func _configure_terrain() -> void:
 		lod.lod_count = 4
 		lod.lod_distance = 56.0
 		lod.cache_generated_blocks = true
+	if _terrain.material != null:
+		var mat: Material = (_terrain.material as Material).duplicate()
+		_terrain.material = mat
+		if mat is ShaderMaterial:
+			var shader_mat := mat as ShaderMaterial
+			shader_mat.set_shader_parameter("u_radial_up", 1.0)
+			shader_mat.set_shader_parameter("u_planet_radius", MoonGeometry.SURFACE_RADIUS_M)
 	_terrain.scale = Vector3.ONE * MoonGeometry.VOXEL_SCALE
 	_ensure_player_viewer_wants_collisions()
 
