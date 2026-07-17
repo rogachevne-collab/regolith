@@ -18,6 +18,7 @@ ADR. Интеграция в Erebus — через Erebus Lite addon, когда
 | Actuator, Wheel | «Примитивы» → «Actuator», «Wheel»; `specs/ROVER-MODULES-V1.md` |
 | Cable / Tether, Sensor | «Примитивы» → одноимённые разделы |
 | ControlSeat, Binding (управление) | «Примитивы» → «ControlSeat и Binding» |
+| Control Graph (визуальная автоматика) | «Примитивы» → «Control Graph»; `specs/CONTROL-GRAPH-V0.md` |
 | Network, Flow, Store (сети и потоки) | «Примитивы» → «Network, Flow и Store» |
 | Resource, Recipe, производство | «Примитивы» → «Resource, Recipe и производство» |
 | Volume, Atmosphere (герметичность) | «Примитивы» → «Volume и Atmosphere» |
@@ -498,6 +499,19 @@ Binding {
 Игрок, автопилот и декларативное правило используют один командный интерфейс. Не
 существует отдельных «кода ровера» и «кода корабля».
 
+### Control Graph
+
+Визуальный declarative граф поведения assembly (аналог PLC / UE Blueprints, не
+скрипты SE Programmable Block). Sensor публикует измерения, граф решает,
+Actuator / `machine_enabled` исполняют через тот же командный интерфейс, что и
+`Binding`.
+
+Хост — элемент `control_unit`. Граф хранится в Blueprint и runtime snapshot.
+Не пишет позы/скорости напрямую и не вызывает structural commands.
+
+Полный контракт MVP, каналы на существующих элементах и приоритет модулей —
+`docs/specs/CONTROL-GRAPH-V0.md`.
+
 ### Network, Flow и Store
 
 `Network` — граф совместимых портов одного типа. Узлы производят, потребляют,
@@ -605,6 +619,7 @@ Recipe {
 - joints;
 - network-связи;
 - bindings;
+- Control Graph (на `control_unit`, см. `specs/CONTROL-GRAPH-V0.md`);
 - начальные настройки.
 
 Blueprint является форматом сохранения, обмена и пересборки. Runtime-состояние
@@ -842,7 +857,8 @@ slice по `docs/specs/VERTICAL-SLICE-01-INDUSTRIAL-BASE.md`:
 
 1. Piston с нагрузкой и overload —
    `docs/specs/POC-ACTUATORS-V1.md`; затем ServoHinge.
-2. Расширенная логистика и автоматизация.
+2. Control Graph v0 (визуальная автоматика) —
+   `docs/specs/CONTROL-GRAPH-V0.md`; затем расширенная логистика.
 3. Volume/Atmosphere: герметичная кабина → пробоина.
 4. Host-authoritative сетевой PoC.
 
