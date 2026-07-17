@@ -46,10 +46,13 @@ static func reconstruct_all_group_motions(world, assembly_id: int) -> Dictionary
 		if int(group_id) == root_group_id:
 			continue
 		result[int(group_id)] = root_motion.duplicate_state()
-	for spec_variant: Variant in compiled.get("driven_specs", []):
-		if not spec_variant is Dictionary:
-			continue
-		var spec: Dictionary = spec_variant
+	# Parent driven joints before children so nested hinge/piston bases see
+	# the already-spun/extended parent group motion (joint_id order is not
+	# a topological guarantee after edits / restore).
+	for spec: Dictionary in _driven_specs_parent_before_child(
+		compiled.get("driven_specs", []),
+		root_group_id
+	):
 		var base_group_id := int(spec.get("base_group_id", 0))
 		var head_group_id := int(spec.get("head_group_id", 0))
 		var base_motion: AssemblyMotionState = result.get(base_group_id)
@@ -65,6 +68,68 @@ static func reconstruct_all_group_motions(world, assembly_id: int) -> Dictionary
 		if head_motion != null:
 			result[head_group_id] = head_motion
 	return result
+
+
+static func _driven_specs_parent_before_child(
+	driven_specs_variant: Variant,
+	root_group_id: int
+) -> Array[Dictionary]:
+	var specs: Array[Dictionary] = []
+	if not driven_specs_variant is Array:
+		return specs
+	var children_of: Dictionary = {}
+	for spec_variant: Variant in driven_specs_variant:
+		if not spec_variant is Dictionary:
+			continue
+		var spec: Dictionary = spec_variant
+		specs.append(spec)
+		var base_group_id := int(spec.get("base_group_id", 0))
+		if not children_of.has(base_group_id):
+			children_of[base_group_id] = []
+		(children_of[base_group_id] as Array).append(spec)
+	if specs.is_empty():
+		return specs
+	var ordered: Array[Dictionary] = []
+	var visited_heads: Dictionary = {}
+	var queue: Array[int] = []
+	if root_group_id > 0:
+		queue.append(root_group_id)
+	else:
+		var bases: Array[int] = []
+		for spec: Dictionary in specs:
+			var base_id := int(spec.get("base_group_id", 0))
+			if not bases.has(base_id):
+				bases.append(base_id)
+		bases.sort()
+		queue.append_array(bases)
+	var queue_index := 0
+	while queue_index < queue.size():
+		var group_id := queue[queue_index]
+		queue_index += 1
+		var child_specs: Array = children_of.get(group_id, [])
+		child_specs.sort_custom(func(a, b):
+			return int(a.get("joint_id", 0)) < int(b.get("joint_id", 0))
+		)
+		for child_variant: Variant in child_specs:
+			var child: Dictionary = child_variant
+			var head_id := int(child.get("head_group_id", 0))
+			if visited_heads.has(head_id):
+				continue
+			visited_heads[head_id] = true
+			ordered.append(child)
+			queue.append(head_id)
+	# Orphans (disconnected from root walk) in stable joint_id order.
+	if ordered.size() < specs.size():
+		var leftovers: Array[Dictionary] = []
+		for spec: Dictionary in specs:
+			var head_id := int(spec.get("head_group_id", 0))
+			if not visited_heads.has(head_id):
+				leftovers.append(spec)
+		leftovers.sort_custom(func(a, b):
+			return int(a.get("joint_id", 0)) < int(b.get("joint_id", 0))
+		)
+		ordered.append_array(leftovers)
+	return ordered
 
 
 static func reconstruct_group_motion(

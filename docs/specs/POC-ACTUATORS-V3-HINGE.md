@@ -234,21 +234,35 @@ enabled и mode ≠ stop; `no_power` даёт момент 0, constraint и уп
 
 - все три linear DOF заблокированы;
 - angular Y/Z заблокированы;
-- angular X ограничен `[lower_limit, upper_limit]` motor state; limits
-  обновляются каждый physics tick (configure может менять их на лету);
+- angular X ограничен motor limits, **сдвинутыми на `angle_offset`**:
+  Jolt считает twist от relative pose на момент create constraint, а
+  motor `observed_angle` — home-relative. Поэтому
+  `jolt_limit = motor_limit - measured_angle_at_create`. Offset хранится
+  в projection record на lifetime constraint; при recreate
+  (snapshot restore / topology rebuild на согнутом hinge) пересчитывается.
+  На тике обновляются только twist lower/upper (не полный reset DOF);
+- soft stop params на twist (`softness` / `damping`) — fixture против
+  solver explosion при упоре; статус `joint_limit` сохраняется;
 - base и top body groups сталкиваются в Jolt (нет group-wide exception);
   kinetic ignore только для пары hub endpoints (см. KINETIC-INTERACTION);
   навешенные фреймы бьют корпус на общих правах.
 
 ### Motor
 
-Torque-limited velocity tracker Rotor v2 без изменений (тот же
-`compute_motor_torque_scalar`): канал — `RigidBody3D.apply_torque`
-(world space), Jolt владеет интеграцией позы/ω, `custom_integrator`
-запрещён. Position mode использует некруговой position_error
-(clamp, не wrap). Гравитационная компенсация не применяется:
-несбалансированный груз честно провисает в пределах torque limit
-и упоров.
+Torque-limited velocity tracker Rotor v2 (`compute_motor_torque_scalar`)
+с near-limit taper для non-continuous angular motors: в `LIMIT_TAPER_RAD`
+к упору в направлении команды момент плавно гасится до 0, чтобы не
+драться с жёстким Jolt-stop на полном `torque_limit`. Канал —
+`RigidBody3D.apply_torque` (world space), Jolt владеет интеграцией
+позы/ω, `custom_integrator` запрещён. Position mode использует
+некруговой position_error (clamp, не wrap). Гравитационная компенсация
+не применяется: несбалансированный груз честно провисает в пределах
+torque limit и упоров.
+
+Nested chains: ось/сила piston на тике берётся из **base body group**
+(не из root assembly transform), иначе после сгиба hinge сила орёт в
+slider constraint. Реконструкция child group motions — parent-before-child
+по driven graph (не по `joint_id`).
 
 ### Observation
 

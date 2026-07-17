@@ -878,45 +878,93 @@ static func validate_driven_head_construction_target(world,
 		var existing: SimulationElement = world.get_element(int(connection["existing_element_id"]))
 		if existing == null:
 			continue
-		for joint: SimulationJoint in world._joints_for_assembly(existing.assembly_id):
-			if not joint.is_driven():
+		var path_error := _validate_driven_path_home_for_element(
+			world,
+			existing
+		)
+		if path_error != null:
+			return path_error
+	return null
+
+
+## Every driven joint on the path from the target element group to root must
+## be at home / idle — not only when the snap face is a hub endpoint.
+static func _validate_driven_path_home_for_element(
+	world,
+	existing: SimulationElement
+) -> StructuralCommandResult:
+	if world == null or existing == null:
+		return null
+	var compiled: Dictionary = world.compile_body_groups(existing.assembly_id)
+	if not bool(compiled.get("valid", false)):
+		return null
+	var element_to_group: Dictionary = compiled.get("element_to_group", {})
+	var group_id := int(element_to_group.get(existing.element_id, 0))
+	if group_id <= 0:
+		return null
+	var head_to_joint: Dictionary = {}
+	for spec_variant: Variant in compiled.get("driven_specs", []):
+		if not spec_variant is Dictionary:
+			continue
+		var spec: Dictionary = spec_variant
+		head_to_joint[int(spec.get("head_group_id", 0))] = int(
+			spec.get("joint_id", 0)
+		)
+	var guard := 0
+	while group_id > 0 and guard < 16:
+		guard += 1
+		if not head_to_joint.has(group_id):
+			break
+		var joint: SimulationJoint = world.get_joint(
+			int(head_to_joint[group_id])
+		)
+		if joint == null or joint.motor == null:
+			break
+		var home_error := _driven_joint_not_home_result(joint)
+		if home_error != null:
+			return home_error
+		var base_group := 0
+		for spec_variant: Variant in compiled.get("driven_specs", []):
+			if not spec_variant is Dictionary:
 				continue
-			if (
-				joint.element_b_id != existing.element_id
-				and joint.element_a_id != existing.element_id
-			):
-				continue
-			if joint.motor == null:
-				continue
-			var at_home := true
-			if joint.kind in [
-				SimulationJoint.Kind.ROTOR,
-				SimulationJoint.Kind.HINGE,
-			]:
-				# Angular home is 0 rad for both; wrap is a no-op inside
-				# hinge limits and required for the continuous rotor.
-				at_home = (
-					absf(SimulationMotorState.wrap_angle(
-						joint.motor.observed_position_m
-					))
-					<= SimulationMotorState.OVERLOAD_ERROR_M
-				)
-			else:
-				at_home = is_equal_approx(
-					joint.motor.observed_position_m,
-					joint.motor.lower_limit_m
-				)
-			if not at_home:
-				return StructuralCommandResult.failed(
-					StructuralCommandResult.REASON_MOVING_TARGET_NOT_SUPPORTED
-				)
-			if (
-				absf(joint.motor.observed_velocity_mps)
-				> SimulationMotorState.OVERLOAD_VELOCITY_MPS
-			):
-				return StructuralCommandResult.failed(
-					StructuralCommandResult.REASON_MOVING_TARGET_NOT_SUPPORTED
-				)
+			var spec: Dictionary = spec_variant
+			if int(spec.get("joint_id", 0)) == joint.joint_id:
+				base_group = int(spec.get("base_group_id", 0))
+				break
+		if base_group <= 0 or base_group == group_id:
+			break
+		group_id = base_group
+	return null
+
+
+static func _driven_joint_not_home_result(
+	joint: SimulationJoint
+) -> StructuralCommandResult:
+	var motor := joint.motor
+	var at_home := true
+	if joint.kind in [
+		SimulationJoint.Kind.ROTOR,
+		SimulationJoint.Kind.HINGE,
+	]:
+		# Angular home is 0 rad for both; wrap is a no-op inside
+		# hinge limits and required for the continuous rotor.
+		at_home = (
+			absf(SimulationMotorState.wrap_angle(motor.observed_position_m))
+			<= SimulationMotorState.OVERLOAD_ERROR_M
+		)
+	else:
+		at_home = is_equal_approx(
+			motor.observed_position_m,
+			motor.lower_limit_m
+		)
+	if not at_home:
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_MOVING_TARGET_NOT_SUPPORTED
+		)
+	if absf(motor.observed_velocity_mps) > SimulationMotorState.OVERLOAD_VELOCITY_MPS:
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_MOVING_TARGET_NOT_SUPPORTED
+		)
 	return null
 
 static func validate_construction_archetype(world, 

@@ -791,9 +791,21 @@ func _project_assembly_multibody(
 			)
 			hinge_joint_node.node_a = hinge_joint_node.get_path_to(base_body)
 			hinge_joint_node.node_b = hinge_joint_node.get_path_to(head_body)
+			# Jolt rest angle is the create pose; motor angle is home-relative.
+			var hinge_create_measured: Dictionary = (
+				RotorProjectionUtil.measure_angular_state(
+					base_body,
+					head_body,
+					hinge_axis_world
+				)
+			)
+			var hinge_angle_offset := float(
+				hinge_create_measured.get("angle_rad", 0.0)
+			)
 			HingeProjectionUtil.configure_hinge_limit_joint(
 				hinge_joint_node,
-				sim_joint.motor
+				sim_joint.motor,
+				hinge_angle_offset
 			)
 			# Hinge shares the rotor's angular record shape and tick loop.
 			rotor_records.append({
@@ -803,6 +815,7 @@ func _project_assembly_multibody(
 				"base_body": base_body,
 				"head_body": head_body,
 				"axis_local": hinge_axis_local,
+				"angle_offset_rad": hinge_angle_offset,
 				"top_element_ids": groups.get(
 					int(spec.get("head_group_id", 0)),
 					[]
@@ -1093,13 +1106,16 @@ func _tick_rotor_actuators(delta: float) -> void:
 				continue
 			if sim_joint.kind == SimulationJoint.Kind.HINGE:
 				# configure_actuator can retune angle limits on a live joint.
+				# Only rewrite twist stops — full DOF reset every tick fights
+				# Jolt warm-starting and amplifies stop explosions.
 				var hinge_constraint: Generic6DOFJoint3D = (
 					record.get("constraint") as Generic6DOFJoint3D
 				)
 				if hinge_constraint != null:
-					HingeProjectionUtil.configure_hinge_limit_joint(
+					HingeProjectionUtil.update_hinge_angle_limits(
 						hinge_constraint,
-						sim_joint.motor
+						sim_joint.motor,
+						float(record.get("angle_offset_rad", 0.0))
 					)
 			var axis_world: Vector3 = (
 				base_body.global_transform.basis
@@ -1163,10 +1179,6 @@ func _tick_piston_actuators(delta: float) -> void:
 		var assembly: SimulationAssembly = _world.get_assembly_raw(assembly_id)
 		if assembly == null or assembly.tombstoned:
 			continue
-		var root_body: PhysicsBody3D = _bodies.get(assembly_id) as PhysicsBody3D
-		if root_body == null:
-			continue
-		var assembly_transform: Transform3D = root_body.global_transform
 		for record_variant: Variant in _piston_constraints[assembly_id]:
 			if not record_variant is Dictionary:
 				continue
@@ -1178,9 +1190,12 @@ func _tick_piston_actuators(delta: float) -> void:
 			var head_body: PhysicsBody3D = record.get("head_body")
 			if base_body == null or head_body == null:
 				continue
+			# Axis must follow the piston base body group (hinge/rotor parent
+			# may have rotated away from the assembly root basis).
 			var axis_world: Vector3 = (
-				assembly_transform.basis * record.get("axis_local", Vector3.UP)
-			)
+				base_body.global_transform.basis
+				* record.get("axis_local", Vector3.UP)
+			).normalized()
 			var measured: Dictionary = PistonProjectionUtil.measure_axial_state(
 				base_body,
 				head_body,
