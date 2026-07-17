@@ -1,6 +1,7 @@
 #pragma once
 
-#include "../thirdparty/FastNoiseLite.h"
+#include <godot_cpp/variant/variant.hpp>
+#include <godot_cpp/variant/vector3.hpp>
 
 #include <array>
 #include <cmath>
@@ -37,6 +38,8 @@ struct Crater {
 	int seed = 0;
 };
 
+/// Lunar height sampler matching scripts/simulation/runtime/moon_terrain_generator.gd.
+/// Noise: Voxel Tools ZN_FastNoiseLite instances created in GDScript and passed in.
 class MoonTerrainSampler {
 public:
 	static constexpr int kHugeCraterCount = 5;
@@ -64,23 +67,27 @@ public:
 	static constexpr float kMicroAmpM = 0.3f;
 	static constexpr float kHeightClampM = 45.f;
 
-	explicit MoonTerrainSampler(float radius_voxels);
+	MoonTerrainSampler(
+			float radius_voxels,
+			const godot::Variant &mare_field,
+			const godot::Variant &highland_rough,
+			const godot::Variant &surface,
+			const godot::Variant &regolith);
 
 	float height_voxels(const Vector3f &n) const;
 	static Vector3f direction_from_node_uv(float u, float v);
 
 private:
 	float radius_voxels_ = 0.f;
-	FastNoiseLite mare_field_;
-	FastNoiseLite highland_rough_;
-	FastNoiseLite surface_;
-	FastNoiseLite regolith_;
+	godot::Variant mare_field_;
+	godot::Variant highland_rough_;
+	godot::Variant surface_;
+	godot::Variant regolith_;
 	std::array<Vector3f, kMareCount> mare_centers_{};
 	std::array<float, kMareCount> mare_radii_{};
 	std::vector<Crater> craters_;
 	std::vector<std::vector<int>> crater_cells_;
 
-	void setup_noise();
 	void build_mare_regions();
 	void rebuild_crater_index();
 	void register_class(
@@ -117,5 +124,5 @@ private:
 		return v < lo ? lo : (v > hi ? hi : v);
 	}
 	static float lerpf(float a, float b, float t) { return a + (b - a) * t; }
-	static void configure_noise(FastNoiseLite &noise, int seed, float period_m, int octaves, float gain, float lacunarity = 2.f);
+	static float sample_zn(const godot::Variant &noise, const Vector3f &p);
 };

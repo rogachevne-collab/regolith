@@ -1,5 +1,9 @@
 #include "moon_terrain_sampler.hpp"
 
+#include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/core/object.hpp>
+#include <godot_cpp/variant/utility_functions.hpp>
+
 #include <algorithm>
 #include <cmath>
 
@@ -11,34 +15,27 @@ namespace {
 constexpr float kTau = static_cast<float>(M_PI * 2.0);
 }
 
-void MoonTerrainSampler::configure_noise(
-		FastNoiseLite &noise,
-		int seed,
-		float period_m,
-		int octaves,
-		float gain,
-		float lacunarity) {
-	noise.SetSeed(seed);
-	noise.SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
-	noise.SetFractalType(FastNoiseLite::FractalType_FBm);
-	noise.SetFractalOctaves(octaves);
-	noise.SetFractalGain(gain);
-	noise.SetFractalLacunarity(lacunarity);
-	const float period_voxels = meters_to_voxels(period_m);
-	if (period_voxels > 0.000001f) {
-		noise.SetFrequency(1.f / period_voxels);
+using namespace godot;
+
+float MoonTerrainSampler::sample_zn(const Variant &noise, const Vector3f &p) {
+	Object *obj = Object::cast_to<Object>(noise.get_validated_object());
+	if (obj == nullptr) {
+		return 0.f;
 	}
+	return float(obj->call("get_noise_3dv", Vector3(p.x, p.y, p.z)));
 }
 
-MoonTerrainSampler::MoonTerrainSampler(float radius_voxels) : radius_voxels_(radius_voxels) {
-	setup_noise();
-}
-
-void MoonTerrainSampler::setup_noise() {
-	configure_noise(mare_field_, kSeed + 11, 480.f, 2, 0.32f);
-	configure_noise(highland_rough_, kSeed + 41, 55.f, 3, 0.42f);
-	configure_noise(surface_, kSeed + 73, 20.f, 2, 0.45f);
-	configure_noise(regolith_, kSeed + 67, 4.5f, 2, 0.5f);
+MoonTerrainSampler::MoonTerrainSampler(
+		float radius_voxels,
+		const Variant &mare_field,
+		const Variant &highland_rough,
+		const Variant &surface,
+		const Variant &regolith) :
+		radius_voxels_(radius_voxels),
+		mare_field_(mare_field),
+		highland_rough_(highland_rough),
+		surface_(surface),
+		regolith_(regolith) {
 	build_mare_regions();
 	rebuild_crater_index();
 }
@@ -125,7 +122,7 @@ float MoonTerrainSampler::mare_factor(const Vector3f &domain) const {
 	}
 	if (mare > 0.04f) {
 		const Vector3f scaled = domain * 0.85f;
-		const float warp = mare_field_.GetNoise(scaled.x, scaled.y, scaled.z);
+		const float warp = sample_zn(mare_field_, scaled);
 		mare = clampf(mare + warp * 0.12f * mare * (1.f - mare), 0.f, 1.f);
 	}
 	return std::pow(clampf(mare, 0.f, 1.f), 1.28f);
@@ -135,13 +132,13 @@ float MoonTerrainSampler::highland_meso_roughness(const Vector3f &domain, float 
 	if (highland < 0.08f || kHighlandRoughAmpM <= 0.001f) {
 		return 0.f;
 	}
-	const float r = highland_rough_.GetNoise(domain.x, domain.y, domain.z);
+	const float r = sample_zn(highland_rough_, domain);
 	return highland * r * kHighlandRoughAmpM;
 }
 
 float MoonTerrainSampler::surface_texture(const Vector3f &domain, float /*mare*/, float highland) const {
-	const float mid = surface_.GetNoise(domain.x, domain.y, domain.z);
-	const float fine = regolith_.GetNoise(domain.x, domain.y, domain.z);
+	const float mid = sample_zn(surface_, domain);
+	const float fine = sample_zn(regolith_, domain);
 	const float mid_amp = lerpf(kPlainsTextureM, kSurfaceTextureM, highland);
 	const float fine_amp = lerpf(kMicroAmpM * 0.45f, kMicroAmpM, highland);
 	return mid * mid_amp + fine * fine_amp;
@@ -302,10 +299,13 @@ int MoonTerrainSampler::dir_to_cell_index(const Vector3f &n) {
 }
 
 float MoonTerrainSampler::hash01(int x) {
-	uint32_t v = static_cast<uint32_t>(x) * 747796405u + 2891336453u;
-	v = ((v >> ((v >> 28u) + 4u)) ^ v) * 277803737u;
-	v = (v >> 22u) ^ v;
-	return float(v & 0xFFFFFFu) / float(0x1000000u);
+	/// Match GDScript int (64-bit) wrapping in moon_terrain_generator.gd.
+	/// Shift count must be masked — bare `(v>>28)+4` can be ≥64 (UB/crash).
+	uint64_t v = uint64_t(int64_t(x)) * 747796405ull + 2891336453ull;
+	const uint64_t shift = ((v >> 28) + 4ull) & 63ull;
+	v = ((v >> shift) ^ v) * 277803737ull;
+	v = (v >> 22) ^ v;
+	return float(v & 0xFFFFFFull) / float(0x1000000ull);
 }
 
 Vector3f MoonTerrainSampler::seed_dir(int seed_value) {

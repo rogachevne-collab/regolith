@@ -1,7 +1,7 @@
 class_name MoonTerrainParams
 extends RefCounted
 
-const GENERATOR_VERSION := 22
+const GENERATOR_VERSION := 23
 const SEED := 0x4D004E
 
 

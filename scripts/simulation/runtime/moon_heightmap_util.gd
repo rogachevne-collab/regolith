@@ -12,13 +12,57 @@ static func _native_bake_available() -> bool:
 	return ClassDB.class_exists("MoonHeightmapBake")
 
 
+static func _make_zn_noise(
+	seed_value: int,
+	period_voxels: float,
+	octaves: int,
+	gain: float,
+	set_lacunarity: bool,
+	lacunarity: float = 2.0
+) -> Object:
+	var noise: Object = ClassDB.instantiate(&"ZN_FastNoiseLite")
+	noise.set("seed", seed_value)
+	noise.set("period", period_voxels)
+	noise.set("noise_type", 0)
+	noise.set("fractal_type", 1)
+	noise.set("fractal_octaves", octaves)
+	noise.set("fractal_gain", gain)
+	if set_lacunarity:
+		noise.set("fractal_lacunarity", lacunarity)
+	return noise
+
+
 static func _bake_pixels_native(
 	width: int,
 	height: int,
 	radius_voxels: float
 ) -> PackedFloat32Array:
+	## Same ZN setup as MoonTerrainGenerator._setup_noise — created here so
+	## Voxel Tools owns the objects; C++ only samples + runs crater math.
+	var scale := MoonGeometry.VOXEL_SCALE
+	var mare := _make_zn_noise(
+		_Params.SEED + 11, 480.0 / scale, 2, 0.32, true, 2.0
+	)
+	var highland := _make_zn_noise(
+		_Params.SEED + 41, 55.0 / scale, 3, 0.42, false
+	)
+	var surface := _make_zn_noise(
+		_Params.SEED + 73, 20.0 / scale, 2, 0.45, true, 2.0
+	)
+	var regolith := _make_zn_noise(
+		_Params.SEED + 67, 4.5 / scale, 2, 0.5, false
+	)
 	var baker: Object = ClassDB.instantiate("MoonHeightmapBake")
-	return baker.call("bake_panorama", width, height, radius_voxels)
+	return baker.call(
+		"bake_panorama",
+		width,
+		height,
+		radius_voxels,
+		mare,
+		highland,
+		surface,
+		regolith
+	)
 
 
 static func heightmap_path() -> String:
@@ -75,9 +119,9 @@ static func bake_heightmap(
 		print(
 			(
 				"MoonHeightmap: native bake %dx%d "
-				+ "(%d threads, one-time)..."
+				+ "(ZN noise + C++ craters, one-time)..."
 			)
-			% [width, height, worker_count]
+			% [width, height]
 		)
 		pixels = _bake_pixels_native(width, height, MoonGeometry.radius_voxels())
 	else:
