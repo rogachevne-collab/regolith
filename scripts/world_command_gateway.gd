@@ -1234,45 +1234,60 @@ func _seat_ground_plan(plan: Dictionary) -> Dictionary:
 	)
 	var origin_cell: Vector3i = plan.get("origin_cell", Vector3i.ZERO)
 	var orientation_index := int(plan.get("orientation_index", 0))
-	var footprint := AABB()
-	var has_box := false
+	# Exact oriented corners, not a world-axis AABB: on a radial field the
+	# block basis is tilted against world axes, an axis-aligned AABB inflates
+	# downward and the block seats on a phantom corner — floating above the
+	# ground by the inflation amount. Corner support is exact for any tilt.
+	var corners := PackedVector3Array()
+	var center := Vector3.ZERO
 	for collider: ColliderDefinition in archetype.colliders:
-		var box := GridPoseUtil.collider_world_aabb(
+		var collider_transform := GridPoseUtil.collider_world_transform(
 			root, origin_cell, orientation_index, collider
 		)
-		if not has_box:
-			footprint = box
-			has_box = true
-		else:
-			footprint = footprint.merge(box)
-	if not has_box:
+		var half: Vector3 = collider.aabb_half_extents()
+		for sx: int in [-1, 1]:
+			for sy: int in [-1, 1]:
+				for sz: int in [-1, 1]:
+					var corner: Vector3 = collider_transform * Vector3(
+						half.x * sx,
+						half.y * sy,
+						half.z * sz
+					)
+					corners.append(corner)
+					center += corner
+	if corners.is_empty():
 		return plan
-	var center := footprint.position + footprint.size * 0.5
+	center /= float(corners.size())
 	var up := GravityField.resolve_up(self, center)
 	var down := -up
-	var half := footprint.size * 0.5
-	var half_along_up := (
-		absf(up.x) * half.x
-		+ absf(up.y) * half.y
-		+ absf(up.z) * half.z
-	)
-	var bottom_along_up := center.dot(up) - half_along_up
-	var probe_lift := half_along_up + 1.0
-	var probe_distance := probe_lift + 4.0
 	var field := GravityField.find_in_tree(self)
 	var frame: Basis = (
 		field.tangent_basis_at(center)
 		if field != null
 		else Basis.looking_at(Vector3.FORWARD, Vector3.UP)
 	)
+	var bottom_along_up := INF
+	var top_along_up := -INF
+	var extent_x := 0.0
+	var extent_z := 0.0
+	for corner: Vector3 in corners:
+		bottom_along_up = minf(bottom_along_up, corner.dot(up))
+		top_along_up = maxf(top_along_up, corner.dot(up))
+		extent_x = maxf(extent_x, absf((corner - center).dot(frame.x)))
+		extent_z = maxf(extent_z, absf((corner - center).dot(frame.z)))
+	var probe_top := top_along_up + 1.0
+	var probe_distance := probe_top - bottom_along_up + 4.0
 	var lowest_along_up := INF
 	for sample: Vector2 in _GROUND_SEAT_SAMPLES:
 		var sample_point := (
 			center
-			+ frame.x * (sample.x * footprint.size.x * 0.5)
-			+ frame.z * (sample.y * footprint.size.z * 0.5)
+			+ frame.x * (sample.x * extent_x)
+			+ frame.z * (sample.y * extent_z)
 		)
-		var probe_from := sample_point + up * probe_lift
+		var probe_from := (
+			sample_point
+			+ up * (probe_top - sample_point.dot(up))
+		)
 		var physics_point := VoxelSpaceUtil.physics_surface_along_ray(
 			_physics_space_state(),
 			probe_from,
