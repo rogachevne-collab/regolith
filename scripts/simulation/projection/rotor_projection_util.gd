@@ -5,6 +5,10 @@ const POSITION_ARRIVE_EPSILON_RAD := 0.005
 const STOP_BRAKE_DAMPING_SCALE := 3.0
 const VELOCITY_RESPONSE_TIME_S := 0.25
 const MIN_INERTIA_KG_M2 := 0.001
+## Taper commanded torque as a bounded (non-continuous) hinge approaches a
+## hard stop in the commanded direction. Keeps JOINT_LIMIT status reachable
+## while avoiding full torque_limit vs Jolt constraint explosions.
+const LIMIT_TAPER_RAD := 0.02
 
 
 static func rotor_axis_assembly_local(
@@ -106,6 +110,36 @@ static func desired_angular_velocity_rad_s(motor: SimulationMotorState) -> float
 	return 0.0
 
 
+static func near_limit_torque_scale(motor: SimulationMotorState) -> float:
+	if motor == null or motor.continuous or not motor.angular:
+		return 1.0
+	if motor.control_mode == SimulationMotorState.ControlMode.STOP:
+		return 1.0
+	var toward_upper := false
+	var toward_lower := false
+	match motor.control_mode:
+		SimulationMotorState.ControlMode.VELOCITY:
+			toward_upper = motor.target_velocity_mps > 0.0001
+			toward_lower = motor.target_velocity_mps < -0.0001
+		SimulationMotorState.ControlMode.POSITION:
+			var error := motor.position_error()
+			toward_upper = error > 0.0001
+			toward_lower = error < -0.0001
+	if toward_upper:
+		var room := motor.upper_limit_m - motor.observed_position_m
+		if room <= 0.0:
+			return 0.0
+		if room < LIMIT_TAPER_RAD:
+			return clampf(room / LIMIT_TAPER_RAD, 0.0, 1.0)
+	if toward_lower:
+		var room_lower := motor.observed_position_m - motor.lower_limit_m
+		if room_lower <= 0.0:
+			return 0.0
+		if room_lower < LIMIT_TAPER_RAD:
+			return clampf(room_lower / LIMIT_TAPER_RAD, 0.0, 1.0)
+	return 1.0
+
+
 static func compute_motor_torque_scalar(
 	motor: SimulationMotorState,
 	observed_velocity_rad_s: float,
@@ -137,7 +171,12 @@ static func compute_motor_torque_scalar(
 		ideal_torque_nm -= (
 			motor.damping_n_s_per_m * observed_velocity_rad_s
 		)
-	var saturated := absf(ideal_torque_nm) >= motor.force_limit_n - 0.001
+	var taper := near_limit_torque_scale(motor)
+	ideal_torque_nm *= taper
+	var saturated := (
+		taper >= 0.999
+		and absf(ideal_torque_nm) >= motor.force_limit_n - 0.001
+	)
 	return {
 		"torque_nm": clampf(
 			ideal_torque_nm,

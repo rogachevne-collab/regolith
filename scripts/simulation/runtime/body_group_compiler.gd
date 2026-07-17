@@ -51,6 +51,9 @@ static func compile(
 	var cycle := _validate_acyclic_piston_graph(driven_specs)
 	if not bool(cycle.get("valid", false)):
 		return cycle
+	var chain := _validate_driven_chain_length(driven_specs, root_group_id)
+	if not bool(chain.get("valid", false)):
+		return chain
 
 	return {
 		"valid": true,
@@ -161,6 +164,55 @@ static func _validate_acyclic_piston_graph(
 		if not _dfs_piston_graph_acyclic(start_id, -1, adjacency, visited):
 			return {"valid": false, "reason": &"driven_joint_cycle"}
 	return {"valid": true}
+
+
+## Longest directed driven path (joint count) from root must be ≤ 4.
+static func _validate_driven_chain_length(
+	driven_specs: Array[Dictionary],
+	root_group_id: int
+) -> Dictionary:
+	if driven_specs.is_empty():
+		return {"valid": true}
+	var children_of: Dictionary = {}
+	for spec: Dictionary in driven_specs:
+		var base_id := int(spec["base_group_id"])
+		if not children_of.has(base_id):
+			children_of[base_id] = []
+		(children_of[base_id] as Array).append(int(spec["head_group_id"]))
+	var start_ids: Array[int] = []
+	if root_group_id > 0:
+		start_ids.append(root_group_id)
+	else:
+		for base_id: int in _sorted_int_keys(children_of):
+			start_ids.append(base_id)
+	var longest := 0
+	for start_id: int in start_ids:
+		longest = maxi(
+			longest,
+			_longest_driven_path_from(start_id, children_of, {})
+		)
+	if longest > MAX_DRIVEN_JOINTS_ON_PATH:
+		return {"valid": false, "reason": &"driven_joint_chain_too_long"}
+	return {"valid": true}
+
+
+static func _longest_driven_path_from(
+	group_id: int,
+	children_of: Dictionary,
+	stack: Dictionary
+) -> int:
+	if stack.has(group_id):
+		return 0
+	stack[group_id] = true
+	var best := 0
+	for child_variant: Variant in children_of.get(group_id, []):
+		var child_id := int(child_variant)
+		best = maxi(
+			best,
+			1 + _longest_driven_path_from(child_id, children_of, stack)
+		)
+	stack.erase(group_id)
+	return best
 
 
 static func _dfs_piston_graph_acyclic(

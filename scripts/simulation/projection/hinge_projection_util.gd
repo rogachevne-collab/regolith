@@ -5,6 +5,18 @@ extends RefCounted
 ## non-continuous position error transparently); this util owns the joint
 ## frame (bend axis on local X — Jolt's twist axis, which supports the
 ## asymmetric angle limits) and the hard angular stops.
+##
+## Jolt measures angular X from the relative pose at joint creation. Motor
+## observed angle is home-relative. `angle_offset_rad` is the measured angle
+## at create time; Jolt limits are motor limits shifted by that offset so
+## hard stops stay aligned after snapshot restore / bent reproject.
+
+
+## Softness / damping on the twist stop — keeps stock torque from fighting
+## the hard limit into a solver explosion while status stays joint_limit.
+const LIMIT_SOFTNESS := 0.15
+const LIMIT_DAMPING := 1.0
+const LIMIT_RESTITUTION := 0.0
 
 
 ## Joint frame with X along the bend axis; angular X is Jolt's twist DOF.
@@ -20,12 +32,25 @@ static func basis_with_x_axis(axis: Vector3) -> Basis:
 	return Basis(x_axis, y_axis, z_axis)
 
 
-## Lock everything except rotation around local X, hard-limited to the
-## motor's [lower, upper] angle range. Called every physics tick: configure
-## can retune the limits on a live joint.
+## Convert home-relative motor limits into Jolt rest-relative limits.
+static func jolt_angle_limits(
+	motor: SimulationMotorState,
+	angle_offset_rad: float
+) -> Vector2:
+	if motor == null:
+		return Vector2.ZERO
+	return Vector2(
+		motor.lower_limit_m - angle_offset_rad,
+		motor.upper_limit_m - angle_offset_rad
+	)
+
+
+## Full joint setup (locked linear + swing, limited twist). Call once when
+## the constraint is created.
 static func configure_hinge_limit_joint(
 	joint: Generic6DOFJoint3D,
-	motor: SimulationMotorState
+	motor: SimulationMotorState,
+	angle_offset_rad: float = 0.0
 ) -> void:
 	for axis: String in ["x", "y", "z"]:
 		joint.set("linear_limit_%s/enabled" % axis, true)
@@ -36,5 +61,21 @@ static func configure_hinge_limit_joint(
 		joint.set("angular_limit_%s/lower_angle" % axis, 0.0)
 		joint.set("angular_limit_%s/upper_angle" % axis, 0.0)
 	joint.set("angular_limit_x/enabled", true)
-	joint.set("angular_limit_x/lower_angle", motor.lower_limit_m)
-	joint.set("angular_limit_x/upper_angle", motor.upper_limit_m)
+	joint.set("angular_limit_x/softness", LIMIT_SOFTNESS)
+	joint.set("angular_limit_x/damping", LIMIT_DAMPING)
+	joint.set("angular_limit_x/restitution", LIMIT_RESTITUTION)
+	update_hinge_angle_limits(joint, motor, angle_offset_rad)
+
+
+## Live retune of twist stops only (configure_actuator may change min/max).
+## Does not rewrite locked DOFs — preserves Jolt warm-starting.
+static func update_hinge_angle_limits(
+	joint: Generic6DOFJoint3D,
+	motor: SimulationMotorState,
+	angle_offset_rad: float = 0.0
+) -> void:
+	if joint == null or motor == null:
+		return
+	var limits := jolt_angle_limits(motor, angle_offset_rad)
+	joint.set("angular_limit_x/lower_angle", limits.x)
+	joint.set("angular_limit_x/upper_angle", limits.y)
