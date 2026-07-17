@@ -392,35 +392,35 @@ func _create_materials() -> void:
 		false,
 		0.78
 	)
-	_materials["rim_frame"] = _material(
-		Color(0.42, 0.28, 0.12, 1.0),
+	_materials["rim_frame"] = _rim_material(
+		Color(0.28, 0.16, 0.06, 1.0),
+		0.4,
+		0.62,
+		Color(0.35, 0.2, 0.08)
+	)
+	_materials["rim_operational"] = _rim_material(
+		Color(0.06, 0.1, 0.16, 1.0),
+		0.9,
+		0.28,
+		Color(0.12, 0.2, 0.32)
+	)
+	_materials["rim_damaged"] = _rim_material(
+		Color(0.42, 0.18, 0.02, 1.0),
+		0.6,
+		0.45,
+		Color(0.5, 0.22, 0.04)
+	)
+	_materials["rim_broken"] = _rim_material(
+		Color(0.2, 0.02, 0.02, 1.0),
 		0.35,
-		false,
-		0.7
-	)
-	_materials["rim_operational"] = _material(
-		Color(0.1, 0.16, 0.24, 1.0),
-		0.85,
-		false,
-		0.35
-	)
-	_materials["rim_damaged"] = _material(
-		Color(0.55, 0.28, 0.04, 1.0),
 		0.55,
-		false,
-		0.5
+		Color(0.3, 0.04, 0.04)
 	)
-	_materials["rim_broken"] = _material(
-		Color(0.28, 0.02, 0.02, 1.0),
-		0.3,
-		false,
-		0.6
-	)
-	_materials["rim_rover"] = _material(
-		Color(0.05, 0.055, 0.065, 1.0),
-		0.7,
-		false,
-		0.55
+	_materials["rim_rover"] = _rim_material(
+		Color(0.03, 0.035, 0.04, 1.0),
+		0.75,
+		0.45,
+		Color(0.08, 0.09, 0.1)
 	)
 
 
@@ -436,4 +436,17 @@ func _material(
 	material.roughness = roughness
 	if transparent:
 		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	return material
+
+
+func _rim_material(
+	color: Color,
+	metallic: float,
+	roughness: float,
+	emission: Color
+) -> StandardMaterial3D:
+	var material := _material(color, metallic, false, roughness)
+	material.emission_enabled = true
+	material.emission = emission
+	material.emission_energy_multiplier = 0.35
 	return material
