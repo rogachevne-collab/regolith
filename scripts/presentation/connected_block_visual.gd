@@ -23,7 +23,9 @@ const CONNECTED_ARCHETYPES := {
 const RIM_FRACTION := 0.08
 const RIM_MIN_M := 0.02
 const RIM_MAX_M := 0.10
-const FACE_BIAS_M := 0.001
+## Keep 0 so perpendicular faces of one cube share edges. A positive outward
+## bias opens visible cracks at cube edges under soft rendering.
+const FACE_BIAS_M := 0.0
 
 static var _mesh_cache: Dictionary = {}
 
@@ -145,7 +147,7 @@ static func make_fill_mesh(size: Vector3, face_mask: int) -> ArrayMesh:
 	for face: OrientationUtil.Face in FACE_ORDER:
 		if is_face_occluded(face_mask, face):
 			continue
-		_add_face_fill(st, face, half, rim)
+		_add_face_fill(st, face, half, rim, face_mask)
 		wrote = true
 	var mesh := _commit_or_empty(st, wrote)
 	_cache_put(size, face_mask, "fill", mesh)
@@ -342,7 +344,8 @@ static func _add_face_fill(
 	st: SurfaceTool,
 	face: OrientationUtil.Face,
 	half: Vector3,
-	rim: float
+	rim: float,
+	face_mask: int
 ) -> void:
 	var basis := _face_basis(face)
 	var normal: Vector3 = basis["normal"]
@@ -350,9 +353,23 @@ static func _add_face_fill(
 	var bitangent: Vector3 = basis["bitangent"]
 	var extent_t := _half_on_axis(half, tangent)
 	var extent_b := _half_on_axis(half, bitangent)
-	var inner_t := extent_t - rim
-	var inner_b := extent_b - rim
-	if inner_t <= 0.0 or inner_b <= 0.0:
+	## Inset fill only where a rim strip is drawn. On connected seams the
+	## adjacent face is occluded → no rim → fill must reach the full edge
+	## or a rim-width gap appears at the join.
+	var adj := _adjacent_faces(face)
+	var u0 := -extent_t + (
+		rim if not is_face_occluded(face_mask, adj["neg_t"]) else 0.0
+	)
+	var u1 := extent_t - (
+		rim if not is_face_occluded(face_mask, adj["pos_t"]) else 0.0
+	)
+	var v0 := -extent_b + (
+		rim if not is_face_occluded(face_mask, adj["neg_b"]) else 0.0
+	)
+	var v1 := extent_b - (
+		rim if not is_face_occluded(face_mask, adj["pos_b"]) else 0.0
+	)
+	if u1 <= u0 or v1 <= v0:
 		return
 	var origin := _face_origin(half, normal)
 	_add_quad_outward(
@@ -360,10 +377,10 @@ static func _add_face_fill(
 		origin,
 		tangent,
 		bitangent,
-		-inner_t,
-		inner_t,
-		-inner_b,
-		inner_b,
+		u0,
+		u1,
+		v0,
+		v1,
 		normal
 	)
 
@@ -391,13 +408,15 @@ static func _add_face_rim(
 	var origin := _face_origin(half, normal)
 	var wrote := false
 
-	## Strips exclude corners; corners are separate pads.
-	var strip_t0 := -extent_t + rim
-	var strip_t1 := extent_t - rim
-	var strip_b0 := -extent_b + rim
-	var strip_b1 := extent_b - rim
+	## Strip span: inset by rim only when that end has a corner pad.
+	## On a connected seam the adjacent face is occluded → strip runs to
+	## the face edge so the outer perimeter stays continuous.
+	var t_lo := -extent_t + (rim if draw_neg_t else 0.0)
+	var t_hi := extent_t - (rim if draw_pos_t else 0.0)
+	var b_lo := -extent_b + (rim if draw_neg_b else 0.0)
+	var b_hi := extent_b - (rim if draw_pos_b else 0.0)
 
-	if draw_neg_t and strip_b1 > strip_b0:
+	if draw_neg_t and b_hi > b_lo:
 		_add_quad_outward(
 			st,
 			origin,
@@ -405,12 +424,12 @@ static func _add_face_rim(
 			bitangent,
 			-extent_t,
 			-extent_t + rim,
-			strip_b0,
-			strip_b1,
+			b_lo,
+			b_hi,
 			normal
 		)
 		wrote = true
-	if draw_pos_t and strip_b1 > strip_b0:
+	if draw_pos_t and b_hi > b_lo:
 		_add_quad_outward(
 			st,
 			origin,
@@ -418,32 +437,32 @@ static func _add_face_rim(
 			bitangent,
 			extent_t - rim,
 			extent_t,
-			strip_b0,
-			strip_b1,
+			b_lo,
+			b_hi,
 			normal
 		)
 		wrote = true
-	if draw_neg_b and strip_t1 > strip_t0:
+	if draw_neg_b and t_hi > t_lo:
 		_add_quad_outward(
 			st,
 			origin,
 			tangent,
 			bitangent,
-			strip_t0,
-			strip_t1,
+			t_lo,
+			t_hi,
 			-extent_b,
 			-extent_b + rim,
 			normal
 		)
 		wrote = true
-	if draw_pos_b and strip_t1 > strip_t0:
+	if draw_pos_b and t_hi > t_lo:
 		_add_quad_outward(
 			st,
 			origin,
 			tangent,
 			bitangent,
-			strip_t0,
-			strip_t1,
+			t_lo,
+			t_hi,
 			extent_b - rim,
 			extent_b,
 			normal

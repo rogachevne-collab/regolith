@@ -88,21 +88,21 @@ func _test_rim_covers_corners() -> bool:
 	var half := size * 0.5
 	var rim := ConnectedBlockVisual.make_rim_mesh(size, 0)
 	var aabb := rim.get_aabb()
-	var bias := ConnectedBlockVisual.FACE_BIAS_M + 0.0005
-	var expected_min := -half - Vector3.ONE * bias
-	var expected_max := half + Vector3.ONE * bias
-	if aabb.position.x > expected_min.x + 0.002:
+	var tol := 0.002
+	var expected_min := -half
+	var expected_max := half
+	if aabb.position.x > expected_min.x + tol:
 		return _fail("rim aabb does not reach -X corner")
-	if aabb.position.y > expected_min.y + 0.002:
+	if aabb.position.y > expected_min.y + tol:
 		return _fail("rim aabb does not reach -Y corner")
-	if aabb.position.z > expected_min.z + 0.002:
+	if aabb.position.z > expected_min.z + tol:
 		return _fail("rim aabb does not reach -Z corner")
 	var aabb_end := aabb.position + aabb.size
-	if aabb_end.x < expected_max.x - 0.002:
+	if aabb_end.x < expected_max.x - tol:
 		return _fail("rim aabb does not reach +X corner")
-	if aabb_end.y < expected_max.y - 0.002:
+	if aabb_end.y < expected_max.y - tol:
 		return _fail("rim aabb does not reach +Y corner")
-	if aabb_end.z < expected_max.z - 0.002:
+	if aabb_end.z < expected_max.z - tol:
 		return _fail("rim aabb does not reach +Z corner")
 	return true
 
@@ -141,6 +141,7 @@ func _test_adjacent_frames_merge() -> bool:
 		return _fail("merged frame should expose 8 rim edges")
 	var size := Vector3.ONE * GridMetric.CELL_SIZE_M
 	var fill := ConnectedBlockVisual.make_fill_mesh(size, left_mask)
+	var rim := ConnectedBlockVisual.make_rim_mesh(size, left_mask)
 	if fill.get_faces().size() != 30:
 		return _fail(
 			"merged fill should have 10 tris (30 verts), got %d"
@@ -148,6 +149,17 @@ func _test_adjacent_frames_merge() -> bool:
 		)
 	if not _assert_cw_outward_mesh(fill, "merged fill"):
 		return false
+	## Seam fill must reach the occluded +X face plane (no rim-width gap).
+	var fill_aabb := fill.get_aabb()
+	var half := size * 0.5
+	if fill_aabb.position.x + fill_aabb.size.x < half.x - 0.001:
+		return _fail("merged fill does not reach +X seam")
+	## Outer perimeter rim must still reach ±Y/±Z corners.
+	var rim_aabb := rim.get_aabb()
+	if rim_aabb.position.y > -half.y + 0.002:
+		return _fail("merged rim lost -Y coverage")
+	if rim_aabb.position.y + rim_aabb.size.y < half.y - 0.002:
+		return _fail("merged rim lost +Y coverage")
 	return true
 
 
