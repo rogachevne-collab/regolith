@@ -1,0 +1,22 @@
+#!/usr/bin/env python3
+
+EnsureSConsVersion(4, 0)
+
+env = SConscript(
+	"../godot-cpp/SConstruct",
+	variables={"build_library": "no", "generate_bindings": "no"},
+	exports=[],
+)
+
+env.Append(CPPPATH=["src/", "thirdparty/"])
+
+sources = Glob("src/*.cpp")
+
+library = env.SharedLibrary(
+	"../../addons/regolith_moon_bake/bin/libregolith_moon_bake{}{}".format(
+		env["suffix"], env["SHLIBSUFFIX"]
+	),
+	source=sources,
+)
+
+Default(library)

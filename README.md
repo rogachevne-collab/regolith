@@ -53,6 +53,24 @@ unzip -o bin/GodotVoxelExtension.zip -d .
 
 Распаковывает `addons/zylann.voxel/` в корень проекта.
 
+### Moon heightmap bake (`regolith_moon_bake`)
+
+C++ GDExtension для быстрого бейка `crust_heightmap.exr` (MIT FastNoiseLite +
+godot-cpp). macOS `template_debug` binary в `addons/regolith_moon_bake/bin/`.
+
+Пересборка (нужен слинкованный `native/godot-cpp` → Erebus `thirdparty/godot-cpp`
+с готовым `.a`):
+
+```bash
+./native/build_moon_bake.sh
+```
+
+После клона, если Godot не видит класс `MoonHeightmapBake`:
+
+```bash
+./run.sh --headless --import
+```
+
 ## Управление
 
 | Клавиша | Действие |

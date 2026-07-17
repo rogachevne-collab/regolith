@@ -1,0 +1,15 @@
+[configuration]
+
+entry_symbol = "regolith_moon_bake_library_init"
+compatibility_minimum = "4.5"
+
+[libraries]
+
+macos.debug = "./bin/libregolith_moon_bake.macos.template_debug.universal.dylib"
+macos.release = "./bin/libregolith_moon_bake.macos.template_release.universal.dylib"
+
+linux.debug.x86_64 = "./bin/libregolith_moon_bake.linux.template_debug.x86_64.so"
+linux.release.x86_64 = "./bin/libregolith_moon_bake.linux.template_release.x86_64.so"
+
+windows.debug.x86_64 = "./bin/regolith_moon_bake.windows.template_debug.x86_64.dll"
+windows.release.x86_64 = "./bin/regolith_moon_bake.windows.template_release.x86_64.dll"

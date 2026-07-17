@@ -134,13 +134,19 @@ Legacy flat yard: `scenes/flat_moon.tscn` + `scripts/flat_moon_bootstrap.gd`.
 - Collisions: on; streaming вокруг viewer (**не** `full_load` с SQLite —
   плагин отвергает).
 - **Дальняя видимость (планета):** конечные `voxel_bounds` +
-  `view_distance`/`lod_count` на бюджет `Camera.far` (~20 км) — оболочка
-  LODит, а не unload'ится. `VoxelViewer.view_distance` синхронизируется в
-  bootstrap. Орбитальные дистанции — camera-relative impostor (не раздувать
-  `Camera.far`: ломает Godot light culler / `create_frustum_points`). Туман
-  выключен (вакуум).
+  `lod_count`. `view_distance` **динамический** (`MoonGeometry.view_distance_voxels_for_camera_distance`):
+  на поверхности ≥2048 вокселей (вся Ø1 км без half-baked scraps), с высотой
+  растёт до 50k под `Camera.far`. Фиксированные 50k у walker'а перегружали
+  мешер → обрывы коры / «кубический сруб». `VoxelViewer` синхронизируется в
+  bootstrap. Орбита — camera-relative impostor (не раздувать `Camera.far`:
+  ломает light culler / `create_frustum_points`). Туман выключен (вакуум).
 - Spawn: ждать meshed + physics; temp landing pad — только fallback.
 - Смена рельефа → bump `GENERATOR_VERSION` + повторный bake.
+- **Heightmap bake:** `MoonHeightmapUtil.bake_heightmap` (2048×1024 EXR) —
+  native `MoonHeightmapBake` GDExtension (`addons/regolith_moon_bake/`, C++
+  threads + FastNoiseLite), ~0.5 с на M1; fallback — GDScript
+  `WorkerThreadPool`. Повторный play грузит
+  `user://moon_experiment/gen_v{N}/crust_heightmap.exr` без rebake.
 - Мир-сейв сборок: `gen_v{N}/world_save.json` (отдельно от flat_moon).
 
 Типизация в коде: **тонкий адаптер** `TerrainCompat`
@@ -293,4 +299,4 @@ Legacy flat yard: `scenes/flat_moon.tscn` + `scripts/flat_moon_bootstrap.gd`.
 | 6 Wheels / joints parity | **done** (rover spawn + field-aware wheels) |
 | 7 Dig persistence | **done** (bake RegionFiles + play modified-only digs) |
 | Lunar relief H(n) | **done** (HQ `MoonTerrainGenerator` — bake only) |
-| Landscape bake | **done** (required: `moon_bake_stream.tscn` → play stream) |
+| Landscape bake | **done** (`moon_bake_stream.tscn`; MT heightmap via `WorkerThreadPool`) |
