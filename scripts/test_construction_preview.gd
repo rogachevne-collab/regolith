@@ -1453,6 +1453,12 @@ func _new_gateway_fixture() -> Dictionary:
 	var visuals := ElementVisualProjection.new()
 	visuals.name = "ElementVisualProjection"
 	session.add_child(visuals)
+	var piston_visuals := PistonVisualProjection.new()
+	piston_visuals.name = "PistonVisualProjection"
+	session.add_child(piston_visuals)
+	var wheel_visuals := WheelVisualProjection.new()
+	wheel_visuals.name = "WheelVisualProjection"
+	session.add_child(wheel_visuals)
 	var impact := ImpactResolverService.new()
 	impact.name = "ImpactResolverService"
 	session.add_child(impact)
@@ -1534,7 +1540,9 @@ func _test_gateway_voxel_place_spawns_visual() -> bool:
 		)
 	var visual_count := 0
 	for child: Node in body.get_children():
-		if child is MeshInstance3D and child.has_meta("element_visual"):
+		# Connected-block visuals put meta on a Node3D root; legacy path uses
+		# MeshInstance3D with the same meta.
+		if child.has_meta("element_visual"):
 			visual_count += 1
 	if visual_count <= 0:
 		return _fail("moon-like place has no element visual meshes on body")
