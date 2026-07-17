@@ -275,13 +275,23 @@ func _on_body_shape_entered(
 		partner_velocity = pre_step_velocity(other_body as RigidBody3D)
 	elif other_body is CharacterBody3D:
 		partner_velocity = (other_body as CharacterBody3D).velocity
+	var relative_velocity := inbound_velocity - partner_velocity
 	var impulse_length := ImpactResolver.fallback_impulse_length(
 		body,
 		other_body,
 		contact_normal,
-		inbound_velocity - partner_velocity
+		relative_velocity
 	)
 	if impulse_length < ImpactResolver.I_MIN:
+		return
+	var v_sep := absf(relative_velocity.dot(contact_normal))
+	# Same resting-contact gate as integrate_contacts: every carve rebuilds the
+	# terrain collider, which re-fires body_shape_entered on the new shape while
+	# the body merely sits — heavy mass alone must not re-trigger a carve.
+	if is_world_surface and not ImpactResolver.passes_terrain_kinetic_gate(
+		impulse_length,
+		v_sep
+	):
 		return
 	var partner_key := ImpactResolver.partner_key_from_object(other_body)
 	var batch_key := ImpactResolver.batch_key(
@@ -299,6 +309,7 @@ func _on_body_shape_entered(
 		"partner": other_body,
 		"partner_element_id": partner_element_id,
 		"impulse_length": impulse_length,
+		"carve_blocked": not ImpactResolver.passes_terrain_carve_gate(v_sep),
 		"contact_world": contact_world,
 		"contact_normal": contact_normal,
 		"inbound_velocity": inbound_velocity,
@@ -396,10 +407,10 @@ func integrate_contacts(
 		# Terrain: ignore resting gravity-support impulses. Jolt reports
 		# contact_impulse ≈ m·g·Δt every step while sat; that used to pass
 		# I_MIN on heavy flight/assembly bodies and dig endless shafts.
+		var v_sep := 0.0
+		if world_normal.length_squared() > 0.000001:
+			v_sep = absf(contact_relative_velocity.dot(world_normal))
 		if ImpactResolver.is_world_surface_partner(partner):
-			var v_sep := 0.0
-			if world_normal.length_squared() > 0.000001:
-				v_sep = absf(contact_relative_velocity.dot(world_normal))
 			if not ImpactResolver.passes_terrain_kinetic_gate(j_fallback, v_sep):
 				continue
 		_queue_entry({
@@ -410,6 +421,9 @@ func integrate_contacts(
 			"partner": partner,
 			"partner_element_id": partner_element_id,
 			"impulse_length": effective_impulse,
+			"carve_blocked": not ImpactResolver.passes_terrain_carve_gate(
+				v_sep
+			),
 			"contact_world": contact_world,
 			"contact_normal": world_normal,
 			"inbound_velocity": inbound_velocity,
@@ -434,6 +448,11 @@ func _queue_entry(entry: Dictionary) -> void:
 		var new_impulse := float(entry.get("impulse_length", 0.0))
 		var old_impulse := float(merged.get("impulse_length", 0.0))
 		merged["impulse_length"] = maxf(old_impulse, new_impulse)
+		# Carve stays allowed if any contributing source allowed it.
+		merged["carve_blocked"] = (
+			bool(merged.get("carve_blocked", false))
+			and bool(entry.get("carve_blocked", false))
+		)
 		var entry_physics := bool(entry.get("contact_from_physics", false))
 		var merged_physics := bool(merged.get("contact_from_physics", false))
 		if entry_physics:
@@ -562,7 +581,11 @@ func _apply_entry(
 		return 0.0
 	var used_volume := 0.0
 	var world_surface := ImpactResolver.is_world_surface_partner(partner)
-	if volume_budget_m3 > 0.0 and world_surface:
+	# Sub-V_CARVE_MIN touchdowns damage elements but never dig: the smallest
+	# crater is deep enough that falling back into it re-arms the kinetic
+	# gate, so carving on touchdown chains a self-digging shaft.
+	var carve_blocked := bool(entry.get("carve_blocked", false))
+	if volume_budget_m3 > 0.0 and world_surface and not carve_blocked:
 		used_volume = _apply_terrain_carve(entry, strength, volume_budget_m3)
 		if used_volume > 0.0 and ImpactResolver.is_terrain_partner(partner):
 			_drop_kinetic_loot(entry, impulse_length, used_volume)

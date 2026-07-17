@@ -7,6 +7,12 @@ const I_REF := 24.0
 ## Needed because Jolt contact_impulse includes gravity support (≈ m·g·Δt),
 ## so I_MIN alone is defeated on heavy assemblies that are merely sitting.
 const V_SEP_MIN := 0.35
+## Terrain carving needs genuine crash speed (~2 m fall on the Moon). The
+## smallest stamp is deeper than the V_SEP_MIN fall height, so a body dropping
+## into its own fresh crater re-arms the kinetic gate at ~1-1.5 m/s and the
+## carve → drop → carve loop digs an endless shaft. Below V_CARVE_MIN a
+## touchdown still damages elements but must not dig.
+const V_CARVE_MIN := 2.5
 const K_DAMAGE := 0.35
 ## Landing legs absorb terrain touchdowns; keep crash lethality elsewhere.
 const K_LANDING_GEAR := 0.08
@@ -37,6 +43,10 @@ static func passes_terrain_kinetic_gate(
 	separating_speed: float
 ) -> bool:
 	return j_fallback >= I_MIN and separating_speed >= V_SEP_MIN
+
+
+static func passes_terrain_carve_gate(separating_speed: float) -> bool:
+	return separating_speed >= V_CARVE_MIN
 
 
 static func damage_amount(
