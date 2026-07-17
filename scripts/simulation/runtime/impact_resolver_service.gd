@@ -24,6 +24,10 @@ var _last_sustained_contact: Dictionary = {}
 var _player_hit_until: Dictionary = {}
 var _material_source := TerrainMaterialSource.new()
 var last_terrain_carve_m3: float = 0.0
+var _last_vfx_spawn_msec := 0
+
+var _sfx_terrain: AudioStream = null
+var _sfx_structure: AudioStream = null
 
 
 func bind(
@@ -32,6 +36,11 @@ func bind(
 ) -> void:
 	_world = world
 	_gateway = gateway
+	# Lazy-load audiovisual resources: generate procedurally if files missing.
+	if _sfx_terrain == null:
+		_sfx_terrain = _generate_impact_sfx(false)
+	if _sfx_structure == null:
+		_sfx_structure = _generate_impact_sfx(true)
 
 
 func unregister_tracked_body(body: RigidBody3D) -> void:
@@ -551,6 +560,8 @@ func _apply_entry(
 		if used_volume > 0.0 and ImpactResolver.is_terrain_partner(partner):
 			_drop_kinetic_loot(entry, impulse_length, used_volume)
 	_apply_element_damage(striker_element_id, impulse_length, world_surface)
+	var is_assembly := ImpactResolver.is_assembly_partner(partner)
+	_spawn_impact_feedback(entry, strength, world_surface or is_assembly)
 	return used_volume
 
 
@@ -850,6 +861,163 @@ func _world_surface_normal(
 		if not hit.is_empty():
 			return Vector3(hit["normal"]).normalized()
 	return Vector3.UP
+
+
+## Spawn audiovisual feedback for an impact: VFX burst + SFX.
+## Particles are built from scratch — no pre-made meteor scene.
+func _spawn_impact_feedback(
+	entry: Dictionary,
+	strength: float,
+	is_structural: bool
+) -> void:
+	# Global VFX cooldown: at most 4 spawns per second.
+	var now := Time.get_ticks_msec()
+	if now - _last_vfx_spawn_msec < 250:
+		return
+	_last_vfx_spawn_msec = now
+	var contact_world := Vector3(entry.get("contact_world", Vector3.ZERO))
+	var parent := _feedback_parent()
+	if parent == null:
+		return
+	var s := clampf(strength, 0.0, 1.0)
+	# Build a small burst node anchored to the terrain.
+	var burst := Node3D.new()
+	parent.add_child(burst)
+	burst.global_position = contact_world
+	# Flash — brief orange/white spark, small sphere.
+	var flash := _make_particles(15, 0.28, Color(1.0, 0.82, 0.55, 0.9))
+	flash.one_shot = true
+	flash.explosiveness = 1.0
+	var flash_mat := flash.process_material as ParticleProcessMaterial
+	flash_mat.spread = 180.0
+	flash_mat.emission_sphere_radius = 0.2 + 0.3 * s
+	flash_mat.initial_velocity_min = 1.5 + 3.0 * s
+	flash_mat.initial_velocity_max = 4.0 + 6.0 * s
+	flash_mat.scale_min = 0.15 + 0.15 * s
+	flash_mat.scale_max = 0.3 + 0.25 * s
+	if is_structural:
+		flash_mat.color = Color(0.85, 0.9, 1.0, 0.9)
+	burst.add_child(flash)
+	# Dust — grey regolith cloud, drifts slowly upward under lunar g.
+	var dust := _make_particles(35, 1.8, Color(0.55, 0.52, 0.48, 0.7))
+	dust.one_shot = true
+	dust.explosiveness = 0.92
+	var dust_mat := dust.process_material as ParticleProcessMaterial
+	dust_mat.spread = 165.0
+	dust_mat.emission_sphere_radius = 0.3 + 0.4 * s
+	dust_mat.initial_velocity_min = 1.0 + 2.0 * s
+	dust_mat.initial_velocity_max = 3.5 + 5.0 * s
+	dust_mat.scale_min = 0.2 + 0.2 * s
+	dust_mat.scale_max = 0.4 + 0.3 * s
+	dust_mat.gravity = Vector3(0.0, -1.62, 0.0)
+	burst.add_child(dust)
+	# Lifecycle: remove after dust fades.
+	var duration := 2.5
+	get_tree().create_timer(duration).timeout.connect(
+		burst.queue_free,
+		CONNECT_DEFERRED
+	)
+	flash.restart(); flash.emitting = true
+	dust.restart(); dust.emitting = true
+	# SFX on Master bus.
+	var stream: AudioStream = _sfx_terrain
+	var pitch_min := 0.8
+	var pitch_max := 1.0
+	if is_structural:
+		stream = _sfx_structure
+		pitch_min = 1.1
+		pitch_max = 1.4
+	if stream != null:
+		var player := AudioStreamPlayer3D.new()
+		player.stream = stream
+		player.pitch_scale = randf_range(pitch_min, pitch_max)
+		player.volume_db = linear_to_db(clampf(s * 1.2, 0.0, 1.0))
+		player.max_distance = 40.0
+		parent.add_child(player)
+		player.global_position = contact_world
+		player.play()
+		var finish_duration := stream.get_length()
+		get_tree().create_timer(finish_duration + 0.1).timeout.connect(
+			player.queue_free,
+			CONNECT_DEFERRED
+		)
+
+
+## Build a minimal GPUParticles3D with a quad mesh and the given
+## material tint. Caller must set one_shot, explosiveness, and emission
+## params on the returned node's process_material.
+static func _make_particles(
+	amount: int,
+	lifetime: float,
+	tint: Color
+) -> GPUParticles3D:
+	var mesh := QuadMesh.new()
+	mesh.size = Vector2(0.5, 0.5)
+	var mat := StandardMaterial3D.new()
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.vertex_color_use_as_albedo = true
+	mat.albedo_color = tint
+	mesh.material = mat
+	var proc_mat := ParticleProcessMaterial.new()
+	proc_mat.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+	proc_mat.direction = Vector3.UP
+	var particles := GPUParticles3D.new()
+	particles.amount = amount
+	particles.lifetime = lifetime
+	particles.process_material = proc_mat
+	particles.draw_pass_1 = mesh
+	return particles
+
+
+## Procedurally generate a short impact SFX — white noise burst with an
+## exponential decay envelope. `structural = true` shifts the noise toward
+## higher frequencies (clang), `false` keeps it low (thud).
+static func _generate_impact_sfx(structural: bool) -> AudioStreamWAV:
+	var sample_rate := 22050
+	var duration_sec := 0.35
+	var num_samples := int(sample_rate * duration_sec)
+	var data := PackedByteArray()
+	data.resize(num_samples * 2)  # 16-bit mono
+	var envelope_scale := 1.0 / float(num_samples)
+	var freq_boost := 0.6 if structural else 0.15  # high-pass blend
+	for i: int in range(num_samples):
+		var t := float(i) * envelope_scale
+		# Envelope: fast attack, exponential decay.
+		var envelope: float = exp(-t * 5.0)
+		# White noise.
+		var noise := randf_range(-1.0, 1.0)
+		# Simple high-pass: mix with previous sample difference.
+		var prev := 0.0 if i == 0 else float(data[(i - 1) * 2 + 1] - 128) / 128.0
+		var hp := noise - prev
+		var sample := lerpf(noise, hp, freq_boost) * envelope
+		sample = clampf(sample, -1.0, 1.0)
+		var s16 := int(sample * 32767.0)
+		s16 = clampi(s16, -32768, 32767)
+		var le := s16 & 0xFF
+		var be := (s16 >> 8) & 0xFF
+		data[i * 2] = le
+		data[i * 2 + 1] = be
+	var wav := AudioStreamWAV.new()
+	wav.data = data
+	wav.format = AudioStreamWAV.FORMAT_16_BITS
+	wav.mix_rate = sample_rate
+	wav.stereo = false
+	wav.loop_mode = AudioStreamWAV.LOOP_DISABLED
+	return wav
+
+
+## World-anchored node for VFX/SFX so they don't follow the falling assembly.
+func _feedback_parent() -> Node3D:
+	var candidate: Node3D = null
+	if _gateway != null:
+		candidate = _gateway.get_node_or_null(_gateway.terrain_path) as Node3D
+	if candidate == null:
+		candidate = get_parent() as Node3D
+	if candidate == null:
+		candidate = get_node_or_null("/root") as Node3D
+	return candidate
 
 
 func _contact_point_on_body(
