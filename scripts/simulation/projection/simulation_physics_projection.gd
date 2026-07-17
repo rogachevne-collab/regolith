@@ -1134,14 +1134,10 @@ func _apply_thruster_force(
 	)
 	if thrust_n <= 0.0:
 		return
-	var offset_local := ThrusterProjectionUtil.nozzle_offset_local(
-		archetype.thruster_definition,
-		element
-	)
 	var axis_world := (body.global_transform.basis * axis_local).normalized()
-	var offset_world := body.global_transform.basis * offset_local
 	body.sleeping = false
-	body.apply_force(axis_world * thrust_n, offset_world)
+	# v0: central thrust keeps hop stable before nozzle torque / RCS tuning.
+	body.apply_central_force(axis_world * thrust_n)
 
 
 func _apply_gyro_torque(
