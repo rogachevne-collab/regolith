@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://moonmeteorpierce01"]
+
+[ext_resource type="Script" path="res://scripts/moon_meteor_pierce_cinematic.gd" id="1"]
+
+[node name="MoonMeteorPierceCinematic" type="Node3D"]
+script = ExtResource("1")

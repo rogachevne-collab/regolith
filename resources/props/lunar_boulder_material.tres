@@ -10,5 +10,5 @@ normal_scale = 1.15
 normal_texture = ExtResource("2")
 metallic = 0.0
 roughness = 0.88
-specular = 0.15
+metallic_specular = 0.15
 texture_filter = 2

@@ -120,13 +120,19 @@
 - **Play (канон Voxel Tools):** `VoxelGeneratorGraph` как в
   [Generators → Planet](https://voxel-tools.readthedocs.io/en/latest/generators/) —
   **`SdfSphere` + height noise** на `normalize(p)` (native C++). Без bake коры.
-- Digs: `VoxelStreamRegionFiles` modified-only (`save_generator_output=false`).
+- Digs: `VoxelStreamSQLite` modified-only (`save_generator_output=false`);
+  DB path `gen_v{N}/moon.sqlite` via `MoonTerrainParams.stream_database_path()`.
+- **Декор (камни):** `VoxelInstancer` child of terrain, `up_mode=Sphere`,
+  library `resources/moon_boulder_instance_library.tres` (3 persistent MultiMesh
+  tiers). Стримится с чанками; удаления после копок сохраняются в SQLite.
+  См. [Instancing](https://voxel-tools.readthedocs.io/en/latest/instancing/).
 - **Нельзя:** live GDScript 565-кратеров; неполный RegionFiles-bake + plain fallback
-  (дырявые дальние LOD, исчезающие при приближении).
+  (дырявые дальние LOD, исчезающие при приближении). `VoxelStreamRegionFiles`
+  не сохраняет instance data — только SQLite.
 - Mesher: `VoxelMesherTransvoxel`.
 - Material: `transvoxel_terrain` / moon albedo (как main).
 - `transform.basis` uniform scale **0.65**.
-- Collisions: on; streaming вокруг viewer (**не** `full_load` с RegionFiles —
+- Collisions: on; streaming вокруг viewer (**не** `full_load` с SQLite —
   плагин отвергает).
 - Spawn: ждать meshed + physics; temp landing pad — только fallback.
 - Смена рельефа → bump `GENERATOR_VERSION` + повторный bake.

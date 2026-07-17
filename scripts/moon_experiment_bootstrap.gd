@@ -13,9 +13,13 @@ const PHYSICS_GROUND_TIMEOUT_LOAD_MS := 2500
 const BASE_SPAWN_TIMEOUT_MS := 60000
 const AUTOSAVE_INTERVAL_S := 90.0
 const LANDING_PAD_SIZE_M := Vector3(48.0, 4.0, 48.0)
-const LunarBoulderFieldScript := preload("res://scripts/lunar_boulder_field.gd")
+## Cross-fade LOD mesh swaps (requires get_lod_fade_discard in terrain shader).
+const TERRAIN_LOD_FADE_DURATION_S := 0.25
+## Detail normalmaps from LOD 2+ — illusion of geometry on distant blocks.
+const TERRAIN_NORMALMAP_BEGIN_LOD := 2
 
 @onready var _terrain: Node3D = $VoxelTerrain
+@onready var _boulder_instancer: VoxelInstancer = $VoxelTerrain/VoxelInstancer
 @onready var _player: Node3D = $Player
 @onready var _session: SimulationSession = $SimulationSession
 @onready var _base_spawn: Node3D = $BaseSpawn
@@ -30,8 +34,8 @@ const LunarBoulderFieldScript := preload("res://scripts/lunar_boulder_field.gd")
 @export var spawn_demo_rover := true
 @export var demo_rover_phrase := "колбаса на 12 колес, низкая"
 @export var persist_digs := true
-## ProtonScatter boulder patch around the player (local −Y = radial into planet).
-@export var spawn_boulder_scatter := true
+## VoxelInstancer decorative rocks (streams with terrain chunks).
+@export var enable_boulder_instancer := true
 
 @export_group("Planet generator")
 ## Preferred: res://resources/moon_planet_generator.tres — edit in Voxel graph UI, then F6.
@@ -80,6 +84,7 @@ func _ready() -> void:
 	_loading.text = "Луна..."
 	_configure_terrain()
 	_configure_dig_stream()
+	_configure_boulder_instancer()
 	for archetype: ElementArchetype in Slice01Archetypes.load_all_required():
 		_session.world.get_archetype_registry().register(archetype)
 	for archetype: ElementArchetype in Slice01Archetypes.load_actuator_archetypes():
@@ -155,6 +160,11 @@ func _configure_terrain() -> void:
 		lod.collision_lod_count = 1
 		lod.lod_count = 4
 		lod.lod_distance = 56.0
+		lod.lod_fade_duration = TERRAIN_LOD_FADE_DURATION_S
+		lod.normalmap_enabled = true
+		lod.normalmap_begin_lod_index = TERRAIN_NORMALMAP_BEGIN_LOD
+		lod.normalmap_tile_resolution_min = 4
+		lod.normalmap_tile_resolution_max = 16
 		lod.cache_generated_blocks = true
 	if _terrain.material != null:
 		var mat: Material = (_terrain.material as Material).duplicate()
@@ -231,8 +241,8 @@ func _configure_dig_stream() -> void:
 	if not DirAccess.dir_exists_absolute(abs_dir):
 		DirAccess.make_dir_recursive_absolute(abs_dir)
 	## Fresh gen_v dir (no partial LOD scraps). Generator fills crust; digs persist.
-	var stream := VoxelStreamRegionFiles.new()
-	stream.directory = dir
+	var stream := VoxelStreamSQLite.new()
+	stream.database_path = MoonTerrainParams.stream_database_path()
 	stream.save_generator_output = false
 	_voxel_stream = stream
 	var lod := _terrain as VoxelLodTerrain
@@ -241,8 +251,16 @@ func _configure_dig_stream() -> void:
 	lod.cache_generated_blocks = true
 	print(
 		"MoonExperiment: VoxelGeneratorGraph planet gen_v%d dig-stream=%s"
-		% [MoonTerrainParams.GENERATOR_VERSION, dir]
+		% [MoonTerrainParams.GENERATOR_VERSION, stream.database_path]
 	)
+
+
+func _configure_boulder_instancer() -> void:
+	if _boulder_instancer == null:
+		return
+	if enable_boulder_instancer:
+		return
+	_boulder_instancer.library = null
 
 
 func _persist_world(force := false) -> void:
@@ -273,16 +291,10 @@ func _persist_digs() -> void:
 
 func _on_terrain_modified(
 	_removed_volume_m3: float,
-	dig_center: Vector3,
-	dig_radius_m: float
+	_dig_center: Vector3,
+	_dig_radius_m: float
 ) -> void:
 	_persist_digs()
-	if dig_radius_m <= 0.0001:
-		return
-	var field := get_node_or_null("LunarBoulderField") as LunarBoulderField
-	if field == null:
-		return
-	field.remove_near(dig_center, dig_radius_m * 1.15)
 
 
 func _begin_fresh_world(player_position: Vector3) -> void:
@@ -318,7 +330,6 @@ func _finish_world_entry(player_position: Vector3) -> void:
 	_resync_player_camera()
 	_session.get_industry_simulation().bind_world(_session.world)
 	_apply_playtest_cargo_if_enabled()
-	await _spawn_boulder_scatter_near_player()
 	if spawn_demo_rover:
 		await _spawn_demo_rover_near_player()
 
@@ -336,26 +347,6 @@ func _finish_loaded_world_entry(spawn_position: Vector3) -> void:
 	)
 	_session.get_industry_simulation().bind_world(_session.world)
 	_apply_playtest_cargo_if_enabled()
-	await _spawn_boulder_scatter_near_player()
-
-
-func _spawn_boulder_scatter_near_player() -> void:
-	if not spawn_boulder_scatter or _player == null:
-		return
-	## Wait for voxel colliders — SDF is above physics at scale 0.65.
-	for _i in 45:
-		await get_tree().physics_frame
-	var field: Node3D = LunarBoulderFieldScript.new()
-	field.name = "LunarBoulderField"
-	add_child(field)
-	var space := get_world_3d().direct_space_state
-	var placed: int = field.call(
-		"build_around",
-		_player.global_position,
-		space,
-		_terrain
-	)
-	print("MoonExperiment: boulder field placed=%d at %s" % [placed, str(_player.global_position)])
 
 
 func _apply_playtest_cargo_if_enabled() -> void:

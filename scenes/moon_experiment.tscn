@@ -10,6 +10,7 @@
 [ext_resource type="VoxelGeneratorGraph" path="res://resources/moon_planet_generator.tres" id="13"]
 [ext_resource type="PackedScene" uid="uid://lunarskydecor001" path="res://scenes/lunar_sky_decor.tscn" id="14"]
 [ext_resource type="Material" path="res://resources/sky/lunar_starfield_sky_material.tres" id="15"]
+[ext_resource type="VoxelInstanceLibrary" path="res://resources/moon_boulder_instance_library.tres" id="16"]
 
 [sub_resource type="Sky" id="Sky_env"]
 sky_material = ExtResource("15")
@@ -91,6 +92,10 @@ mesher = SubResource("VoxelMesherTransvoxel_moon")
 view_distance = 256
 generate_collisions = true
 material = ExtResource("4")
+
+[node name="VoxelInstancer" type="VoxelInstancer" parent="VoxelTerrain"]
+up_mode = 1
+library = ExtResource("16")
 
 [node name="PlacedBlocks" type="Node3D" parent="."]
 script = ExtResource("6")
