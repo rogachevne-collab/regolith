@@ -87,6 +87,14 @@ static func enrich_control_seat_metadata(
 		world,
 		element.assembly_id
 	)
+	metadata["flight"] = ThrusterSimulationService.is_flight_assembly(
+		world,
+		element.assembly_id
+	)
+	metadata["mobile"] = ThrusterSimulationService.is_mobile_assembly(
+		world,
+		element.assembly_id
+	)
 
 
 static func seat_offset_local(element: SimulationElement) -> Vector3:

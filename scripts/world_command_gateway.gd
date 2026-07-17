@@ -560,25 +560,67 @@ func tick_rover_locomotion_input() -> void:
 	if assembly_id <= 0:
 		return
 	var locomotion := _session.world.get_locomotion_controller(assembly_id)
+	var is_flight := ThrusterSimulationService.is_flight_assembly(
+		_session.world,
+		assembly_id
+	)
+	var is_loco := WheelSimulationService.is_locomotive_assembly(
+		_session.world,
+		assembly_id
+	)
 	if Input.is_action_just_pressed(&"toggle_parking_brake"):
-		_toggle_rover_parking_brake(assembly_id, locomotion)
-	if locomotion.is_parking_brake():
+		if is_flight and not is_loco:
+			locomotion.set_dampeners(not locomotion.is_dampeners())
+			_wake_rover_body(assembly_id)
+		elif is_loco:
+			_toggle_rover_parking_brake(assembly_id, locomotion)
+	if is_loco and locomotion.is_parking_brake() and not is_flight:
 		# Latched Space: same commands every tick, no wheel-tick special cases.
 		locomotion.set_drive_command(0.0)
 		locomotion.set_steering_command(0.0)
 		locomotion.set_brake_command(1.0)
+		locomotion.set_thrust_command(0.0)
+		locomotion.set_attitude_commands(0.0, 0.0, 0.0)
 		_wake_rover_body(assembly_id)
 		return
-	var drive := (
-		Input.get_action_strength(&"move_forward")
-		- Input.get_action_strength(&"move_back")
-	)
-	var steer := Input.get_axis(&"move_right", &"move_left")
-	locomotion.set_drive_command(drive)
-	locomotion.set_steering_command(steer)
-	locomotion.set_brake_command(
-		1.0 if Input.is_action_pressed(&"jump") else 0.0
-	)
+	if is_loco:
+		var drive := (
+			Input.get_action_strength(&"move_forward")
+			- Input.get_action_strength(&"move_back")
+		)
+		var steer := Input.get_axis(&"move_right", &"move_left")
+		locomotion.set_drive_command(drive)
+		locomotion.set_steering_command(steer)
+		if is_flight:
+			# Hybrid: Space = thrust; brake via parking brake only.
+			locomotion.set_brake_command(0.0)
+			locomotion.set_attitude_commands(0.0, 0.0, 0.0)
+		else:
+			locomotion.set_brake_command(
+				1.0 if Input.is_action_pressed(&"jump") else 0.0
+			)
+	else:
+		locomotion.set_drive_command(0.0)
+		locomotion.set_steering_command(0.0)
+		locomotion.set_brake_command(0.0)
+	if is_flight:
+		locomotion.set_thrust_command(
+			Input.get_action_strength(&"jump")
+		)
+		if not is_loco:
+			var pitch := (
+				Input.get_action_strength(&"move_back")
+				- Input.get_action_strength(&"move_forward")
+			)
+			var roll := Input.get_axis(&"move_left", &"move_right")
+			var yaw := (
+				Input.get_action_strength(&"yaw_right")
+				- Input.get_action_strength(&"yaw_left")
+			)
+			locomotion.set_attitude_commands(pitch, yaw, roll)
+	else:
+		locomotion.set_thrust_command(0.0)
+		locomotion.set_attitude_commands(0.0, 0.0, 0.0)
 	if locomotion.has_active_input():
 		_wake_rover_body(assembly_id)
 
@@ -641,11 +683,11 @@ func _enter_rover_seat(
 	var assembly_id := int(metadata.get("assembly_id", 0))
 	if element_id <= 0 or assembly_id <= 0:
 		return _result(&"invalid_target")
-	if not WheelSimulationService.is_locomotive_assembly(
+	if not ThrusterSimulationService.is_mobile_assembly(
 		_session.world,
 		assembly_id
 	):
-		return _result(&"blocked", {"detail": &"not_locomotive"})
+		return _result(&"blocked", {"detail": &"not_mobile"})
 	var body := (
 		_session.projection.get_element_projection(element_id).get("body")
 		as PhysicsBody3D
@@ -803,11 +845,13 @@ func _exit_rover_seat(player: Node3D) -> Dictionary:
 	var locomotion := _session.world.get_locomotion_controller(assembly_id)
 	locomotion.set_drive_command(0.0)
 	locomotion.set_steering_command(0.0)
+	locomotion.set_thrust_command(0.0)
+	locomotion.set_attitude_commands(0.0, 0.0, 0.0)
 	if locomotion.is_parking_brake():
 		locomotion.set_brake_command(1.0)
 	else:
 		locomotion.set_brake_command(0.0)
-	# Keep activated so floating wheel phys continues (coast or parking lock).
+	# Keep activated so floating wheel/flight phys continues.
 	_session.projection.sync_body_motion_now(assembly_id)
 	_rover_seat_player = null
 	_rover_seat_assembly_id = 0

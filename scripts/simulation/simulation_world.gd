@@ -284,7 +284,7 @@ func list_locomotion_rows() -> Array[Dictionary]:
 		var keep := (
 			controller.is_activated()
 			or controller.has_released_from_anchor()
-			or WheelSimulationService.is_locomotive_assembly(self, assembly_id)
+			or ThrusterSimulationService.is_mobile_assembly(self, assembly_id)
 		)
 		if not keep:
 			continue

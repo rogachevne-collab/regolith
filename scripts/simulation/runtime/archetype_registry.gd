@@ -125,6 +125,12 @@ static func _fingerprint_from_schema(
 		"suspension_definition": _suspension_definition_row(
 			archetype.suspension_definition
 		),
+		"thruster_definition": _thruster_definition_row(
+			archetype.thruster_definition
+		),
+		"gyro_definition": _gyro_definition_row(
+			archetype.gyro_definition
+		),
 		"internal_archetype": archetype.internal_archetype,
 		"ports": ports,
 		"colliders": colliders,
@@ -228,6 +234,33 @@ static func _hinge_definition_row(
 		"max_angle_rad": definition.max_angle_rad,
 		"power_draw_w": definition.power_draw_w,
 		"overload_policy": definition.overload_policy,
+	}
+
+
+static func _thruster_definition_row(
+	definition: ThrusterDefinition
+) -> Dictionary:
+	if definition == null:
+		return {}
+	return {
+		"thrust_axis_face": definition.thrust_axis_face,
+		"max_thrust_n": definition.max_thrust_n,
+		"power_draw_w": definition.power_draw_w,
+		"idle_w": definition.idle_w,
+		"nozzle_offset_local": definition.nozzle_offset_local,
+	}
+
+
+static func _gyro_definition_row(
+	definition: GyroDefinition
+) -> Dictionary:
+	if definition == null:
+		return {}
+	return {
+		"max_torque_nm": definition.max_torque_nm,
+		"power_draw_w": definition.power_draw_w,
+		"idle_w": definition.idle_w,
+		"dampen_gain": definition.dampen_gain,
 	}
 
 

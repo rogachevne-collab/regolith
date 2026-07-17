@@ -26,6 +26,8 @@ enum StructuralSurfacePolicy {
 @export var hinge_definition: HingeDefinition
 @export var suspension_definition: SuspensionDefinition
 @export var wheel_definition: WheelDefinition
+@export var thruster_definition: ThrusterDefinition
+@export var gyro_definition: GyroDefinition
 @export var internal_archetype: bool = false
 
 
@@ -39,6 +41,14 @@ func is_rotor_base() -> bool:
 
 func is_hinge_base() -> bool:
 	return hinge_definition != null
+
+
+func is_thruster() -> bool:
+	return thruster_definition != null
+
+
+func is_gyro() -> bool:
+	return gyro_definition != null
 
 
 func resolved_structural_surface_policy() -> StructuralSurfacePolicy:

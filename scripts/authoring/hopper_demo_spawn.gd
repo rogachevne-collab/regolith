@@ -1,0 +1,95 @@
+class_name HopperDemoSpawn
+extends RefCounted
+
+## Minimal flight craft for POC-THRUSTERS-V0: deck + thruster + gyro + seat + power.
+
+const STORE_ID := "player"
+
+
+static func spawn_at_transform(
+	session: SimulationSession,
+	assembly_transform: Transform3D,
+	store_id: String = STORE_ID
+) -> Dictionary:
+	if session == null or session.world == null:
+		return {"ok": false, "error": "no_session"}
+	for archetype: ElementArchetype in Slice01Archetypes.load_rover_archetypes():
+		session.world.get_archetype_registry().register(archetype)
+	for archetype: ElementArchetype in Slice01Archetypes.load_flight_archetypes():
+		session.world.get_archetype_registry().register(archetype)
+	var helper := AssemblyBuildHelper.new(session.world, store_id)
+	helper.ensure_materials(400.0)
+	var grid_frame := GridSpawnUtil.grid_frame_from_transform(assembly_transform)
+	if not helper.spawn_anchor(Slice01Archetypes.rover_frame(), grid_frame):
+		return {"ok": false, "error": helper.last_error}
+	# Deck row x=0..2 at z=0.
+	for cell: Vector3i in [Vector3i(1, 0, 0), Vector3i(2, 0, 0)]:
+		if not helper.place(Slice01Archetypes.rover_frame(), cell, 0, "deck_%d" % cell.x):
+			return {"ok": false, "error": helper.last_error}
+	# Cockpit forward (3×2×2 footprint).
+	if not helper.place(Slice01Archetypes.cockpit(), Vector3i(0, 0, 1), 0, "cockpit"):
+		return {"ok": false, "error": helper.last_error}
+	# Thruster under deck center — force +Y.
+	if not helper.place(Slice01Archetypes.thruster(), Vector3i(1, -1, 0), 0, "thruster"):
+		return {"ok": false, "error": helper.last_error}
+	# Gyro on port side.
+	if not helper.place(Slice01Archetypes.gyro(), Vector3i(-1, 0, 0), 0, "gyro"):
+		return {"ok": false, "error": helper.last_error}
+	# Battery (2×3×2) starboard of deck.
+	if not helper.place(
+		Slice01Archetypes.power_battery_small(),
+		Vector3i(3, 0, 0),
+		0,
+		"battery"
+	):
+		return {"ok": false, "error": helper.last_error}
+	# Distributor beside battery / cockpit.
+	if not helper.place(
+		Slice01Archetypes.power_distributor_small(),
+		Vector3i(3, 0, 2),
+		0,
+		"distributor"
+	):
+		return {"ok": false, "error": helper.last_error}
+	helper.weld_all()
+	if not helper.connect_ports("battery", "power_out", "distributor", "power_in"):
+		return {"ok": false, "error": helper.last_error}
+	var battery_id := int(helper.element_ids.get("battery", 0))
+	if battery_id > 0:
+		var battery := session.world.get_element(battery_id)
+		var runtime := session.world.ensure_industry_element_runtime(battery_id)
+		runtime.battery_kwh = IndustryElectricProfile.battery_max_kwh(battery)
+	session.world.get_locomotion_controller(
+		helper.assembly_id
+	).mark_released_from_anchor()
+	session.world.get_locomotion_controller(helper.assembly_id).set_parking_brake(
+		false
+	)
+	IndustryElectricBudget.apply_tick(session.world, 0.25)
+	if session.projection != null:
+		session.projection.rebuild_all()
+	return {
+		"ok": true,
+		"assembly_id": helper.assembly_id,
+		"element_ids": helper.element_ids.duplicate(),
+	}
+
+
+static func spawn_on_terrain(
+	session: SimulationSession,
+	world_position: Vector3,
+	store_id: String = STORE_ID,
+	terrain: Node3D = null,
+	tool: VoxelTool = null,
+	space_state: PhysicsDirectSpaceState3D = null
+) -> Dictionary:
+	var assembly_transform := RoverDemoSpawn.assembly_transform_on_surface(
+		world_position,
+		Basis.IDENTITY,
+		terrain,
+		tool,
+		space_state
+	)
+	# Lift so thruster under the deck clears the ground.
+	assembly_transform.origin += assembly_transform.basis.y * 1.2
+	return spawn_at_transform(session, assembly_transform, store_id)

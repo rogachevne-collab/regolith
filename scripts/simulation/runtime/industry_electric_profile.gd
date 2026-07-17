@@ -58,6 +58,14 @@ const _ARCHETYPE_DEFAULTS := {
 		"is_consumer": true,
 		"idle_w": 20.0,
 	},
+	"thruster": {
+		"is_consumer": true,
+		"idle_w": 10.0,
+	},
+	"gyro": {
+		"is_consumer": true,
+		"idle_w": 5.0,
+	},
 	"power_battery_small": {
 		"is_battery": true,
 		"max_kwh": 2.5,
@@ -121,6 +129,10 @@ static func idle_w(element: SimulationElement) -> float:
 		var archetype := element.get_archetype()
 		if archetype != null and archetype.wheel_definition != null:
 			return archetype.wheel_definition.idle_w
+		if archetype != null and archetype.thruster_definition != null:
+			return archetype.thruster_definition.idle_w
+		if archetype != null and archetype.gyro_definition != null:
+			return archetype.gyro_definition.idle_w
 	return float(for_element(element).get("idle_w", 0.0))
 
 

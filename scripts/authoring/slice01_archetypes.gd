@@ -10,6 +10,10 @@ const ROVER_IDS: PackedStringArray = [
 	"power_battery_small",
 	"power_distributor_small",
 ]
+const FLIGHT_IDS: PackedStringArray = [
+	"thruster",
+	"gyro",
+]
 const REQUIRED_IDS: PackedStringArray = [
 	"foundation",
 	"frame",
@@ -156,6 +160,24 @@ static func load_rover_archetypes() -> Array[ElementArchetype]:
 			return []
 		archetypes.append(archetype)
 	return archetypes
+
+
+static func load_flight_archetypes() -> Array[ElementArchetype]:
+	var archetypes: Array[ElementArchetype] = []
+	for archetype_id: String in FLIGHT_IDS:
+		var archetype: ElementArchetype = load_required(archetype_id)
+		if archetype == null:
+			return []
+		archetypes.append(archetype)
+	return archetypes
+
+
+static func thruster() -> ElementArchetype:
+	return load_required("thruster")
+
+
+static func gyro() -> ElementArchetype:
+	return load_required("gyro")
 
 
 static func rover_frame() -> ElementArchetype:

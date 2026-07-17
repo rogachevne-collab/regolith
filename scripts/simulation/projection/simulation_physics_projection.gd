@@ -23,6 +23,12 @@ const HingeProjectionUtil := preload(
 const WheelSimulationService := preload(
 	"res://scripts/simulation/runtime/wheel_simulation_service.gd"
 )
+const ThrusterSimulationService := preload(
+	"res://scripts/simulation/runtime/thruster_simulation_service.gd"
+)
+const ThrusterProjectionUtil := preload(
+	"res://scripts/simulation/projection/thruster_projection_util.gd"
+)
 const BodyGroupMotionUtilScript := preload(
 	"res://scripts/simulation/runtime/body_group_motion_util.gd"
 )
@@ -201,6 +207,7 @@ func _physics_process(delta: float) -> void:
 	_tick_rotor_actuators(delta)
 	_tick_piston_actuators(delta)
 	_tick_wheel_pairs(delta)
+	_tick_thrusters(delta)
 	for assembly_id: int in _sorted_int_keys(_bodies):
 		var assembly: SimulationAssembly = _world.get_assembly_raw(assembly_id)
 		if assembly == null or assembly.tombstoned:
@@ -521,7 +528,7 @@ func _project_assembly_single(
 	if release_from_anchor:
 		motion.transform.origin += (
 			motion.transform.basis.y.normalized()
-			* WheelSimulationService.activation_clearance_m(
+			* ThrusterSimulationService.activation_clearance_m(
 				_world,
 				assembly_id
 			)
@@ -536,11 +543,11 @@ func _project_assembly_single(
 		motion.angular_velocity = Vector3.ZERO
 		motion.sleeping = true
 	elif _is_locomotive_assembly(assembly_id):
-		# Floating loco: dynamic + parking_brake holds wheels (no freeze).
+		# Floating mobile: dynamic; wheels use parking_brake, flight uses thrust.
 		if not locomotion.has_released_from_anchor():
 			motion.transform.origin += (
 				motion.transform.basis.y.normalized()
-				* WheelSimulationService.activation_clearance_m(
+				* ThrusterSimulationService.activation_clearance_m(
 					_world,
 					assembly_id
 				)
@@ -631,7 +638,7 @@ func _project_assembly_multibody(
 	):
 		seed_motion.transform.origin += (
 			seed_motion.transform.basis.y.normalized()
-			* WheelSimulationService.activation_clearance_m(
+			* ThrusterSimulationService.activation_clearance_m(
 				_world,
 				assembly_id
 			)
@@ -1013,7 +1020,7 @@ func _attach_colliders_to_body(
 func _is_locomotive_assembly(assembly_id: int) -> bool:
 	if _world == null:
 		return false
-	return WheelSimulationService.is_locomotive_assembly(_world, assembly_id)
+	return ThrusterSimulationService.is_mobile_assembly(_world, assembly_id)
 
 
 func _is_active_locomotive(assembly_id: int) -> bool:
@@ -1024,7 +1031,10 @@ func _is_active_locomotive(assembly_id: int) -> bool:
 
 
 func _should_tick_wheels(assembly_id: int) -> bool:
-	if not _is_locomotive_assembly(assembly_id):
+	if (
+		_world == null
+		or not WheelSimulationService.is_locomotive_assembly(_world, assembly_id)
+	):
 		return false
 	var body := get_physics_body(assembly_id)
 	if body is RigidBody3D:
@@ -1050,6 +1060,95 @@ func _tick_wheel_pairs(delta: float) -> void:
 			Callable(self, "_wheel_body_for_suspension"),
 			_wheel_exclude_rids(assembly_id)
 		)
+
+
+func _tick_thrusters(delta: float) -> void:
+	if _world == null or delta <= 0.0:
+		return
+	for assembly_id: int in _sorted_int_keys(_bodies):
+		if not ThrusterSimulationService.is_flight_assembly(_world, assembly_id):
+			continue
+		var locomotion := _world.get_locomotion_controller(assembly_id)
+		if not locomotion.is_activated():
+			continue
+		var thrusters := ThrusterSimulationService.list_thruster_elements(
+			_world,
+			assembly_id
+		)
+		for thruster: SimulationElement in thrusters:
+			_apply_thruster_force(thruster, locomotion.thrust_command)
+		var gyros := ThrusterSimulationService.list_gyro_elements(
+			_world,
+			assembly_id
+		)
+		var gyro_count := gyros.size()
+		if gyro_count <= 0:
+			continue
+		for gyro: SimulationElement in gyros:
+			_apply_gyro_torque(gyro, locomotion, gyro_count)
+
+
+func _apply_thruster_force(
+	element: SimulationElement,
+	thrust_command: float
+) -> void:
+	var archetype := element.get_archetype()
+	if archetype == null or archetype.thruster_definition == null:
+		return
+	var record := get_element_projection(element.element_id)
+	var body := record.get("body") as RigidBody3D
+	if body == null or body.freeze:
+		return
+	var powered := ThrusterSimulationService.is_element_powered(_world, element)
+	var thrust_n := ThrusterProjectionUtil.compute_thrust_n(
+		archetype.thruster_definition,
+		thrust_command,
+		powered
+	)
+	if thrust_n <= 0.0:
+		return
+	var axis_local := ThrusterProjectionUtil.thrust_axis_local(
+		archetype.thruster_definition,
+		element.orientation_index
+	)
+	var offset_local := ThrusterProjectionUtil.nozzle_offset_local(
+		archetype.thruster_definition,
+		element
+	)
+	var axis_world := (body.global_transform.basis * axis_local).normalized()
+	var offset_world := body.global_transform.basis * offset_local
+	body.sleeping = false
+	body.apply_force(axis_world * thrust_n, offset_world)
+
+
+func _apply_gyro_torque(
+	element: SimulationElement,
+	locomotion: AssemblyLocomotionController,
+	gyro_count: int
+) -> void:
+	var archetype := element.get_archetype()
+	if archetype == null or archetype.gyro_definition == null:
+		return
+	var record := get_element_projection(element.element_id)
+	var body := record.get("body") as RigidBody3D
+	if body == null or body.freeze:
+		return
+	var powered := ThrusterSimulationService.is_element_powered(_world, element)
+	var omega_local := body.global_transform.basis.inverse() * body.angular_velocity
+	var torque_local := ThrusterProjectionUtil.compute_gyro_torque_local(
+		archetype.gyro_definition,
+		locomotion.pitch_command,
+		locomotion.yaw_command,
+		locomotion.roll_command,
+		locomotion.is_dampeners(),
+		omega_local,
+		gyro_count,
+		powered
+	)
+	if torque_local.length_squared() <= 0.0001:
+		return
+	body.sleeping = false
+	body.apply_torque(body.global_transform.basis * torque_local)
 
 
 func _wheel_body_for_suspension(

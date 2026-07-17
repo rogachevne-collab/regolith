@@ -132,6 +132,17 @@ const TOOLBAR_PAGES: Array = [
 		{"type": &"block", "archetype_id": "rotor_base_large"},
 		{"type": &"block", "archetype_id": "hinge_base"},
 	],
+	[
+		{"type": &"block", "archetype_id": "thruster"},
+		{"type": &"block", "archetype_id": "gyro"},
+		{"type": &"block", "archetype_id": "cockpit"},
+		{"type": &"block", "archetype_id": "rover_frame"},
+		{"type": &"block", "archetype_id": "power_battery_small"},
+		{"type": &"block", "archetype_id": "power_distributor_small"},
+		{"type": &"block", "archetype_id": "frame"},
+		{"type": &"block", "archetype_id": "power_source"},
+		{"type": &"connect"},
+	],
 ]
 
 var state := ActionState.IDLE

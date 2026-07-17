@@ -9,6 +9,7 @@ static func apply_tick(world: SimulationWorld, dt: float) -> void:
 		return
 	WheelSimulationService.sync_power_demand(world)
 	ActuatorSimulationService.sync_power_demand(world)
+	ThrusterSimulationService.sync_power_demand(world)
 	var network := world.get_industry_network()
 	var graph := network.ensure_graph_current(world)
 	var consumers: Array[SimulationElement] = []
