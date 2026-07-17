@@ -48,8 +48,6 @@ var _world_loot_piles: Dictionary = {}
 var _simulation_time_s: float = 0.0
 var _command_queue: Array[StructuralCommand] = []
 var _flush_scheduled := false
-var _occupancy_index_cache: Dictionary = {}
-var _archetype_validation_cache: Dictionary = {}
 var _terrain_contact_probe: Callable
 
 

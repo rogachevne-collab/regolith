@@ -195,11 +195,11 @@ func _update_volume_bar_shader() -> void:
 	_volume_mat.set_shader_parameter("rect_size", bar_size)
 
 
-func _make_subsection(parent: Node, title: String) -> VBoxContainer:
+func _make_subsection(parent_node: Node, title: String) -> VBoxContainer:
 	var section := VBoxContainer.new()
 	section.add_theme_constant_override("separation", 4)
 	section.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	parent.add_child(section)
+	parent_node.add_child(section)
 	var header := Label.new()
 	header.text = title
 	header.theme_type_variation = &"HudSmall"
@@ -303,9 +303,9 @@ func _refresh_machine_progress(machine: Dictionary, enabled: bool) -> void:
 	if _machine_progress_row == null:
 		return
 	var active := str(machine.get("recipe_id", ""))
-	var show := not active.is_empty()
-	_machine_progress_row.visible = show
-	if not show:
+	var progress_visible := not active.is_empty()
+	_machine_progress_row.visible = progress_visible
+	if not progress_visible:
 		return
 	if _machine_progress_name != null:
 		_machine_progress_name.text = HudTokens.recipe_label(active)
@@ -325,10 +325,10 @@ func _refresh_machine_progress(machine: Dictionary, enabled: bool) -> void:
 func _clear_subsection_rows(section: VBoxContainer) -> void:
 	if section == null:
 		return
-	for child in section.get_children():
-		if child is Label:
+	for child_node in section.get_children():
+		if child_node is Label:
 			continue
-		child.queue_free()
+		child_node.queue_free()
 
 
 func _machine_target() -> Dictionary:

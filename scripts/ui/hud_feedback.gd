@@ -41,7 +41,7 @@ func _ready() -> void:
 	add_child(_result)
 
 
-func _make_centered_label(offset_top: float, offset_bottom: float) -> Label:
+func _make_centered_label(top_px: float, bottom_px: float) -> Label:
 	var lbl := Label.new()
 	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -51,8 +51,8 @@ func _make_centered_label(offset_top: float, offset_bottom: float) -> Label:
 	lbl.anchor_bottom = 0.5
 	lbl.offset_left = -260.0
 	lbl.offset_right = 260.0
-	lbl.offset_top = offset_top
-	lbl.offset_bottom = offset_bottom
+	lbl.offset_top = top_px
+	lbl.offset_bottom = bottom_px
 	return lbl
 
 

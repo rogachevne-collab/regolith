@@ -462,5 +462,5 @@ static func _apply_material_recursive(node: Node, material: Material) -> void:
 		mesh_instance.cast_shadow = (
 			GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		)
-	for child: Node in node.get_children():
-		_apply_material_recursive(child, material)
+	for child_node: Node in node.get_children():
+		_apply_material_recursive(child_node, material)

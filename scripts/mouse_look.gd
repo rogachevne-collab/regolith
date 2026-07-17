@@ -117,10 +117,10 @@ func view_angles() -> Vector2:
 func apply_view_angles(yaw_rad: float, pitch_deg: float) -> void:
 	if _target != null:
 		var up := GravityField.resolve_up(_target, _target.global_position)
-		var basis := GravityField.find_in_tree(_target)
+		var gravity_basis := GravityField.find_in_tree(_target)
 		var frame: Basis
-		if basis != null:
-			frame = basis.tangent_basis_at(_target.global_position)
+		if gravity_basis != null:
+			frame = gravity_basis.tangent_basis_at(_target.global_position)
 		else:
 			frame = Basis.looking_at(Vector3.FORWARD, Vector3.UP)
 		var yawed := Basis(up, yaw_rad) * frame

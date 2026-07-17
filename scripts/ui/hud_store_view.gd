@@ -63,10 +63,10 @@ func bind(store: SimulationResourceStore, heading: String = "") -> void:
 func refresh() -> void:
 	if _rows_box == null:
 		return
-	for child: Node in _rows_box.get_children():
-		if child == _empty_label:
+	for child_node: Node in _rows_box.get_children():
+		if child_node == _empty_label:
 			continue
-		child.queue_free()
+		child_node.queue_free()
 
 	var ids := PackedStringArray()
 	if _store != null:

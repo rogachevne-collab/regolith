@@ -492,10 +492,10 @@ func _refresh_actuator_tune_values(meta: Dictionary) -> void:
 		)
 
 
-func _set_actuator_tune_value(field: String, text: String) -> void:
+func _set_actuator_tune_value(field: String, value_text: String) -> void:
 	var label: Label = _actuator_tune_values.get(field)
 	if label != null:
-		label.text = text
+		label.text = value_text
 
 
 func _refresh_machine_info(
@@ -671,9 +671,9 @@ func _refresh_machine_progress(
 	_machine_progress_value.add_theme_color_override("font_color", bar_color)
 
 
-func _set_machine_progress_visible(is_visible: bool) -> void:
+func _set_machine_progress_visible(progress_visible: bool) -> void:
 	if _machine_progress_row != null:
-		_machine_progress_row.visible = is_visible
+		_machine_progress_row.visible = progress_visible
 
 
 func _integrity_fraction(archetype_id: String, meta: Dictionary) -> float:

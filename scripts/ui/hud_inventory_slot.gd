@@ -15,9 +15,9 @@ var _slot_size := HudTokens.SLOT_SIZE
 var _amount_label: Label
 
 
-func configure(size: Vector2) -> void:
-	_slot_size = size
-	custom_minimum_size = size
+func configure(slot_size: Vector2) -> void:
+	_slot_size = slot_size
+	custom_minimum_size = slot_size
 	if is_node_ready():
 		_build()
 
@@ -31,12 +31,14 @@ func _ready() -> void:
 
 
 func bind(source_store: String, entry: Dictionary) -> void:
-	var bind := HudInventoryTransferUtil.slot_bind_from_entry(source_store, entry)
-	source_store_id = str(bind.get("source_store_id", ""))
-	item_id = str(bind.get("item_id", ""))
-	amount = float(bind.get("amount", 0.0))
-	discrete = bool(bind.get("discrete", false))
-	instance_id = str(bind.get("instance_id", ""))
+	var slot_bind := HudInventoryTransferUtil.slot_bind_from_entry(
+		source_store, entry
+	)
+	source_store_id = str(slot_bind.get("source_store_id", ""))
+	item_id = str(slot_bind.get("item_id", ""))
+	amount = float(slot_bind.get("amount", 0.0))
+	discrete = bool(slot_bind.get("discrete", false))
+	instance_id = str(slot_bind.get("instance_id", ""))
 	if is_node_ready():
 		_build()
 
@@ -55,9 +57,9 @@ func drag_payload(half: bool = false) -> Dictionary:
 func _build() -> void:
 	for child_node in get_children():
 		child_node.queue_free()
-	var icon := HudTokens.make_item_icon(item_id, _slot_size.x)
-	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	add_child(icon)
+	var slot_icon := HudTokens.make_item_icon(item_id, _slot_size.x)
+	slot_icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(slot_icon)
 
 	_amount_label = Label.new()
 	_amount_label.theme_type_variation = &"HudSmall"
@@ -101,12 +103,12 @@ func _make_drag_preview(payload: Dictionary) -> Control:
 	preview.size = _slot_size
 	preview.position = -_slot_size * 0.5
 	preview.modulate = Color(1.0, 1.0, 1.0, 0.92)
-	var icon := HudTokens.make_item_icon(
+	var slot_icon := HudTokens.make_item_icon(
 		str(payload.get("item_id", "")),
 		_slot_size.x
 	)
-	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	preview.add_child(icon)
+	slot_icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	preview.add_child(slot_icon)
 	var badge := Label.new()
 	badge.text = HudTokens.format_amount(float(payload.get("amount", 0.0)))
 	badge.theme_type_variation = &"HudSmall"

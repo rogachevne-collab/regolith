@@ -16,7 +16,7 @@ var _snapshot: Dictionary = {}
 var _column_width := 248.0
 var _slot_size := HudTokens.SLOT_SIZE
 var _max_height := 0.0
-var _slot_gap := HudTokens.SLOT_GAP
+var _slot_gap: float = float(HudTokens.SLOT_GAP)
 
 var _scroll: ScrollContainer
 var _grid: GridContainer
@@ -48,7 +48,9 @@ func configure_layout(
 	_column_width = column_width
 	_slot_size = slot_size
 	_max_height = max_height
-	_slot_gap = 8.0 if slot_size.x < HudTokens.SLOT_SIZE.x else HudTokens.SLOT_GAP
+	_slot_gap = (
+		8.0 if slot_size.x < HudTokens.SLOT_SIZE.x else float(HudTokens.SLOT_GAP)
+	)
 	if _grid != null:
 		_grid.add_theme_constant_override("h_separation", int(_slot_gap))
 		_grid.add_theme_constant_override("v_separation", int(_slot_gap))

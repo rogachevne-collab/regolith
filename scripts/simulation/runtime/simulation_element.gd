@@ -30,13 +30,13 @@ var _archetype: ElementArchetype
 
 
 static func from_placement(
-	element_id: int,
-	assembly_id: int,
+	new_element_id: int,
+	new_assembly_id: int,
 	placement: BlueprintElementPlacement
 ) -> SimulationElement:
 	var element: SimulationElement = _SCRIPT.new()
-	element.element_id = element_id
-	element.assembly_id = assembly_id
+	element.element_id = new_element_id
+	element.assembly_id = new_assembly_id
 	element.archetype_id = placement.archetype.archetype_id
 	element.origin_cell = placement.origin_cell
 	element.orientation_index = placement.orientation_index

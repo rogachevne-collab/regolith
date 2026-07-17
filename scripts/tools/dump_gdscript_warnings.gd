@@ -16,12 +16,11 @@ func _run() -> void:
 	paths.sort()
 	print("dump_gdscript_warnings: reloading %d scripts..." % paths.size())
 	for path in paths:
-		var scr: Script = load(path) as Script
+		var scr: GDScript = load(path) as GDScript
 		if scr == null:
 			push_warning("failed to load %s" % path)
 			continue
-		if scr.has_method("reload"):
-			pass  # load is enough
+		scr.reload()
 	print("dump_gdscript_warnings: done")
 	quit(0)
 
@@ -31,15 +30,15 @@ func _collect_gd(dir_path: String, out: PackedStringArray) -> void:
 	if dir == null:
 		return
 	dir.list_dir_begin()
-	var name := dir.get_next()
-	while name != "":
-		if name.begins_with("."):
-			name = dir.get_next()
+	var entry_name := dir.get_next()
+	while entry_name != "":
+		if entry_name.begins_with("."):
+			entry_name = dir.get_next()
 			continue
-		var full := "%s/%s" % [dir_path, name]
+		var full := "%s/%s" % [dir_path, entry_name]
 		if dir.current_is_dir():
 			_collect_gd(full, out)
-		elif name.ends_with(".gd"):
+		elif entry_name.ends_with(".gd"):
 			out.append(full)
-		name = dir.get_next()
+		entry_name = dir.get_next()
 	dir.list_dir_end()

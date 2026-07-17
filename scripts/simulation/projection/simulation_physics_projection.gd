@@ -11,24 +11,6 @@ const SUSTAINED_V_EPS := 0.05
 const FragmentBodyScript := preload(
 	"res://scripts/simulation/projection/projected_assembly_body.gd"
 )
-const PistonProjectionUtil := preload(
-	"res://scripts/simulation/projection/piston_projection_util.gd"
-)
-const RotorProjectionUtil := preload(
-	"res://scripts/simulation/projection/rotor_projection_util.gd"
-)
-const HingeProjectionUtil := preload(
-	"res://scripts/simulation/projection/hinge_projection_util.gd"
-)
-const WheelSimulationService := preload(
-	"res://scripts/simulation/runtime/wheel_simulation_service.gd"
-)
-const ThrusterSimulationService := preload(
-	"res://scripts/simulation/runtime/thruster_simulation_service.gd"
-)
-const ThrusterProjectionUtil := preload(
-	"res://scripts/simulation/projection/thruster_projection_util.gd"
-)
 const BodyGroupMotionUtilScript := preload(
 	"res://scripts/simulation/runtime/body_group_motion_util.gd"
 )
@@ -620,7 +602,6 @@ func _project_assembly_multibody(
 		return
 	_remove_body(assembly_id)
 	var groups: Dictionary = compiled["groups"]
-	var element_to_group: Dictionary = compiled["element_to_group"]
 	var root_group_id := int(compiled.get("root_group_id", 0))
 	var source_motion: AssemblyMotionState = (
 		motion_override

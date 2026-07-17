@@ -541,7 +541,7 @@ func _place_when_ground_exists() -> void:
 				payload.get("player", {}),
 				loaded_spawn
 			)
-			await _finish_loaded_world_entry(loaded_spawn)
+			_finish_loaded_world_entry(loaded_spawn)
 			call_deferred("_finalize_loaded_world_after_entry")
 			return
 		var rejected_backup := WorldPersistence.backup_rejected_save()
@@ -812,7 +812,7 @@ func _resolve_spawn_with_floor(
 func _install_landing_pad(surface: Vector3) -> Vector3:
 	_remove_landing_pad()
 	var up := _gravity_field.up_at(surface)
-	var basis := _gravity_field.tangent_basis_at(surface)
+	var surface_basis := _gravity_field.tangent_basis_at(surface)
 	var body := StaticBody3D.new()
 	body.name = "MoonLandingPad"
 	body.collision_layer = 1
@@ -825,7 +825,7 @@ func _install_landing_pad(surface: Vector3) -> Vector3:
 	add_child(body)
 	## Top face of the box sits on the SDF surface.
 	body.global_transform = Transform3D(
-		basis,
+		surface_basis,
 		surface - up * (LANDING_PAD_SIZE_M.y * 0.5)
 	)
 	_landing_pad = body

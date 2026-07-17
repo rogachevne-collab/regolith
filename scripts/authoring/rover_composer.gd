@@ -191,9 +191,11 @@ static func _place_modules(helper: AssemblyBuildHelper, intent: RoverIntent) -> 
 	var width := intent.width_cells()
 	var length := intent.length_cells()
 	var module_y := intent.module_y()
-	var cockpit_z := 0 if intent.cockpit == "front" else maxi(length / 2 - 1, 0)
+	var cockpit_z := (
+		0 if intent.cockpit == "front" else maxi(int(length / 2.0) - 1, 0)
+	)
 	var battery_count := intent.battery_count()
-	var per_row := maxi(width / 2, 1)
+	var per_row := maxi(int(width / 2.0), 1)
 	var battery_rows := maxi(ceili(float(battery_count) / float(per_row)), 1)
 	var rear_z := length - 2
 	# Keep battery rows clear of cockpit (2-cell deep).
@@ -209,7 +211,9 @@ static func _place_modules(helper: AssemblyBuildHelper, intent: RoverIntent) -> 
 	):
 		return false
 	# Center distributor on long sausages so wheels stay in supply_radius_m.
-	var distributor_z := clampi(length / 2, cockpit_z + 2, rear_z - battery_rows * 2)
+	var distributor_z := clampi(
+		int(length / 2.0), cockpit_z + 2, rear_z - battery_rows * 2
+	)
 	if distributor_z < cockpit_z + 2:
 		distributor_z = cockpit_z + 2
 	var distributor_x := 2 if intent.power != "side" else maxi(width - 2, 2)
@@ -222,7 +226,7 @@ static func _place_modules(helper: AssemblyBuildHelper, intent: RoverIntent) -> 
 		return false
 	for battery_i: int in range(battery_count):
 		var key := "battery" if battery_i == 0 else "battery_%d" % (battery_i + 1)
-		var row := battery_i / per_row
+		var row := int(battery_i / float(per_row))
 		var col := battery_i % per_row
 		var battery_x := col * 2
 		var battery_z := rear_z - row * 2

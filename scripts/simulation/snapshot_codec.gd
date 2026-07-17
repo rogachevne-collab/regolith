@@ -67,11 +67,15 @@ static func packed_vector3_array_to_array(
 static func _parse_vector_text(text: String, as_int: bool) -> Variant:
 	var cleaned := text.strip_edges()
 	if not cleaned.begins_with("(") or not cleaned.ends_with(")"):
-		return Vector3i.ZERO if as_int else Vector3.ZERO
+		if as_int:
+			return Vector3i.ZERO
+		return Vector3.ZERO
 	var inner := cleaned.substr(1, cleaned.length() - 2)
 	var parts := inner.split(",")
 	if parts.size() < 3:
-		return Vector3i.ZERO if as_int else Vector3.ZERO
+		if as_int:
+			return Vector3i.ZERO
+		return Vector3.ZERO
 	if as_int:
 		return Vector3i(
 			int(parts[0].strip_edges()),

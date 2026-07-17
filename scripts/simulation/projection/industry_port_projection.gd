@@ -52,7 +52,7 @@ func bind(
 
 
 func set_presentation_state(
-	is_visible: bool,
+	ports_visible: bool,
 	highlight_element_ids: Array = [],
 	compatible_ports: Array = []
 ) -> void:
@@ -74,13 +74,13 @@ func set_presentation_state(
 			if not key.is_empty():
 				next_compatible_ports[key] = true
 	var next_signature := _presentation_signature(
-		is_visible,
+		ports_visible,
 		next_element_ids,
 		next_compatible_ports
 	)
 	if next_signature == _state_signature:
 		return
-	_visible = is_visible
+	_visible = ports_visible
 	_highlight_element_ids = next_element_ids
 	_compatible_ports = next_compatible_ports
 	_state_signature = next_signature
@@ -281,7 +281,7 @@ func _create_meshes() -> void:
 
 
 func _presentation_signature(
-	is_visible: bool,
+	ports_visible: bool,
 	element_ids: Dictionary,
 	compatible_ports: Dictionary
 ) -> String:
@@ -289,7 +289,7 @@ func _presentation_signature(
 	sorted_element_ids.sort()
 	var sorted_ports: Array = compatible_ports.keys()
 	sorted_ports.sort()
-	return "%s|%s|%s" % [is_visible, sorted_element_ids, sorted_ports]
+	return "%s|%s|%s" % [ports_visible, sorted_element_ids, sorted_ports]
 
 
 func _marker_material(color: Color, emission_scale: float = 0.35) -> StandardMaterial3D:

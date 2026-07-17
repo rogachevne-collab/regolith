@@ -517,27 +517,27 @@ func _toggle_control_seat(
 			str(metadata.get("archetype_id", "")) == "cockpit"
 			and int(metadata.get("element_id", 0)) > 0
 		):
-			var source: Node3D = command.get("source")
-			if source == null:
+			var cockpit_source: Node3D = command.get("source")
+			if cockpit_source == null:
 				return _result(&"not_ready")
-			if _is_rover_seated(source):
-				return _exit_rover_seat(source)
-			return _enter_rover_seat(source, metadata)
+			if _is_rover_seated(cockpit_source):
+				return _exit_rover_seat(cockpit_source)
+			return _enter_rover_seat(cockpit_source, metadata)
 		return _result(&"invalid_target")
-	var source: Node3D = command.get("source")
-	if source == null:
+	var seat_source: Node3D = command.get("source")
+	if seat_source == null:
 		return _result(&"not_ready")
-	if _is_rover_seated(source):
-		return _exit_rover_seat(source)
+	if _is_rover_seated(seat_source):
+		return _exit_rover_seat(seat_source)
 	var vehicle: Object = target.get("collider")
 	if metadata.has("element_id"):
-		return _enter_rover_seat(source, metadata)
+		return _enter_rover_seat(seat_source, metadata)
 	if (
 		vehicle == null
 		or not vehicle.has_method("handle_interact")
 	):
 		return _result(&"not_ready")
-	if not vehicle.call("handle_interact", source):
+	if not vehicle.call("handle_interact", seat_source):
 		return _result(&"blocked")
 	return _result(&"ok")
 

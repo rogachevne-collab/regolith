@@ -154,7 +154,7 @@ static func desired_axial_velocity_mps(motor: SimulationMotorState) -> float:
 
 static func effective_desired_axial_velocity_mps(
 	motor: SimulationMotorState,
-	carriage_mass_kg: float,
+	mass_kg: float,
 	axis_world: Vector3,
 	gravity: Vector3
 ) -> float:
@@ -164,7 +164,7 @@ static func effective_desired_axial_velocity_mps(
 	var motion_sign := signf(commanded)
 	var nominal_abs := absf(commanded)
 	var hold_n := axial_load_hold_force_n(
-		carriage_mass_kg,
+		mass_kg,
 		axis_world,
 		gravity
 	)
@@ -175,7 +175,7 @@ static func effective_desired_axial_velocity_mps(
 		motion_budget -= maxf(-hold_n, 0.0)
 	if motion_budget <= 0.0:
 		return 0.0
-	var effective_mass := maxf(carriage_mass_kg, MIN_CARRIAGE_MASS_KG)
+	var effective_mass := maxf(mass_kg, MIN_CARRIAGE_MASS_KG)
 	var denom := motor.damping_n_s_per_m + (
 		effective_mass / maxf(VELOCITY_RESPONSE_TIME_S, 0.0001)
 	)
@@ -186,20 +186,20 @@ static func effective_desired_axial_velocity_mps(
 
 
 static func axial_load_hold_force_n(
-	carriage_mass_kg: float,
+	mass_kg: float,
 	axis_world: Vector3,
 	gravity: Vector3
 ) -> float:
-	if carriage_mass_kg <= 0.0 or axis_world.length_squared() <= 0.000001:
+	if mass_kg <= 0.0 or axis_world.length_squared() <= 0.000001:
 		return 0.0
-	return -carriage_mass_kg * gravity.dot(axis_world.normalized())
+	return -mass_kg * gravity.dot(axis_world.normalized())
 
 
 static func compute_motor_force_scalar(
 	motor: SimulationMotorState,
 	observed_velocity_mps: float,
 	powered: bool,
-	carriage_mass_kg: float = 0.0,
+	mass_kg: float = 0.0,
 	axis_world: Vector3 = Vector3.ZERO,
 	gravity: Vector3 = Vector3.ZERO
 ) -> Dictionary:
@@ -213,7 +213,7 @@ static func compute_motor_force_scalar(
 	else:
 		desired_velocity_mps = effective_desired_axial_velocity_mps(
 			motor,
-			carriage_mass_kg,
+			mass_kg,
 			axis_world,
 			gravity
 		)
@@ -222,7 +222,7 @@ static func compute_motor_force_scalar(
 		motor,
 		observed_velocity_mps,
 		desired_velocity_mps,
-		carriage_mass_kg,
+		mass_kg,
 		axis_world,
 		gravity,
 		brake_hold
@@ -243,19 +243,19 @@ static func _ideal_motor_force_n(
 	motor: SimulationMotorState,
 	observed_velocity_mps: float,
 	desired_velocity_mps: float,
-	carriage_mass_kg: float,
+	mass_kg: float,
 	axis_world: Vector3,
 	gravity: Vector3,
 	brake_hold: bool
 ) -> float:
-	var effective_mass := maxf(carriage_mass_kg, MIN_CARRIAGE_MASS_KG)
+	var effective_mass := maxf(mass_kg, MIN_CARRIAGE_MASS_KG)
 	var velocity_error := desired_velocity_mps - observed_velocity_mps
 	var response_time := VELOCITY_RESPONSE_TIME_S
 	if brake_hold:
 		response_time /= STOP_BRAKE_DAMPING_SCALE
 	var desired_accel := velocity_error / maxf(response_time, 0.0001)
 	var hold_n := axial_load_hold_force_n(
-		carriage_mass_kg,
+		mass_kg,
 		axis_world,
 		gravity
 	)
@@ -267,14 +267,14 @@ static func _compute_velocity_tracking_force(
 	motor: SimulationMotorState,
 	observed_velocity_mps: float,
 	desired_velocity_mps: float,
-	carriage_mass_kg: float,
+	mass_kg: float,
 	brake_hold: bool
 ) -> Dictionary:
 	var ideal_force_n := _ideal_motor_force_n(
 		motor,
 		observed_velocity_mps,
 		desired_velocity_mps,
-		carriage_mass_kg,
+		mass_kg,
 		Vector3.ZERO,
 		Vector3.ZERO,
 		brake_hold

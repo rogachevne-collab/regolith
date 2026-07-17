@@ -136,10 +136,10 @@ func _build() -> void:
 
 	var margin := MarginContainer.new()
 	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	margin.add_theme_constant_override("margin_left", PANEL_MARGIN_H)
-	margin.add_theme_constant_override("margin_right", PANEL_MARGIN_H)
-	margin.add_theme_constant_override("margin_top", PANEL_MARGIN_V)
-	margin.add_theme_constant_override("margin_bottom", PANEL_MARGIN_V)
+	margin.add_theme_constant_override("margin_left", int(PANEL_MARGIN_H))
+	margin.add_theme_constant_override("margin_right", int(PANEL_MARGIN_H))
+	margin.add_theme_constant_override("margin_top", int(PANEL_MARGIN_V))
+	margin.add_theme_constant_override("margin_bottom", int(PANEL_MARGIN_V))
 	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_panel.add_child(margin)
 
@@ -181,7 +181,7 @@ func _build() -> void:
 	_body_scroll.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_content.add_child(_body_scroll)
 	_body = HBoxContainer.new()
-	_body.add_theme_constant_override("separation", PANEL_GAP)
+	_body.add_theme_constant_override("separation", int(PANEL_GAP))
 	_body.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_body_scroll.add_child(_body)
 

@@ -96,12 +96,12 @@ func _draw() -> void:
 	_draw_centered("%03d°" % heading_deg, cx, TOP + 44.0, 15, HudTokens.COL_TEXT)
 
 
-func _draw_centered(text: String, cx: float, y: float, font_size: int, color: Color) -> void:
-	var w := _font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
+func _draw_centered(label_text: String, cx: float, y: float, font_size: int, color: Color) -> void:
+	var w := _font.get_string_size(label_text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
 	draw_string(
 		_font,
 		Vector2(cx - w * 0.5, y),
-		text,
+		label_text,
 		HORIZONTAL_ALIGNMENT_LEFT,
 		-1,
 		font_size,

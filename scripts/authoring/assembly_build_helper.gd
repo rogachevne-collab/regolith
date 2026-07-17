@@ -32,15 +32,15 @@ func spawn_anchor(
 	if world == null or archetype == null:
 		last_error = "no_world_or_archetype"
 		return false
-	var place := PlaceElementCommand.new()
-	place.assembly_id = 0
-	place.origin_cell = Vector3i.ZERO
-	place.orientation_index = 0
-	place.archetype = archetype
-	place.new_assembly_grid_frame = grid_frame
-	place.initial_motion = AssemblyMotionState.from_grid_frame(grid_frame)
-	place.store_id = store_id
-	var result := world.apply_structural_command_now(place)
+	var place_cmd := PlaceElementCommand.new()
+	place_cmd.assembly_id = 0
+	place_cmd.origin_cell = Vector3i.ZERO
+	place_cmd.orientation_index = 0
+	place_cmd.archetype = archetype
+	place_cmd.new_assembly_grid_frame = grid_frame
+	place_cmd.initial_motion = AssemblyMotionState.from_grid_frame(grid_frame)
+	place_cmd.store_id = store_id
+	var result := world.apply_structural_command_now(place_cmd)
 	if not result.is_ok():
 		last_error = "anchor:%s" % result.reason
 		return false

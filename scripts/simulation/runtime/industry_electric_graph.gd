@@ -29,9 +29,9 @@ func rebuild(links: Array[IndustryElectricLink]) -> void:
 		while not pending.is_empty():
 			var current: int = pending.pop_back()
 			component.append(current)
-			var neighbors: Array = _adjacency[current].keys()
-			neighbors.sort()
-			for neighbor_variant: Variant in neighbors:
+			var neighbor_keys: Array = _adjacency[current].keys()
+			neighbor_keys.sort()
+			for neighbor_variant: Variant in neighbor_keys:
 				var neighbor_id: int = int(neighbor_variant)
 				if not visited.has(neighbor_id):
 					visited[neighbor_id] = true

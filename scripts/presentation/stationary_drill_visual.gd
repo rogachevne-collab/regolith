@@ -33,9 +33,9 @@ static func apply_preview_material(
 	var mechanical := visual.get_node_or_null("Mechanical")
 	if mechanical != null:
 		_apply_material_recursive(mechanical, material)
-	var operation_vfx := operation_vfx(visual)
-	if operation_vfx != null:
-		operation_vfx.visible = false
+	var vfx_root := operation_vfx(visual)
+	if vfx_root != null:
+		vfx_root.visible = false
 
 
 static func operational_rotor(visual: Node3D) -> Node3D:
@@ -63,5 +63,5 @@ static func _apply_material_recursive(
 		mesh_instance.cast_shadow = (
 			GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		)
-	for child: Node in node.get_children():
-		_apply_material_recursive(child, material)
+	for child_node: Node in node.get_children():
+		_apply_material_recursive(child_node, material)

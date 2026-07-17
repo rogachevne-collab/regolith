@@ -201,7 +201,6 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 				> element.required_material_amount(str(resource_id)) + 0.000001
 			):
 				return false
-		var required_total := element.total_required_material_amount()
 		var expected_fraction := element.structural_fraction()
 		if not is_equal_approx(expected_fraction, element.build_progress):
 			return false
@@ -583,10 +582,10 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 
 
 static func _new_world():
-	var script := load(
+	var world_script := load(
 		"res://scripts/simulation/simulation_world.gd"
 	) as Script
-	return script.new() if script != null else null
+	return world_script.new() if world_script != null else null
 
 
 static func _serialize_assemblies(world) -> Array[Dictionary]:

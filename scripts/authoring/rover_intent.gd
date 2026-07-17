@@ -67,7 +67,7 @@ func unsupported_reason() -> String:
 
 
 func axle_count() -> int:
-	return maxi(wheel_count / 2, 1)
+	return maxi(int(wheel_count / 2.0), 1)
 
 
 func length_cells() -> int:
@@ -105,7 +105,7 @@ func battery_count() -> int:
 
 func _batteries_per_row() -> int:
 	# Each battery footprint is 2 cells wide.
-	return maxi(width_cells_base() / 2, 1)
+	return maxi(int(width_cells_base() / 2.0), 1)
 
 
 func width_cells_base() -> int:

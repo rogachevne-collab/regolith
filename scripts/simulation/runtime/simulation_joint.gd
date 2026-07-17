@@ -24,33 +24,33 @@ var motor: SimulationMotorState
 
 
 static func rigid(
-	joint_id: int,
-	assembly_id: int,
-	element_a_id: int,
-	port_a_id: String,
-	element_b_id: int,
-	port_b_id: String
+	new_joint_id: int,
+	new_assembly_id: int,
+	new_element_a_id: int,
+	new_port_a_id: String,
+	new_element_b_id: int,
+	new_port_b_id: String
 ) -> SimulationJoint:
 	var joint: SimulationJoint = _SCRIPT.new()
-	joint.joint_id = joint_id
-	joint.assembly_id = assembly_id
+	joint.joint_id = new_joint_id
+	joint.assembly_id = new_assembly_id
 	joint.kind = Kind.RIGID
-	joint.element_a_id = element_a_id
-	joint.port_a_id = port_a_id
-	joint.element_b_id = element_b_id
-	joint.port_b_id = port_b_id
+	joint.element_a_id = new_element_a_id
+	joint.port_a_id = new_port_a_id
+	joint.element_b_id = new_element_b_id
+	joint.port_b_id = new_port_b_id
 	return joint
 
 
 static func anchor(
-	joint_id: int,
-	assembly_id: int,
+	new_joint_id: int,
+	new_assembly_id: int,
 	element_id: int,
 	port_id: String
 ) -> SimulationJoint:
 	var joint: SimulationJoint = _SCRIPT.new()
-	joint.joint_id = joint_id
-	joint.assembly_id = assembly_id
+	joint.joint_id = new_joint_id
+	joint.assembly_id = new_assembly_id
 	joint.kind = Kind.ANCHOR
 	joint.element_a_id = element_id
 	joint.port_a_id = port_id
@@ -60,15 +60,15 @@ static func anchor(
 
 
 static func piston(
-	joint_id: int,
-	assembly_id: int,
+	new_joint_id: int,
+	new_assembly_id: int,
 	base_element_id: int,
 	head_element_id: int,
 	definition: PistonDefinition
 ) -> SimulationJoint:
 	var joint: SimulationJoint = _SCRIPT.new()
-	joint.joint_id = joint_id
-	joint.assembly_id = assembly_id
+	joint.joint_id = new_joint_id
+	joint.assembly_id = new_assembly_id
 	joint.kind = Kind.PISTON
 	joint.element_a_id = base_element_id
 	joint.port_a_id = SimulationMotorState.PISTON_DRIVE_PORT
@@ -79,15 +79,15 @@ static func piston(
 
 
 static func rotor(
-	joint_id: int,
-	assembly_id: int,
+	new_joint_id: int,
+	new_assembly_id: int,
 	base_element_id: int,
 	top_element_id: int,
 	definition: RotorDefinition
 ) -> SimulationJoint:
 	var joint: SimulationJoint = _SCRIPT.new()
-	joint.joint_id = joint_id
-	joint.assembly_id = assembly_id
+	joint.joint_id = new_joint_id
+	joint.assembly_id = new_assembly_id
 	joint.kind = Kind.ROTOR
 	joint.element_a_id = base_element_id
 	joint.port_a_id = SimulationMotorState.ROTOR_DRIVE_PORT
@@ -98,15 +98,15 @@ static func rotor(
 
 
 static func hinge(
-	joint_id: int,
-	assembly_id: int,
+	new_joint_id: int,
+	new_assembly_id: int,
 	base_element_id: int,
 	top_element_id: int,
 	definition: HingeDefinition
 ) -> SimulationJoint:
 	var joint: SimulationJoint = _SCRIPT.new()
-	joint.joint_id = joint_id
-	joint.assembly_id = assembly_id
+	joint.joint_id = new_joint_id
+	joint.assembly_id = new_assembly_id
 	joint.kind = Kind.HINGE
 	joint.element_a_id = base_element_id
 	joint.port_a_id = SimulationMotorState.HINGE_DRIVE_PORT

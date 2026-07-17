@@ -49,10 +49,10 @@ static func has_recipe(recipe_id: String) -> bool:
 	return RECIPES.has(recipe_id)
 
 
-static func recipe_ids_for_machine(machine_archetype_id: String) -> PackedStringArray:
+static func recipe_ids_for_machine(for_machine_id: String) -> PackedStringArray:
 	var result := PackedStringArray()
 	for recipe_id: String in _sorted_recipe_ids():
-		if machine_archetype_id(recipe_id) == machine_archetype_id:
+		if machine_archetype_id(recipe_id) == for_machine_id:
 			result.append(recipe_id)
 	return result
 
@@ -88,9 +88,9 @@ static func power_w(recipe_id: String) -> float:
 	return maxf(float(get_recipe(recipe_id).get("power_w", 0.0)), 0.0)
 
 
-static func default_recipe_for_machine(machine_archetype_id: String) -> String:
+static func default_recipe_for_machine(for_machine_id: String) -> String:
 	var defaults: Variant = IndustryArchetypeProfile.DEFAULT_RECIPES.get(
-		machine_archetype_id,
+		for_machine_id,
 		""
 	)
 	return str(defaults)

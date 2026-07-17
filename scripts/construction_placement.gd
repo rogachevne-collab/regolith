@@ -193,17 +193,17 @@ static func _field_aligned_grid_basis(
 	orientation_index: int,
 	surface_up: Vector3
 ) -> Basis:
-	var snapped := OrientationUtil.orientation_basis(orientation_index)
+	var orient_basis := OrientationUtil.orientation_basis(orientation_index)
 	var up := surface_up
 	if not up.is_finite() or up.length_squared() <= 0.000001:
-		return snapped
+		return orient_basis
 	up = up.normalized()
-	var alignment := snapped.y.dot(up)
+	var alignment := orient_basis.y.dot(up)
 	if alignment >= 1.0 - 0.000001:
-		return snapped
+		return orient_basis
 	if alignment <= -1.0 + 0.000001:
-		return (Basis(snapped.x.normalized(), PI) * snapped).orthonormalized()
-	return (Basis(Quaternion(snapped.y, up)) * snapped).orthonormalized()
+		return (Basis(orient_basis.x.normalized(), PI) * orient_basis).orthonormalized()
+	return (Basis(Quaternion(orient_basis.y, up)) * orient_basis).orthonormalized()
 
 
 static func _dominant_grid_direction(direction: Vector3) -> Vector3i:

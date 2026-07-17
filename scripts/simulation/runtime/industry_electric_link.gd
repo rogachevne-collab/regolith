@@ -19,7 +19,7 @@ var waypoints: PackedVector3Array = PackedVector3Array()
 
 
 static func new_link(
-	link_id: int,
+	new_link_id: int,
 	element_a_id: int,
 	port_a_id: String,
 	element_b_id: int,
@@ -27,7 +27,7 @@ static func new_link(
 	link_waypoints: PackedVector3Array = PackedVector3Array()
 ) -> IndustryElectricLink:
 	var link: IndustryElectricLink = _SCRIPT.new()
-	link.link_id = link_id
+	link.link_id = new_link_id
 	link.element_a = element_a_id
 	link.port_a = port_a_id
 	link.element_b = element_b_id
@@ -81,11 +81,11 @@ func canonical_pair_key() -> String:
 
 
 func to_dict(for_snapshot := false) -> Dictionary:
-	var waypoint_row: Variant = (
-		_CODEC.packed_vector3_array_to_array(waypoints)
-		if for_snapshot
-		else waypoints.duplicate()
-	)
+	var waypoint_row: Variant
+	if for_snapshot:
+		waypoint_row = _CODEC.packed_vector3_array_to_array(waypoints)
+	else:
+		waypoint_row = waypoints.duplicate()
 	return {
 		"link_id": link_id,
 		"element_a": element_a,
