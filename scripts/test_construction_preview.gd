@@ -24,6 +24,10 @@ func _run() -> void:
 		return
 	if not _test_ground_placement_keeps_continuous_pose():
 		return
+	if not _test_upright_basis_field_aligned():
+		return
+	if not _test_radial_ground_placement_keeps_field_pose():
+		return
 	if not _test_rotation_snap_pivot_parity():
 		return
 	if not _test_rotation_full_cycle_no_drift():
@@ -47,6 +51,8 @@ func _run() -> void:
 	if not _test_snap_face_cache_motion_invalidation():
 		return
 	if not _test_snap_resolver_performance():
+		return
+	if not _test_gateway_voxel_place_spawns_visual():
 		return
 	print("CONSTRUCTION-V1: PASS")
 	get_tree().quit(0)
@@ -456,6 +462,58 @@ func _test_ground_placement_keeps_continuous_pose() -> bool:
 		return _fail("ground placement lost continuous terrain pose")
 	if not plan["preview_root_transform"].is_equal_approx(continuous_transform):
 		return _fail("preview root diverged from continuous ground pose")
+	_free_fixture(fixture)
+	return true
+
+
+func _test_upright_basis_field_aligned() -> bool:
+	var surface_up := Vector3(1.0, 1.0, 0.0).normalized()
+	var basis := ConstructionPlacement._upright_basis(
+		Vector3.FORWARD,
+		surface_up
+	)
+	if not basis.y.is_equal_approx(surface_up):
+		return _fail("upright basis y != surface_up on tilted field")
+	if absf(basis.y.dot(basis.x)) > 0.001:
+		return _fail("upright basis x/y not orthogonal")
+	if absf(basis.y.dot(basis.z)) > 0.001:
+		return _fail("upright basis y/z not orthogonal")
+	var fixture := _new_fixture()
+	var world: SimulationWorld = fixture["world"]
+	var frame: ElementArchetype = Slice01Archetypes.frame()
+	var point := Vector3(12.0, 12.0, 0.0)
+	var target := _voxel_target(point, surface_up, Vector3.FORWARD)
+	target["surface_up"] = surface_up
+	var plan := ConstructionPlacement.plan(world, target, frame, 0)
+	if not bool(plan.get("valid", false)):
+		return _fail("voxel plan with surface_up invalid on tilted field")
+	_free_fixture(fixture)
+	return true
+
+
+func _test_radial_ground_placement_keeps_field_pose() -> bool:
+	var fixture := _new_fixture()
+	var world: SimulationWorld = fixture["world"]
+	var frame: ElementArchetype = Slice01Archetypes.frame()
+	var surface_up := Vector3(0.0, 0.6, 0.8).normalized()
+	var point := surface_up * 500.0
+	var aim := Vector3(0.8, 0.0, -0.6).normalized()
+	var target := _voxel_target(point, surface_up, aim)
+	target["surface_up"] = surface_up
+	var plan := ConstructionPlacement.plan(world, target, frame, 0)
+	if not bool(plan.get("valid", false)):
+		return _fail("radial ground plan invalid")
+	var root: Transform3D = plan["assembly_world_transform"]
+	if not root.basis.y.is_equal_approx(surface_up):
+		return _fail("radial ground root basis y != surface_up")
+	var ground_contact := GridPoseUtil.ground_contact_local(frame, 0)
+	var bottom_world := root.origin + root.basis * ground_contact
+	var bottom_error := absf(surface_up.dot(bottom_world - point))
+	if bottom_error > 0.05:
+		return _fail(
+			"radial ground bottom not seated on surface (err=%.4f)"
+			% bottom_error
+		)
 	_free_fixture(fixture)
 	return true
 
@@ -1420,6 +1478,7 @@ func _new_gateway_fixture() -> Dictionary:
 		"root": root,
 		"world": world,
 		"gateway": gateway,
+		"session": session,
 	}
 
 
@@ -1439,6 +1498,52 @@ func _new_fixture() -> Dictionary:
 func _free_fixture(fixture: Dictionary) -> void:
 	var root: Node = fixture["root"]
 	root.queue_free()
+
+
+func _test_gateway_voxel_place_spawns_visual() -> bool:
+	var fixture := _new_gateway_fixture()
+	var world: SimulationWorld = fixture["world"]
+	var gateway: WorldCommandGateway = fixture["gateway"]
+	var session: SimulationSession = fixture["session"]
+	var large_frame := Slice01Archetypes.large_frame()
+	var point := Vector3(0.0, 518.0, 2.0)
+	var surface_up := point.normalized()
+	var target := _voxel_target(point, surface_up, Vector3.FORWARD)
+	target["surface_up"] = surface_up
+	var plan := gateway.preview_construction(target, "large_frame", 0)
+	if not bool(plan.get("valid", false)):
+		return _fail("moon-like gateway preview_construction invalid")
+	var plan_origin: Vector3 = plan["assembly_world_transform"].origin
+	if plan_origin.distance_to(point) > 15.0:
+		return _fail(
+			"moon-like plan origin too far from hit (origin=%s hit=%s)"
+			% [plan_origin, point]
+		)
+	var place: PlaceElementCommand = plan["command"]
+	var result := world.apply_structural_command_now(place)
+	if not result.is_ok():
+		return _fail("moon-like place failed: %s" % str(result.reason))
+	var assembly_id := int(result.data["assembly_id"])
+	var body := session.projection.get_physics_body(assembly_id)
+	if body == null:
+		return _fail("moon-like place missing physics body")
+	if body.global_transform.origin.distance_to(plan_origin) > 0.05:
+		return _fail(
+			"physics body origin != plan (body=%s plan=%s)"
+			% [body.global_transform.origin, plan_origin]
+		)
+	var visual_count := 0
+	for child: Node in body.get_children():
+		if child is MeshInstance3D and child.has_meta("element_visual"):
+			visual_count += 1
+	if visual_count <= 0:
+		return _fail("moon-like place has no element visual meshes on body")
+	_free_gateway_fixture(fixture)
+	return true
+
+
+func _free_gateway_fixture(fixture: Dictionary) -> void:
+	_free_fixture(fixture)
 
 
 func _voxel_target(
