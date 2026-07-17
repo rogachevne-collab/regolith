@@ -1540,11 +1540,9 @@ func _test_gateway_voxel_place_spawns_visual() -> bool:
 		)
 	var visual_count := 0
 	for child: Node in body.get_children():
-		if not child.has_meta("element_visual"):
-			continue
-		## Connected cubes attach a Node3D root (Fill+Rim); other archetypes use
-		## a direct MeshInstance3D.
-		if child is MeshInstance3D or child is Node3D:
+		# Connected-block visuals put meta on a Node3D root; legacy path uses
+		# MeshInstance3D with the same meta.
+		if child.has_meta("element_visual"):
 			visual_count += 1
 	if visual_count <= 0:
 		return _fail("moon-like place has no element visual meshes on body")
