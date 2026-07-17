@@ -271,8 +271,18 @@ func _persist_digs() -> void:
 		_voxel_stream.flush()
 
 
-func _on_terrain_modified(_removed_volume_m3: float) -> void:
+func _on_terrain_modified(
+	_removed_volume_m3: float,
+	dig_center: Vector3,
+	dig_radius_m: float
+) -> void:
 	_persist_digs()
+	if dig_radius_m <= 0.0001:
+		return
+	var field := get_node_or_null("LunarBoulderField") as LunarBoulderField
+	if field == null:
+		return
+	field.remove_near(dig_center, dig_radius_m * 1.15)
 
 
 func _begin_fresh_world(player_position: Vector3) -> void:

@@ -20,7 +20,7 @@ const _GROUND_SEAT_SAMPLES: Array[Vector2] = [
 @export var placed_blocks_path: NodePath = NodePath("../PlacedBlocks")
 @export var simulation_session_path: NodePath = NodePath("../SimulationSession")
 
-signal terrain_modified(removed_volume_m3: float)
+signal terrain_modified(removed_volume_m3: float, dig_center: Vector3, dig_radius_m: float)
 
 var _terrain: Node3D
 var _placed_blocks: Node
@@ -223,7 +223,7 @@ func _remove_voxel(
 	if total_removed_m3 > 0.000001:
 		_hand_drill_last_bite_center = bite_center
 		_hand_drill_last_bite_msec = now_msec
-		_notify_terrain_modified(total_removed_m3)
+		_notify_terrain_modified(total_removed_m3, bite_center, radius)
 	else:
 		_hand_drill_last_bite_center = null
 	var removed_m3 := total_removed_m3
@@ -295,12 +295,42 @@ func apply_terrain_carve(
 		_excavation.excavate(_voxel_tool, request).get("removed_volume_m3", 0.0)
 	)
 	if removed > 0.000001:
-		_notify_terrain_modified(removed)
+		_notify_terrain_modified(
+			removed,
+			_dig_center_from_request(request),
+			_dig_radius_from_request(request)
+		)
 	return removed
 
 
-func _notify_terrain_modified(removed_volume_m3: float) -> void:
-	terrain_modified.emit(removed_volume_m3)
+func _dig_center_from_request(request: Dictionary) -> Vector3:
+	match StringName(request.get("stamp_kind", &"sphere")):
+		&"path":
+			var points: PackedVector3Array = request.get("points", PackedVector3Array())
+			if points.is_empty():
+				return Vector3.ZERO
+			return points[points.size() - 1]
+		_:
+			return request.get("center", Vector3.ZERO)
+
+
+func _dig_radius_from_request(request: Dictionary) -> float:
+	match StringName(request.get("stamp_kind", &"sphere")):
+		&"path":
+			var radii: PackedFloat32Array = request.get("radii", PackedFloat32Array())
+			if radii.is_empty():
+				return 0.0
+			return float(radii[radii.size() - 1])
+		_:
+			return float(request.get("radius", 0.0))
+
+
+func _notify_terrain_modified(
+	removed_volume_m3: float,
+	dig_center: Vector3 = Vector3.ZERO,
+	dig_radius_m: float = 0.0
+) -> void:
+	terrain_modified.emit(removed_volume_m3, dig_center, dig_radius_m)
 
 
 func stationary_drill_has_terrain_contact(element_id: int) -> bool:
@@ -332,7 +362,7 @@ func carve_stationary_drill(element_id: int) -> float:
 		).get("removed_volume_m3", 0.0)
 	)
 	if removed > 0.000001:
-		_notify_terrain_modified(removed)
+		_notify_terrain_modified(removed, center, radius)
 	return removed
 
 
