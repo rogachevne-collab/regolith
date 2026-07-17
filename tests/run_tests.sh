@@ -24,6 +24,7 @@ KERNEL=(
 	test_player_inventory_hotbar
 	test_suit_state
 	test_connected_block_visual
+	test_impact_destruction
 )
 
 # Physics/gameplay/UI integration scenes. Not part of the gate: the running
@@ -33,7 +34,6 @@ EXTRA=(
 	test_character_controller
 	test_construction_toolbar_remap
 	test_hud_palette_layout
-	test_impact_destruction
 	test_player_interaction
 )
 
