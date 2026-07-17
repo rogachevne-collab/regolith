@@ -1,0 +1,294 @@
+[gd_resource type="VoxelInstanceLibrary" format=3]
+
+[ext_resource type="Texture2D" path="res://resources/textures/lunar_rock/albedo.png" id="1_17xy2"]
+[ext_resource type="Texture2D" path="res://resources/textures/lunar_rock/normal.png" id="2_ohvn5"]
+[ext_resource type="ArrayMesh" path="res://resources/props/lunar_boulder_mesh_small_0.tres" id="3_gy6o3"]
+[ext_resource type="ArrayMesh" path="res://resources/props/lunar_boulder_mesh_small_1.tres" id="4_01lb1"]
+[ext_resource type="ArrayMesh" path="res://resources/props/lunar_boulder_mesh_small_2.tres" id="5_lmtae"]
+[ext_resource type="ArrayMesh" path="res://resources/props/lunar_boulder_mesh_large_0.tres" id="6_nmqtj"]
+[ext_resource type="ArrayMesh" path="res://resources/props/lunar_boulder_mesh_large_1.tres" id="7_e4u57"]
+
+[sub_resource type="FastNoiseLite" id="FastNoiseLite_mpcm7"]
+seed = 404
+frequency = 0.022
+
+[sub_resource type="VoxelInstanceGenerator" id="VoxelInstanceGenerator_e7ku5"]
+emit_mode = 1
+density = 0.012
+triangle_area_threshold = 0.18
+min_scale = 0.5
+max_scale = 0.78
+scale_distribution = 2
+offset_along_normal = -0.1
+min_slope_degrees = 4.0
+max_slope_degrees = 28.0
+max_slope_falloff_degrees = 10.0
+noise = SubResource("FastNoiseLite_mpcm7")
+noise_threshold = 0.48
+noise_on_scale = 0.22
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_vdosh"]
+albedo_texture = ExtResource("1_17xy2")
+metallic_specular = 0.15
+roughness = 0.88
+normal_enabled = true
+normal_scale = 1.15
+normal_texture = ExtResource("2_ohvn5")
+texture_filter = 2
+
+[sub_resource type="VoxelInstanceLibraryMultiMeshItem" id="VoxelInstanceLibraryMultiMeshItem_1einc"]
+mesh = ExtResource("3_gy6o3")
+material_override = SubResource("StandardMaterial3D_vdosh")
+cast_shadow = 0
+gi_mode = 0
+name = "pebble_a"
+generator = SubResource("VoxelInstanceGenerator_e7ku5")
+persistent = true
+floating_sdf_offset_along_normal = -0.15
+resource_name = "pebble_a"
+
+[sub_resource type="FastNoiseLite" id="FastNoiseLite_ir4mw"]
+seed = 511
+frequency = 0.022
+
+[sub_resource type="VoxelInstanceGenerator" id="VoxelInstanceGenerator_00gsr"]
+emit_mode = 1
+density = 0.01
+triangle_area_threshold = 0.18
+min_scale = 0.55
+max_scale = 0.82
+scale_distribution = 2
+offset_along_normal = -0.11
+min_slope_degrees = 4.0
+max_slope_degrees = 28.0
+max_slope_falloff_degrees = 10.0
+noise = SubResource("FastNoiseLite_ir4mw")
+noise_threshold = 0.48
+noise_on_scale = 0.22
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_4pw74"]
+albedo_color = Color(0.9, 0.93, 0.98, 1)
+albedo_texture = ExtResource("1_17xy2")
+metallic_specular = 0.15
+roughness = 0.88
+normal_enabled = true
+normal_scale = 1.15
+normal_texture = ExtResource("2_ohvn5")
+texture_filter = 2
+
+[sub_resource type="VoxelInstanceLibraryMultiMeshItem" id="VoxelInstanceLibraryMultiMeshItem_3g020"]
+mesh = ExtResource("4_01lb1")
+material_override = SubResource("StandardMaterial3D_4pw74")
+cast_shadow = 0
+gi_mode = 0
+name = "pebble_b"
+generator = SubResource("VoxelInstanceGenerator_00gsr")
+persistent = true
+floating_sdf_offset_along_normal = -0.15
+resource_name = "pebble_b"
+
+[sub_resource type="FastNoiseLite" id="FastNoiseLite_j2y6d"]
+seed = 618
+frequency = 0.022
+
+[sub_resource type="VoxelInstanceGenerator" id="VoxelInstanceGenerator_gg5i6"]
+emit_mode = 1
+density = 0.009
+triangle_area_threshold = 0.18
+min_scale = 0.48
+max_scale = 0.74
+scale_distribution = 2
+offset_along_normal = -0.12
+min_slope_degrees = 4.0
+max_slope_degrees = 26.0
+max_slope_falloff_degrees = 10.0
+noise = SubResource("FastNoiseLite_j2y6d")
+noise_threshold = 0.48
+noise_on_scale = 0.22
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_r3prs"]
+albedo_color = Color(0.98, 0.92, 0.88, 1)
+albedo_texture = ExtResource("1_17xy2")
+metallic_specular = 0.15
+roughness = 0.88
+normal_enabled = true
+normal_scale = 1.15
+normal_texture = ExtResource("2_ohvn5")
+texture_filter = 2
+
+[sub_resource type="VoxelInstanceLibraryMultiMeshItem" id="VoxelInstanceLibraryMultiMeshItem_6gwe4"]
+mesh = ExtResource("5_lmtae")
+material_override = SubResource("StandardMaterial3D_r3prs")
+cast_shadow = 0
+gi_mode = 0
+name = "pebble_c"
+generator = SubResource("VoxelInstanceGenerator_gg5i6")
+persistent = true
+floating_sdf_offset_along_normal = -0.15
+resource_name = "pebble_c"
+
+[sub_resource type="FastNoiseLite" id="FastNoiseLite_apo7i"]
+seed = 722
+frequency = 0.022
+
+[sub_resource type="VoxelInstanceGenerator" id="VoxelInstanceGenerator_au513"]
+emit_mode = 1
+density = 0.006
+triangle_area_threshold = 0.18
+min_scale = 0.72
+max_scale = 1.05
+scale_distribution = 2
+offset_along_normal = -0.13
+min_slope_degrees = 3.0
+max_slope_degrees = 26.0
+max_slope_falloff_degrees = 10.0
+noise = SubResource("FastNoiseLite_apo7i")
+noise_threshold = 0.48
+noise_on_scale = 0.22
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_u3s8b"]
+albedo_color = Color(0.9, 0.93, 0.98, 1)
+albedo_texture = ExtResource("1_17xy2")
+metallic_specular = 0.15
+roughness = 0.88
+normal_enabled = true
+normal_scale = 1.15
+normal_texture = ExtResource("2_ohvn5")
+texture_filter = 2
+
+[sub_resource type="VoxelInstanceLibraryMultiMeshItem" id="VoxelInstanceLibraryMultiMeshItem_jbgyn"]
+mesh = ExtResource("3_gy6o3")
+material_override = SubResource("StandardMaterial3D_u3s8b")
+cast_shadow = 0
+gi_mode = 0
+name = "rock_a"
+generator = SubResource("VoxelInstanceGenerator_au513")
+persistent = true
+floating_sdf_offset_along_normal = -0.15
+resource_name = "rock_a"
+
+[sub_resource type="FastNoiseLite" id="FastNoiseLite_i6a6b"]
+seed = 833
+frequency = 0.022
+
+[sub_resource type="VoxelInstanceGenerator" id="VoxelInstanceGenerator_m7tdg"]
+emit_mode = 1
+density = 0.005
+triangle_area_threshold = 0.18
+min_scale = 0.78
+max_scale = 1.12
+scale_distribution = 2
+offset_along_normal = -0.14
+min_slope_degrees = 3.0
+max_slope_degrees = 24.0
+max_slope_falloff_degrees = 10.0
+noise = SubResource("FastNoiseLite_i6a6b")
+noise_threshold = 0.48
+noise_on_scale = 0.22
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_4fxlb"]
+albedo_texture = ExtResource("1_17xy2")
+metallic_specular = 0.15
+roughness = 0.88
+normal_enabled = true
+normal_scale = 1.15
+normal_texture = ExtResource("2_ohvn5")
+texture_filter = 2
+
+[sub_resource type="VoxelInstanceLibraryMultiMeshItem" id="VoxelInstanceLibraryMultiMeshItem_bmi1f"]
+mesh = ExtResource("4_01lb1")
+material_override = SubResource("StandardMaterial3D_4fxlb")
+cast_shadow = 0
+gi_mode = 0
+name = "rock_b"
+generator = SubResource("VoxelInstanceGenerator_m7tdg")
+persistent = true
+floating_sdf_offset_along_normal = -0.15
+resource_name = "rock_b"
+
+[sub_resource type="FastNoiseLite" id="FastNoiseLite_hiw5h"]
+seed = 504
+frequency = 0.022
+
+[sub_resource type="VoxelInstanceGenerator" id="VoxelInstanceGenerator_0xkio"]
+emit_mode = 1
+density = 0.0018
+triangle_area_threshold = 0.18
+min_scale = 0.9
+max_scale = 1.45
+scale_distribution = 2
+offset_along_normal = -0.16
+min_slope_degrees = 2.0
+max_slope_degrees = 22.0
+max_slope_falloff_degrees = 10.0
+noise = SubResource("FastNoiseLite_hiw5h")
+noise_threshold = 0.48
+noise_on_scale = 0.22
+snap_to_generator_sdf_enabled = true
+snap_to_generator_sdf_search_distance = 1.4
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_m6vrq"]
+albedo_color = Color(0.98, 0.92, 0.88, 1)
+albedo_texture = ExtResource("1_17xy2")
+metallic_specular = 0.15
+roughness = 0.88
+normal_enabled = true
+normal_scale = 1.15
+normal_texture = ExtResource("2_ohvn5")
+texture_filter = 2
+
+[sub_resource type="VoxelInstanceLibraryMultiMeshItem" id="VoxelInstanceLibraryMultiMeshItem_urcvy"]
+mesh = ExtResource("6_nmqtj")
+material_override = SubResource("StandardMaterial3D_m6vrq")
+cast_shadow = 0
+gi_mode = 0
+name = "boulder"
+lod_index = 1
+generator = SubResource("VoxelInstanceGenerator_0xkio")
+persistent = true
+floating_sdf_offset_along_normal = -0.15
+resource_name = "boulder"
+
+[sub_resource type="FastNoiseLite" id="FastNoiseLite_yiws2"]
+seed = 591
+frequency = 0.022
+
+[sub_resource type="VoxelInstanceGenerator" id="VoxelInstanceGenerator_6gygr"]
+emit_mode = 1
+density = 0.0012
+triangle_area_threshold = 0.18
+max_scale = 1.65
+scale_distribution = 2
+offset_along_normal = -0.17
+min_slope_degrees = 2.0
+max_slope_degrees = 20.0
+max_slope_falloff_degrees = 10.0
+noise = SubResource("FastNoiseLite_yiws2")
+noise_threshold = 0.48
+noise_on_scale = 0.22
+snap_to_generator_sdf_enabled = true
+snap_to_generator_sdf_search_distance = 1.4
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_dobco"]
+albedo_texture = ExtResource("1_17xy2")
+metallic_specular = 0.15
+roughness = 0.88
+normal_enabled = true
+normal_scale = 1.15
+normal_texture = ExtResource("2_ohvn5")
+texture_filter = 2
+
+[sub_resource type="VoxelInstanceLibraryMultiMeshItem" id="VoxelInstanceLibraryMultiMeshItem_whxxo"]
+mesh = ExtResource("7_e4u57")
+material_override = SubResource("StandardMaterial3D_dobco")
+cast_shadow = 0
+gi_mode = 0
+name = "boulder_flat"
+lod_index = 1
+generator = SubResource("VoxelInstanceGenerator_6gygr")
+persistent = true
+floating_sdf_offset_along_normal = -0.15
+resource_name = "boulder_flat"
+
+[resource]
+_data = [0, 0, SubResource("VoxelInstanceLibraryMultiMeshItem_1einc"), 1, SubResource("VoxelInstanceLibraryMultiMeshItem_3g020"), 2, SubResource("VoxelInstanceLibraryMultiMeshItem_6gwe4"), 3, SubResource("VoxelInstanceLibraryMultiMeshItem_jbgyn"), 4, SubResource("VoxelInstanceLibraryMultiMeshItem_bmi1f"), 5, SubResource("VoxelInstanceLibraryMultiMeshItem_urcvy"), 6, SubResource("VoxelInstanceLibraryMultiMeshItem_whxxo")]

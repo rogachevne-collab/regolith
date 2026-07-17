@@ -1,0 +1,3 @@
+Dark Rough Rock 1 PBR Material
+Source: https://freepbr.com/ (dark rough rock)
+License: free use in games/3D work (FreePBR terms). Do not re-upload as a texture pack.

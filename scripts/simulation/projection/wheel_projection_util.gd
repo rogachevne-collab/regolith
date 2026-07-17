@@ -118,7 +118,8 @@ static func tick_pair(
 	if not body_up.is_finite() or body_up.length_squared() <= 0.0001:
 		result["status"] = &"invalid_body"
 		return result
-	var upright_dot := body_up.normalized().dot(Vector3.UP)
+	var field_up := GravityField.resolve_up(body, body_transform.origin)
+	var upright_dot := body_up.normalized().dot(field_up)
 	var ray_origin_world := body_transform * ray_origin_local
 	var ray_dir_world := (
 		body_transform.basis * ray_dir_local

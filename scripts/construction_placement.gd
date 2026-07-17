@@ -68,10 +68,13 @@ static func plan(
 			metadata.get("aim_direction", Vector3.FORWARD)
 		)
 		var surface_point := Vector3(target.get("point", Vector3.ZERO))
-		# Gravity-upright orientation keeps the base level on slopes; only the
+		# Field-upright orientation keeps the base level on slopes; only the
 		# discrete grid frame is snapped. The continuous root keeps the exact
-		# surface contact height so the block neither floats nor tilts.
-		var aim_basis := _upright_basis(aim_direction)
+		# surface contact height so the block neither floats nor tilts. On a
+		# radial field (spherical moon) the local up is the surface up, not
+		# world +Y — a world-snapped root there buries the block in the crust.
+		var surface_up := _surface_up_for_target(target)
+		var aim_basis := _upright_basis(aim_direction, surface_up)
 		command.assembly_id = 0
 		command.origin_cell = Vector3i.ZERO
 		command.new_assembly_grid_frame = (
@@ -79,8 +82,9 @@ static func plan(
 				Transform3D(aim_basis, surface_point)
 			)
 		)
-		var upright_basis := OrientationUtil.orientation_basis(
-			command.new_assembly_grid_frame.orientation_index
+		var upright_basis := _field_aligned_grid_basis(
+			command.new_assembly_grid_frame.orientation_index,
+			surface_up
 		)
 		if held_ground_pivot.is_finite():
 			assembly_world_transform = (
@@ -147,17 +151,59 @@ static func baseline_ground_pivot(
 	)
 
 
-static func _upright_basis(aim_direction: Vector3) -> Basis:
-	var up := Vector3.UP
+static func _surface_up_for_target(target: Dictionary) -> Vector3:
+	var up := Vector3(
+		target.get(
+			"surface_up",
+			target.get("metadata", {}).get(
+				"surface_up",
+				target.get("normal", Vector3.UP)
+			)
+		)
+	)
+	if not up.is_finite() or up.length_squared() <= 0.000001:
+		return Vector3.UP
+	return up.normalized()
+
+
+static func _upright_basis(
+	aim_direction: Vector3,
+	surface_up: Vector3 = Vector3.UP
+) -> Basis:
+	var up := surface_up
+	if not up.is_finite() or up.length_squared() <= 0.000001:
+		up = Vector3.UP
+	up = up.normalized()
 	var forward := aim_direction - up * aim_direction.dot(up)
 	if forward.length_squared() < 0.000001:
 		forward = Vector3.FORWARD - up * Vector3.FORWARD.dot(up)
-	forward = forward.normalized()
 	if forward.length_squared() < 0.000001:
-		forward = Vector3.FORWARD
+		forward = Vector3.RIGHT - up * Vector3.RIGHT.dot(up)
+	forward = forward.normalized()
 	var right := forward.cross(up).normalized()
 	forward = up.cross(right).normalized()
 	return Basis(right, up, -forward).orthonormalized()
+
+
+## Snapped grid orientation re-anchored to the Field up. On a flat field this
+## is exactly the snapped world-grid basis (old behaviour, yaw quantized). On
+## a radial field the snapped basis is rotated by the shortest arc so local +Y
+## matches the surface up and the block base stays level on the sphere.
+static func _field_aligned_grid_basis(
+	orientation_index: int,
+	surface_up: Vector3
+) -> Basis:
+	var snapped := OrientationUtil.orientation_basis(orientation_index)
+	var up := surface_up
+	if not up.is_finite() or up.length_squared() <= 0.000001:
+		return snapped
+	up = up.normalized()
+	var alignment := snapped.y.dot(up)
+	if alignment >= 1.0 - 0.000001:
+		return snapped
+	if alignment <= -1.0 + 0.000001:
+		return (Basis(snapped.x.normalized(), PI) * snapped).orthonormalized()
+	return (Basis(Quaternion(snapped.y, up)) * snapped).orthonormalized()
 
 
 static func _dominant_grid_direction(direction: Vector3) -> Vector3i:

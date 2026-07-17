@@ -5,6 +5,7 @@ const BODY_NAME_PREFIX := "AssemblyBody_"
 const GROUP_BODY_NAME_PREFIX := "AssemblyGroupBody_"
 const PISTON_JOINT_NAME_PREFIX := "PistonJoint_"
 const ROTOR_JOINT_NAME_PREFIX := "RotorJoint_"
+const HINGE_JOINT_NAME_PREFIX := "HingeJoint_"
 const MIN_MASS := 0.001
 const SUSTAINED_V_EPS := 0.05
 const FragmentBodyScript := preload(
@@ -16,8 +17,17 @@ const PistonProjectionUtil := preload(
 const RotorProjectionUtil := preload(
 	"res://scripts/simulation/projection/rotor_projection_util.gd"
 )
+const HingeProjectionUtil := preload(
+	"res://scripts/simulation/projection/hinge_projection_util.gd"
+)
 const WheelSimulationService := preload(
 	"res://scripts/simulation/runtime/wheel_simulation_service.gd"
+)
+const ThrusterSimulationService := preload(
+	"res://scripts/simulation/runtime/thruster_simulation_service.gd"
+)
+const ThrusterProjectionUtil := preload(
+	"res://scripts/simulation/projection/thruster_projection_util.gd"
 )
 const BodyGroupMotionUtilScript := preload(
 	"res://scripts/simulation/runtime/body_group_motion_util.gd"
@@ -197,6 +207,7 @@ func _physics_process(delta: float) -> void:
 	_tick_rotor_actuators(delta)
 	_tick_piston_actuators(delta)
 	_tick_wheel_pairs(delta)
+	_tick_thrusters(delta)
 	for assembly_id: int in _sorted_int_keys(_bodies):
 		var assembly: SimulationAssembly = _world.get_assembly_raw(assembly_id)
 		if assembly == null or assembly.tombstoned:
@@ -517,7 +528,7 @@ func _project_assembly_single(
 	if release_from_anchor:
 		motion.transform.origin += (
 			motion.transform.basis.y.normalized()
-			* WheelSimulationService.activation_clearance_m(
+			* ThrusterSimulationService.activation_clearance_m(
 				_world,
 				assembly_id
 			)
@@ -532,11 +543,11 @@ func _project_assembly_single(
 		motion.angular_velocity = Vector3.ZERO
 		motion.sleeping = true
 	elif _is_locomotive_assembly(assembly_id):
-		# Floating loco: dynamic + parking_brake holds wheels (no freeze).
+		# Floating mobile: dynamic; wheels use parking_brake, flight uses thrust.
 		if not locomotion.has_released_from_anchor():
 			motion.transform.origin += (
 				motion.transform.basis.y.normalized()
-				* WheelSimulationService.activation_clearance_m(
+				* ThrusterSimulationService.activation_clearance_m(
 					_world,
 					assembly_id
 				)
@@ -627,7 +638,7 @@ func _project_assembly_multibody(
 	):
 		seed_motion.transform.origin += (
 			seed_motion.transform.basis.y.normalized()
-			* WheelSimulationService.activation_clearance_m(
+			* ThrusterSimulationService.activation_clearance_m(
 				_world,
 				assembly_id
 			)
@@ -752,6 +763,71 @@ func _project_assembly_multibody(
 			int(spec.get("head_element_id", 0))
 		)
 		if base_element == null or head_element == null:
+			continue
+		if sim_joint.kind == SimulationJoint.Kind.HINGE:
+			var hinge_definition: HingeDefinition = (
+				base_element.get_archetype().hinge_definition
+			)
+			if hinge_definition == null:
+				continue
+			var hinge_axis_local: Vector3 = (
+				HingePlacementUtil.bend_axis_assembly_local(
+					base_element,
+					hinge_definition
+				)
+			)
+			var hinge_axis_world: Vector3 = (
+				base_body.global_transform.basis * hinge_axis_local
+			).normalized()
+			var hinge_pivot: Vector3 = (
+				HingePlacementUtil.pivot_assembly_local(
+					base_element,
+					hinge_definition
+				)
+			)
+			var hinge_joint_node := Generic6DOFJoint3D.new()
+			hinge_joint_node.name = "%s%d_%d" % [
+				HINGE_JOINT_NAME_PREFIX,
+				assembly_id,
+				sim_joint.joint_id,
+			]
+			add_child(hinge_joint_node)
+			hinge_joint_node.global_transform = Transform3D(
+				HingeProjectionUtil.basis_with_x_axis(hinge_axis_world),
+				base_body.global_transform * hinge_pivot
+			)
+			hinge_joint_node.node_a = hinge_joint_node.get_path_to(base_body)
+			hinge_joint_node.node_b = hinge_joint_node.get_path_to(head_body)
+			# Jolt rest angle is the create pose; motor angle is home-relative.
+			var hinge_create_measured: Dictionary = (
+				RotorProjectionUtil.measure_angular_state(
+					base_body,
+					head_body,
+					hinge_axis_world
+				)
+			)
+			var hinge_angle_offset := float(
+				hinge_create_measured.get("angle_rad", 0.0)
+			)
+			HingeProjectionUtil.configure_hinge_limit_joint(
+				hinge_joint_node,
+				sim_joint.motor,
+				hinge_angle_offset
+			)
+			# Hinge shares the rotor's angular record shape and tick loop.
+			rotor_records.append({
+				"joint_id": sim_joint.joint_id,
+				"sim_joint": sim_joint,
+				"constraint": hinge_joint_node,
+				"base_body": base_body,
+				"head_body": head_body,
+				"axis_local": hinge_axis_local,
+				"angle_offset_rad": hinge_angle_offset,
+				"top_element_ids": groups.get(
+					int(spec.get("head_group_id", 0)),
+					[]
+				),
+			})
 			continue
 		if sim_joint.kind == SimulationJoint.Kind.ROTOR:
 			var rotor_definition: RotorDefinition = (
@@ -957,7 +1033,7 @@ func _attach_colliders_to_body(
 func _is_locomotive_assembly(assembly_id: int) -> bool:
 	if _world == null:
 		return false
-	return WheelSimulationService.is_locomotive_assembly(_world, assembly_id)
+	return ThrusterSimulationService.is_mobile_assembly(_world, assembly_id)
 
 
 func _is_active_locomotive(assembly_id: int) -> bool:
@@ -968,7 +1044,10 @@ func _is_active_locomotive(assembly_id: int) -> bool:
 
 
 func _should_tick_wheels(assembly_id: int) -> bool:
-	if not _is_locomotive_assembly(assembly_id):
+	if (
+		_world == null
+		or not WheelSimulationService.is_locomotive_assembly(_world, assembly_id)
+	):
 		return false
 	var body := get_physics_body(assembly_id)
 	if body is RigidBody3D:
@@ -994,6 +1073,101 @@ func _tick_wheel_pairs(delta: float) -> void:
 			Callable(self, "_wheel_body_for_suspension"),
 			_wheel_exclude_rids(assembly_id)
 		)
+
+
+func _tick_thrusters(delta: float) -> void:
+	if _world == null or delta <= 0.0:
+		return
+	for assembly_id: int in _sorted_int_keys(_bodies):
+		if not ThrusterSimulationService.is_flight_assembly(_world, assembly_id):
+			continue
+		var locomotion := _world.get_locomotion_controller(assembly_id)
+		if not locomotion.is_activated():
+			continue
+		var thrusters := ThrusterSimulationService.list_thruster_elements(
+			_world,
+			assembly_id
+		)
+		for thruster: SimulationElement in thrusters:
+			_apply_thruster_force(thruster, locomotion)
+		var gyros := ThrusterSimulationService.list_gyro_elements(
+			_world,
+			assembly_id
+		)
+		var gyro_count := gyros.size()
+		if gyro_count <= 0:
+			continue
+		for gyro: SimulationElement in gyros:
+			_apply_gyro_torque(gyro, locomotion, gyro_count)
+
+
+func _apply_thruster_force(
+	element: SimulationElement,
+	locomotion: AssemblyLocomotionController
+) -> void:
+	var archetype := element.get_archetype()
+	if archetype == null or archetype.thruster_definition == null:
+		return
+	var record := get_element_projection(element.element_id)
+	var body := record.get("body") as RigidBody3D
+	if body == null or body.freeze:
+		return
+	var powered := ThrusterSimulationService.is_element_powered(_world, element)
+	var axis_local := ThrusterProjectionUtil.thrust_axis_local(
+		archetype.thruster_definition,
+		element.orientation_index
+	)
+	var velocity_local := (
+		body.global_transform.basis.inverse() * body.linear_velocity
+	)
+	var throttle := ThrusterProjectionUtil.compute_thruster_throttle(
+		axis_local,
+		locomotion.translate_command,
+		locomotion.is_dampeners(),
+		velocity_local,
+		powered
+	)
+	var thrust_n := ThrusterProjectionUtil.compute_thrust_n(
+		archetype.thruster_definition,
+		throttle,
+		powered
+	)
+	if thrust_n <= 0.0:
+		return
+	var axis_world := (body.global_transform.basis * axis_local).normalized()
+	body.sleeping = false
+	# v0: central thrust keeps hop stable before nozzle torque / RCS tuning.
+	body.apply_central_force(axis_world * thrust_n)
+
+
+func _apply_gyro_torque(
+	element: SimulationElement,
+	locomotion: AssemblyLocomotionController,
+	gyro_count: int
+) -> void:
+	var archetype := element.get_archetype()
+	if archetype == null or archetype.gyro_definition == null:
+		return
+	var record := get_element_projection(element.element_id)
+	var body := record.get("body") as RigidBody3D
+	if body == null or body.freeze:
+		return
+	var powered := ThrusterSimulationService.is_element_powered(_world, element)
+	var omega_local := body.global_transform.basis.inverse() * body.angular_velocity
+	var torque_local := ThrusterProjectionUtil.compute_gyro_torque_local(
+		archetype.gyro_definition,
+		locomotion.pitch_command,
+		locomotion.yaw_command,
+		locomotion.roll_command,
+		locomotion.is_dampeners(),
+		omega_local,
+		gyro_count,
+		powered
+	)
+	if torque_local.length_squared() <= 0.0001:
+		return
+	body.sleeping = false
+	body.apply_torque(body.global_transform.basis * torque_local)
 
 
 func _wheel_body_for_suspension(
@@ -1035,6 +1209,19 @@ func _tick_rotor_actuators(delta: float) -> void:
 			var head_body: PhysicsBody3D = record.get("head_body")
 			if base_body == null or head_body == null:
 				continue
+			if sim_joint.kind == SimulationJoint.Kind.HINGE:
+				# configure_actuator can retune angle limits on a live joint.
+				# Only rewrite twist stops — full DOF reset every tick fights
+				# Jolt warm-starting and amplifies stop explosions.
+				var hinge_constraint: Generic6DOFJoint3D = (
+					record.get("constraint") as Generic6DOFJoint3D
+				)
+				if hinge_constraint != null:
+					HingeProjectionUtil.update_hinge_angle_limits(
+						hinge_constraint,
+						sim_joint.motor,
+						float(record.get("angle_offset_rad", 0.0))
+					)
 			var axis_world: Vector3 = (
 				base_body.global_transform.basis
 				* record.get("axis_local", Vector3.UP)
@@ -1097,10 +1284,6 @@ func _tick_piston_actuators(delta: float) -> void:
 		var assembly: SimulationAssembly = _world.get_assembly_raw(assembly_id)
 		if assembly == null or assembly.tombstoned:
 			continue
-		var root_body: PhysicsBody3D = _bodies.get(assembly_id) as PhysicsBody3D
-		if root_body == null:
-			continue
-		var assembly_transform: Transform3D = root_body.global_transform
 		for record_variant: Variant in _piston_constraints[assembly_id]:
 			if not record_variant is Dictionary:
 				continue
@@ -1112,9 +1295,12 @@ func _tick_piston_actuators(delta: float) -> void:
 			var head_body: PhysicsBody3D = record.get("head_body")
 			if base_body == null or head_body == null:
 				continue
+			# Axis must follow the piston base body group (hinge/rotor parent
+			# may have rotated away from the assembly root basis).
 			var axis_world: Vector3 = (
-				assembly_transform.basis * record.get("axis_local", Vector3.UP)
-			)
+				base_body.global_transform.basis
+				* record.get("axis_local", Vector3.UP)
+			).normalized()
 			var measured: Dictionary = PistonProjectionUtil.measure_axial_state(
 				base_body,
 				head_body,
@@ -1139,15 +1325,13 @@ func _tick_piston_actuators(delta: float) -> void:
 			)
 			if head_body is RigidBody3D:
 				head_mass = maxf((head_body as RigidBody3D).mass, head_mass)
-			var gravity := Vector3(
-				0.0,
-				-float(
-					ProjectSettings.get_setting(
-						"physics/3d/default_gravity",
-						9.8
-					)
-				),
-				0.0
+			var gravity := GravityField.resolve_gravity_accel(
+				self,
+				(
+					(head_body as Node3D).global_position
+					if head_body is Node3D
+					else Vector3.ZERO
+				)
 			)
 			var force_result: Dictionary = (
 				PistonProjectionUtil.compute_motor_force_scalar(

@@ -1,0 +1,142 @@
+[gd_scene format=3 uid="uid://main001"]
+
+[ext_resource type="Script" uid="uid://dy12yom7kucv7" path="res://scripts/flat_moon_bootstrap.gd" id="1"]
+[ext_resource type="PackedScene" uid="uid://player001" path="res://scenes/player.tscn" id="2"]
+[ext_resource type="VoxelGeneratorNoise2D" uid="uid://cngp1p34afd2p" path="res://resources/terrain_generator.tres" id="3"]
+[ext_resource type="Material" path="res://resources/terrain_material_smooth.tres" id="4"]
+[ext_resource type="Script" uid="uid://q1onpmc4txha" path="res://scripts/placed_blocks.gd" id="6"]
+[ext_resource type="Script" uid="uid://dy6xqaqoolp22" path="res://scripts/world_command_gateway.gd" id="10"]
+[ext_resource type="PackedScene" path="res://scenes/simulation_session.tscn" id="11"]
+[ext_resource type="PackedScene" uid="uid://lunarskydecor001" path="res://scenes/lunar_sky_decor.tscn" id="12"]
+[ext_resource type="Material" path="res://resources/sky/lunar_starfield_sky_material.tres" id="13"]
+
+[sub_resource type="Sky" id="Sky_env"]
+sky_material = ExtResource("13")
+radiance_size = 3
+
+[sub_resource type="Environment" id="Environment_main"]
+background_mode = 2
+sky = SubResource("Sky_env")
+ambient_light_source = 2
+ambient_light_color = Color(0.16, 0.18, 0.26, 1)
+ambient_light_sky_contribution = 0.45
+ambient_light_energy = 0.2
+tonemap_mode = 2
+tonemap_exposure = 0.92
+ssao_enabled = true
+ssao_radius = 1.2
+ssao_intensity = 0.65
+ssao_power = 1.4
+sdfgi_enabled = true
+sdfgi_min_cell_size = 0.5
+sdfgi_y_scale = 0
+sdfgi_energy = 0.2
+fog_enabled = true
+fog_mode = 1
+fog_light_color = Color(0.2, 0.24, 0.36, 1)
+fog_density = 0.00028
+fog_aerial_perspective = 0.5
+fog_sky_affect = 0.55
+
+[sub_resource type="VoxelMesherTransvoxel" id="VoxelMesherTransvoxel_main"]
+
+[node name="FlatMoon" type="Node3D" unique_id=1542859540]
+script = ExtResource("1")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=2097184809]
+environment = SubResource("Environment_main")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=840538034]
+transform = Transform3D(0.866025, -0.25, 0.433013, 0, 0.866025, 0.5, -0.5, -0.433013, 0.75, 0, 40, 0)
+light_color = Color(0.98, 0.99, 1, 1)
+light_energy = 1.55
+shadow_enabled = true
+directional_shadow_mode = 1
+directional_shadow_blend_splits = true
+directional_shadow_max_distance = 128.0
+
+[node name="FillLight" type="DirectionalLight3D" parent="." unique_id=1302696797]
+transform = Transform3D(-0.866025, 0.25, -0.433013, 0, 0.866025, 0.5, 0.5, 0.433013, -0.75, 0, 24, 0)
+light_color = Color(0.55, 0.62, 0.82, 1)
+light_energy = 0.28
+
+[node name="LunarSkyDecor" parent="." instance=ExtResource("12")]
+sun_light_path = NodePath("../DirectionalLight3D")
+earth_direction = Vector3(0.35, 0.78, -0.52)
+angular_diameter_deg = 5.2
+distance_m = 12000.0
+
+[node name="VoxelTerrain" type="VoxelTerrain" parent="." unique_id=823362394]
+transform = Transform3D(0.65, 0, 0, 0, 0.65, 0, 0, 0, 0.65, 0, 0, 0)
+generator = ExtResource("3")
+mesher = SubResource("VoxelMesherTransvoxel_main")
+max_view_distance = 200
+material_override = ExtResource("4")
+
+[node name="PlacedBlocks" type="Node3D" parent="." unique_id=1799464660]
+script = ExtResource("6")
+
+[node name="WorldCommandGateway" type="Node" parent="." unique_id=2047263142]
+script = ExtResource("10")
+
+[node name="SimulationSession" parent="." unique_id=1913214264 instance=ExtResource("11")]
+gateway_path = NodePath("../WorldCommandGateway")
+
+[node name="BaseSpawn" type="Marker3D" parent="." unique_id=1964029452]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -30, 0, 8)
+
+[node name="Player" parent="." unique_id=213621646 instance=ExtResource("2")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 16)
+
+[node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=605350263]
+
+[node name="Loading" type="Label" parent="CanvasLayer" unique_id=1794338184]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -240.0
+offset_top = -20.0
+offset_right = 240.0
+offset_bottom = 20.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(1, 1, 1, 0.95)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.85)
+theme_override_constants/shadow_offset_x = 2
+theme_override_constants/shadow_offset_y = 2
+theme_override_font_sizes/font_size = 22
+text = "Загрузка террейна..."
+horizontal_alignment = 1
+
+[node name="Hint" type="Label" parent="CanvasLayer" unique_id=1626922486]
+offset_left = 16.0
+offset_top = 12.0
+offset_right = 720.0
+offset_bottom = 215.0
+theme_override_colors/font_color = Color(1, 1, 1, 0.9)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.8)
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 1
+text = "WASD — ходьба, Shift — бег, Space — прыжок, Esc — настройки
+1–9 — инструменты, ЛКМ — действие, C/V/B — поворот блока
+ПКМ/F по грунту — первый блок базы, E у ровера — кокпит
+В кокпите: WASD — ехать, Space — тормоз, E — выйти"
+
+[node name="Coordinates" type="Label" parent="CanvasLayer" unique_id=1269680688]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -300.0
+offset_top = 12.0
+offset_right = -16.0
+offset_bottom = 70.0
+grow_horizontal = 0
+theme_override_colors/font_color = Color(1, 1, 1, 0.9)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.8)
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 1
+theme_override_font_sizes/font_size = 18
+text = "Игрок:  0.0, 0.0, 0.0"
+horizontal_alignment = 2

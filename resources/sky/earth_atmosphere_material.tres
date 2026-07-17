@@ -1,0 +1,15 @@
+[gd_resource type="ShaderMaterial" format=3]
+
+[ext_resource type="Shader" path="res://resources/sky/earth_atmosphere.gdshader" id="1"]
+
+[resource]
+render_priority = 1
+shader = ExtResource("1")
+shader_parameter/atmosphere_color = Color(0.45, 0.72, 1.0, 1)
+shader_parameter/rim_power = 1.9
+shader_parameter/rim_intensity = 1.85
+shader_parameter/face_glow = 0.2
+shader_parameter/night_softness = 0.4
+shader_parameter/sun_direction = Vector3(0.5, 0.7, 0.3)
+shader_parameter/haze_color = Color(0.55, 0.65, 0.85, 1)
+shader_parameter/haze_mix = 0.4

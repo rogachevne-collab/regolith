@@ -1,0 +1,32 @@
+[gd_scene format=3 uid="uid://cdgwh0kuuyve3"]
+
+[ext_resource type="Script" path="res://scripts/lunar_sky_decor.gd" id="1"]
+[ext_resource type="Material" path="res://resources/sky/earth_body_material.tres" id="2"]
+[ext_resource type="Material" path="res://resources/sky/earth_atmosphere_material.tres" id="3"]
+
+[sub_resource type="SphereMesh" id="SphereMesh_earth"]
+radius = 24.0
+height = 48.0
+radial_segments = 64
+rings = 32
+
+[sub_resource type="SphereMesh" id="SphereMesh_atmo"]
+radius = 25.1
+height = 50.2
+radial_segments = 64
+rings = 32
+
+[node name="LunarSkyDecor" type="Node3D"]
+script = ExtResource("1")
+
+[node name="Earth" type="MeshInstance3D" parent="."]
+cast_shadow = 0
+gi_mode = 0
+mesh = SubResource("SphereMesh_earth")
+material_override = ExtResource("2")
+
+[node name="Atmosphere" type="MeshInstance3D" parent="."]
+cast_shadow = 0
+gi_mode = 0
+mesh = SubResource("SphereMesh_atmo")
+material_override = ExtResource("3")

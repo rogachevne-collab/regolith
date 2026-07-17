@@ -1,7 +1,7 @@
 class_name SimulationSnapshot
 extends RefCounted
 
-const VERSION := 7
+const VERSION := 8
 
 static var last_validate_error: String = ""
 
@@ -339,6 +339,18 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 				!= joint.assembly_id
 				or joint.port_a_id != SimulationMotorState.ROTOR_DRIVE_PORT
 				or joint.port_b_id != SimulationMotorState.ROTOR_TOP_PORT
+				or joint.motor == null
+			):
+				return false
+		elif joint.kind == SimulationJoint.Kind.HINGE:
+			if (
+				joint.element_b_id <= 0
+				or joint.element_b_id == joint.element_a_id
+				or not elements.has(joint.element_b_id)
+				or (elements[joint.element_b_id] as SimulationElement).assembly_id
+				!= joint.assembly_id
+				or joint.port_a_id != SimulationMotorState.HINGE_DRIVE_PORT
+				or joint.port_b_id != SimulationMotorState.HINGE_TOP_PORT
 				or joint.motor == null
 			):
 				return false

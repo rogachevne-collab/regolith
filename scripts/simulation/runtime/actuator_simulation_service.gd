@@ -73,6 +73,8 @@ static func apply_configure_actuator(
 		}
 	if joint.kind == SimulationJoint.Kind.ROTOR:
 		return _apply_configure_rotor(world, joint, base_element, command)
+	if joint.kind == SimulationJoint.Kind.HINGE:
+		return _apply_configure_hinge(world, joint, base_element, command)
 	var definition := _piston_definition_for_element(base_element)
 	if definition == null:
 		return {"status": &"failed", "reason": &"invalid_reference"}
@@ -194,6 +196,83 @@ static func _apply_configure_rotor(
 	}
 
 
+const HINGE_LIMIT_SNAP_RAD := PI / 180.0
+
+
+static func _apply_configure_hinge(
+	world: SimulationWorld,
+	joint: SimulationJoint,
+	base_element: SimulationElement,
+	command: ConfigureActuatorCommand
+) -> Dictionary:
+	var archetype := base_element.get_archetype()
+	var definition: HingeDefinition = (
+		archetype.hinge_definition if archetype != null else null
+	)
+	if definition == null:
+		return {"status": &"failed", "reason": &"invalid_reference"}
+	var motor := joint.motor
+	if command.extend_velocity_mps >= 0.0:
+		motor.extend_velocity_mps = clampf(
+			command.extend_velocity_mps,
+			0.0,
+			definition.max_velocity_rad_s
+		)
+	if command.retract_velocity_mps >= 0.0:
+		motor.retract_velocity_mps = clampf(
+			command.retract_velocity_mps,
+			0.0,
+			definition.max_velocity_rad_s
+		)
+	if (
+		command.extend_velocity_mps >= 0.0
+		or command.retract_velocity_mps >= 0.0
+	):
+		motor.speed_limit_mps = maxf(
+			motor.extend_velocity_mps,
+			motor.retract_velocity_mps
+		)
+	if command.force_limit_n >= 0.0:
+		motor.force_limit_n = clampf(
+			command.force_limit_n,
+			1.0,
+			definition.max_torque_limit_nm
+		)
+	var lower_limit := motor.lower_limit_m
+	var upper_limit := motor.upper_limit_m
+	if command.lower_limit_set:
+		lower_limit = clampf(
+			snappedf(command.lower_limit_m, HINGE_LIMIT_SNAP_RAD),
+			definition.min_angle_rad,
+			definition.max_angle_rad
+		)
+	if command.upper_limit_set:
+		upper_limit = clampf(
+			snappedf(command.upper_limit_m, HINGE_LIMIT_SNAP_RAD),
+			definition.min_angle_rad,
+			definition.max_angle_rad
+		)
+	if upper_limit <= lower_limit + 0.0001:
+		return {"status": &"failed", "reason": &"invalid_reference"}
+	motor.lower_limit_m = lower_limit
+	motor.upper_limit_m = upper_limit
+	motor.target_position_m = motor.clamp_target_position()
+	motor.target_velocity_mps = motor.clamp_target_velocity()
+	motor.observed_position_m = motor.clamp_observed_position()
+	if motor.status in [
+		SimulationMotorState.Status.STUCK,
+		SimulationMotorState.Status.OVERLOADED,
+	]:
+		motor.status = SimulationMotorState.Status.IDLE
+	_update_joint_status(world, joint)
+	return {
+		"status": &"ok",
+		"reason": &"ok",
+		"joint_id": joint.joint_id,
+		"status_name": _status_name(joint.motor.status),
+	}
+
+
 static func _piston_definition_for_element(
 	element: SimulationElement
 ) -> PistonDefinition:
@@ -250,6 +329,7 @@ static func sync_power_demand(world: SimulationWorld) -> void:
 		if (
 			archetype.piston_definition != null
 			or archetype.rotor_definition != null
+			or archetype.hinge_definition != null
 		):
 			world.ensure_industry_element_runtime(
 				element.element_id

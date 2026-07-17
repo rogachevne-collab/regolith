@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://moonspaceshot001"]
+
+[ext_resource type="Script" path="res://scripts/moon_space_shot.gd" id="1"]
+
+[node name="MoonSpaceShot" type="Node3D"]
+script = ExtResource("1")

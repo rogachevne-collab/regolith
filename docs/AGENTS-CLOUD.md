@@ -14,8 +14,9 @@
   софт-рендер) и dummy-audio. Соответствующие `ERROR/WARNING` (VK_KHR_surface,
   ALSA, SDFGI) при старте безвредны, игра рендерит корректно.
 - **GUI-запуск:** дисплей `:1`. Запускай окно как `DISPLAY=:1 ./run.sh res://scenes/main.tscn`.
-- **Smoke `main.tscn`:** это игровая сцена и работает бесконечно; для headless-проверки
+- **Smoke `main.tscn`:** planetoid default; для headless-проверки
   компиляции шейдеров/скриптов ограничивай кадры: `./run.sh --headless res://scenes/main.tscn --quit-after 300`
+  Legacy flat yard: `res://scenes/flat_moon.tscn`.
   (предупреждения «ObjectDB instances leaked at exit» при таком выходе — норма).
 - **Бур:** карвит voxel-terrain только под прицелом в пределах `reach = 2.2 м`
   (`scripts/drill.gd`); чтобы прорыть грунт под ногами, смотри почти строго вниз.

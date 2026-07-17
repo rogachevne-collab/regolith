@@ -99,6 +99,7 @@ script = ExtResource("13")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.75, 0)
 current = true
 fov = 80.0
+far = 20000.0
 script = ExtResource("2")
 
 [node name="MiningLight" type="SpotLight3D" parent="Camera"]
@@ -251,4 +252,6 @@ mesh = SubResource("CapsuleMesh_body")
 surface_material_override/0 = SubResource("StandardMaterial3D_body")
 
 [node name="VoxelViewer" type="VoxelViewer" parent="." unique_id=1175640371]
-view_distance = 197
+view_distance = 140
+requires_collisions = true
+requires_visuals = true

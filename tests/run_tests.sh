@@ -13,7 +13,9 @@ KERNEL=(
 	test_simulation_runtime
 	test_simulation_actuator
 	test_simulation_wheel
+	test_simulation_thruster
 	test_rover_compose
+	test_machine_compose
 	test_simulation_projection
 	test_construction_preview
 	test_construction_damage
@@ -21,6 +23,8 @@ KERNEL=(
 	test_industry_v1
 	test_player_inventory_hotbar
 	test_suit_state
+	test_connected_block_visual
+	test_impact_destruction
 )
 
 # Physics/gameplay/UI integration scenes. Not part of the gate: the running
@@ -30,7 +34,6 @@ EXTRA=(
 	test_character_controller
 	test_construction_toolbar_remap
 	test_hud_palette_layout
-	test_impact_destruction
 	test_player_interaction
 )
 

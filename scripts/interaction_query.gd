@@ -9,6 +9,7 @@ signal hit_updated(hit: InteractionHit)
 @export var terrain_path: NodePath = NodePath("../../VoxelTerrain")
 @export var simulation_session_path: NodePath = NodePath("../../SimulationSession")
 @export var max_distance := 4.0
+@export var build_max_distance := 10.0
 ## Layers 1 (terrain), 4 (interaction wire colliders), 8 (loot pickup only).
 @export_flags_3d_physics var collision_mask := 13
 
@@ -17,7 +18,7 @@ var current_hit := InteractionHit.empty()
 var _player: CollisionObject3D
 var _camera: Camera3D
 var _tools: ToolController
-var _terrain: VoxelTerrain
+var _terrain: Node3D
 var _voxel_tool: VoxelTool
 var _session: SimulationSession
 
@@ -28,7 +29,7 @@ func _ready() -> void:
 	_tools = get_node_or_null(tool_controller_path) as ToolController
 	_terrain = get_node(terrain_path)
 	_session = get_node_or_null(simulation_session_path) as SimulationSession
-	_voxel_tool = _terrain.get_voxel_tool()
+	_voxel_tool = TerrainCompat.get_voxel_tool(_terrain)
 	_voxel_tool.channel = VoxelBuffer.CHANNEL_SDF
 
 
@@ -43,23 +44,33 @@ func _physics_process(_delta: float) -> void:
 	var aim: Transform3D = _camera.call("aim_transform")
 	var origin := aim.origin
 	var direction := -aim.basis.z.normalized()
-	var physics_hit := _query_physics(origin, direction)
+	var reach := _effective_max_distance()
+	var physics_hit := _query_physics(origin, direction, reach)
 	if physics_hit.valid:
 		_publish(physics_hit)
 		return
-	_publish(_query_voxel(origin, direction))
+	_publish(_query_voxel(origin, direction, reach))
+
+
+func _effective_max_distance() -> float:
+	if _tools != null and _tools.active_tool == &"build":
+		return build_max_distance
+	return max_distance
 
 
 func _query_physics(
 	origin: Vector3,
-	direction: Vector3
+	direction: Vector3,
+	reach: float = -1.0
 ) -> InteractionHit:
+	if reach <= 0.0:
+		reach = max_distance
 	var exclude: Array = [_player.get_rid()]
 	var skips_left := 8
 	while skips_left >= 0:
 		var query := PhysicsRayQueryParameters3D.create(
 			origin,
-			origin + direction * max_distance
+			origin + direction * reach
 		)
 		query.exclude = exclude
 		query.collision_mask = collision_mask
@@ -82,16 +93,27 @@ func _query_physics(
 			exclude.append((collider as CollisionObject3D).get_rid())
 			skips_left -= 1
 			continue
+		if (
+			_should_skip_body_for_build(kind)
+			and collider is CollisionObject3D
+		):
+			exclude.append((collider as CollisionObject3D).get_rid())
+			skips_left -= 1
+			continue
 		metadata["aim_direction"] = direction
 		var stable_target_id := (
 			StringName(str(metadata["element_id"]))
 			if kind == InteractionHit.KIND_SIMULATION_ELEMENT
 			else StringName(str(collider.get_instance_id()))
 		)
+		var hit_point: Vector3 = raw["position"]
+		var hit_normal: Vector3 = raw["normal"]
+		if kind == InteractionHit.KIND_VOXEL:
+			hit_normal = GravityField.resolve_up(_terrain, hit_point)
 		return InteractionHit.create(
-			raw["position"],
-			raw["normal"],
-			origin.distance_to(raw["position"]),
+			hit_point,
+			hit_normal,
+			origin.distance_to(hit_point),
 			kind,
 			collider,
 			stable_target_id,
@@ -102,14 +124,17 @@ func _query_physics(
 
 func _query_voxel(
 	origin: Vector3,
-	direction: Vector3
+	direction: Vector3,
+	reach: float = -1.0
 ) -> InteractionHit:
+	if reach <= 0.0:
+		reach = max_distance
 	var raw: VoxelRaycastResult = VoxelSpaceUtil.raycast_world(
 		_voxel_tool,
 		_terrain,
 		origin,
 		direction,
-		max_distance
+		reach
 	)
 	if raw == null:
 		return InteractionHit.empty()
@@ -121,7 +146,7 @@ func _query_voxel(
 	)
 	return InteractionHit.create(
 		world_point,
-		-direction,
+		GravityField.resolve_up(_terrain, world_point),
 		origin.distance_to(world_point),
 		InteractionHit.KIND_VOXEL,
 		null,
@@ -144,7 +169,7 @@ func _target_kind(
 		return InteractionHit.KIND_WORLD_LOOT
 	if metadata.has("electric_link_id"):
 		return InteractionHit.KIND_ELECTRIC_CABLE
-	if collider is VoxelTerrain:
+	if TerrainCompat.is_terrain_collider(collider, _terrain):
 		return InteractionHit.KIND_VOXEL
 	if collider is Node and collider.is_in_group("placed_blocks"):
 		return InteractionHit.KIND_PLACED_BLOCK
@@ -286,6 +311,11 @@ func _target_metadata(
 				int(metadata["element_id"]),
 				metadata
 			)
+			HingePlacementUtil.enrich_interaction_metadata(
+				_session.world,
+				int(metadata["element_id"]),
+				metadata
+			)
 			WheelPlacementUtil.enrich_interaction_metadata(
 				_session.world,
 				int(metadata["element_id"]),
@@ -312,6 +342,14 @@ func _should_skip_loot_for_drill() -> bool:
 
 func _should_skip_cable_for_build() -> bool:
 	return _tools != null and _tools.active_tool == &"build"
+
+
+func _should_skip_body_for_build(kind: StringName) -> bool:
+	return (
+		_tools != null
+		and _tools.active_tool == &"build"
+		and kind == InteractionHit.KIND_BODY
+	)
 
 
 func _publish(hit: InteractionHit) -> void:

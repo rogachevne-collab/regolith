@@ -20,7 +20,9 @@ const _GROUND_SEAT_SAMPLES: Array[Vector2] = [
 @export var placed_blocks_path: NodePath = NodePath("../PlacedBlocks")
 @export var simulation_session_path: NodePath = NodePath("../SimulationSession")
 
-var _terrain: VoxelTerrain
+signal terrain_modified(removed_volume_m3: float, dig_center: Vector3, dig_radius_m: float)
+
+var _terrain: Node3D
 var _placed_blocks: Node
 var _voxel_tool: VoxelTool
 var _session: SimulationSession
@@ -46,7 +48,7 @@ func _ready() -> void:
 	_terrain = get_node(terrain_path)
 	_placed_blocks = get_node(placed_blocks_path)
 	_session = get_node_or_null(simulation_session_path) as SimulationSession
-	_voxel_tool = _terrain.get_voxel_tool()
+	_voxel_tool = TerrainCompat.get_voxel_tool(_terrain)
 	_voxel_tool.channel = VoxelBuffer.CHANNEL_SDF
 	add_to_group(&"world_command_gateway")
 	for archetype_id: String in ToolController.CONSTRUCTION_ARCHETYPES:
@@ -221,6 +223,7 @@ func _remove_voxel(
 	if total_removed_m3 > 0.000001:
 		_hand_drill_last_bite_center = bite_center
 		_hand_drill_last_bite_msec = now_msec
+		_notify_terrain_modified(total_removed_m3, bite_center, radius)
 	else:
 		_hand_drill_last_bite_center = null
 	var removed_m3 := total_removed_m3
@@ -288,9 +291,46 @@ func apply_terrain_carve(
 	request["volume_budget_m3"] = volume_budget_m3
 	if not request.has("sdf_scale"):
 		request["sdf_scale"] = TerrainExcavationService.DEFAULT_SDF_SCALE
-	return float(
+	var removed := float(
 		_excavation.excavate(_voxel_tool, request).get("removed_volume_m3", 0.0)
 	)
+	if removed > 0.000001:
+		_notify_terrain_modified(
+			removed,
+			_dig_center_from_request(request),
+			_dig_radius_from_request(request)
+		)
+	return removed
+
+
+func _dig_center_from_request(request: Dictionary) -> Vector3:
+	match StringName(request.get("stamp_kind", &"sphere")):
+		&"path":
+			var points: PackedVector3Array = request.get("points", PackedVector3Array())
+			if points.is_empty():
+				return Vector3.ZERO
+			return points[points.size() - 1]
+		_:
+			return request.get("center", Vector3.ZERO)
+
+
+func _dig_radius_from_request(request: Dictionary) -> float:
+	match StringName(request.get("stamp_kind", &"sphere")):
+		&"path":
+			var radii: PackedFloat32Array = request.get("radii", PackedFloat32Array())
+			if radii.is_empty():
+				return 0.0
+			return float(radii[radii.size() - 1])
+		_:
+			return float(request.get("radius", 0.0))
+
+
+func _notify_terrain_modified(
+	removed_volume_m3: float,
+	dig_center: Vector3 = Vector3.ZERO,
+	dig_radius_m: float = 0.0
+) -> void:
+	terrain_modified.emit(removed_volume_m3, dig_center, dig_radius_m)
 
 
 func stationary_drill_has_terrain_contact(element_id: int) -> bool:
@@ -309,7 +349,7 @@ func carve_stationary_drill(element_id: int) -> float:
 		* radius
 		* IndustryArchetypeProfile.drill_carve_center_offset_factor()
 	)
-	return float(
+	var removed := float(
 		_excavation.excavate(
 			_voxel_tool,
 			{
@@ -321,6 +361,9 @@ func carve_stationary_drill(element_id: int) -> float:
 			}
 		).get("removed_volume_m3", 0.0)
 	)
+	if removed > 0.000001:
+		_notify_terrain_modified(removed, center, radius)
+	return removed
 
 
 func _stationary_drill_contact(element_id: int) -> Dictionary:
@@ -517,27 +560,92 @@ func tick_rover_locomotion_input() -> void:
 	if assembly_id <= 0:
 		return
 	var locomotion := _session.world.get_locomotion_controller(assembly_id)
-	if Input.is_action_just_pressed(&"toggle_parking_brake"):
+	var is_flight := ThrusterSimulationService.is_flight_assembly(
+		_session.world,
+		assembly_id
+	)
+	var is_loco := WheelSimulationService.is_locomotive_assembly(
+		_session.world,
+		assembly_id
+	)
+	if is_flight and Input.is_action_just_pressed(&"toggle_dampeners"):
+		locomotion.set_dampeners(not locomotion.is_dampeners())
+		_wake_rover_body(assembly_id)
+	if is_loco and Input.is_action_just_pressed(&"toggle_parking_brake"):
 		_toggle_rover_parking_brake(assembly_id, locomotion)
-	if locomotion.is_parking_brake():
+	if is_loco and locomotion.is_parking_brake() and not is_flight:
 		# Latched Space: same commands every tick, no wheel-tick special cases.
 		locomotion.set_drive_command(0.0)
 		locomotion.set_steering_command(0.0)
 		locomotion.set_brake_command(1.0)
+		locomotion.set_translate_command(Vector3.ZERO)
+		locomotion.set_attitude_commands(0.0, 0.0, 0.0)
 		_wake_rover_body(assembly_id)
 		return
-	var drive := (
-		Input.get_action_strength(&"move_forward")
-		- Input.get_action_strength(&"move_back")
-	)
-	var steer := Input.get_axis(&"move_right", &"move_left")
-	locomotion.set_drive_command(drive)
-	locomotion.set_steering_command(steer)
-	locomotion.set_brake_command(
-		1.0 if Input.is_action_pressed(&"jump") else 0.0
-	)
+	if is_flight:
+		# SE 6DOF: flight consumes WASD/Space/C; wheels idle while thrusters present.
+		locomotion.set_drive_command(0.0)
+		locomotion.set_steering_command(0.0)
+		locomotion.set_brake_command(
+			1.0 if is_loco and locomotion.is_parking_brake() else 0.0
+		)
+		# Seat forward is body −Z (seated player keeps rotation ZERO and the
+		# camera looks down −Z), so move_forward commands −z translate.
+		var translate := Vector3(
+			Input.get_action_strength(&"move_right")
+			- Input.get_action_strength(&"move_left"),
+			Input.get_action_strength(&"move_up")
+			- Input.get_action_strength(&"move_down"),
+			Input.get_action_strength(&"move_back")
+			- Input.get_action_strength(&"move_forward")
+		)
+		locomotion.set_translate_command(translate)
+		var look := _consume_flight_look_delta()
+		var roll := (
+			Input.get_action_strength(&"roll_right")
+			- Input.get_action_strength(&"roll_left")
+		)
+		# −Z forward: pitch up = +X torque (mouse up, like on-foot freelook),
+		# yaw right = −Y, roll right (E) = −Z.
+		locomotion.set_attitude_commands(-look.y, -look.x, -roll)
+	elif is_loco:
+		var drive := (
+			Input.get_action_strength(&"move_forward")
+			- Input.get_action_strength(&"move_back")
+		)
+		var steer := Input.get_axis(&"move_right", &"move_left")
+		locomotion.set_drive_command(drive)
+		locomotion.set_steering_command(steer)
+		locomotion.set_brake_command(
+			1.0 if Input.is_action_pressed(&"jump") else 0.0
+		)
+		locomotion.set_translate_command(Vector3.ZERO)
+		locomotion.set_attitude_commands(0.0, 0.0, 0.0)
+	else:
+		locomotion.set_drive_command(0.0)
+		locomotion.set_steering_command(0.0)
+		locomotion.set_brake_command(0.0)
+		locomotion.set_translate_command(Vector3.ZERO)
+		locomotion.set_attitude_commands(0.0, 0.0, 0.0)
 	if locomotion.has_active_input():
 		_wake_rover_body(assembly_id)
+
+
+const FLIGHT_LOOK_SENSITIVITY := 0.035
+
+
+func _consume_flight_look_delta() -> Vector2:
+	var player := _rover_seat_player
+	if player == null or not player.has_method("get_node_or_null"):
+		return Vector2.ZERO
+	var camera: Node = player.get_node_or_null("Camera")
+	if camera == null or not camera.has_method("consume_flight_look_delta"):
+		return Vector2.ZERO
+	var raw: Vector2 = camera.call("consume_flight_look_delta")
+	return Vector2(
+		clampf(raw.x * FLIGHT_LOOK_SENSITIVITY, -1.0, 1.0),
+		clampf(raw.y * FLIGHT_LOOK_SENSITIVITY, -1.0, 1.0)
+	)
 
 
 func _toggle_rover_parking_brake(
@@ -598,11 +706,11 @@ func _enter_rover_seat(
 	var assembly_id := int(metadata.get("assembly_id", 0))
 	if element_id <= 0 or assembly_id <= 0:
 		return _result(&"invalid_target")
-	if not WheelSimulationService.is_locomotive_assembly(
+	if not ThrusterSimulationService.is_mobile_assembly(
 		_session.world,
 		assembly_id
 	):
-		return _result(&"blocked", {"detail": &"not_locomotive"})
+		return _result(&"blocked", {"detail": &"not_mobile"})
 	var body := (
 		_session.projection.get_element_projection(element_id).get("body")
 		as PhysicsBody3D
@@ -624,6 +732,14 @@ func _enter_rover_seat(
 		player.call("set_gameplay_input_enabled", false)
 	if player.has_method("enter_vehicle"):
 		player.call("enter_vehicle", body, seat_offset)
+	if player.has_method("set_vehicle_flight_controls"):
+		player.call(
+			"set_vehicle_flight_controls",
+			ThrusterSimulationService.is_flight_assembly(
+				_session.world,
+				assembly_id
+			)
+		)
 	_rover_seat_player = player
 	_rover_seat_assembly_id = assembly_id
 	_rover_seat_element_id = element_id
@@ -751,7 +867,7 @@ func _exit_rover_seat(player: Node3D) -> Dictionary:
 			exit_position = (
 				seat_world
 				+ body.global_transform.basis.x * 1.2
-				+ Vector3.UP * 0.15
+				+ GravityField.resolve_up(body, seat_world) * 0.15
 			)
 	if player.has_method("exit_vehicle"):
 		player.call("exit_vehicle", exit_position)
@@ -760,11 +876,15 @@ func _exit_rover_seat(player: Node3D) -> Dictionary:
 	var locomotion := _session.world.get_locomotion_controller(assembly_id)
 	locomotion.set_drive_command(0.0)
 	locomotion.set_steering_command(0.0)
+	locomotion.set_translate_command(Vector3.ZERO)
+	locomotion.set_attitude_commands(0.0, 0.0, 0.0)
 	if locomotion.is_parking_brake():
 		locomotion.set_brake_command(1.0)
 	else:
 		locomotion.set_brake_command(0.0)
-	# Keep activated so floating wheel phys continues (coast or parking lock).
+	if player.has_method("set_vehicle_flight_controls"):
+		player.call("set_vehicle_flight_controls", false)
+	# Keep activated so floating wheel/flight phys continues.
 	_session.projection.sync_body_motion_now(assembly_id)
 	_rover_seat_player = null
 	_rover_seat_assembly_id = 0
@@ -1174,7 +1294,7 @@ func _apply_place_plan(plan: Dictionary) -> Dictionary:
 
 
 ## Reseats a first-on-ground placement so its footprint rests on the lowest
-## terrain sample beneath it. Only shifts the continuous root along world +Y/-Y;
+## terrain sample beneath it along Field down. Only shifts the continuous root;
 ## the discrete grid frame (topology) is untouched. Non-ground plans (attaching
 ## to an existing assembly) and invalid plans pass through unchanged.
 func _seat_ground_plan(plan: Dictionary) -> Dictionary:
@@ -1191,61 +1311,95 @@ func _seat_ground_plan(plan: Dictionary) -> Dictionary:
 	)
 	var origin_cell: Vector3i = plan.get("origin_cell", Vector3i.ZERO)
 	var orientation_index := int(plan.get("orientation_index", 0))
-	var footprint := AABB()
-	var has_box := false
+	# Exact oriented corners, not a world-axis AABB: on a radial field the
+	# block basis is tilted against world axes, an axis-aligned AABB inflates
+	# downward and the block seats on a phantom corner — floating above the
+	# ground by the inflation amount. Corner support is exact for any tilt.
+	var corners := PackedVector3Array()
+	var center := Vector3.ZERO
 	for collider: ColliderDefinition in archetype.colliders:
-		var box := GridPoseUtil.collider_world_aabb(
+		var collider_transform := GridPoseUtil.collider_world_transform(
 			root, origin_cell, orientation_index, collider
 		)
-		if not has_box:
-			footprint = box
-			has_box = true
-		else:
-			footprint = footprint.merge(box)
-	if not has_box:
+		var half: Vector3 = collider.aabb_half_extents()
+		for sx: int in [-1, 1]:
+			for sy: int in [-1, 1]:
+				for sz: int in [-1, 1]:
+					var corner: Vector3 = collider_transform * Vector3(
+						half.x * sx,
+						half.y * sy,
+						half.z * sz
+					)
+					corners.append(corner)
+					center += corner
+	if corners.is_empty():
 		return plan
-	var bottom_y := footprint.position.y
-	var probe_from_y := bottom_y + footprint.size.y + 1.0
-	var probe_distance := (probe_from_y - bottom_y) + 4.0
-	var center := footprint.position + footprint.size * 0.5
-	var lowest_surface := INF
+	center /= float(corners.size())
+	var up := GravityField.resolve_up(self, center)
+	var down := -up
+	var field := GravityField.find_in_tree(self)
+	var frame: Basis = (
+		field.tangent_basis_at(center)
+		if field != null
+		else Basis.looking_at(Vector3.FORWARD, Vector3.UP)
+	)
+	var bottom_along_up := INF
+	var top_along_up := -INF
+	var extent_x := 0.0
+	var extent_z := 0.0
+	for corner: Vector3 in corners:
+		bottom_along_up = minf(bottom_along_up, corner.dot(up))
+		top_along_up = maxf(top_along_up, corner.dot(up))
+		extent_x = maxf(extent_x, absf((corner - center).dot(frame.x)))
+		extent_z = maxf(extent_z, absf((corner - center).dot(frame.z)))
+	var probe_top := top_along_up + 1.0
+	var probe_distance := probe_top - bottom_along_up + 4.0
+	var lowest_along_up := INF
 	for sample: Vector2 in _GROUND_SEAT_SAMPLES:
-		var sample_x := center.x + sample.x * footprint.size.x
-		var sample_z := center.z + sample.y * footprint.size.z
-		var sample_xz := Vector2(sample_x, sample_z)
-		var physics_y := VoxelSpaceUtil.physics_down_surface_y(
+		var sample_point := (
+			center
+			+ frame.x * (sample.x * extent_x)
+			+ frame.z * (sample.y * extent_z)
+		)
+		var probe_from := (
+			sample_point
+			+ up * (probe_top - sample_point.dot(up))
+		)
+		var physics_point := VoxelSpaceUtil.physics_surface_along_ray(
 			_physics_space_state(),
-			sample_xz,
-			probe_from_y,
+			probe_from,
+			down,
 			probe_distance
 		)
-		if is_finite(physics_y):
-			lowest_surface = minf(lowest_surface, physics_y)
+		if (
+			is_finite(physics_point.x)
+			and is_finite(physics_point.y)
+			and is_finite(physics_point.z)
+		):
+			lowest_along_up = minf(lowest_along_up, physics_point.dot(up))
 			continue
 		var hit: VoxelRaycastResult = VoxelSpaceUtil.raycast_world(
 			_voxel_tool,
 			_terrain,
-			Vector3(
-				center.x + sample.x * footprint.size.x,
-				probe_from_y,
-				center.z + sample.y * footprint.size.z
-			),
-			Vector3.DOWN,
+			probe_from,
+			down,
 			probe_distance
 		)
 		if hit == null:
 			continue
-		lowest_surface = minf(
-			lowest_surface,
-			probe_from_y
-			- VoxelSpaceUtil.raycast_hit_world_distance(_terrain, hit)
+		var sdf_point := VoxelSpaceUtil.raycast_hit_world_point(
+			_terrain,
+			probe_from,
+			down,
+			hit
 		)
-	if is_inf(lowest_surface):
+		lowest_along_up = minf(lowest_along_up, sdf_point.dot(up))
+	if is_inf(lowest_along_up):
 		return plan
-	var delta_y := (lowest_surface - GROUND_SEAT_EMBED) - bottom_y
-	if absf(delta_y) < 0.0001:
+	var delta := (lowest_along_up - GROUND_SEAT_EMBED) - bottom_along_up
+	if absf(delta) < 0.0001:
 		return plan
-	var shift := Vector3(0.0, delta_y, 0.0)
+	var shift := up * delta
 	var seated := plan.duplicate(true)
 	var seated_root := root.translated(shift)
 	seated["assembly_world_transform"] = seated_root
@@ -1492,7 +1646,10 @@ func _set_actuator_target(
 			"joint_id",
 			metadata.get(
 				"piston_joint_id",
-				metadata.get("rotor_joint_id", 0)
+				metadata.get(
+					"rotor_joint_id",
+					metadata.get("hinge_joint_id", 0)
+				)
 			)
 		)
 	)
@@ -1536,7 +1693,10 @@ func _configure_actuator(
 			"joint_id",
 			metadata.get(
 				"piston_joint_id",
-				metadata.get("rotor_joint_id", 0)
+				metadata.get(
+					"rotor_joint_id",
+					metadata.get("hinge_joint_id", 0)
+				)
 			)
 		)
 	)
@@ -1549,6 +1709,8 @@ func _configure_actuator(
 	configure.force_limit_n = float(parameters.get("force_limit_n", -1.0))
 	configure.lower_limit_m = float(parameters.get("lower_limit_m", -1.0))
 	configure.upper_limit_m = float(parameters.get("upper_limit_m", -1.0))
+	configure.lower_limit_set = parameters.has("lower_limit_m")
+	configure.upper_limit_set = parameters.has("upper_limit_m")
 	var result := _session.apply_configure_actuator(configure)
 	return _result(
 		StringName(result.get("reason", &"invalid_target")),

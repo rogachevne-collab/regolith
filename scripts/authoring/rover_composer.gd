@@ -68,7 +68,7 @@ static func spawn_on_terrain(
 	world_position: Vector3,
 	intent: RoverIntent = null,
 	store_id: String = "player",
-	terrain: VoxelTerrain = null,
+	terrain: Node3D = null,
 	tool: VoxelTool = null,
 	space_state: PhysicsDirectSpaceState3D = null
 ) -> Dictionary:
@@ -116,7 +116,7 @@ static func spawn_on_terrain_from_phrase(
 	world_position: Vector3,
 	phrase: String,
 	store_id: String = "player",
-	terrain: VoxelTerrain = null,
+	terrain: Node3D = null,
 	tool: VoxelTool = null,
 	space_state: PhysicsDirectSpaceState3D = null
 ) -> Dictionary:

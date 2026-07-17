@@ -3,7 +3,19 @@ extends RefCounted
 
 const I_MIN := 4.0
 const I_REF := 24.0
+## Closing speed below this is resting / micro-bounce, not a kinetic slam.
+## Needed because Jolt contact_impulse includes gravity support (≈ m·g·Δt),
+## so I_MIN alone is defeated on heavy assemblies that are merely sitting.
+const V_SEP_MIN := 0.35
+## Terrain carving needs genuine crash speed (~2 m fall on the Moon). The
+## smallest stamp is deeper than the V_SEP_MIN fall height, so a body dropping
+## into its own fresh crater re-arms the kinetic gate at ~1-1.5 m/s and the
+## carve → drop → carve loop digs an endless shaft. Below V_CARVE_MIN a
+## touchdown still damages elements but must not dig.
+const V_CARVE_MIN := 2.5
 const K_DAMAGE := 0.35
+## Landing legs absorb terrain touchdowns; keep crash lethality elsewhere.
+const K_LANDING_GEAR := 0.08
 const V_MAX_M3 := 2.0
 ## Kinetic loot threshold: below this impulse a carve yields nothing, so
 ## junk taps cannot be farmed (V2-4).
@@ -24,14 +36,39 @@ static func impulse_strength(impulse_length: float) -> float:
 	return clampf(impulse_length / I_REF, 0.0, 1.0)
 
 
+## Terrain kinetic gate: velocity-derived J and closing speed must both clear
+## thresholds. Resting support impulses must not carve/damage.
+static func passes_terrain_kinetic_gate(
+	j_fallback: float,
+	separating_speed: float
+) -> bool:
+	return j_fallback >= I_MIN and separating_speed >= V_SEP_MIN
+
+
+static func passes_terrain_carve_gate(separating_speed: float) -> bool:
+	return separating_speed >= V_CARVE_MIN
+
+
 static func damage_amount(
 	impulse_length: float,
-	max_integrity: float
+	max_integrity: float,
+	damage_scale: float = 1.0
 ) -> float:
 	var strength := impulse_strength(impulse_length)
 	if strength <= 0.0 or max_integrity <= 0.0:
 		return 0.0
-	return strength * strength * max_integrity * K_DAMAGE
+	var scale := maxf(damage_scale, 0.0)
+	return strength * strength * max_integrity * K_DAMAGE * scale
+
+
+static func is_landing_gear_archetype(archetype_id: String) -> bool:
+	return archetype_id == "landing_leg"
+
+
+static func terrain_damage_scale_for_archetype(archetype_id: String) -> float:
+	if is_landing_gear_archetype(archetype_id):
+		return K_LANDING_GEAR / K_DAMAGE
+	return 1.0
 
 
 static func batch_key(
@@ -45,7 +82,7 @@ static func batch_key(
 static func partner_key_from_object(partner: Object) -> String:
 	if partner == null:
 		return "none"
-	if partner is VoxelTerrain:
+	if TerrainCompat.is_terrain(partner):
 		return "terrain"
 	var assembly_id := int(partner.get_meta("assembly_id", 0))
 	if assembly_id > 0:
@@ -56,14 +93,14 @@ static func partner_key_from_object(partner: Object) -> String:
 static func is_terrain_partner(partner: Object) -> bool:
 	if partner == null:
 		return false
-	if partner is VoxelTerrain:
+	if TerrainCompat.is_terrain(partner):
 		return true
 	if partner is PhysicsBody3D:
 		if int((partner as PhysicsBody3D).get_meta("assembly_id", 0)) != 0:
 			return false
 	var node := partner as Node
 	while node != null:
-		if node is VoxelTerrain:
+		if TerrainCompat.is_terrain(node):
 			return true
 		node = node.get_parent()
 	return false

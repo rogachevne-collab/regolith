@@ -332,7 +332,10 @@ Dynamic head position не меняет topology electric graph. Electric wire
 ### Motor
 
 Motor — force-limited velocity tracker вдоль свободной оси (модель Space Engineers:
-signed velocity, без пружины):
+signed velocity, без пружины). World-axis силы на тике берётся из
+**base body group** (`base_body.global_transform.basis * axis_local`), не из
+root `Assembly.motion` — иначе nested piston на согнутом hinge/rotor орёт в
+slider constraint:
 
 ```text
 velocity mode (primary gameplay):

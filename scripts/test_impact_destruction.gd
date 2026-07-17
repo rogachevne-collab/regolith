@@ -16,6 +16,9 @@ func _run_tests() -> void:
 	var tests: Array[Callable] = [
 		_test_damage_scales_with_impulse,
 		_test_weak_impulse_ignored,
+		_test_terrain_kinetic_gate_rejects_resting,
+		_test_carve_speed_gate,
+		_test_blocked_carve_still_damages,
 		_test_fallback_impulse_uses_separating_velocity,
 		_test_terrain_carve_changes_sdf,
 		_test_carve_respects_volume_budget,
@@ -53,6 +56,67 @@ func _test_damage_scales_with_impulse() -> bool:
 func _test_weak_impulse_ignored() -> bool:
 	if ImpactResolver.damage_amount(2.0, 100.0) != 0.0:
 		return _fail("sub-threshold impulse applied damage")
+	return true
+
+
+func _test_terrain_kinetic_gate_rejects_resting() -> bool:
+	# Heavy body sitting: Jolt support impulse would clear I_MIN, but
+	# velocity-derived J and closing speed are near zero.
+	if ImpactResolver.passes_terrain_kinetic_gate(10.5, 0.0):
+		return _fail("resting support impulse must not pass terrain gate")
+	if ImpactResolver.passes_terrain_kinetic_gate(20.0, 0.1):
+		return _fail("micro-bounce below V_SEP_MIN must not pass terrain gate")
+	if not ImpactResolver.passes_terrain_kinetic_gate(40.0, 2.0):
+		return _fail("real slam must pass terrain kinetic gate")
+	if ImpactResolver.passes_terrain_kinetic_gate(2.0, 2.0):
+		return _fail("sub-I_MIN fallback must not pass terrain gate")
+	return true
+
+
+func _test_carve_speed_gate() -> bool:
+	# Touchdown speeds pass the kinetic gate (damage) but must not carve;
+	# a fall into a fresh self-carved crater lands at ~1-1.5 m/s.
+	if ImpactResolver.passes_terrain_carve_gate(ImpactResolver.V_SEP_MIN):
+		return _fail("touchdown-speed contact must not carve terrain")
+	if ImpactResolver.passes_terrain_carve_gate(1.5):
+		return _fail("fall into own crater must not carve terrain")
+	if not ImpactResolver.passes_terrain_carve_gate(3.0):
+		return _fail("crash-speed contact must carve terrain")
+	return true
+
+
+func _test_blocked_carve_still_damages() -> bool:
+	var fixture := await _new_fixture()
+	var spawn := _spawn_single(fixture.world)
+	if not spawn.is_ok():
+		_free_fixture(fixture)
+		return _fail("blocked-carve spawn failed")
+	var element_id := int(spawn.data["element_ids"][0])
+	var body: RigidBody3D = fixture.projection.get_physics_body(
+		int(spawn.data["assembly_id"])
+	) as RigidBody3D
+	if body == null:
+		_free_fixture(fixture)
+		return _fail("blocked-carve body missing")
+	var integrity_before: float = fixture.world.get_element(element_id).integrity
+	var carved: float = fixture.impact_service.apply_entry_for_test({
+		"batch_key": "blocked_carve_test",
+		"striker_element_id": element_id,
+		"striker_body": body,
+		"local_shape_index": 0,
+		"partner": fixture.terrain,
+		"impulse_length": 36.0,
+		"carve_blocked": true,
+		"contact_world": Vector3(0.5, 0.0, 0.5),
+		"contact_points": PackedVector3Array([Vector3(0.5, 0.0, 0.5)]),
+		"contact_impulses": PackedFloat32Array([36.0]),
+	})
+	var integrity_after: float = fixture.world.get_element(element_id).integrity
+	_free_fixture(fixture)
+	if carved != 0.0:
+		return _fail("carve-blocked touchdown still carved terrain")
+	if integrity_after >= integrity_before:
+		return _fail("carve-blocked touchdown must still damage the striker")
 	return true
 
 

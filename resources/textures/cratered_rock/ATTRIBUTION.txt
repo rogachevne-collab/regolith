@@ -1,0 +1,3 @@
+Cratered Rock PBR Material
+Source: https://freepbr.com/ (cratered rock)
+License: free use in games/3D work (FreePBR terms). Do not re-upload as a texture pack.

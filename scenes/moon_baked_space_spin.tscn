@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://moonbakedspacespin1"]
+
+[ext_resource type="Script" path="res://scripts/moon_baked_space_spin.gd" id="1"]
+
+[node name="MoonBakedSpaceSpin" type="Node3D"]
+script = ExtResource("1")

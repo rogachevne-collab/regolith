@@ -8,12 +8,16 @@ func update_from_character(character: CharacterBody3D) -> void:
 		_carrier = null
 		return
 
+	var up := character.up_direction
+	if up.length_squared() <= 0.000001:
+		up = GravityField.resolve_up(character, character.global_position)
+
 	var found_carrier: RigidBody3D
 	for collision_index: int in character.get_slide_collision_count():
 		var collision: KinematicCollision3D = (
 			character.get_slide_collision(collision_index)
 		)
-		if collision.get_normal().dot(Vector3.UP) < 0.4:
+		if collision.get_normal().dot(up) < 0.4:
 			continue
 		var collider: Object = collision.get_collider()
 		if collider is RigidBody3D:
@@ -21,7 +25,7 @@ func update_from_character(character: CharacterBody3D) -> void:
 			break
 
 	if found_carrier == null:
-		found_carrier = _probe_floor_carrier(character)
+		found_carrier = _probe_floor_carrier(character, up)
 	_carrier = found_carrier
 
 
@@ -51,7 +55,8 @@ func point_velocity(world_point: Vector3) -> Vector3:
 
 
 func _probe_floor_carrier(
-	character: CharacterBody3D
+	character: CharacterBody3D,
+	up: Vector3
 ) -> RigidBody3D:
 	var space: PhysicsDirectSpaceState3D = (
 		character.get_world_3d().direct_space_state
@@ -60,7 +65,7 @@ func _probe_floor_carrier(
 	var query: PhysicsRayQueryParameters3D = (
 		PhysicsRayQueryParameters3D.create(
 			origin,
-			origin + Vector3.DOWN * 1.15
+			origin - up * 1.15
 		)
 	)
 	query.exclude = [character.get_rid()]

@@ -104,7 +104,10 @@ static func collider_world_aabb(
 		collider
 	)
 	var half_extents: Vector3 = collider.aabb_half_extents()
-	var bounds := AABB()
+	# Seed the box at the first corner: a default AABB() sits at the world
+	# origin, and expand() would silently include (0,0,0) in every footprint —
+	# harmless near the flat-map origin, catastrophic on the spherical moon.
+	var bounds := AABB(world_transform * (-half_extents), Vector3.ZERO)
 	for sx: int in [-1, 1]:
 		for sy: int in [-1, 1]:
 			for sz: int in [-1, 1]:

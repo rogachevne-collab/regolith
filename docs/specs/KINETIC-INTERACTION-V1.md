@@ -85,6 +85,8 @@ SimulationWorld (integrity) + VoxelTerrain (SDF)
 |---|---|---|
 | `I_MIN` | минимальный импульс для любой реакции | 4.0 Н·с |
 | `I_REF` | импульс «типичного» заметного удара | 24.0 Н·с |
+| `V_SEP_MIN` | мин. closing speed для terrain-реакции (damage/carve-gate) | 0.35 м/с |
+| `V_CARVE_MIN` | мин. closing speed для terrain carve (ниже — только damage) | 2.5 м/с |
 | `K_DAMAGE` | коэффициент урона | 0.35 |
 | `V_MAX_M3` | бюджет carve на assembly за кадр | 2.0 м³ |
 
@@ -110,8 +112,23 @@ strength = clamp(J_effective / I_REF, 0.0, 1.0)   // 0 при J < I_MIN
 damage   = strength² · max_integrity · K_DAMAGE
 ```
 
-**Terrain carve** (только partner = `VoxelTerrain`, как v0): `strength` →
-`sdf_strength`; бюджет `V_MAX_M3`, cooldown на пару. Форма стампа:
+**Terrain carve** (только partner = `VoxelTerrain` / world surface, как v0):
+`strength` → `sdf_strength`; бюджет `V_MAX_M3`, cooldown на пару.
+
+Два порога по closing speed `|v_rel · n|` (оба пути: `_integrate_forces` и
+`body_shape_entered`):
+
+1. `|v_rel · n| < V_SEP_MIN` (или `J_fallback < I_MIN`) — resting / micro-bounce:
+   ни damage, ни carve. Jolt `contact_impulse` ≈ m·g·Δt сам по себе не удар.
+2. `V_SEP_MIN ≤ |v_rel · n| < V_CARVE_MIN` — touchdown: damage ударнику есть,
+   carve **нет**. Самый мелкий stamp глубже высоты падения на `V_SEP_MIN`; без
+   этого порога body падает в свежий кратер (~1–1.5 м/с), снова проходит kinetic
+   gate и копает бесконечную шахту (carve → drop → carve).
+3. `|v_rel · n| ≥ V_CARVE_MIN` — crash: damage + carve. Entry несёт
+   `carve_blocked`; при merge batch carve разрешён, если хоть один источник
+   разрешил.
+
+Форма стампа:
 
 - **`mesh` (carve v2, приоритет)** — box-коллайдер ударника штампуется
   `VoxelTool.do_mesh` с его **мировой ориентацией**: единичный куб один раз
@@ -225,6 +242,12 @@ entries от carriage-контактов независимо от `machine_enab
 - Падающий frame — как v0 (не регрессировать).
 - Base ↔ head одной сборки — без self-damage.
 - Слабое касание / качение ниже `I_MIN` — тишина.
+- Resting на terrain: `get_contact_impulse` ≈ m·g·Δt **не** считается ударом;
+  terrain-реакция требует `J_fallback ≥ I_MIN` и `|v_rel · n| ≥ V_SEP_MIN`
+  (иначе тяжёлые assembly копают шахту сидя).
+- Touchdown / мягкая посадка (`V_SEP_MIN…V_CARVE_MIN`): integrity падает,
+  кратера нет — иначе падение в свой же stamp роет бесконечную шахту.
+- Crash (`≥ V_CARVE_MIN`, ~падение с ≥2 м на Луне): carve + damage.
 - Каскад: lethal drill → split → падающий обломок бьёт базу как чужая assembly.
 
 ## Модули (целевая раскладка)
@@ -249,13 +272,16 @@ entries от carriage-контактов независимо от `machine_enab
 4. Assembly ↔ assembly (разные): оба `element_id` получают damage; terrain не
    меняется.
 5. Base ↔ head одной assembly: нет self-damage/carve.
-6. Падение frame (регрессия v0): carve + integrity, без изменения поведения.
-7. Слабое касание ниже `I_MIN`: без carve и damage.
-8. Каскад: пистон+бур на макс. → drill lethal → split → обломок в базу наносит
+6. Падение frame (регрессия v0): carve + integrity при crash-speed; без изменения
+   поведения на жёстком ударе.
+7. Слабое касание ниже `I_MIN` / resting (`< V_SEP_MIN`): без carve и damage.
+8. Touchdown (`V_SEP_MIN…V_CARVE_MIN`): damage ударнику есть, terrain не меняется;
+   повторный контакт после мелкого stamp не роет шахту.
+9. Каскад: пистон+бур на макс. → drill lethal → split → обломок в базу наносит
    full kinetic damage.
-9. Headless: `test_impact_destruction` расширен (piston slam, slow saturated push,
-   регрессия fall); зелёный в `tests/run_tests.sh`.
-10. Playground `scenes/test_kinetic_playground.tscn`: 5 стендов, проверка в игре.
+10. Headless: `test_impact_destruction` (в т.ч. carve-speed gate и
+    blocked-carve still damages); зелёный в `tests/run_tests.sh`.
+11. Playground `scenes/test_kinetic_playground.tscn`: 5 стендов, проверка в игре.
 
 ## Верификация
 

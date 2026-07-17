@@ -8,9 +8,10 @@ enum Kind {
 	ANCHOR,
 	PISTON,
 	ROTOR,
+	HINGE,
 }
 
-const DRIVEN_KINDS: Array[Kind] = [Kind.PISTON, Kind.ROTOR]
+const DRIVEN_KINDS: Array[Kind] = [Kind.PISTON, Kind.ROTOR, Kind.HINGE]
 
 var joint_id: int = 0
 var assembly_id: int = 0
@@ -96,8 +97,27 @@ static func rotor(
 	return joint
 
 
+static func hinge(
+	joint_id: int,
+	assembly_id: int,
+	base_element_id: int,
+	top_element_id: int,
+	definition: HingeDefinition
+) -> SimulationJoint:
+	var joint: SimulationJoint = _SCRIPT.new()
+	joint.joint_id = joint_id
+	joint.assembly_id = assembly_id
+	joint.kind = Kind.HINGE
+	joint.element_a_id = base_element_id
+	joint.port_a_id = SimulationMotorState.HINGE_DRIVE_PORT
+	joint.element_b_id = top_element_id
+	joint.port_b_id = SimulationMotorState.HINGE_TOP_PORT
+	joint.motor = SimulationMotorState.from_hinge_definition(definition)
+	return joint
+
+
 func is_driven() -> bool:
-	return kind == Kind.PISTON or kind == Kind.ROTOR
+	return kind in DRIVEN_KINDS
 
 
 func endpoint_ids() -> Array[int]:

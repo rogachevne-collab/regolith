@@ -46,10 +46,13 @@ static func reconstruct_all_group_motions(world, assembly_id: int) -> Dictionary
 		if int(group_id) == root_group_id:
 			continue
 		result[int(group_id)] = root_motion.duplicate_state()
-	for spec_variant: Variant in compiled.get("driven_specs", []):
-		if not spec_variant is Dictionary:
-			continue
-		var spec: Dictionary = spec_variant
+	# Parent driven joints before children so nested hinge/piston bases see
+	# the already-spun/extended parent group motion (joint_id order is not
+	# a topological guarantee after edits / restore).
+	for spec: Dictionary in _driven_specs_parent_before_child(
+		compiled.get("driven_specs", []),
+		root_group_id
+	):
 		var base_group_id := int(spec.get("base_group_id", 0))
 		var head_group_id := int(spec.get("head_group_id", 0))
 		var base_motion: AssemblyMotionState = result.get(base_group_id)
@@ -58,11 +61,75 @@ static func reconstruct_all_group_motions(world, assembly_id: int) -> Dictionary
 		var head_motion: AssemblyMotionState
 		if int(spec.get("joint_kind", -1)) == SimulationJoint.Kind.ROTOR:
 			head_motion = _reconstruct_top_from_rotor_base(world, spec, base_motion)
+		elif int(spec.get("joint_kind", -1)) == SimulationJoint.Kind.HINGE:
+			head_motion = _reconstruct_top_from_hinge_base(world, spec, base_motion)
 		else:
 			head_motion = _reconstruct_head_from_base(world, spec, base_motion)
 		if head_motion != null:
 			result[head_group_id] = head_motion
 	return result
+
+
+static func _driven_specs_parent_before_child(
+	driven_specs_variant: Variant,
+	root_group_id: int
+) -> Array[Dictionary]:
+	var specs: Array[Dictionary] = []
+	if not driven_specs_variant is Array:
+		return specs
+	var children_of: Dictionary = {}
+	for spec_variant: Variant in driven_specs_variant:
+		if not spec_variant is Dictionary:
+			continue
+		var spec: Dictionary = spec_variant
+		specs.append(spec)
+		var base_group_id := int(spec.get("base_group_id", 0))
+		if not children_of.has(base_group_id):
+			children_of[base_group_id] = []
+		(children_of[base_group_id] as Array).append(spec)
+	if specs.is_empty():
+		return specs
+	var ordered: Array[Dictionary] = []
+	var visited_heads: Dictionary = {}
+	var queue: Array[int] = []
+	if root_group_id > 0:
+		queue.append(root_group_id)
+	else:
+		var bases: Array[int] = []
+		for spec: Dictionary in specs:
+			var base_id := int(spec.get("base_group_id", 0))
+			if not bases.has(base_id):
+				bases.append(base_id)
+		bases.sort()
+		queue.append_array(bases)
+	var queue_index := 0
+	while queue_index < queue.size():
+		var group_id := queue[queue_index]
+		queue_index += 1
+		var child_specs: Array = children_of.get(group_id, [])
+		child_specs.sort_custom(func(a, b):
+			return int(a.get("joint_id", 0)) < int(b.get("joint_id", 0))
+		)
+		for child_variant: Variant in child_specs:
+			var child: Dictionary = child_variant
+			var head_id := int(child.get("head_group_id", 0))
+			if visited_heads.has(head_id):
+				continue
+			visited_heads[head_id] = true
+			ordered.append(child)
+			queue.append(head_id)
+	# Orphans (disconnected from root walk) in stable joint_id order.
+	if ordered.size() < specs.size():
+		var leftovers: Array[Dictionary] = []
+		for spec: Dictionary in specs:
+			var head_id := int(spec.get("head_group_id", 0))
+			if not visited_heads.has(head_id):
+				leftovers.append(spec)
+		leftovers.sort_custom(func(a, b):
+			return int(a.get("joint_id", 0)) < int(b.get("joint_id", 0))
+		)
+		ordered.append_array(leftovers)
+	return ordered
 
 
 static func reconstruct_group_motion(
@@ -159,6 +226,57 @@ static func _reconstruct_top_from_rotor_base(
 	var pivot_local := _port_anchor_assembly_local(
 		base_element,
 		SimulationMotorState.ROTOR_DRIVE_PORT
+	)
+	var angle: float = joint.motor.clamp_observed_position()
+	var axis_world: Vector3 = (
+		base_motion.transform.basis * axis_local
+	).normalized()
+	var pivot_world: Vector3 = base_motion.transform * pivot_local
+	var spin := Basis(axis_world, angle)
+	var top: AssemblyMotionState = base_motion.duplicate_state()
+	top.transform = Transform3D(
+		spin * base_motion.transform.basis,
+		pivot_world + spin * (base_motion.transform.origin - pivot_world)
+	)
+	if base_motion.frozen:
+		top.linear_velocity = Vector3.ZERO
+		top.angular_velocity = Vector3.ZERO
+	else:
+		var omega_rel: Vector3 = axis_world * joint.motor.observed_velocity_mps
+		top.angular_velocity = base_motion.angular_velocity + omega_rel
+		top.linear_velocity = (
+			base_motion.linear_velocity
+			+ omega_rel.cross(top.transform.origin - pivot_world)
+		)
+	top.sleeping = base_motion.sleeping
+	top.frozen = false
+	return top
+
+
+static func _reconstruct_top_from_hinge_base(
+	world,
+	spec: Dictionary,
+	base_motion: AssemblyMotionState
+) -> AssemblyMotionState:
+	var joint = world.get_joint(int(spec.get("joint_id", 0)))
+	var base_element = world.get_element(int(spec.get("base_element_id", 0)))
+	if joint == null or joint.motor == null or base_element == null:
+		return base_motion.duplicate_state()
+	var definition: HingeDefinition = null
+	var archetype = base_element.get_archetype()
+	if archetype != null:
+		definition = archetype.hinge_definition
+	if definition == null:
+		return base_motion.duplicate_state()
+	var axis_local := HingePlacementUtil.bend_axis_assembly_local(
+		base_element,
+		definition
+	)
+	if axis_local.length_squared() <= 0.000001:
+		return base_motion.duplicate_state()
+	var pivot_local := HingePlacementUtil.pivot_assembly_local(
+		base_element,
+		definition
 	)
 	var angle: float = joint.motor.clamp_observed_position()
 	var axis_world: Vector3 = (

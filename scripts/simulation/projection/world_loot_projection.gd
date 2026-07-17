@@ -38,7 +38,9 @@ func rebuild_all() -> void:
 
 
 func _ensure_terrain_accepts_loot() -> void:
-	var terrain := get_node_or_null("../../VoxelTerrain") as VoxelTerrain
+	var terrain := get_node_or_null("../../VoxelTerrain") as Node3D
+	if terrain != null and not TerrainCompat.is_terrain(terrain):
+		terrain = null
 	if terrain == null:
 		return
 	terrain.collision_mask = terrain.collision_mask | LOOT_COLLISION_LAYER

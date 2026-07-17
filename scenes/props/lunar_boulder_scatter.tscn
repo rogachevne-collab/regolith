@@ -1,0 +1,85 @@
+[gd_scene load_steps=16 format=3]
+
+[ext_resource type="Script" path="res://addons/proton_scatter/src/scatter.gd" id="1"]
+[ext_resource type="Script" path="res://addons/proton_scatter/src/stack/modifier_stack.gd" id="2"]
+[ext_resource type="Script" path="res://addons/proton_scatter/src/modifiers/create_inside_random.gd" id="3"]
+[ext_resource type="Script" path="res://addons/proton_scatter/src/modifiers/randomize_transforms.gd" id="4"]
+[ext_resource type="Script" path="res://addons/proton_scatter/src/modifiers/project_on_geometry.gd" id="5"]
+[ext_resource type="Script" path="res://addons/proton_scatter/src/scatter_item.gd" id="6"]
+[ext_resource type="Script" path="res://addons/proton_scatter/src/scatter_shape.gd" id="7"]
+[ext_resource type="Script" path="res://addons/proton_scatter/src/shapes/sphere_shape.gd" id="8"]
+
+[sub_resource type="Resource" id="mod_create"]
+script = ExtResource("3")
+amount = 64
+enabled = true
+override_global_seed = false
+custom_seed = 0
+restrict_height = true
+reference_frame = 1
+
+[sub_resource type="Resource" id="mod_random"]
+script = ExtResource("4")
+position = Vector3(0.4, 0.05, 0.4)
+rotation = Vector3(12, 360, 12)
+scale = Vector3(0.45, 0.35, 0.45)
+enabled = true
+override_global_seed = false
+custom_seed = 0
+restrict_height = false
+reference_frame = 2
+
+[sub_resource type="Resource" id="mod_project"]
+script = ExtResource("5")
+ray_direction = Vector3(0, -1, 0)
+ray_length = 90.0
+ray_offset = 35.0
+remove_points_on_miss = true
+align_with_collision_normal = true
+max_slope = 90.0
+collision_mask = 1
+exclude_mask = 0
+enabled = true
+override_global_seed = false
+custom_seed = 0
+restrict_height = false
+reference_frame = 1
+
+[sub_resource type="Resource" id="mod_stack"]
+script = ExtResource("2")
+stack = Array[Resource]([SubResource("mod_create"), SubResource("mod_random"), SubResource("mod_project")])
+
+[sub_resource type="Resource" id="shape_sphere"]
+script = ExtResource("8")
+radius = 48.0
+
+[node name="LunarBoulderScatter" type="Node3D"]
+script = ExtResource("1")
+enabled = true
+global_seed = 404
+show_output_in_tree = false
+render_mode = 0
+keep_static_colliders = false
+force_rebuild_on_load = false
+enable_updates_in_game = true
+modifier_stack = SubResource("mod_stack")
+Performance/use_chunks = true
+Performance/chunk_dimensions = Vector3(24, 24, 24)
+
+[node name="BoulderA" type="Node3D" parent="."]
+script = ExtResource("6")
+proportion = 100
+source = 1
+path = "res://scenes/props/lunar_boulder_a.tscn"
+source_scale_multiplier = 1.0
+
+[node name="BoulderB" type="Node3D" parent="."]
+script = ExtResource("6")
+proportion = 70
+source = 1
+path = "res://scenes/props/lunar_boulder_b.tscn"
+source_scale_multiplier = 1.0
+
+[node name="ScatterShape" type="Node3D" parent="."]
+script = ExtResource("7")
+shape = SubResource("shape_sphere")

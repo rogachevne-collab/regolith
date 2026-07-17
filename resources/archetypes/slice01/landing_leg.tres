@@ -1,0 +1,47 @@
+[gd_resource type="Resource" script_class="ElementArchetype" format=3]
+
+[ext_resource type="Script" path="res://scripts/simulation/resources/build_requirement.gd" id="1_req"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/collider_definition.gd" id="2_col"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/structural_mount_pad.gd" id="3_pad"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/element_archetype.gd" id="4_arch"]
+
+[sub_resource type="Resource" id="Requirement"]
+script = ExtResource("1_req")
+resource_id = "construction_component"
+amount = 3.0
+
+[sub_resource type="Resource" id="Collider"]
+script = ExtResource("2_col")
+size = Vector3(0.42, 0.4, 0.42)
+offset_in_cell = Vector3(0.25, 0.18, 0.25)
+
+[sub_resource type="Resource" id="Mount_py"]
+script = ExtResource("3_pad")
+local_face = 2
+
+[sub_resource type="Resource" id="Mount_px"]
+script = ExtResource("3_pad")
+
+[sub_resource type="Resource" id="Mount_nx"]
+script = ExtResource("3_pad")
+local_face = 1
+
+[sub_resource type="Resource" id="Mount_pz"]
+script = ExtResource("3_pad")
+local_face = 4
+
+[sub_resource type="Resource" id="Mount_nz"]
+script = ExtResource("3_pad")
+local_face = 5
+
+[resource]
+script = ExtResource("4_arch")
+archetype_id = "landing_leg"
+display_name = "Посадочная нога"
+roles = PackedStringArray("Support", "Frame")
+mass_kg = 18.0
+max_integrity = 400.0
+colliders = Array[ExtResource("2_col")]([SubResource("Collider")])
+structural_surface_policy = 2
+structural_mount_pads = Array[ExtResource("3_pad")]([SubResource("Mount_py"), SubResource("Mount_px"), SubResource("Mount_nx"), SubResource("Mount_pz"), SubResource("Mount_nz")])
+build_requirements = Array[ExtResource("1_req")]([SubResource("Requirement")])

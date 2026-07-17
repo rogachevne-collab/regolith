@@ -21,6 +21,12 @@ const ROTOR_BASE_LARGE := preload(
 const ROTOR_TOP_LARGE := preload(
 	"res://resources/archetypes/slice01/rotor_top_large.tres"
 )
+const HINGE_BASE := preload(
+	"res://resources/archetypes/slice01/hinge_base.tres"
+)
+const HINGE_TOP := preload(
+	"res://resources/archetypes/slice01/hinge_top.tres"
+)
 
 
 func _ready() -> void:
@@ -49,6 +55,20 @@ func _run_tests() -> void:
 		_test_rotor_wrap_and_overload,
 		_test_rotor_dismantle_splits_top,
 		_test_rotor_moving_top_construction_rejected,
+		_test_hinge_atomic_placement,
+		_test_hinge_body_groups_and_reconstruct,
+		_test_hinge_snapshot_roundtrip,
+		_test_hinge_target_and_configure,
+		_test_hinge_joint_limit_status,
+		_test_hinge_overload_and_no_power,
+		_test_hinge_dismantle_splits_top,
+		_test_hinge_moving_top_construction_rejected,
+		_test_hinge_jolt_limit_offset_math,
+		_test_hinge_near_limit_torque_taper,
+		_test_nested_rotor_hinge_reconstruct_order,
+		_test_piston_axis_follows_bent_hinge_basis,
+		_test_construction_rejected_on_bent_hinge_branch,
+		_test_driven_chain_length_limit,
 	]
 	for test: Callable in tests:
 		if not bool(test.call()):
@@ -1173,6 +1193,804 @@ func _test_rotor_moving_top_construction_rejected() -> bool:
 		return _fail("construction on turned rotor top was not rejected")
 	world.free()
 	return true
+
+
+func _test_hinge_atomic_placement() -> bool:
+	var world := _hinge_world_with_foundation()
+	var setup := _hinge_setup(world)
+	if setup.is_empty():
+		world.free()
+		return _fail("hinge setup failed")
+	var hinge: StructuralCommandResult = setup["hinge"]
+	var base_id := int(hinge.data["element_id"])
+	var top_id := int(hinge.data["head_element_id"])
+	var joint_id := int(hinge.data["hinge_joint_id"])
+	if int(hinge.data["driven_joint_id"]) != joint_id:
+		world.free()
+		return _fail("hinge driven_joint_id mismatch")
+	if world.get_element(base_id) == null or world.get_element(top_id) == null:
+		world.free()
+		return _fail("hinge elements missing")
+	var joint := world.get_joint(joint_id)
+	if (
+		joint == null
+		or joint.kind != SimulationJoint.Kind.HINGE
+		or joint.motor == null
+		or not joint.motor.angular
+		or joint.motor.continuous
+	):
+		world.free()
+		return _fail("hinge joint missing bounded angular motor state")
+	if (
+		not is_equal_approx(joint.motor.lower_limit_m, -PI / 2.0)
+		or not is_equal_approx(joint.motor.upper_limit_m, PI / 2.0)
+	):
+		world.free()
+		return _fail("hinge joint did not inherit authored angle bounds")
+	if world.get_resource_store("player").amount("construction_component") >= 100.0:
+		world.free()
+		return _fail("hinge placement did not spend materials")
+	world.free()
+	return true
+
+
+func _test_hinge_body_groups_and_reconstruct() -> bool:
+	var world := _hinge_world_with_foundation()
+	var setup := _hinge_setup(world)
+	if setup.is_empty():
+		world.free()
+		return _fail("hinge setup failed")
+	var hinge: StructuralCommandResult = setup["hinge"]
+	var assembly_id := int(setup["assembly_id"])
+	var top_id := int(hinge.data["head_element_id"])
+
+	# Attach the swing arm on the top's +Y face: the bend axis is +X, so a
+	# +Y branch sweeps in the Y-Z plane around the top cell center.
+	var platform := PlaceElementCommand.new()
+	platform.assembly_id = assembly_id
+	platform.expected_assembly_revision = int(hinge.data["topology_revision"])
+	platform.archetype = Slice01Archetypes.frame()
+	platform.origin_cell = Vector3i(5, 2, 0)
+	platform.orientation_index = 0
+	platform.store_id = "player"
+	var platform_result := world.apply_structural_command_now(platform)
+	if not platform_result.is_ok():
+		world.free()
+		return _fail(
+			"platform attach to hinge top failed: %s %s"
+			% [platform_result.reason, platform_result.data]
+		)
+	var platform_id := int(platform_result.data["element_id"])
+	var top_group := world.body_group_id_for_element(top_id)
+	var platform_group := world.body_group_id_for_element(platform_id)
+	var root_group := world.root_body_group_id(assembly_id)
+	if top_group <= 0 or top_group != platform_group or top_group == root_group:
+		world.free()
+		return _fail("hinge top branch did not form its own body group")
+
+	var joint := world.get_joint(int(hinge.data["hinge_joint_id"]))
+	var cell_center_local := Vector3(0.25, 0.25, 0.25)
+	var home_top_tf := world.element_world_transform(top_id)
+	var home_platform_tf := world.element_world_transform(platform_id)
+	var home_top_center := home_top_tf * cell_center_local
+	var home_platform_center := home_platform_tf * cell_center_local
+	joint.motor.observed_position_m = PI / 2.0
+	var bent_top_tf := world.element_world_transform(top_id)
+	var bent_platform_tf := world.element_world_transform(platform_id)
+	var bent_top_center := bent_top_tf * cell_center_local
+	var bent_platform_center := bent_platform_tf * cell_center_local
+	if not bent_top_center.is_equal_approx(home_top_center):
+		world.free()
+		return _fail("hinge top center is the pivot and must not translate")
+	var rotation_delta := (
+		bent_top_tf.basis * home_top_tf.basis.inverse()
+	).get_rotation_quaternion().get_angle()
+	if absf(rotation_delta - PI / 2.0) > 0.01:
+		world.free()
+		return _fail(
+			"hinge top rotation %.3f expected ~%.3f" % [rotation_delta, PI / 2.0]
+		)
+	var pivot := home_top_center
+	var home_radius := Vector2(
+		home_platform_center.y - pivot.y,
+		home_platform_center.z - pivot.z
+	).length()
+	var bent_radius := Vector2(
+		bent_platform_center.y - pivot.y,
+		bent_platform_center.z - pivot.z
+	).length()
+	if absf(home_radius - bent_radius) > 0.01:
+		world.free()
+		return _fail("platform did not stay on the hinge swing radius")
+	if not is_equal_approx(bent_platform_center.x, home_platform_center.x):
+		world.free()
+		return _fail("platform must not translate along the bend axis")
+	if home_platform_center.is_equal_approx(bent_platform_center):
+		world.free()
+		return _fail("platform did not swing around the bend axis")
+	world.free()
+	return true
+
+
+func _test_hinge_snapshot_roundtrip() -> bool:
+	var world := _hinge_world_with_foundation()
+	var setup := _hinge_setup(world)
+	if setup.is_empty():
+		world.free()
+		return _fail("hinge setup failed")
+	var hinge: StructuralCommandResult = setup["hinge"]
+	var joint_id := int(hinge.data["hinge_joint_id"])
+	var base_id := int(hinge.data["element_id"])
+	var runtime := world.ensure_industry_element_runtime(base_id)
+	runtime.machine_enabled = true
+	runtime.powered = true
+	_weld_element(world, base_id)
+	_weld_element(world, int(hinge.data["head_element_id"]))
+
+	var configure := ConfigureActuatorCommand.new()
+	configure.joint_id = joint_id
+	configure.lower_limit_m = -PI / 4.0
+	configure.lower_limit_set = true
+	if StringName(world.apply_configure_actuator(configure).get("status", &"")) != &"ok":
+		world.free()
+		return _fail("hinge configure failed before snapshot")
+	var command := SetActuatorTargetCommand.new()
+	command.joint_id = joint_id
+	command.mode = SimulationMotorState.ControlMode.VELOCITY
+	command.target_velocity_mps = 0.8
+	if StringName(world.apply_set_actuator_target(command).get("status", &"")) != &"ok":
+		world.free()
+		return _fail("hinge set_actuator_target failed before snapshot")
+	world.sync_actuator_observation(joint_id, 0.6, 0.4, 900.0, false)
+
+	var snapshot := world.capture_snapshot()
+	if int(snapshot.get("version", 0)) != SimulationSnapshot.VERSION:
+		world.free()
+		return _fail("snapshot version mismatch")
+	var restored: SimulationWorld = SimulationSnapshot.create_from_snapshot(
+		snapshot
+	)
+	if restored == null:
+		world.free()
+		return _fail(
+			"hinge snapshot restore failed: %s"
+			% SimulationSnapshot.last_validate_error
+		)
+	var joint := restored.get_joint(joint_id)
+	if (
+		joint == null
+		or joint.kind != SimulationJoint.Kind.HINGE
+		or joint.motor == null
+		or joint.motor.continuous
+		or not is_equal_approx(joint.motor.observed_position_m, 0.6)
+		or not is_equal_approx(joint.motor.target_velocity_mps, 0.8)
+		or not is_equal_approx(joint.motor.lower_limit_m, -PI / 4.0)
+		or not is_equal_approx(joint.motor.upper_limit_m, PI / 2.0)
+		or joint.motor.control_mode != SimulationMotorState.ControlMode.VELOCITY
+	):
+		restored.free()
+		world.free()
+		return _fail("hinge motor state did not roundtrip")
+	if not SimulationSnapshot.semantic_equals(
+		snapshot,
+		restored.capture_snapshot()
+	):
+		restored.free()
+		world.free()
+		return _fail("hinge snapshot semantics changed on roundtrip")
+	restored.free()
+	world.free()
+	return true
+
+
+func _test_hinge_target_and_configure() -> bool:
+	var world := _hinge_world_with_foundation()
+	var setup := _hinge_setup(world)
+	if setup.is_empty():
+		world.free()
+		return _fail("hinge setup failed")
+	var hinge: StructuralCommandResult = setup["hinge"]
+	var joint_id := int(hinge.data["hinge_joint_id"])
+	var base_id := int(hinge.data["element_id"])
+	var runtime := world.ensure_industry_element_runtime(base_id)
+	runtime.machine_enabled = true
+	runtime.powered = true
+	_weld_element(world, base_id)
+	_weld_element(world, int(hinge.data["head_element_id"]))
+	var joint := world.get_joint(joint_id)
+	if ActuatorSimulationService.power_demand_w(joint) != 0.0:
+		world.free()
+		return _fail("stopped hinge should not draw actuator power")
+
+	var command := SetActuatorTargetCommand.new()
+	command.joint_id = joint_id
+	command.mode = SimulationMotorState.ControlMode.VELOCITY
+	command.target_velocity_mps = 5.0
+	if StringName(world.apply_set_actuator_target(command).get("status", &"")) != &"ok":
+		world.free()
+		return _fail("hinge set_actuator_target failed")
+	if not is_equal_approx(
+		joint.motor.clamp_target_velocity(),
+		joint.motor.extend_velocity_mps
+	):
+		world.free()
+		return _fail("hinge velocity target was not clamped to forward limit")
+	if not is_equal_approx(
+		ActuatorSimulationService.power_demand_w(joint),
+		joint.motor.power_draw_w
+	):
+		world.free()
+		return _fail("commanded hinge power demand was not published")
+
+	var position := SetActuatorTargetCommand.new()
+	position.joint_id = joint_id
+	position.mode = SimulationMotorState.ControlMode.POSITION
+	position.target_position_m = PI
+	if StringName(world.apply_set_actuator_target(position).get("status", &"")) != &"ok":
+		world.free()
+		return _fail("hinge position target failed")
+	if not is_equal_approx(
+		joint.motor.clamp_target_position(),
+		joint.motor.upper_limit_m
+	):
+		world.free()
+		return _fail("hinge position target was not clamped into angle limits")
+
+	var configure := ConfigureActuatorCommand.new()
+	configure.joint_id = joint_id
+	configure.extend_velocity_mps = 5.0
+	configure.retract_velocity_mps = 0.25
+	configure.force_limit_n = 5000.0
+	configure.lower_limit_m = -PI / 4.0
+	configure.lower_limit_set = true
+	configure.upper_limit_m = PI / 4.0
+	configure.upper_limit_set = true
+	if StringName(world.apply_configure_actuator(configure).get("status", &"")) != &"ok":
+		world.free()
+		return _fail("hinge configure_actuator failed")
+	if (
+		not is_equal_approx(joint.motor.extend_velocity_mps, 2.0)
+		or not is_equal_approx(joint.motor.retract_velocity_mps, 0.25)
+		or not is_equal_approx(joint.motor.force_limit_n, 5000.0)
+	):
+		world.free()
+		return _fail("hinge configure velocity/torque clamps not applied")
+	if (
+		not is_equal_approx(joint.motor.lower_limit_m, -PI / 4.0)
+		or not is_equal_approx(joint.motor.upper_limit_m, PI / 4.0)
+	):
+		world.free()
+		return _fail("hinge negative lower limit did not apply via set flag")
+	if not is_equal_approx(
+		joint.motor.clamp_target_position(),
+		PI / 4.0
+	):
+		world.free()
+		return _fail("hinge target was not re-clamped after limit change")
+
+	var untouched := ConfigureActuatorCommand.new()
+	untouched.joint_id = joint_id
+	untouched.force_limit_n = 4000.0
+	if StringName(world.apply_configure_actuator(untouched).get("status", &"")) != &"ok":
+		world.free()
+		return _fail("hinge torque-only configure failed")
+	if (
+		not is_equal_approx(joint.motor.lower_limit_m, -PI / 4.0)
+		or not is_equal_approx(joint.motor.upper_limit_m, PI / 4.0)
+	):
+		world.free()
+		return _fail("hinge limits changed without set flags")
+
+	var invalid := ConfigureActuatorCommand.new()
+	invalid.joint_id = joint_id
+	invalid.lower_limit_m = PI / 3.0
+	invalid.lower_limit_set = true
+	invalid.upper_limit_m = -PI / 3.0
+	invalid.upper_limit_set = true
+	if StringName(world.apply_configure_actuator(invalid).get("status", &"")) == &"ok":
+		world.free()
+		return _fail("inverted hinge limits were not rejected")
+	world.free()
+	return true
+
+
+func _test_hinge_joint_limit_status() -> bool:
+	var world := _hinge_world_with_foundation()
+	var setup := _hinge_setup(world)
+	if setup.is_empty():
+		world.free()
+		return _fail("hinge setup failed")
+	var hinge: StructuralCommandResult = setup["hinge"]
+	var joint_id := int(hinge.data["hinge_joint_id"])
+	var base_id := int(hinge.data["element_id"])
+	var runtime := world.ensure_industry_element_runtime(base_id)
+	runtime.machine_enabled = true
+	runtime.powered = true
+	_weld_element(world, base_id)
+	_weld_element(world, int(hinge.data["head_element_id"]))
+	var joint := world.get_joint(joint_id)
+
+	var command := SetActuatorTargetCommand.new()
+	command.joint_id = joint_id
+	command.mode = SimulationMotorState.ControlMode.VELOCITY
+	command.target_velocity_mps = 1.0
+	if StringName(world.apply_set_actuator_target(command).get("status", &"")) != &"ok":
+		world.free()
+		return _fail("hinge set_actuator_target failed before limit test")
+	world.sync_actuator_observation(
+		joint_id,
+		joint.motor.upper_limit_m,
+		0.0,
+		joint.motor.force_limit_n,
+		true
+	)
+	for _i: int in range(30):
+		world.tick_actuators(0.05)
+	if joint.motor.status != SimulationMotorState.Status.JOINT_LIMIT:
+		world.free()
+		return _fail(
+			"expected joint_limit at the upper stop, got %s"
+			% ActuatorSimulationService.status_name_for_motor(joint.motor)
+		)
+
+	# Observed angles beyond the stops must clamp into the travel range.
+	world.sync_actuator_observation(joint_id, PI, 0.0, 0.0, false)
+	if not is_equal_approx(
+		joint.motor.observed_position_m,
+		joint.motor.upper_limit_m
+	):
+		world.free()
+		return _fail("hinge observed angle was not clamped into limits")
+	world.free()
+	return true
+
+
+func _test_hinge_overload_and_no_power() -> bool:
+	var world := _hinge_world_with_foundation()
+	var setup := _hinge_setup(world)
+	if setup.is_empty():
+		world.free()
+		return _fail("hinge setup failed")
+	var hinge: StructuralCommandResult = setup["hinge"]
+	var joint_id := int(hinge.data["hinge_joint_id"])
+	var base_id := int(hinge.data["element_id"])
+	var runtime := world.ensure_industry_element_runtime(base_id)
+	runtime.machine_enabled = true
+	runtime.powered = true
+	_weld_element(world, base_id)
+	_weld_element(world, int(hinge.data["head_element_id"]))
+	var joint := world.get_joint(joint_id)
+
+	var command := SetActuatorTargetCommand.new()
+	command.joint_id = joint_id
+	command.mode = SimulationMotorState.ControlMode.VELOCITY
+	command.target_velocity_mps = 1.0
+	if StringName(world.apply_set_actuator_target(command).get("status", &"")) != &"ok":
+		world.free()
+		return _fail("hinge set_actuator_target failed before overload")
+	# Saturated torque with zero progress mid-travel (away from both stops).
+	world.sync_actuator_observation(
+		joint_id,
+		0.0,
+		0.0,
+		joint.motor.force_limit_n,
+		true
+	)
+	for _i: int in range(30):
+		world.tick_actuators(0.05)
+	if joint.motor.status != SimulationMotorState.Status.OVERLOADED:
+		world.free()
+		return _fail("expected overloaded hinge status")
+
+	runtime.powered = false
+	world.tick_actuators(0.05)
+	if joint.motor.status != SimulationMotorState.Status.NO_POWER:
+		world.free()
+		return _fail("expected no_power hinge status")
+	world.free()
+	return true
+
+
+func _test_hinge_dismantle_splits_top() -> bool:
+	var world := _hinge_world_with_foundation()
+	var setup := _hinge_setup(world)
+	if setup.is_empty():
+		world.free()
+		return _fail("hinge setup failed")
+	var hinge: StructuralCommandResult = setup["hinge"]
+	var assembly_id := int(setup["assembly_id"])
+
+	var platform := PlaceElementCommand.new()
+	platform.assembly_id = assembly_id
+	platform.expected_assembly_revision = int(hinge.data["topology_revision"])
+	platform.archetype = Slice01Archetypes.frame()
+	platform.origin_cell = Vector3i(5, 2, 0)
+	platform.orientation_index = 0
+	platform.store_id = "player"
+	if not world.apply_structural_command_now(platform).is_ok():
+		world.free()
+		return _fail("platform attach failed before hinge dismantle")
+
+	var dismantle := DismantleElementCommand.new()
+	dismantle.element_id = int(hinge.data["element_id"])
+	dismantle.expected_assembly_revision = world.get_assembly_raw(
+		assembly_id
+	).topology_revision
+	dismantle.store_id = "player"
+	var result := world.apply_structural_command_now(dismantle)
+	if not result.is_ok() or not bool(result.data.get("split", false)):
+		world.free()
+		return _fail("dismantle hinge base did not split assembly")
+	world.free()
+	return true
+
+
+func _test_hinge_moving_top_construction_rejected() -> bool:
+	var world := _hinge_world_with_foundation()
+	var setup := _hinge_setup(world)
+	if setup.is_empty():
+		world.free()
+		return _fail("hinge setup failed")
+	var hinge: StructuralCommandResult = setup["hinge"]
+	var assembly_id := int(setup["assembly_id"])
+	var joint := world.get_joint(int(hinge.data["hinge_joint_id"]))
+	joint.motor.observed_position_m = 0.5
+
+	var platform := PlaceElementCommand.new()
+	platform.assembly_id = assembly_id
+	platform.expected_assembly_revision = world.get_assembly_raw(
+		assembly_id
+	).topology_revision
+	platform.archetype = Slice01Archetypes.frame()
+	platform.origin_cell = Vector3i(5, 2, 0)
+	platform.orientation_index = 0
+	platform.store_id = "player"
+	var result := world.apply_structural_command_now(platform)
+	if result.reason != StructuralCommandResult.REASON_MOVING_TARGET_NOT_SUPPORTED:
+		world.free()
+		return _fail("construction on a bent hinge top was not rejected")
+	world.free()
+	return true
+
+
+func _test_hinge_jolt_limit_offset_math() -> bool:
+	var motor := SimulationMotorState.from_hinge_definition(
+		HINGE_BASE.hinge_definition
+	)
+	var offset := 0.5
+	var limits := HingeProjectionUtil.jolt_angle_limits(motor, offset)
+	if not is_equal_approx(limits.x, motor.lower_limit_m - offset):
+		return _fail("jolt lower limit offset mismatch")
+	if not is_equal_approx(limits.y, motor.upper_limit_m - offset):
+		return _fail("jolt upper limit offset mismatch")
+	var at_home := HingeProjectionUtil.jolt_angle_limits(motor, 0.0)
+	if not is_equal_approx(at_home.x, motor.lower_limit_m):
+		return _fail("zero-offset lower limit should match motor")
+	if not is_equal_approx(at_home.y, motor.upper_limit_m):
+		return _fail("zero-offset upper limit should match motor")
+	return true
+
+
+func _test_hinge_near_limit_torque_taper() -> bool:
+	var motor := SimulationMotorState.from_hinge_definition(
+		HINGE_BASE.hinge_definition
+	)
+	motor.control_mode = SimulationMotorState.ControlMode.VELOCITY
+	motor.target_velocity_mps = 1.0
+	motor.observed_position_m = motor.upper_limit_m
+	if RotorProjectionUtil.near_limit_torque_scale(motor) > 0.001:
+		return _fail("torque scale at upper limit must be 0")
+	motor.observed_position_m = motor.upper_limit_m - 0.01
+	var mid_scale := RotorProjectionUtil.near_limit_torque_scale(motor)
+	if mid_scale <= 0.0 or mid_scale >= 1.0:
+		return _fail("torque scale inside taper band must be partial")
+	motor.observed_position_m = 0.0
+	if not is_equal_approx(
+		RotorProjectionUtil.near_limit_torque_scale(motor),
+		1.0
+	):
+		return _fail("mid-travel torque scale must be 1")
+	var torque := RotorProjectionUtil.compute_motor_torque_scalar(
+		motor,
+		0.0,
+		true,
+		1.0
+	)
+	if absf(float(torque.get("torque_nm", 0.0))) <= 0.0:
+		return _fail("mid-travel motor should still produce torque")
+	motor.observed_position_m = motor.upper_limit_m
+	var stopped := RotorProjectionUtil.compute_motor_torque_scalar(
+		motor,
+		0.0,
+		true,
+		1.0
+	)
+	if absf(float(stopped.get("torque_nm", 0.0))) > 0.001:
+		return _fail("torque at hard stop must taper to 0")
+	return true
+
+
+func _test_nested_rotor_hinge_reconstruct_order() -> bool:
+	var world := _nested_rotor_hinge_world()
+	if world == null:
+		return _fail("nested rotor+hinge setup failed")
+	var assembly_id := int(world.get_meta("assembly_id"))
+	var hinge_top_id := int(world.get_meta("hinge_top_id"))
+	var platform_id := int(world.get_meta("platform_id"))
+	var rotor_joint := world.get_joint(int(world.get_meta("rotor_joint_id")))
+	var hinge_joint := world.get_joint(int(world.get_meta("hinge_joint_id")))
+	rotor_joint.motor.observed_position_m = PI / 2.0
+	hinge_joint.motor.observed_position_m = PI / 2.0
+	var cell_center_local := Vector3(0.25, 0.25, 0.25)
+	var top_tf := world.element_world_transform(hinge_top_id)
+	var platform_tf := world.element_world_transform(platform_id)
+	var top_center := top_tf * cell_center_local
+	var platform_center := platform_tf * cell_center_local
+	# Parent-before-child reconstruct: hinge top must leave the home column
+	# after both rotor yaw and hinge pitch are applied.
+	var home_top := Vector3(5.25, 3.25, 0.25)
+	if top_center.is_equal_approx(home_top):
+		world.free()
+		return _fail("nested reconstruct left hinge top at home pose")
+	var root := world.get_body_group_motion(
+		assembly_id,
+		world.root_body_group_id(assembly_id)
+	)
+	var hinge_top_group := world.body_group_id_for_element(hinge_top_id)
+	var top_motion := world.get_body_group_motion(assembly_id, hinge_top_group)
+	if top_motion.transform.basis.is_equal_approx(root.transform.basis):
+		world.free()
+		return _fail("hinge top basis should differ from root after nested bend")
+	if platform_center.is_equal_approx(Vector3(5.25, 4.25, 0.25)):
+		world.free()
+		return _fail("platform on nested hinge did not leave home cell")
+	world.free()
+	return true
+
+
+func _test_piston_axis_follows_bent_hinge_basis() -> bool:
+	var world := _hinge_world_with_foundation()
+	var setup := _hinge_setup(world)
+	if setup.is_empty():
+		world.free()
+		return _fail("hinge setup failed")
+	var hinge: StructuralCommandResult = setup["hinge"]
+	var assembly_id := int(setup["assembly_id"])
+	var top_id := int(hinge.data["head_element_id"])
+	var joint := world.get_joint(int(hinge.data["hinge_joint_id"]))
+	joint.motor.observed_position_m = PI / 2.0
+	var root_motion := world.get_body_group_motion(
+		assembly_id,
+		world.root_body_group_id(assembly_id)
+	)
+	var top_motion := world.get_body_group_motion(
+		assembly_id,
+		world.body_group_id_for_element(top_id)
+	)
+	var axis_local := Vector3.UP
+	var root_axis := (root_motion.transform.basis * axis_local).normalized()
+	var base_axis := (top_motion.transform.basis * axis_local).normalized()
+	if root_axis.is_equal_approx(base_axis):
+		world.free()
+		return _fail(
+			"bent hinge top basis must rotate piston axis away from root"
+		)
+	world.free()
+	return true
+
+
+func _test_construction_rejected_on_bent_hinge_branch() -> bool:
+	var world := _hinge_world_with_foundation()
+	var setup := _hinge_setup(world)
+	if setup.is_empty():
+		world.free()
+		return _fail("hinge setup failed")
+	var hinge: StructuralCommandResult = setup["hinge"]
+	var assembly_id := int(setup["assembly_id"])
+	var platform := PlaceElementCommand.new()
+	platform.assembly_id = assembly_id
+	platform.expected_assembly_revision = int(hinge.data["topology_revision"])
+	platform.archetype = Slice01Archetypes.frame()
+	platform.origin_cell = Vector3i(5, 2, 0)
+	platform.orientation_index = 0
+	platform.store_id = "player"
+	var platform_result := world.apply_structural_command_now(platform)
+	if not platform_result.is_ok():
+		world.free()
+		return _fail("platform attach before bend failed")
+	var joint := world.get_joint(int(hinge.data["hinge_joint_id"]))
+	joint.motor.observed_position_m = 0.5
+	var tip := PlaceElementCommand.new()
+	tip.assembly_id = assembly_id
+	tip.expected_assembly_revision = world.get_assembly_raw(
+		assembly_id
+	).topology_revision
+	tip.archetype = Slice01Archetypes.frame()
+	tip.origin_cell = Vector3i(5, 3, 0)
+	tip.orientation_index = 0
+	tip.store_id = "player"
+	var result := world.apply_structural_command_now(tip)
+	if result.reason != StructuralCommandResult.REASON_MOVING_TARGET_NOT_SUPPORTED:
+		world.free()
+		return _fail(
+			"construction on bent hinge branch frame was not rejected"
+		)
+	world.free()
+	return true
+
+
+func _test_driven_chain_length_limit() -> bool:
+	var definition := HINGE_BASE.hinge_definition
+	var frame := Slice01Archetypes.frame()
+	var element_ids: Array[int] = []
+	var elements_by_id: Dictionary = {}
+	for index: int in range(1, 7):
+		element_ids.append(index)
+		elements_by_id[index] = SimulationElement.frame(
+			index,
+			1,
+			frame,
+			Vector3i(index, 0, 0),
+			0,
+			{}
+		)
+	var too_long: Array[SimulationJoint] = [
+		SimulationJoint.anchor(100, 1, 1, "anchor"),
+	]
+	for index: int in range(1, 6):
+		too_long.append(
+			SimulationJoint.hinge(index, 1, index, index + 1, definition)
+		)
+	var rejected := BodyGroupCompiler.compile(
+		element_ids,
+		elements_by_id,
+		too_long
+	)
+	if bool(rejected.get("valid", true)):
+		return _fail("5 driven joints on a path should be rejected")
+	if String(rejected.get("reason", "")) != "driven_joint_chain_too_long":
+		return _fail(
+			"expected driven_joint_chain_too_long, got %s"
+			% str(rejected.get("reason", ""))
+		)
+	var ok_ids: Array[int] = []
+	var ok_elements: Dictionary = {}
+	for index: int in range(1, 6):
+		ok_ids.append(index)
+		ok_elements[index] = SimulationElement.frame(
+			index,
+			1,
+			frame,
+			Vector3i(index, 0, 0),
+			0,
+			{}
+		)
+	var ok_joints: Array[SimulationJoint] = [
+		SimulationJoint.anchor(100, 1, 1, "anchor"),
+	]
+	for index: int in range(1, 5):
+		ok_joints.append(
+			SimulationJoint.hinge(index, 1, index, index + 1, definition)
+		)
+	var accepted := BodyGroupCompiler.compile(ok_ids, ok_elements, ok_joints)
+	if not bool(accepted.get("valid", false)):
+		return _fail(
+			"4 driven joints on a path must remain valid: %s"
+			% str(accepted.get("reason", ""))
+		)
+	return true
+
+
+func _nested_rotor_hinge_world() -> SimulationWorld:
+	var world := SimulationWorld.new()
+	world.ensure_resource_store("player")
+	world.set_resource_amount("player", "construction_component", 200.0)
+	world.get_archetype_registry().register(ROTOR_TOP)
+	world.get_archetype_registry().register(HINGE_TOP)
+	var foundation := _spawn(
+		world,
+		_single_blueprint(Slice01Archetypes.foundation()),
+		GridTransform.identity()
+	)
+	if not foundation.is_ok():
+		world.free()
+		return null
+	var assembly_id := int(foundation.data["assembly_id"])
+	var frame := _place_frame(world, assembly_id, Vector3i(4, 0, 0), foundation)
+	if not frame.is_ok():
+		world.free()
+		return null
+	var rotor_place := PlaceElementCommand.new()
+	rotor_place.assembly_id = assembly_id
+	rotor_place.expected_assembly_revision = int(frame.data["topology_revision"])
+	rotor_place.archetype = ROTOR_BASE
+	rotor_place.origin_cell = Vector3i(5, 0, 0)
+	rotor_place.orientation_index = 0
+	rotor_place.store_id = "player"
+	var rotor := world.apply_structural_command_now(rotor_place)
+	if not rotor.is_ok():
+		world.free()
+		return null
+	var mast := PlaceElementCommand.new()
+	mast.assembly_id = assembly_id
+	mast.expected_assembly_revision = int(rotor.data["topology_revision"])
+	mast.archetype = Slice01Archetypes.frame()
+	mast.origin_cell = Vector3i(5, 2, 0)
+	mast.orientation_index = 0
+	mast.store_id = "player"
+	var mast_result := world.apply_structural_command_now(mast)
+	if not mast_result.is_ok():
+		world.free()
+		return null
+	var hinge_place := PlaceElementCommand.new()
+	hinge_place.assembly_id = assembly_id
+	hinge_place.expected_assembly_revision = int(
+		mast_result.data["topology_revision"]
+	)
+	hinge_place.archetype = HINGE_BASE
+	hinge_place.origin_cell = Vector3i(5, 3, 0)
+	hinge_place.orientation_index = 0
+	hinge_place.store_id = "player"
+	var hinge := world.apply_structural_command_now(hinge_place)
+	if not hinge.is_ok():
+		world.free()
+		return null
+	var platform := PlaceElementCommand.new()
+	platform.assembly_id = assembly_id
+	platform.expected_assembly_revision = int(hinge.data["topology_revision"])
+	platform.archetype = Slice01Archetypes.frame()
+	platform.origin_cell = Vector3i(5, 5, 0)
+	platform.orientation_index = 0
+	platform.store_id = "player"
+	var platform_result := world.apply_structural_command_now(platform)
+	if not platform_result.is_ok():
+		world.free()
+		return null
+	world.set_meta("assembly_id", assembly_id)
+	world.set_meta("rotor_joint_id", int(rotor.data["rotor_joint_id"]))
+	world.set_meta("hinge_joint_id", int(hinge.data["hinge_joint_id"]))
+	world.set_meta("hinge_top_id", int(hinge.data["head_element_id"]))
+	world.set_meta("platform_id", int(platform_result.data["element_id"]))
+	return world
+
+
+func _hinge_world_with_foundation() -> SimulationWorld:
+	var world := SimulationWorld.new()
+	world.ensure_resource_store("player")
+	world.set_resource_amount("player", "construction_component", 100.0)
+	world.get_archetype_registry().register(HINGE_TOP)
+	return world
+
+
+func _hinge_setup(world: SimulationWorld) -> Dictionary:
+	var foundation := _spawn(
+		world,
+		_single_blueprint(Slice01Archetypes.foundation()),
+		GridTransform.identity()
+	)
+	if not foundation.is_ok():
+		return {}
+	var assembly_id := int(foundation.data["assembly_id"])
+	var frame := _place_frame(world, assembly_id, Vector3i(4, 0, 0), foundation)
+	if not frame.is_ok():
+		return {}
+	var place := PlaceElementCommand.new()
+	place.assembly_id = assembly_id
+	place.expected_assembly_revision = int(frame.data["topology_revision"])
+	place.archetype = HINGE_BASE
+	place.origin_cell = Vector3i(5, 0, 0)
+	place.orientation_index = 0
+	place.store_id = "player"
+	var hinge := world.apply_structural_command_now(place)
+	if not hinge.is_ok():
+		push_error(
+			"hinge placement failed: %s %s" % [hinge.reason, hinge.data]
+		)
+		return {}
+	return {
+		"assembly_id": assembly_id,
+		"hinge": hinge,
+	}
 
 
 func _rotor_world_with_foundation() -> SimulationWorld:

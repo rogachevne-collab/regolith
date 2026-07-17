@@ -11,32 +11,40 @@ const MAX_FLAT_SLOPE_M := 0.35
 
 
 static func find_flat_ground_near(
-	terrain: VoxelTerrain,
+	terrain: Node3D,
 	tool: VoxelTool,
 	space_state: PhysicsDirectSpaceState3D,
-	center_xz: Vector2,
+	center_hint: Vector3,
 	search_radius_m: float = FLAT_SEARCH_RADIUS_M,
 	step_m: float = FLAT_SEARCH_STEP_M
 ) -> Variant:
 	if terrain == null or tool == null or space_state == null:
 		return null
+	var field := GravityField.find_in_tree(terrain)
+	var search_center := _search_center_hint(center_hint, field)
+	var frame: Basis = (
+		field.tangent_basis_at(search_center)
+		if field != null
+		else Basis.IDENTITY
+	)
 	var best_ground: Vector3 = Vector3.ZERO
 	var best_slope := INF
 	var best_dist_sq := INF
 	var steps := maxi(int(ceil(search_radius_m / step_m)), 1)
 	for ix: int in range(-steps, steps + 1):
 		for iz: int in range(-steps, steps + 1):
-			var xz := center_xz + Vector2(
-				float(ix) * step_m,
-				float(iz) * step_m
+			var offset := (
+				frame.x * (float(ix) * step_m)
+				+ frame.z * (float(iz) * step_m)
 			)
-			if xz.distance_to(center_xz) > search_radius_m + 0.001:
+			if offset.length() > search_radius_m + 0.001:
 				continue
-			var ground_variant: Variant = _ground_point_at_xz(
+			var hint := search_center + offset
+			var ground_variant: Variant = _ground_point_along_field(
 				terrain,
 				tool,
 				space_state,
-				xz
+				hint
 			)
 			if not ground_variant is Vector3:
 				continue
@@ -50,7 +58,7 @@ static func find_flat_ground_near(
 			)
 			if slope > MAX_FLAT_SLOPE_M:
 				continue
-			var dist_sq := xz.distance_squared_to(center_xz)
+			var dist_sq := offset.length_squared()
 			if slope < best_slope - 0.001 or (
 				is_equal_approx(slope, best_slope)
 				and dist_sq < best_dist_sq
@@ -63,11 +71,23 @@ static func find_flat_ground_near(
 	return best_ground
 
 
+static func _search_center_hint(
+	center_hint: Vector3,
+	field: GravityField
+) -> Vector3:
+	if field != null and field.mode == GravityField.Mode.RADIAL:
+		var hint := center_hint
+		if hint.length_squared() <= 0.000001:
+			hint = Vector3.UP
+		return MoonGeometry.surface_point(hint)
+	return Vector3(center_hint.x, 0.0, center_hint.z)
+
+
 static func spawn_on_terrain(
 	session: SimulationSession,
 	world_position: Vector3,
 	store_id: String = STORE_ID,
-	terrain: VoxelTerrain = null,
+	terrain: Node3D = null,
 	tool: VoxelTool = null,
 	space_state: PhysicsDirectSpaceState3D = null
 ) -> Dictionary:
@@ -145,8 +165,9 @@ static func spawn_on_terrain(
 	var locomotion := world.get_locomotion_controller(assembly_id)
 	locomotion.set_parking_brake(true)
 	var motion := AssemblyMotionState.from_grid_frame(grid_frame)
-	# Keep terrain seating Y; grid snap alone can bury/float the chassis ±0.25 m.
-	motion.transform.origin.y = assembly_transform.origin.y
+	# Keep terrain seating pose; grid snap alone can bury/float the chassis.
+	motion.transform.origin = assembly_transform.origin
+	motion.transform.basis = assembly_transform.basis
 	motion.frozen = false
 	motion.sleeping = false
 	motion.linear_velocity = Vector3.ZERO
@@ -168,7 +189,7 @@ static func spawn_on_terrain(
 static func assembly_transform_on_surface(
 	surface_point: Vector3,
 	basis: Basis = Basis.IDENTITY,
-	terrain: VoxelTerrain = null,
+	terrain: Node3D = null,
 	tool: VoxelTool = null,
 	space_state: PhysicsDirectSpaceState3D = null
 ) -> Transform3D:
@@ -184,7 +205,7 @@ static func assembly_transform_on_surface(
 static func _assembly_transform_on_surface(
 	surface_point: Vector3,
 	basis: Basis = Basis.IDENTITY,
-	terrain: VoxelTerrain = null,
+	terrain: Node3D = null,
 	tool: VoxelTool = null,
 	space_state: PhysicsDirectSpaceState3D = null
 ) -> Transform3D:
@@ -196,26 +217,52 @@ static func _assembly_transform_on_surface(
 		suspension.suspension_definition.suspension_travel_m
 		+ wheel.wheel_definition.radius_m
 	)
-	var seat_y := _lowest_surface_y_near(
+	var up := GravityField.resolve_up(terrain, surface_point)
+	var field := GravityField.find_in_tree(terrain)
+	var seated_basis := basis
+	if field != null and field.mode == GravityField.Mode.RADIAL:
+		if basis.is_equal_approx(Basis.IDENTITY) or basis.y.dot(up) < 0.85:
+			seated_basis = field.tangent_basis_at(surface_point)
+	var seat_point := _lowest_surface_point_near(
 		surface_point,
 		terrain,
 		tool,
 		space_state
 	)
-	var seated_point := Vector3(surface_point.x, seat_y, surface_point.z)
 	return Transform3D(
-		basis,
-		seated_point - basis * contact + basis.y.normalized() * clearance
+		seated_basis,
+		seat_point - seated_basis * contact + seated_basis.y.normalized() * clearance
 	)
 
 
 static func _lowest_surface_y_near(
 	center: Vector3,
-	terrain: VoxelTerrain,
+	terrain: Node3D,
 	tool: VoxelTool,
 	space_state: PhysicsDirectSpaceState3D
 ) -> float:
+	return _lowest_surface_point_near(
+		center,
+		terrain,
+		tool,
+		space_state
+	).dot(GravityField.resolve_up(terrain, center))
+
+
+static func _lowest_surface_point_near(
+	center: Vector3,
+	terrain: Node3D,
+	tool: VoxelTool,
+	space_state: PhysicsDirectSpaceState3D
+) -> Vector3:
 	var half := FLAT_SAMPLE_SPAN_M * 0.5
+	var up := GravityField.resolve_up(terrain, center)
+	var field := GravityField.find_in_tree(terrain)
+	var frame: Basis = (
+		field.tangent_basis_at(center)
+		if field != null
+		else Basis.IDENTITY
+	)
 	var offsets: Array[Vector2] = [
 		Vector2(0.0, 0.0),
 		Vector2(-half, -half),
@@ -223,30 +270,33 @@ static func _lowest_surface_y_near(
 		Vector2(-half, half),
 		Vector2(half, half),
 	]
-	var lowest := center.y
+	var lowest := center
+	var lowest_height := center.dot(up)
 	var found := false
 	for offset: Vector2 in offsets:
-		var xz := Vector2(center.x + offset.x, center.z + offset.y)
+		var hint := center + frame.x * offset.x + frame.z * offset.y
 		var ground_variant: Variant = null
 		if space_state != null and terrain != null and tool != null:
-			ground_variant = _ground_point_at_xz(
+			ground_variant = _ground_point_along_field(
 				terrain,
 				tool,
 				space_state,
-				xz
+				hint
 			)
 		if ground_variant is Vector3:
 			var ground: Vector3 = ground_variant
-			if not found or ground.y < lowest:
-				lowest = ground.y
+			var height := ground.dot(up)
+			if not found or height < lowest_height:
+				lowest_height = height
+				lowest = ground
 				found = true
-	return lowest if found else center.y
+	return lowest if found else center
 
 
 ## After load: re-seat released locomotives to physics ground under the footprint.
 static func reseat_parked_locomotives(
 	session: SimulationSession,
-	terrain: VoxelTerrain,
+	terrain: Node3D,
 	tool: VoxelTool,
 	space_state: PhysicsDirectSpaceState3D
 ) -> void:
@@ -286,22 +336,28 @@ static func reseat_parked_locomotives(
 			locomotion.mark_released_from_anchor()
 		var motion := assembly.motion.duplicate_state()
 		var origin := motion.transform.origin
-		var seat_y := _lowest_surface_y_near(
+		var up := GravityField.resolve_up(terrain, origin)
+		var seat_point := _lowest_surface_point_near(
 			origin,
 			terrain,
 			tool,
 			space_state
 		)
 		var basis := motion.transform.basis
+		var field := GravityField.find_in_tree(terrain)
+		if field != null and field.mode == GravityField.Mode.RADIAL:
+			if basis.y.normalized().dot(up) < 0.85:
+				basis = field.tangent_basis_at(seat_point)
 		var desired := (
-			Vector3(origin.x, seat_y, origin.z)
+			seat_point
 			- basis * contact
 			+ basis.y.normalized() * clearance
 		)
-		var delta_y := desired.y - origin.y
-		if absf(delta_y) < 0.02 and not motion.frozen:
+		var delta := desired - origin
+		if delta.length() < 0.02 and not motion.frozen:
 			continue
-		motion.transform.origin.y += delta_y
+		motion.transform.basis = basis
+		motion.transform.origin = desired
 		motion.frozen = false
 		motion.sleeping = false
 		motion.linear_velocity = Vector3.ZERO
@@ -311,61 +367,103 @@ static func reseat_parked_locomotives(
 
 
 static func _ground_point_at_xz(
-	terrain: VoxelTerrain,
+	terrain: Node3D,
 	tool: VoxelTool,
 	space_state: PhysicsDirectSpaceState3D,
 	xz: Vector2
 ) -> Variant:
-	var origin := Vector3(xz.x, SKY_PROBE_Y, xz.y)
+	return _ground_point_along_field(
+		terrain,
+		tool,
+		space_state,
+		Vector3(xz.x, 0.0, xz.y)
+	)
+
+
+static func _ground_point_along_field(
+	terrain: Node3D,
+	tool: VoxelTool,
+	space_state: PhysicsDirectSpaceState3D,
+	hint: Vector3
+) -> Variant:
+	var up := GravityField.resolve_up(terrain, hint)
+	var down := -up
+	var field := GravityField.find_in_tree(terrain)
+	var origin: Vector3
+	if field != null and field.mode == GravityField.Mode.RADIAL:
+		var radial_hint := hint
+		if radial_hint.length_squared() <= 0.000001:
+			radial_hint = Vector3.UP
+		origin = (
+			radial_hint.normalized()
+			* (MoonGeometry.SURFACE_RADIUS_M + MoonGeometry.SPAWN_SKY_OFFSET_M)
+		)
+		up = field.up_at(origin)
+		down = -up
+	else:
+		origin = Vector3(hint.x, SKY_PROBE_Y, hint.z)
 	var hit: VoxelRaycastResult = VoxelSpaceUtil.raycast_world(
 		tool,
 		terrain,
 		origin,
-		Vector3.DOWN,
+		down,
 		GROUND_PROBE_MAX_DISTANCE
 	)
 	if hit == null:
 		return null
-	var sdf_y := (
-		origin.y
-		- VoxelSpaceUtil.raycast_hit_world_distance(terrain, hit)
+	var sdf_point := VoxelSpaceUtil.raycast_hit_world_point(
+		terrain,
+		origin,
+		down,
+		hit
 	)
-	var surface_y := VoxelSpaceUtil.resolve_ground_surface_y(
+	return VoxelSpaceUtil.resolve_ground_surface_along_ray(
 		space_state,
-		xz,
-		sdf_y,
-		SKY_PROBE_Y,
+		origin,
+		down,
+		sdf_point,
 		GROUND_PROBE_MAX_DISTANCE
 	)
-	return Vector3(xz.x, surface_y, xz.y)
 
 
 static func _local_slope_m(
-	terrain: VoxelTerrain,
+	terrain: Node3D,
 	tool: VoxelTool,
 	space_state: PhysicsDirectSpaceState3D,
 	center: Vector3,
 	sample_span_m: float
 ) -> float:
+	var up := GravityField.resolve_up(terrain, center)
+	var field := GravityField.find_in_tree(terrain)
+	var frame: Basis = (
+		field.tangent_basis_at(center)
+		if field != null
+		else Basis.IDENTITY
+	)
 	var max_delta := 0.0
+	var center_height := center.dot(up)
 	for offset: Vector2 in [
 		Vector2(1.0, 0.0),
 		Vector2(-1.0, 0.0),
 		Vector2(0.0, 1.0),
 		Vector2(0.0, -1.0),
 	]:
-		var neighbor_xz := Vector2(center.x, center.z) + offset * sample_span_m
-		var neighbor_variant: Variant = _ground_point_at_xz(
+		var hint := (
+			center
+			+ frame.x * (offset.x * sample_span_m)
+			+ frame.z * (offset.y * sample_span_m)
+		)
+		var neighbor_variant: Variant = _ground_point_along_field(
 			terrain,
 			tool,
 			space_state,
-			neighbor_xz
+			hint
 		)
 		if not neighbor_variant is Vector3:
 			return INF
 		max_delta = maxf(
 			max_delta,
-			absf((neighbor_variant as Vector3).y - center.y)
+			absf((neighbor_variant as Vector3).dot(up) - center_height)
 		)
 	return max_delta
 
