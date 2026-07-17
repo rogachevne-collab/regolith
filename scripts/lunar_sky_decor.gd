@@ -66,7 +66,13 @@ func _place() -> void:
 	var sky_dir := _celestial_direction(anchor, up)
 	var earth_pos := anchor + sky_dir * distance_m
 
-	var look := Basis.looking_at(-sky_dir, up)
+	var look_up := up
+	if absf(sky_dir.dot(up)) > 0.999:
+		var tangent := Vector3.FORWARD.slide(up)
+		if tangent.length_squared() < 0.0001:
+			tangent = Vector3.RIGHT.slide(up)
+		look_up = tangent.normalized()
+	var look := Basis.looking_at(-sky_dir, look_up)
 	look = look.rotated(look.y.normalized(), deg_to_rad(_spin))
 	global_transform = Transform3D(look, earth_pos)
 	_apply_scale()
