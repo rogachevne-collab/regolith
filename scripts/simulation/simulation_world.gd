@@ -49,6 +49,12 @@ var _simulation_time_s: float = 0.0
 var _command_queue: Array[StructuralCommand] = []
 var _flush_scheduled := false
 var _terrain_contact_probe: Callable
+## Cache for ConstructionCommandService.validate_construction_archetype
+## (key: archetype instance_id → fingerprint + validation result).
+var _archetype_validation_cache: Dictionary = {}
+## Cache for ConstructionOccupancyUtil.assembly_occupancy_index
+## (key: assembly_id → {revision, cells}).
+var _occupancy_index_cache: Dictionary = {}
 
 
 func set_terrain_contact_probe(probe: Callable) -> void:

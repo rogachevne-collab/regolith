@@ -1170,8 +1170,10 @@ func _test_snap_face_cache_motion_invalidation() -> bool:
 	if not world.sync_assembly_motion(assembly_id, moved):
 		return _fail("snap cache motion sync failed")
 	cache.ensure_current()
-	if cache.generation <= generation_before:
-		return _fail("snap cache did not rebuild after motion-only update")
+	# Anchored/frozen assemblies skip continuous pose sync (walk/aim FPS).
+	# Motion must not bump generation or thrash world_point rebuilds.
+	if cache.generation != generation_before:
+		return _fail("snap cache bumped generation on motion-only update")
 	var face_after: Dictionary = {}
 	for face: Dictionary in cache.faces():
 		if (
@@ -1181,13 +1183,12 @@ func _test_snap_face_cache_motion_invalidation() -> bool:
 			face_after = face
 			break
 	if face_after.is_empty():
-		return _fail("snap cache lost assembly face after motion rebuild")
+		return _fail("snap cache lost assembly face after motion update")
 	var point_before: Vector3 = face_before["world_point"]
 	var point_after: Vector3 = face_after["world_point"]
-	if point_after.distance_to(point_before + Vector3(3.0, 0.0, 0.0)) > 0.05:
+	if point_after.distance_to(point_before) > 0.05:
 		return _fail(
-			"snap cache face point did not follow motion delta %.4f"
-			% point_after.distance_to(point_before)
+			"anchored snap cache unexpectedly rewrote face point on motion"
 		)
 	_free_fixture(fixture)
 	return true

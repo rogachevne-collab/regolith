@@ -215,6 +215,10 @@ func _resolve_context_key(
 	var origin: Vector3 = aim["origin"]
 	var direction: Vector3 = aim["direction"]
 	var aim_step := _aim_quantize_step_for_selection()
+	# Miss / empty aim still runs face-scan resolve; coarsen while walking so
+	# camera origin noise does not re-resolve every physics frame.
+	if not bool(direct_hit.get("valid", false)):
+		aim_step = maxf(aim_step, 0.35)
 	return "%d|%s|%s|%s|%d|%s|%s|%s" % [
 		_gateway.snap_cache_generation(),
 		_quantize_vec3(origin, aim_step),
