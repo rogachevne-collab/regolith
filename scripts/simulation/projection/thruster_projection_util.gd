@@ -2,16 +2,43 @@ class_name ThrusterProjectionUtil
 extends RefCounted
 
 const ATTITUDE_EPS := 0.001
+const LINEAR_DAMPEN_SPEED_EPS := 0.05
 
 
 static func compute_thrust_n(
 	definition: ThrusterDefinition,
-	thrust_command: float,
+	throttle: float,
 	powered: bool
 ) -> float:
 	if definition == null or not powered:
 		return 0.0
-	return definition.max_thrust_n * clampf(thrust_command, 0.0, 1.0)
+	return definition.max_thrust_n * clampf(throttle, 0.0, 1.0)
+
+
+## Throttle 0..1 for a thruster given SE-like translate (+ optional linear dampen).
+## `axis_local` and `velocity_local` are in the same body/assembly frame.
+static func compute_thruster_throttle(
+	axis_local: Vector3,
+	translate_command: Vector3,
+	dampeners: bool,
+	velocity_local: Vector3,
+	powered: bool
+) -> float:
+	if not powered or axis_local.length_squared() < 0.0001:
+		return 0.0
+	var axis := axis_local.normalized()
+	var desired := translate_command
+	if desired.length() <= ATTITUDE_EPS:
+		if not dampeners:
+			return 0.0
+		var speed := velocity_local.length()
+		if speed < LINEAR_DAMPEN_SPEED_EPS:
+			return 0.0
+		desired = -velocity_local / speed
+	var alignment := axis.dot(desired.normalized())
+	if alignment <= 0.0:
+		return 0.0
+	return clampf(alignment * minf(desired.length(), 1.0), 0.0, 1.0)
 
 
 static func thrust_axis_local(

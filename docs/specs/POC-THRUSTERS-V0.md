@@ -31,8 +31,9 @@
    Jolt владеет позой, скоростью и результатом сил.
 3. `thrust_axis_face` — направление **силы на корпус** (реакция). Сопло визуально
    противоположно оси.
-4. Все thruster на одной activated assembly получают один assembly-level
-   `thrust_command` (0..1). Дифференциальная тяга — вне v0.
+4. Все thruster на одной activated assembly читают общий
+   `translate_command` (body-local 6DOF); каждый thruster стреляет по
+   alignment своей оси. Дифференциальные группы — вне v0.
 5. Все gyro на assembly делят `pitch_command` / `yaw_command` / `roll_command`
    (−1..1) и флаг `dampeners`. Каждый gyro вносит долю момента
    `command * max_torque_nm / gyro_count` (равномерно).
@@ -98,57 +99,56 @@ GyroDefinition {
 ### AssemblyLocomotionController (flight fields)
 
 ```text
-thrust_command   # 0..1
-pitch_command    # -1..1  (local +X torque sense)
-yaw_command      # -1..1  (local +Y)
-roll_command     # -1..1  (local +Z)
-dampeners        # bool, default true
+translate_command  # Vector3 body-local −1..1 (x=right, y=up, z=forward)
+pitch_command      # -1..1  (local +X torque)
+yaw_command        # -1..1  (local +Y)
+roll_command       # -1..1  (local +Z)
+dampeners          # bool, default true
 ```
 
 Существующие wheel fields сохраняются. Snapshot включает flight fields.
+Legacy `thrust_command` в snapshot читается как `translate.y`.
 
 ### Power
 
-- Thruster `dynamic_power_w = power_draw_w * thrust_command` при activated seat
-  и powered; иначе 0 (+ idle через Industry profile).
+- Thruster `dynamic_power_w = power_draw_w * |translate_command|` (clamped ≤ 1).
 - Gyro `dynamic_power_w = power_draw_w * max(|pitch|,|yaw|,|roll|, dampeners? 0.25 : 0)`.
 - Без `runtime.powered` сила/момент = 0, status reason `no_power`.
 
 ### Projection (каждый physics frame)
 
-Для каждого operational thruster на activated mobile assembly:
+Для каждого operational thruster на activated flight assembly:
 
-1. `thrust_n = max_thrust_n * thrust_command` если powered, иначе 0.
-2. World axis = body basis · element basis · face_vector(thrust_axis_face).
-3. Offset = body · (element_local_origin + element_basis · nozzle_offset_local)
-   − body.origin.
-4. `RigidBody3D.apply_force(axis * thrust_n, offset)`; wake body.
+1. `throttle = max(0, axis_local · desired) * |desired|`, где `desired` =
+   `translate_command`, или при нулевом translate и dampeners —
+   `−normalize(v_local)` (linear dampen).
+2. `thrust_n = max_thrust_n * throttle` если powered.
+3. `apply_force` в точке сопла вдоль axis.
 
 Для gyro:
 
-1. Собрать command torque в **body local** axes (pitch→X, yaw→Y, roll→Z).
+1. Собрать command torque в **body local** (pitch→X, yaw→Y, roll→Z).
 2. Если dampeners и command ≈ 0: `τ = clamp(-ω_local * dampen_gain, ±max)`.
-3. Иначе `τ = command * max_torque_nm` (с делением на число gyro).
-4. `apply_torque(body_basis * τ)` на rigid body группы элемента.
+3. Иначе `τ = command * max_torque_nm / gyro_count`.
+4. `apply_torque(body_basis * τ)`.
 
-## ControlSeat bindings (v0)
+## ControlSeat bindings (SE-like)
 
 Когда assembly — flight (`is_flight_assembly`) и seat occupied:
 
 | Input action | Command |
 |---|---|
-| `jump` | `thrust_command` |
-| `move_forward` / `move_back` | `pitch_command` |
-| `move_left` / `move_right` | `roll_command` |
-| `yaw_left` / `yaw_right` | `yaw_command` |
-| `toggle_parking_brake` | toggle `dampeners` |
+| `move_forward` / `move_back` | `translate.z` (±forward) |
+| `move_left` / `move_right` | `translate.x` (±strafe) |
+| `move_up` / `move_down` | `translate.y` (Space / C) |
+| mouse X / Y (FP, not orbit) | `yaw` / `pitch` |
+| `roll_left` / `roll_right` | `roll` (Q / E) |
+| `toggle_dampeners` | toggle `dampeners` (Z) |
 
-Если assembly одновременно locomotive (колёса):
+Orbit camera (`toggle_vehicle_camera` / V): freelook вокруг craft, мышь не рулит.
 
-- WASD остаётся wheel drive/steer;
-- `jump` = thrust (не brake);
-- brake только через `toggle_parking_brake` + остановку, как у ровера;
-- attitude (pitch/yaw/roll) = 0, пока нет отдельного mode switch (вне v0).
+Если assembly одновременно locomotive (колёса) **и** flight: flight bindings
+побеждают (WASD = translate, не drive). Parking brake остаётся на `P`.
 
 Seat entry разрешён для `is_mobile_assembly` = locomotive ∨ flight.
 

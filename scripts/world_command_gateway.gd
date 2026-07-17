@@ -568,22 +568,42 @@ func tick_rover_locomotion_input() -> void:
 		_session.world,
 		assembly_id
 	)
-	if Input.is_action_just_pressed(&"toggle_parking_brake"):
-		if is_flight and not is_loco:
-			locomotion.set_dampeners(not locomotion.is_dampeners())
-			_wake_rover_body(assembly_id)
-		elif is_loco:
-			_toggle_rover_parking_brake(assembly_id, locomotion)
+	if is_flight and Input.is_action_just_pressed(&"toggle_dampeners"):
+		locomotion.set_dampeners(not locomotion.is_dampeners())
+		_wake_rover_body(assembly_id)
+	if is_loco and Input.is_action_just_pressed(&"toggle_parking_brake"):
+		_toggle_rover_parking_brake(assembly_id, locomotion)
 	if is_loco and locomotion.is_parking_brake() and not is_flight:
 		# Latched Space: same commands every tick, no wheel-tick special cases.
 		locomotion.set_drive_command(0.0)
 		locomotion.set_steering_command(0.0)
 		locomotion.set_brake_command(1.0)
-		locomotion.set_thrust_command(0.0)
+		locomotion.set_translate_command(Vector3.ZERO)
 		locomotion.set_attitude_commands(0.0, 0.0, 0.0)
 		_wake_rover_body(assembly_id)
 		return
-	if is_loco:
+	if is_flight:
+		# SE 6DOF: flight consumes WASD/Space/C; wheels idle while thrusters present.
+		locomotion.set_drive_command(0.0)
+		locomotion.set_steering_command(0.0)
+		locomotion.set_brake_command(0.0)
+		var translate := Vector3(
+			Input.get_action_strength(&"move_right")
+			- Input.get_action_strength(&"move_left"),
+			Input.get_action_strength(&"move_up")
+			- Input.get_action_strength(&"move_down"),
+			Input.get_action_strength(&"move_forward")
+			- Input.get_action_strength(&"move_back")
+		)
+		locomotion.set_translate_command(translate)
+		var look := _consume_flight_look_delta()
+		var roll := (
+			Input.get_action_strength(&"roll_right")
+			- Input.get_action_strength(&"roll_left")
+		)
+		# Mouse right → yaw right (−Y in Godot); mouse up → pitch up (−X).
+		locomotion.set_attitude_commands(look.y, -look.x, roll)
+	elif is_loco:
 		var drive := (
 			Input.get_action_strength(&"move_forward")
 			- Input.get_action_strength(&"move_back")
@@ -591,38 +611,36 @@ func tick_rover_locomotion_input() -> void:
 		var steer := Input.get_axis(&"move_right", &"move_left")
 		locomotion.set_drive_command(drive)
 		locomotion.set_steering_command(steer)
-		if is_flight:
-			# Hybrid: Space = thrust; brake via parking brake only.
-			locomotion.set_brake_command(0.0)
-			locomotion.set_attitude_commands(0.0, 0.0, 0.0)
-		else:
-			locomotion.set_brake_command(
-				1.0 if Input.is_action_pressed(&"jump") else 0.0
-			)
+		locomotion.set_brake_command(
+			1.0 if Input.is_action_pressed(&"jump") else 0.0
+		)
+		locomotion.set_translate_command(Vector3.ZERO)
+		locomotion.set_attitude_commands(0.0, 0.0, 0.0)
 	else:
 		locomotion.set_drive_command(0.0)
 		locomotion.set_steering_command(0.0)
 		locomotion.set_brake_command(0.0)
-	if is_flight:
-		locomotion.set_thrust_command(
-			Input.get_action_strength(&"jump")
-		)
-		if not is_loco:
-			var pitch := (
-				Input.get_action_strength(&"move_back")
-				- Input.get_action_strength(&"move_forward")
-			)
-			var roll := Input.get_axis(&"move_left", &"move_right")
-			var yaw := (
-				Input.get_action_strength(&"yaw_right")
-				- Input.get_action_strength(&"yaw_left")
-			)
-			locomotion.set_attitude_commands(pitch, yaw, roll)
-	else:
-		locomotion.set_thrust_command(0.0)
+		locomotion.set_translate_command(Vector3.ZERO)
 		locomotion.set_attitude_commands(0.0, 0.0, 0.0)
 	if locomotion.has_active_input():
 		_wake_rover_body(assembly_id)
+
+
+const FLIGHT_LOOK_SENSITIVITY := 0.035
+
+
+func _consume_flight_look_delta() -> Vector2:
+	var player := _rover_seat_player
+	if player == null or not player.has_method("get_node_or_null"):
+		return Vector2.ZERO
+	var camera: Node = player.get_node_or_null("Camera")
+	if camera == null or not camera.has_method("consume_flight_look_delta"):
+		return Vector2.ZERO
+	var raw: Vector2 = camera.call("consume_flight_look_delta")
+	return Vector2(
+		clampf(raw.x * FLIGHT_LOOK_SENSITIVITY, -1.0, 1.0),
+		clampf(raw.y * FLIGHT_LOOK_SENSITIVITY, -1.0, 1.0)
+	)
 
 
 func _toggle_rover_parking_brake(
@@ -709,6 +727,14 @@ func _enter_rover_seat(
 		player.call("set_gameplay_input_enabled", false)
 	if player.has_method("enter_vehicle"):
 		player.call("enter_vehicle", body, seat_offset)
+	if player.has_method("set_vehicle_flight_controls"):
+		player.call(
+			"set_vehicle_flight_controls",
+			ThrusterSimulationService.is_flight_assembly(
+				_session.world,
+				assembly_id
+			)
+		)
 	_rover_seat_player = player
 	_rover_seat_assembly_id = assembly_id
 	_rover_seat_element_id = element_id
@@ -845,12 +871,14 @@ func _exit_rover_seat(player: Node3D) -> Dictionary:
 	var locomotion := _session.world.get_locomotion_controller(assembly_id)
 	locomotion.set_drive_command(0.0)
 	locomotion.set_steering_command(0.0)
-	locomotion.set_thrust_command(0.0)
+	locomotion.set_translate_command(Vector3.ZERO)
 	locomotion.set_attitude_commands(0.0, 0.0, 0.0)
 	if locomotion.is_parking_brake():
 		locomotion.set_brake_command(1.0)
 	else:
 		locomotion.set_brake_command(0.0)
+	if player.has_method("set_vehicle_flight_controls"):
+		player.call("set_vehicle_flight_controls", false)
 	# Keep activated so floating wheel/flight phys continues.
 	_session.projection.sync_body_motion_now(assembly_id)
 	_rover_seat_player = null

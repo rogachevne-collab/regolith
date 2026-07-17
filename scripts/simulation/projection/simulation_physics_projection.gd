@@ -1076,7 +1076,7 @@ func _tick_thrusters(delta: float) -> void:
 			assembly_id
 		)
 		for thruster: SimulationElement in thrusters:
-			_apply_thruster_force(thruster, locomotion.thrust_command)
+			_apply_thruster_force(thruster, locomotion)
 		var gyros := ThrusterSimulationService.list_gyro_elements(
 			_world,
 			assembly_id
@@ -1090,7 +1090,7 @@ func _tick_thrusters(delta: float) -> void:
 
 func _apply_thruster_force(
 	element: SimulationElement,
-	thrust_command: float
+	locomotion: AssemblyLocomotionController
 ) -> void:
 	var archetype := element.get_archetype()
 	if archetype == null or archetype.thruster_definition == null:
@@ -1100,17 +1100,27 @@ func _apply_thruster_force(
 	if body == null or body.freeze:
 		return
 	var powered := ThrusterSimulationService.is_element_powered(_world, element)
-	var thrust_n := ThrusterProjectionUtil.compute_thrust_n(
-		archetype.thruster_definition,
-		thrust_command,
-		powered
-	)
-	if thrust_n <= 0.0:
-		return
 	var axis_local := ThrusterProjectionUtil.thrust_axis_local(
 		archetype.thruster_definition,
 		element.orientation_index
 	)
+	var velocity_local := (
+		body.global_transform.basis.inverse() * body.linear_velocity
+	)
+	var throttle := ThrusterProjectionUtil.compute_thruster_throttle(
+		axis_local,
+		locomotion.translate_command,
+		locomotion.is_dampeners(),
+		velocity_local,
+		powered
+	)
+	var thrust_n := ThrusterProjectionUtil.compute_thrust_n(
+		archetype.thruster_definition,
+		throttle,
+		powered
+	)
+	if thrust_n <= 0.0:
+		return
 	var offset_local := ThrusterProjectionUtil.nozzle_offset_local(
 		archetype.thruster_definition,
 		element

@@ -16,6 +16,8 @@ var _last_target_position := Vector3.ZERO
 var _orbit_mode := false
 var _orbit_yaw := 0.0
 var _orbit_pitch := 15.0
+## Accumulated mouse delta for SE-like ship pitch/yaw (consumed by gateway).
+var _flight_look_delta := Vector2.ZERO
 
 const SETTINGS_PATH := "user://player_settings.cfg"
 const TELEPORT_SNAP_DISTANCE := 4.0
@@ -45,6 +47,11 @@ func _unhandled_input(event: InputEvent) -> void:
 				orbit_min_pitch,
 				orbit_max_pitch
 			)
+		elif _is_flight_controls_active():
+			# SE cockpit: mouse steers the grid; camera stays seat-forward.
+			_flight_look_delta.x += motion.x * sensitivity
+			_flight_look_delta.y += motion.y * sensitivity
+			_pitch = 0.0
 		elif _target != null:
 			var up := GravityField.resolve_up(_target, _target.global_position)
 			_target.rotate(up, deg_to_rad(-motion.x * sensitivity))
@@ -173,6 +180,22 @@ func set_camera_fov(value: float) -> void:
 
 func is_vehicle_orbit_camera() -> bool:
 	return _orbit_mode and _is_in_vehicle()
+
+
+func consume_flight_look_delta() -> Vector2:
+	var delta := _flight_look_delta
+	_flight_look_delta = Vector2.ZERO
+	return delta
+
+
+func _is_flight_controls_active() -> bool:
+	return (
+		_is_in_vehicle()
+		and not _orbit_mode
+		and _target != null
+		and _target.has_method("is_vehicle_flight_controls")
+		and bool(_target.call("is_vehicle_flight_controls"))
+	)
 
 
 func _toggle_orbit_mode() -> void:

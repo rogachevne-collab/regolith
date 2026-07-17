@@ -84,6 +84,33 @@ func _test_thrust_and_gyro_math() -> bool:
 		return _fail("thrust scale wrong: %s" % thrust)
 	if ThrusterProjectionUtil.compute_thrust_n(thruster_def, 1.0, false) != 0.0:
 		return _fail("unpowered thrust must be 0")
+	var up_throttle := ThrusterProjectionUtil.compute_thruster_throttle(
+		Vector3.UP,
+		Vector3(0.0, 1.0, 0.0),
+		true,
+		Vector3.ZERO,
+		true
+	)
+	if not is_equal_approx(up_throttle, 1.0):
+		return _fail("aligned translate throttle must be 1, got %s" % up_throttle)
+	var side_throttle := ThrusterProjectionUtil.compute_thruster_throttle(
+		Vector3.UP,
+		Vector3(1.0, 0.0, 0.0),
+		true,
+		Vector3.ZERO,
+		true
+	)
+	if side_throttle > 0.001:
+		return _fail("perpendicular thruster must stay off")
+	var damp_throttle := ThrusterProjectionUtil.compute_thruster_throttle(
+		Vector3.UP,
+		Vector3.ZERO,
+		true,
+		Vector3(0.0, -2.0, 0.0),
+		true
+	)
+	if damp_throttle <= 0.5:
+		return _fail("linear dampen should fire opposing fall, got %s" % damp_throttle)
 	var torque := ThrusterProjectionUtil.compute_gyro_torque_local(
 		gyro_def,
 		1.0,
@@ -136,18 +163,18 @@ func _test_power_demand_scales_with_throttle() -> bool:
 	helper.weld_all()
 	var locomotion := world.get_locomotion_controller(helper.assembly_id)
 	locomotion.activate()
-	locomotion.set_thrust_command(0.0)
+	locomotion.set_translate_command(Vector3.ZERO)
 	ThrusterSimulationService.sync_power_demand(world)
 	var thruster_id := int(helper.element_ids["thruster"])
 	var idle_dyn := world.ensure_industry_element_runtime(thruster_id).dynamic_power_w
 	if idle_dyn > 0.001:
-		return _fail("zero throttle must demand 0 dynamic W, got %s" % idle_dyn)
-	locomotion.set_thrust_command(1.0)
+		return _fail("zero translate must demand 0 dynamic W, got %s" % idle_dyn)
+	locomotion.set_translate_command(Vector3(0.0, 1.0, 0.0))
 	ThrusterSimulationService.sync_power_demand(world)
 	var full := world.ensure_industry_element_runtime(thruster_id).dynamic_power_w
 	var expected := Slice01Archetypes.thruster().thruster_definition.power_draw_w
 	if not is_equal_approx(full, expected):
-		return _fail("full throttle demand %s != %s" % [full, expected])
+		return _fail("full translate demand %s != %s" % [full, expected])
 	return true
 
 

@@ -106,6 +106,7 @@ static func sync_power_demand(world: SimulationWorld) -> void:
 		var locomotion := world.get_locomotion_controller(assembly.assembly_id)
 		if not locomotion.is_activated():
 			continue
+		var translate_load := locomotion.translate_magnitude()
 		for thruster: SimulationElement in list_thruster_elements(
 			world,
 			assembly.assembly_id
@@ -116,9 +117,7 @@ static func sync_power_demand(world: SimulationWorld) -> void:
 			var runtime := world.ensure_industry_element_runtime(
 				thruster.element_id
 			)
-			runtime.dynamic_power_w = (
-				definition.power_draw_w * locomotion.thrust_command
-			)
+			runtime.dynamic_power_w = definition.power_draw_w * translate_load
 		var attitude_mag := maxf(
 			absf(locomotion.pitch_command),
 			maxf(
