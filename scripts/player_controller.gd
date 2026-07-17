@@ -10,6 +10,8 @@ var _settled_frames := 0
 var _world_parent: Node
 var _gameplay_input_enabled := true
 var _current_vehicle: Node3D
+## When true, mouse steers the assembly (SE cockpit) instead of freelook.
+var _vehicle_flight_controls := false
 
 const SETTLED_FRAMES_NEEDED := 12
 
@@ -70,6 +72,16 @@ func current_vehicle() -> Node3D:
 	return _current_vehicle
 
 
+func set_vehicle_flight_controls(enabled: bool) -> void:
+	_vehicle_flight_controls = enabled
+	if not enabled and _head != null and _head.has_method("consume_flight_look_delta"):
+		_head.call("consume_flight_look_delta")
+
+
+func is_vehicle_flight_controls() -> bool:
+	return _vehicle_flight_controls and _current_vehicle != null
+
+
 func _ready() -> void:
 	super._ready()
 	_head = get_node(head_path)
@@ -111,6 +123,7 @@ func exit_vehicle(world_position: Vector3) -> void:
 	reparent(_world_parent, true)
 	global_position = world_position
 	_current_vehicle = null
+	_vehicle_flight_controls = false
 	rotation = Vector3.ZERO
 	velocity = Vector3.ZERO
 	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF

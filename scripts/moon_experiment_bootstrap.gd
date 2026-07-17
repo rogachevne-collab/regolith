@@ -91,6 +91,8 @@ func _ready() -> void:
 		_session.world.get_archetype_registry().register(archetype)
 	for archetype: ElementArchetype in Slice01Archetypes.load_rover_archetypes():
 		_session.world.get_archetype_registry().register(archetype)
+	for archetype: ElementArchetype in Slice01Archetypes.load_flight_archetypes():
+		_session.world.get_archetype_registry().register(archetype)
 	var gateway := get_node_or_null("WorldCommandGateway")
 	if gateway != null and gateway.has_signal("terrain_modified"):
 		gateway.terrain_modified.connect(_on_terrain_modified)

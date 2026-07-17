@@ -1439,7 +1439,7 @@ static func assembly_has_anchor(world, assembly_id: int) -> bool:
 static func construction_attach_allowed(world, assembly_id: int) -> bool:
 	if ConstructionCommandService.assembly_has_anchor(world, assembly_id):
 		return true
-	if not WheelSimulationService.is_locomotive_assembly(world, assembly_id):
+	if not ThrusterSimulationService.is_mobile_assembly(world, assembly_id):
 		return false
 	var assembly: SimulationAssembly = world.get_assembly_raw(assembly_id)
 	if assembly == null:

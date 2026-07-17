@@ -18,6 +18,8 @@ ADR. Интеграция в Erebus — через Erebus Lite addon, когда
 | Machine compose (буровой манипулятор по фразе) | `specs/MACHINE-COMPOSE-V0.md`; cheatsheet `machine-compose` |
 | Body, Field, Surface | «Примитивы» → одноимённые разделы |
 | Actuator, Wheel | «Примитивы» → «Actuator», «Wheel»; `specs/ROVER-MODULES-V1.md` |
+| Thruster, Gyro (flight hop) | «Примитивы» → «Actuator»; `specs/POC-THRUSTERS-V0.md` |
+| Landing leg (посадочная нога) | «Примитивы» → роли `Support`; `specs/POC-THRUSTERS-V0.md` |
 | Cable / Tether, Sensor | «Примитивы» → одноимённые разделы |
 | ControlSeat, Binding (управление) | «Примитивы» → «ControlSeat и Binding» |
 | Network, Flow, Store (сети и потоки) | «Примитивы» → «Network, Flow и Store» |
@@ -401,9 +403,13 @@ Surface {
 
 Виды:
 
-- сила в точке — двигатель, лебёдка, привод колеса;
+- сила в точке — двигатель / `Thruster`, лебёдка, привод колеса;
 - чистый момент — `Gyro`;
 - motor у приводного Joint.
+
+`Thruster` и `Gyro` — element-scoped actuators без `SimulationJoint`
+(сила/момент через Jolt). Lunar hop / VTOL: `specs/POC-THRUSTERS-V0.md`.
+Орбитальная механика не входит в v0.
 
 ```text
 Actuator {
@@ -845,9 +851,11 @@ slice по `docs/specs/VERTICAL-SLICE-01-INDUSTRIAL-BASE.md`:
 1. Piston с нагрузкой и overload —
    `docs/specs/POC-ACTUATORS-V1.md`; затем ServoHinge —
    `docs/specs/POC-ACTUATORS-V3-HINGE.md`.
-2. Расширенная логистика и автоматизация.
-3. Volume/Atmosphere: герметичная кабина → пробоина.
-4. Host-authoritative сетевой PoC.
+2. Thruster + Gyro (lunar hop / VTOL, без орбит) —
+   `docs/specs/POC-THRUSTERS-V0.md`.
+3. Расширенная логистика и автоматизация.
+4. Volume/Atmosphere: герметичная кабина → пробоина.
+5. Host-authoritative сетевой PoC.
 
 ## Не входит в v0
 

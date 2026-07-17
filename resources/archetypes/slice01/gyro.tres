@@ -1,0 +1,66 @@
+[gd_resource type="Resource" script_class="ElementArchetype" format=3]
+
+[ext_resource type="Script" path="res://scripts/simulation/resources/build_requirement.gd" id="1_req"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/collider_definition.gd" id="2_col"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/port_definition.gd" id="3_port"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/gyro_definition.gd" id="4_gyro"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/structural_mount_pad.gd" id="5_pad"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/element_archetype.gd" id="6_arch"]
+
+[sub_resource type="Resource" id="Requirement"]
+script = ExtResource("1_req")
+resource_id = "construction_component"
+amount = 3.0
+
+[sub_resource type="Resource" id="Collider"]
+script = ExtResource("2_col")
+size = Vector3(0.4, 0.4, 0.4)
+
+[sub_resource type="Resource" id="GyroDefinition"]
+script = ExtResource("4_gyro")
+max_torque_nm = 400.0
+power_draw_w = 200.0
+idle_w = 5.0
+dampen_gain = 80.0
+
+[sub_resource type="Resource" id="Power_in"]
+script = ExtResource("3_port")
+port_id = "power_in"
+kind = 1
+compatibility_tags = PackedStringArray("electric", "input")
+
+[sub_resource type="Resource" id="Mount_px"]
+script = ExtResource("5_pad")
+
+[sub_resource type="Resource" id="Mount_nx"]
+script = ExtResource("5_pad")
+local_face = 1
+
+[sub_resource type="Resource" id="Mount_py"]
+script = ExtResource("5_pad")
+local_face = 2
+
+[sub_resource type="Resource" id="Mount_ny"]
+script = ExtResource("5_pad")
+local_face = 3
+
+[sub_resource type="Resource" id="Mount_pz"]
+script = ExtResource("5_pad")
+local_face = 4
+
+[sub_resource type="Resource" id="Mount_nz"]
+script = ExtResource("5_pad")
+local_face = 5
+
+[resource]
+script = ExtResource("6_arch")
+archetype_id = "gyro"
+display_name = "Гироскоп"
+roles = PackedStringArray("Actuator")
+mass_kg = 20.0
+colliders = Array[ExtResource("2_col")]([SubResource("Collider")])
+ports = Array[ExtResource("3_port")]([SubResource("Power_in")])
+structural_surface_policy = 2
+structural_mount_pads = Array[ExtResource("5_pad")]([SubResource("Mount_px"), SubResource("Mount_nx"), SubResource("Mount_py"), SubResource("Mount_ny"), SubResource("Mount_pz"), SubResource("Mount_nz")])
+build_requirements = Array[ExtResource("1_req")]([SubResource("Requirement")])
+gyro_definition = SubResource("GyroDefinition")
