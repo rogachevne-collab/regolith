@@ -31,7 +31,7 @@ const LunarBoulderFieldScript := preload("res://scripts/lunar_boulder_field.gd")
 @export var demo_rover_phrase := "колбаса на 12 колес, низкая"
 @export var persist_digs := true
 ## ProtonScatter boulder patch around the player (local −Y = radial into planet).
-@export var spawn_boulder_scatter := false
+@export var spawn_boulder_scatter := true
 
 @export_group("Planet generator")
 ## Preferred: res://resources/moon_planet_generator.tres — edit in Voxel graph UI, then F6.
@@ -342,14 +342,19 @@ func _finish_loaded_world_entry(spawn_position: Vector3) -> void:
 func _spawn_boulder_scatter_near_player() -> void:
 	if not spawn_boulder_scatter or _player == null:
 		return
-	## Wait for voxel colliders to catch the visual mesh around the player.
-	for _i in 12:
+	## Wait for voxel colliders — SDF is above physics at scale 0.65.
+	for _i in 45:
 		await get_tree().physics_frame
 	var field: Node3D = LunarBoulderFieldScript.new()
 	field.name = "LunarBoulderField"
 	add_child(field)
 	var space := get_world_3d().direct_space_state
-	var placed: int = field.call("build_around", _player.global_position, space)
+	var placed: int = field.call(
+		"build_around",
+		_player.global_position,
+		space,
+		_terrain
+	)
 	print("MoonExperiment: boulder field placed=%d at %s" % [placed, str(_player.global_position)])
 
 
