@@ -75,6 +75,7 @@ var _voxel_stream: VoxelStream
 var _landing_pad: StaticBody3D
 var _far_impostor: MeshInstance3D
 var _player_camera: Camera3D
+var _applied_view_distance := -1
 
 
 func is_world_ready() -> bool:
@@ -125,6 +126,7 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	_update_streaming_budget()
 	_update_far_impostor()
 	if _world_ready:
 		_autosave_accum += delta
@@ -653,7 +655,7 @@ func _spawn_base_when_terrain_ready() -> void:
 
 
 func _ensure_player_viewer_for_planet() -> void:
-	var viewer := _player.get_node_or_null("VoxelViewer") as VoxelViewer
+	var viewer := _find_voxel_viewer()
 	if viewer == null:
 		return
 	viewer.requires_collisions = true
@@ -661,6 +663,39 @@ func _ensure_player_viewer_for_planet() -> void:
 	## Effective range is min(terrain, viewer) — keep both at planet budget.
 	viewer.view_distance = MoonGeometry.DEFAULT_VIEW_DISTANCE_VOXELS
 	_player_camera = _player.get_node_or_null("Camera") as Camera3D
+	_applied_view_distance = MoonGeometry.DEFAULT_VIEW_DISTANCE_VOXELS
+
+
+func _find_voxel_viewer() -> VoxelViewer:
+	## On foot: child of player. In a vehicle: reparented to the world root.
+	if _player != null:
+		var under_player := _player.get_node_or_null("VoxelViewer") as VoxelViewer
+		if under_player != null:
+			return under_player
+	return get_node_or_null("VoxelViewer") as VoxelViewer
+
+
+func _update_streaming_budget() -> void:
+	## Surface: modest VD so the mesher finishes the whole Ø1 km shell.
+	## Altitude: grow with |cam|+R so the planet LODs instead of unloading.
+	## A fixed 50k on foot was the "moon ends / cubic scraps" failure mode.
+	if not (_terrain is VoxelLodTerrain):
+		return
+	if _player_camera == null:
+		if _player != null:
+			_player_camera = _player.get_node_or_null("Camera") as Camera3D
+		if _player_camera == null:
+			return
+	var vd := MoonGeometry.view_distance_voxels_for_camera_distance(
+		_player_camera.global_position.length()
+	)
+	if vd == _applied_view_distance:
+		return
+	_applied_view_distance = vd
+	(_terrain as VoxelLodTerrain).view_distance = vd
+	var viewer := _find_voxel_viewer()
+	if viewer != null:
+		viewer.view_distance = vd
 
 
 func _configure_far_impostor() -> void:

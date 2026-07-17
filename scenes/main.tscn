@@ -84,7 +84,7 @@ shape = SubResource("SphereShape_gravity")
 [node name="VoxelTerrain" type="VoxelLodTerrain" parent="."]
 transform = Transform3D(0.65, 0, 0, 0, 0.65, 0, 0, 0, 0.65, 0, 0, 0)
 mesher = SubResource("VoxelMesherTransvoxel_moon")
-view_distance = 50000
+view_distance = 2048
 generate_collisions = true
 material = ExtResource("4")
 

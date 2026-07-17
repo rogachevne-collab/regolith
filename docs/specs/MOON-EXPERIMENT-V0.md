@@ -37,7 +37,7 @@ legacy flat yard (стройка, физика, шарниры, колёса, б
 | Радиус поверхности (целевой) | 500 м |
 | Voxel node scale | **0.65** (как `main`, INDUSTRY-V1) |
 | Радиус в local voxel | ≈ 500 / 0.65 ≈ **769** voxel |
-| Bounds (local, с запасом) | ≈ ± radius_voxels × 1.1 |
+| Bounds (local, с запасом) | ≈ ± radius_voxels × 1.25 |
 | Центр луны | world origin `(0,0,0)` на v0 (без origin shifting) |
 
 ## Официальные опоры (сверять, не угадывать)
@@ -133,11 +133,11 @@ Legacy flat yard: `scenes/flat_moon.tscn` + `scripts/flat_moon_bootstrap.gd`.
 - `transform.basis` uniform scale **0.65**.
 - Collisions: on; streaming вокруг viewer (**не** `full_load` с SQLite —
   плагин отвергает).
-- **Дальняя видимость (планета):** конечные `voxel_bounds` +
-  `lod_count`. `view_distance` **динамический** (`MoonGeometry.view_distance_voxels_for_camera_distance`):
-  на поверхности ≥2048 вокселей (вся Ø1 км без half-baked scraps), с высотой
-  растёт до 50k под `Camera.far`. Фиксированные 50k у walker'а перегружали
-  мешер → обрывы коры / «кубический сруб». `VoxelViewer` синхронизируется в
+- **Дальняя видимость (планета):** конечные `voxel_bounds` + `lod_count=6`
+  (coarsest block 512; **не** 8 — block 2048 > bounds ±R·1.25 → cubic cuts /
+  floating scraps). `view_distance` **динамический**
+  (`MoonGeometry.view_distance_voxels_for_camera_distance`): на поверхности
+  ≥2048 вокселей, с высотой растёт до 50k. `VoxelViewer` синхронизируется в
   bootstrap. Орбита — camera-relative impostor (не раздувать `Camera.far`:
   ломает light culler / `create_frustum_points`). Туман выключен (вакуум).
 - Spawn: ждать meshed + physics; temp landing pad — только fallback.

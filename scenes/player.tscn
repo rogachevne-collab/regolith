@@ -252,6 +252,6 @@ mesh = SubResource("CapsuleMesh_body")
 surface_material_override/0 = SubResource("StandardMaterial3D_body")
 
 [node name="VoxelViewer" type="VoxelViewer" parent="." unique_id=1175640371]
-view_distance = 140
+view_distance = 2048
 requires_collisions = true
 requires_visuals = true
