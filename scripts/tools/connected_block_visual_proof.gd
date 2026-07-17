@@ -16,27 +16,27 @@ func _run() -> void:
 	await _capture_case(
 		"connected_block_isolated",
 		_build_isolated_root(),
-		Vector3(1.2, 1.1, 1.4)
+		Vector3(1.25, 1.35, 1.45)
 	)
 	await _capture_case(
 		"connected_block_isolated_pos_z",
 		_build_isolated_root(),
-		Vector3(0.65, 0.7, 1.5)
+		Vector3(0.7, 0.85, 1.55)
 	)
 	await _capture_case(
 		"connected_block_isolated_neg_z",
 		_build_isolated_root(),
-		Vector3(-0.65, 0.7, -1.5)
+		Vector3(-0.7, 0.85, -1.55)
 	)
 	await _capture_case(
 		"connected_block_merged_x",
 		_build_merged_pair_root(),
-		Vector3(1.5, 1.4, 2.1)
+		Vector3(1.55, 1.55, 2.15)
 	)
 	await _capture_case(
 		"connected_block_large_isolated",
 		_build_large_isolated_root(),
-		Vector3(4.2, 3.8, 5.0)
+		Vector3(4.4, 4.2, 5.2)
 	)
 	print("CONNECTED-BLOCK-VISUAL-PROOF: PASS")
 	get_tree().quit(0)
@@ -95,7 +95,7 @@ func _capture_case(name: String, subject: Node3D, camera_pos: Vector3) -> void:
 	await RenderingServer.frame_post_draw
 
 	var img: Image = viewport.get_texture().get_image()
-	img.flip_y()
+	## Godot 4 SubViewport images are already upright with OpenGL; do not flip_y.
 	var path := "%s/%s.png" % [OUT_DIR, name]
 	img.save_png(path)
 	print("PROOF: wrote ", path, " bytes=", FileAccess.get_file_as_bytes(path).size())
