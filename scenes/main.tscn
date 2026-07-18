@@ -10,6 +10,7 @@
 [ext_resource type="PackedScene" uid="uid://cdgwh0kuuyve3" path="res://scenes/lunar_sky_decor.tscn" id="14"]
 [ext_resource type="Material" path="res://resources/sky/lunar_starfield_sky_material.tres" id="15"]
 [ext_resource type="VoxelInstanceLibrary" path="res://resources/moon_boulder_instance_library.tres" id="16"]
+[ext_resource type="Script" path="res://scripts/meteorite_system.gd" id="17"]
 
 [sub_resource type="Sky" id="Sky_env"]
 sky_material = ExtResource("15")
@@ -100,6 +101,9 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 505, 8)
 [node name="Player" parent="." unique_id=2047904443 instance=ExtResource("2")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 520, 0)
 
+[node name="MeteoriteSystem" type="Node" parent="."]
+script = ExtResource("17")
+
 [node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=1718140636]
 
 [node name="Loading" type="Label" parent="CanvasLayer" unique_id=560459123]
@@ -133,7 +137,8 @@ theme_override_constants/shadow_offset_x = 1
 theme_override_constants/shadow_offset_y = 1
 text = "Regolith — Ø1 км
 WASD — ходьба, Shift — бег, Space — прыжок, Esc — настройки
-1–9 — инструменты, ЛКМ — действие"
+1–9 — инструменты, ЛКМ — действие
+F8 — метеорит рядом (debug)"
 
 [node name="Coordinates" type="Label" parent="CanvasLayer" unique_id=1659077725]
 anchors_preset = 1
