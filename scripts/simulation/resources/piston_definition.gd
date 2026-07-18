@@ -3,6 +3,7 @@ extends Resource
 
 @export var head_archetype_id: String = ""
 @export var axis_face: OrientationUtil.Face = OrientationUtil.Face.POS_Y
+@export var head_offset_cells: int = 1
 @export var retracted_offset_m: float = 0.0
 @export var lower_limit_m: float = 0.0
 @export var upper_limit_m: float = 2.0
@@ -14,6 +15,11 @@ extends Resource
 @export var max_force_limit_n: float = 100000.0
 @export var stiffness_n_per_m: float = 8000.0
 @export var damping_n_s_per_m: float = 400.0
+## Soft angular compliance (SE-like flex on long chains). Hard cone ±soft_limit;
+## springs pull toward 0. Built-in Jolt ignores *_limit_*/softness — use springs.
+@export var angular_soft_limit_rad: float = 0.12
+@export var angular_stiffness_nm_per_rad: float = 18000.0
+@export var angular_damping_nm_s_per_rad: float = 600.0
 @export var power_draw_w: float = 1500.0
 @export var overload_policy: SimulationMotorState.OverloadPolicy = (
 	SimulationMotorState.OverloadPolicy.STOP
@@ -21,7 +27,18 @@ extends Resource
 
 
 func head_axis_offset_cell() -> Vector3i:
-	return OrientationUtil.face_to_vector(axis_face)
+	# .tres saved before head_offset_cells existed deserialize it as 0;
+	# clamp to the historical offset of 1 instead of collapsing the head
+	# onto the base.
+	return OrientationUtil.face_to_vector(axis_face) * maxi(head_offset_cells, 1)
+
+
+func angular_compliance() -> Dictionary:
+	return {
+		"soft_limit_rad": maxf(angular_soft_limit_rad, 0.0),
+		"stiffness_nm_per_rad": maxf(angular_stiffness_nm_per_rad, 0.0),
+		"damping_nm_s_per_rad": maxf(angular_damping_nm_s_per_rad, 0.0),
+	}
 
 
 func validate(
@@ -34,7 +51,6 @@ func validate(
 	elif not head_archetype.internal_archetype:
 		errors.append("head archetype must be internal")
 	else:
-		var _base_cells := _footprint_set(base_archetype)
 		var head_cells := _footprint_set(head_archetype)
 		var offset := head_axis_offset_cell()
 		for base_cell: Vector3i in base_archetype.footprint_cells:
@@ -74,6 +90,9 @@ func validate_base_archetype(base_archetype: ElementArchetype) -> Array[String]:
 		or max_force_limit_n <= 0.0
 		or stiffness_n_per_m < 0.0
 		or damping_n_s_per_m < 0.0
+		or angular_soft_limit_rad < 0.0
+		or angular_stiffness_nm_per_rad < 0.0
+		or angular_damping_nm_s_per_rad < 0.0
 		or power_draw_w < 0.0
 	):
 		errors.append("piston motor tuning must be non-negative")

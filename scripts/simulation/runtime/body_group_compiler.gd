@@ -62,6 +62,84 @@ static func compile(
 		"driven_specs": driven_specs,
 	}
 
+## Prospective compile after placing a driven base+head with rigid snaps.
+## Preview elements often use negative placeholder ids (-1/-2); body-group ids
+## are min(element_id) and the compiler rejects group_id <= 0, so remap to
+## large positive temps that cannot collide with live allocators.
+const PROSPECTIVE_BASE_ELEMENT_ID := 900000001
+const PROSPECTIVE_HEAD_ELEMENT_ID := 900000002
+const PROSPECTIVE_JOINT_ID_BASE := 900001000
+
+
+## `driven_joint` is a throwaway built for this call; its endpoints are
+## rewritten onto the prospective temp elements.
+static func compile_prospective_driven_place(
+	assembly_element_ids: Array[int],
+	elements_by_id: Dictionary,
+	existing_joints: Array[SimulationJoint],
+	base_preview: SimulationElement,
+	head_preview: SimulationElement,
+	base_connections: Array[Dictionary],
+	head_connections: Array[Dictionary],
+	driven_joint: SimulationJoint
+) -> Dictionary:
+	var element_ids: Array[int] = assembly_element_ids.duplicate()
+	var elements: Dictionary = elements_by_id.duplicate()
+	var temp_base := SimulationElement.frame(
+		PROSPECTIVE_BASE_ELEMENT_ID,
+		base_preview.assembly_id,
+		base_preview.get_archetype(),
+		base_preview.origin_cell,
+		base_preview.orientation_index,
+		{}
+	)
+	var temp_head := SimulationElement.frame(
+		PROSPECTIVE_HEAD_ELEMENT_ID,
+		head_preview.assembly_id,
+		head_preview.get_archetype(),
+		head_preview.origin_cell,
+		head_preview.orientation_index,
+		{}
+	)
+	elements[temp_base.element_id] = temp_base
+	elements[temp_head.element_id] = temp_head
+	element_ids.append(temp_base.element_id)
+	element_ids.append(temp_head.element_id)
+	var joints: Array[SimulationJoint] = existing_joints.duplicate()
+	driven_joint.joint_id = PROSPECTIVE_JOINT_ID_BASE
+	driven_joint.element_a_id = temp_base.element_id
+	driven_joint.element_b_id = temp_head.element_id
+	joints.append(driven_joint)
+	var next_joint_id := PROSPECTIVE_JOINT_ID_BASE + 1
+	for connection_variant: Variant in base_connections:
+		var connection: Dictionary = connection_variant
+		joints.append(
+			SimulationJoint.rigid(
+				next_joint_id,
+				driven_joint.assembly_id,
+				int(connection["existing_element_id"]),
+				str(connection["existing_port_id"]),
+				temp_base.element_id,
+				str(connection["new_port_id"])
+			)
+		)
+		next_joint_id += 1
+	for connection_variant: Variant in head_connections:
+		var connection: Dictionary = connection_variant
+		joints.append(
+			SimulationJoint.rigid(
+				next_joint_id,
+				driven_joint.assembly_id,
+				int(connection["existing_element_id"]),
+				str(connection["existing_port_id"]),
+				temp_head.element_id,
+				str(connection["new_port_id"])
+			)
+		)
+		next_joint_id += 1
+	return compile(element_ids, elements, joints)
+
+
 static func would_rigid_bridge_piston_groups(
 	element_a_id: int,
 	element_b_id: int,

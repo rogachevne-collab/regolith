@@ -110,6 +110,14 @@ static func piston_head() -> ElementArchetype:
 	return load_required("piston_head")
 
 
+static func piston_base_large() -> ElementArchetype:
+	return load_required("piston_base_large")
+
+
+static func piston_head_large() -> ElementArchetype:
+	return load_required("piston_head_large")
+
+
 static func rotor_base() -> ElementArchetype:
 	return load_required("rotor_base")
 
@@ -139,6 +147,8 @@ static func load_actuator_archetypes() -> Array[ElementArchetype]:
 	for archetype_id: String in [
 		"piston_base",
 		"piston_head",
+		"piston_base_large",
+		"piston_head_large",
 		"rotor_base",
 		"rotor_top",
 		"rotor_base_large",

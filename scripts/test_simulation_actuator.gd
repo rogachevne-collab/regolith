@@ -10,6 +10,12 @@ const PISTON_BASE := preload(
 const PISTON_HEAD := preload(
 	"res://resources/archetypes/slice01/piston_head.tres"
 )
+const PISTON_BASE_LARGE := preload(
+	"res://resources/archetypes/slice01/piston_base_large.tres"
+)
+const PISTON_HEAD_LARGE := preload(
+	"res://resources/archetypes/slice01/piston_head_large.tres"
+)
 const ROTOR_BASE := preload(
 	"res://resources/archetypes/slice01/rotor_base.tres"
 )
@@ -38,6 +44,10 @@ func _run_tests() -> void:
 	_HeadlessTestHarness.arm_watchdog(self, "KERNEL-ACTUATOR-V1")
 	var tests: Array[Callable] = [
 		_test_piston_atomic_placement,
+		_test_piston_large_atomic_placement,
+		_test_piston_stack_chain,
+		_test_piston_fifth_rejected_at_placement,
+		_test_piston_angular_compliance_config,
 		_test_body_group_compiler,
 		_test_reconstruct_carriage_from_extension,
 		_test_piston_dual_anchor_root_group,
@@ -141,6 +151,227 @@ func _test_piston_atomic_placement() -> bool:
 		world.free()
 		return _fail("piston placement did not spend materials")
 	world.free()
+	return true
+
+
+func _test_piston_large_atomic_placement() -> bool:
+	var world := SimulationWorld.new()
+	world.ensure_resource_store("player")
+	world.set_resource_amount("player", "construction_component", 200.0)
+	world.get_archetype_registry().register(PISTON_HEAD_LARGE)
+	var foundation := _spawn(
+		world,
+		_single_blueprint(Slice01Archetypes.foundation()),
+		GridTransform.identity()
+	)
+	if not foundation.is_ok():
+		world.free()
+		return _fail("large piston foundation spawn failed")
+	var assembly_id := int(foundation.data["assembly_id"])
+	var platform := PlaceElementCommand.new()
+	platform.assembly_id = assembly_id
+	platform.expected_assembly_revision = int(foundation.data["topology_revision"])
+	platform.archetype = Slice01Archetypes.large_frame()
+	platform.origin_cell = Vector3i(0, 1, 0)
+	platform.orientation_index = 0
+	platform.store_id = "player"
+	var platform_result := world.apply_structural_command_now(platform)
+	if not platform_result.is_ok():
+		world.free()
+		return _fail(
+			"large piston platform failed: %s" % platform_result.reason
+		)
+	var validation := PistonPlacementUtil.validate_piston_archetype(
+		PISTON_BASE_LARGE,
+		PISTON_HEAD_LARGE,
+		world.get_archetype_registry()
+	)
+	if not validation.is_empty():
+		world.free()
+		return _fail(
+			"large piston archetype validation failed: %s"
+			% ", ".join(validation)
+		)
+	var piston := PlaceElementCommand.new()
+	piston.assembly_id = assembly_id
+	piston.expected_assembly_revision = int(
+		platform_result.data["topology_revision"]
+	)
+	piston.archetype = PISTON_BASE_LARGE
+	piston.origin_cell = Vector3i(0, 6, 0)
+	piston.orientation_index = 0
+	piston.store_id = "player"
+	var result := world.apply_structural_command_now(piston)
+	if not result.is_ok():
+		world.free()
+		return _fail("large piston placement failed: %s" % result.reason)
+	var joint := world.get_joint(int(result.data["piston_joint_id"]))
+	if joint == null or joint.motor == null:
+		world.free()
+		return _fail("large piston joint missing")
+	if not is_equal_approx(joint.motor.upper_limit_m, 5.0):
+		world.free()
+		return _fail("large piston travel not scaled")
+	if not is_equal_approx(joint.motor.force_limit_n, 80000.0):
+		world.free()
+		return _fail("large piston force not scaled")
+	var head := world.get_element(int(result.data["head_element_id"]))
+	if head == null or head.archetype_id != "piston_head_large":
+		world.free()
+		return _fail("large piston head archetype mismatch")
+	if head.origin_cell != Vector3i(0, 8, 0):
+		world.free()
+		return _fail(
+			"large piston head offset wrong: %s" % str(head.origin_cell)
+		)
+	world.free()
+	return true
+
+
+func _test_piston_stack_chain() -> bool:
+	var world := SimulationWorld.new()
+	world.ensure_resource_store("player")
+	world.set_resource_amount("player", "construction_component", 200.0)
+	world.get_archetype_registry().register(PISTON_HEAD)
+	var foundation := _spawn(
+		world,
+		_single_blueprint(Slice01Archetypes.foundation()),
+		GridTransform.identity()
+	)
+	if not foundation.is_ok():
+		world.free()
+		return _fail("stack foundation failed")
+	var assembly_id := int(foundation.data["assembly_id"])
+	var prior := foundation
+	var frame := _place_frame(world, assembly_id, Vector3i(4, 0, 0), prior)
+	if not frame.is_ok():
+		world.free()
+		return _fail("stack frame failed")
+	prior = frame
+	var piston_count := 0
+	for index: int in range(4):
+		var origin := Vector3i(5, index * 2, 0)
+		var piston := _place_piston(world, assembly_id, origin, prior)
+		if not piston.is_ok():
+			world.free()
+			return _fail(
+				"stack piston %d failed: %s"
+				% [index + 1, piston.reason]
+			)
+		prior = piston
+		piston_count += 1
+	var compiled := world.compile_body_groups(assembly_id)
+	if not bool(compiled.get("valid", false)):
+		world.free()
+		return _fail(
+			"4-piston stack compile invalid: %s"
+			% str(compiled.get("reason", ""))
+		)
+	var driven: Array = compiled.get("driven_specs", [])
+	if driven.size() != piston_count:
+		world.free()
+		return _fail(
+			"expected %d driven joints, got %d"
+			% [piston_count, driven.size()]
+		)
+	var groups: Dictionary = compiled.get("groups", {})
+	if groups.size() != piston_count + 1:
+		world.free()
+		return _fail(
+			"expected %d body groups, got %d"
+			% [piston_count + 1, groups.size()]
+		)
+	world.free()
+	return true
+
+
+func _test_piston_fifth_rejected_at_placement() -> bool:
+	var world := SimulationWorld.new()
+	world.ensure_resource_store("player")
+	world.set_resource_amount("player", "construction_component", 200.0)
+	world.get_archetype_registry().register(PISTON_HEAD)
+	var foundation := _spawn(
+		world,
+		_single_blueprint(Slice01Archetypes.foundation()),
+		GridTransform.identity()
+	)
+	if not foundation.is_ok():
+		world.free()
+		return _fail("fifth-reject foundation failed")
+	var assembly_id := int(foundation.data["assembly_id"])
+	var prior := _place_frame(world, assembly_id, Vector3i(4, 0, 0), foundation)
+	if not prior.is_ok():
+		world.free()
+		return _fail("fifth-reject frame failed")
+	for index: int in range(4):
+		var piston := _place_piston(
+			world,
+			assembly_id,
+			Vector3i(5, index * 2, 0),
+			prior
+		)
+		if not piston.is_ok():
+			world.free()
+			return _fail(
+				"setup piston %d failed before fifth: %s"
+				% [index + 1, piston.reason]
+			)
+		prior = piston
+	var before_amount := world.get_resource_store("player").amount(
+		"construction_component"
+	)
+	var fifth := _place_piston(world, assembly_id, Vector3i(5, 8, 0), prior)
+	if fifth.reason != StructuralCommandResult.REASON_DRIVEN_JOINT_CHAIN_TOO_LONG:
+		world.free()
+		return _fail(
+			"fifth piston should be driven_joint_chain_too_long, got %s"
+			% fifth.reason
+		)
+	var after_amount := world.get_resource_store("player").amount(
+		"construction_component"
+	)
+	if not is_equal_approx(before_amount, after_amount):
+		world.free()
+		return _fail("rejected fifth piston spent materials")
+	world.free()
+	return true
+
+
+func _test_piston_angular_compliance_config() -> bool:
+	var joint := Generic6DOFJoint3D.new()
+	var motor := SimulationMotorState.from_piston_definition(
+		PISTON_BASE.piston_definition
+	)
+	var compliance := PistonProjectionUtil.compliance_from_definition(
+		PISTON_BASE.piston_definition
+	)
+	PistonProjectionUtil.configure_slider_joint(joint, motor, compliance)
+	var soft_limit := float(compliance["soft_limit_rad"])
+	if soft_limit <= 0.0:
+		joint.free()
+		return _fail("expected positive angular soft limit")
+	if not bool(joint.get("angular_spring_x/enabled")):
+		joint.free()
+		return _fail("angular spring x must be enabled for SE-like flex")
+	if not is_equal_approx(
+		float(joint.get("angular_limit_x/upper_angle")),
+		soft_limit
+	):
+		joint.free()
+		return _fail("angular soft cone not applied")
+	if is_zero_approx(float(joint.get("angular_spring_x/stiffness"))):
+		joint.free()
+		return _fail("angular spring stiffness missing")
+	var large_compliance := PistonProjectionUtil.compliance_from_definition(
+		PISTON_BASE_LARGE.piston_definition
+	)
+	if (
+		float(large_compliance["stiffness_nm_per_rad"])
+		<= float(compliance["stiffness_nm_per_rad"])
+	):
+		joint.free()
+		return _fail("large piston should be stiffer than small")
+	joint.free()
 	return true
 
 

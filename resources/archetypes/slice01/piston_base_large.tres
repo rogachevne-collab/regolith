@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="ElementArchetype" format=3 uid="uid://secug01vq48b"]
+[gd_resource type="Resource" script_class="ElementArchetype" format=3]
 
 [ext_resource type="Script" uid="uid://c2p36g85wqkru" path="res://scripts/simulation/resources/build_requirement.gd" id="1"]
 [ext_resource type="Script" uid="uid://b6d2jhfw581hb" path="res://scripts/simulation/resources/collider_definition.gd" id="2"]
@@ -10,28 +10,36 @@
 [sub_resource type="Resource" id="Requirement"]
 script = ExtResource("1")
 resource_id = "construction_component"
-amount = 4.0
+amount = 20.0
 
 [sub_resource type="Resource" id="Collider"]
 script = ExtResource("2")
-size = Vector3(0.4, 0.4, 0.4)
+shape_kind = 1
+size = Vector3(1.4, 0.95, 1.4)
+offset_in_cell = Vector3(0.75, 0.5, 0.75)
 
 [sub_resource type="Resource" id="PistonDefinition"]
 script = ExtResource("4")
-head_archetype_id = "piston_head"
-head_offset_cells = 1
-default_speed_limit_mps = 0.1
-extend_velocity_mps = 0.15
-force_limit_n = 30000.0
+head_archetype_id = "piston_head_large"
+head_offset_cells = 2
+upper_limit_m = 5.0
+default_speed_limit_mps = 0.2
+extend_velocity_mps = 0.2
+retract_velocity_mps = 0.2
+force_limit_n = 80000.0
+max_velocity_mps = 3.0
+max_force_limit_n = 200000.0
 stiffness_n_per_m = 0.0
-damping_n_s_per_m = 4000.0
-angular_soft_limit_rad = 0.12
-angular_stiffness_nm_per_rad = 18000.0
-angular_damping_nm_s_per_rad = 600.0
+damping_n_s_per_m = 8000.0
+angular_soft_limit_rad = 0.08
+angular_stiffness_nm_per_rad = 45000.0
+angular_damping_nm_s_per_rad = 1200.0
+power_draw_w = 4000.0
 
 [sub_resource type="Resource" id="DrivePort"]
 script = ExtResource("3")
 port_id = "piston_drive"
+local_cell = Vector3i(1, 1, 1)
 local_face = 2
 compatibility_tags = PackedStringArray("piston", "internal")
 
@@ -39,28 +47,43 @@ compatibility_tags = PackedStringArray("piston", "internal")
 script = ExtResource("3")
 port_id = "power_in"
 kind = 1
+local_cell = Vector3i(1, 0, 1)
 compatibility_tags = PackedStringArray("electric", "input")
 
 [sub_resource type="Resource" id="MountNy"]
 script = ExtResource("5")
+local_cell = Vector3i(1, 0, 1)
 local_face = 3
 
 [sub_resource type="Resource" id="MountPx"]
 script = ExtResource("5")
+local_cell = Vector3i(2, 0, 1)
 
 [sub_resource type="Resource" id="MountNx"]
 script = ExtResource("5")
+local_cell = Vector3i(0, 0, 1)
 local_face = 1
+
+[sub_resource type="Resource" id="MountPz"]
+script = ExtResource("5")
+local_cell = Vector3i(1, 0, 2)
+local_face = 4
+
+[sub_resource type="Resource" id="MountNz"]
+script = ExtResource("5")
+local_cell = Vector3i(1, 0, 0)
+local_face = 5
 
 [resource]
 script = ExtResource("6")
-archetype_id = "piston_base"
-display_name = "Piston"
+archetype_id = "piston_base_large"
+display_name = "Large Piston"
 roles = PackedStringArray("Actuator")
-mass_kg = 40.0
+mass_kg = 420.0
+footprint_cells = Array[Vector3i]([Vector3i(0, 0, 0), Vector3i(0, 0, 1), Vector3i(0, 0, 2), Vector3i(0, 1, 0), Vector3i(0, 1, 1), Vector3i(0, 1, 2), Vector3i(1, 0, 0), Vector3i(1, 0, 1), Vector3i(1, 0, 2), Vector3i(1, 1, 0), Vector3i(1, 1, 1), Vector3i(1, 1, 2), Vector3i(2, 0, 0), Vector3i(2, 0, 1), Vector3i(2, 0, 2), Vector3i(2, 1, 0), Vector3i(2, 1, 1), Vector3i(2, 1, 2)])
 colliders = Array[ExtResource("2")]([SubResource("Collider")])
 ports = Array[ExtResource("3")]([SubResource("DrivePort"), SubResource("PowerPort")])
 structural_surface_policy = 2
-structural_mount_pads = Array[ExtResource("5")]([SubResource("MountNy"), SubResource("MountPx"), SubResource("MountNx")])
+structural_mount_pads = Array[ExtResource("5")]([SubResource("MountNy"), SubResource("MountPx"), SubResource("MountNx"), SubResource("MountPz"), SubResource("MountNz")])
 build_requirements = Array[ExtResource("1")]([SubResource("Requirement")])
 piston_definition = SubResource("PistonDefinition")

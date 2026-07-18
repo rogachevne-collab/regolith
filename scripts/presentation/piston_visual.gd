@@ -10,9 +10,23 @@ const HEAD_SCENE := preload(
 
 const MIN_SHAFT_HEIGHT_M := 0.04
 const SHAFT_RADIUS_M := 0.07
+const SHAFT_RADIUS_LARGE_M := 0.18
+const LARGE_VISUAL_SCALE := 2.4
 const TRAVEL_GHOST_RADIUS_M := 0.045
 static func is_piston_element(archetype_id: String) -> bool:
-	return archetype_id == "piston_base" or archetype_id == "piston_head"
+	return (
+		archetype_id == "piston_base"
+		or archetype_id == "piston_head"
+		or archetype_id == "piston_base_large"
+		or archetype_id == "piston_head_large"
+	)
+
+
+static func is_large_piston_element(archetype_id: String) -> bool:
+	return (
+		archetype_id == "piston_base_large"
+		or archetype_id == "piston_head_large"
+	)
 
 
 static func element_body_transform(
@@ -49,14 +63,13 @@ static func attach_runtime(
 	var head_root: Node3D = HEAD_SCENE.instantiate() as Node3D
 	base_root.name = "PistonBaseVisual_%d" % joint_id
 	head_root.name = "PistonHeadVisual_%d" % joint_id
-	base_root.transform = Transform3D(
-		PistonProjectionUtil.basis_from_axis(axis_local),
-		drive_local
-	)
-	head_root.transform = Transform3D(
-		PistonProjectionUtil.basis_from_axis(axis_local),
-		carriage_local
-	)
+	var large := is_large_piston_element(base_element.archetype_id)
+	var visual_scale := LARGE_VISUAL_SCALE if large else 1.0
+	var basis := PistonProjectionUtil.basis_from_axis(axis_local)
+	base_root.transform = Transform3D(basis, drive_local)
+	head_root.transform = Transform3D(basis, carriage_local)
+	base_root.scale = Vector3.ONE * visual_scale
+	head_root.scale = Vector3.ONE * visual_scale
 	_tag_runtime_node(base_root, assembly_id, joint_id, base_element.element_id)
 	_tag_runtime_node(head_root, assembly_id, joint_id, head_element.element_id)
 	base_body.add_child(base_root)
@@ -69,6 +82,8 @@ static func attach_runtime(
 		"head_root": head_root,
 		"shaft_mesh": shaft_mesh,
 		"axis_local": axis_local,
+		"shaft_radius_m": SHAFT_RADIUS_LARGE_M if large else SHAFT_RADIUS_M,
+		"visual_scale": visual_scale,
 	}
 
 
@@ -81,14 +96,17 @@ static func update_runtime(
 	var shaft_mesh: MeshInstance3D = record.get("shaft_mesh")
 	if shaft_mesh == null:
 		return
-	var height := maxf(extension_m, MIN_SHAFT_HEIGHT_M)
+	var visual_scale := maxf(float(record.get("visual_scale", 1.0)), 0.001)
+	# Shaft lives under a scaled parent; keep world length ≈ extension_m.
+	var height := maxf(extension_m / visual_scale, MIN_SHAFT_HEIGHT_M)
+	var radius := float(record.get("shaft_radius_m", SHAFT_RADIUS_M)) / visual_scale
 	var cylinder := shaft_mesh.mesh as CylinderMesh
 	if cylinder == null:
 		cylinder = CylinderMesh.new()
-		cylinder.top_radius = SHAFT_RADIUS_M
-		cylinder.bottom_radius = SHAFT_RADIUS_M
 		cylinder.radial_segments = 12
 		shaft_mesh.mesh = cylinder
+	cylinder.top_radius = radius
+	cylinder.bottom_radius = radius
 	cylinder.height = height
 	shaft_mesh.position = Vector3(0.0, height * 0.5, 0.0)
 	_apply_runtime_shaft_material(shaft_mesh, powered, status)
