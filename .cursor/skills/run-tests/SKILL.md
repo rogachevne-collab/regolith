@@ -19,13 +19,13 @@ Gameplay/HUD/presentation changes are NOT verified here — run the game
 
 ## Prerequisites
 
-- Stock Godot 4.5+ (`/Applications/Godot.app`, `$GODOT`, or `PATH`)
+- Stock Godot 4.7+ (`/Applications/Godot.app`, `$GODOT`, `PATH`; Windows: `Y:\Godot\Godot_v4.7.1-stable_win64*.exe` via `run.ps1` / `run.sh`)
 - Voxel GDExtension present: `addons/zylann.voxel/voxel.gdextension`
-- First clone: `./run.sh --headless --import` once
+- First clone: `./run.sh --headless --import` or `.\run.ps1 --headless --import` once
 
 ## Commands
 
-Run from repo root `~/Desktop/regolith`.
+Run from repo root (`~/Desktop/regolith` / `Y:\regolith`).
 
 | Goal | Command |
 |------|---------|
