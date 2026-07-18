@@ -8,7 +8,7 @@ const PISTON_HEAD := preload(
 )
 
 
-const TEST_WATCHDOG_SEC := 45.0
+const TEST_WATCHDOG_SEC := 25.0
 
 
 func _ready() -> void:
