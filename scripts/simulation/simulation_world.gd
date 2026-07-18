@@ -30,6 +30,9 @@ signal player_inventory_changed()
 ## Monotonic world-wide topology counter: bumps on every structural mutation.
 ## Cheap staleness check for presentation-side caches (snap resolve reuse).
 var topology_generation := 0
+## Nested: while > 0, structural_event is suppressed (except world_restored).
+## Use around bulk compose so projections rebuild once at the end.
+var _structural_batch_depth := 0
 var _allocator := SimulationIdAllocator.new()
 var _archetypes := ArchetypeRegistry.new()
 var _assemblies: Dictionary = {}
@@ -1287,5 +1290,17 @@ func _sorted_keys(dictionary: Dictionary) -> Array[int]:
 	result.sort()
 	return result
 
+func begin_structural_batch() -> void:
+	_structural_batch_depth += 1
+
+
+func end_structural_batch() -> void:
+	_structural_batch_depth = maxi(_structural_batch_depth - 1, 0)
+
+
 func _emit_structural_event(event: Dictionary) -> void:
+	if _structural_batch_depth > 0:
+		var kind := StringName(event.get("kind", &""))
+		if kind != &"world_restored":
+			return
 	structural_event.emit(event)

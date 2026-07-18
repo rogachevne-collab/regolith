@@ -17,6 +17,19 @@ static func compose(
 	var unsupported := intent.unsupported_reason()
 	if not unsupported.is_empty():
 		return {"ok": false, "error": unsupported}
+	## One physics/visual rebuild at spawn end — not per PlaceElement.
+	world.begin_structural_batch()
+	var result := _compose_batched(world, intent, grid_frame, store_id)
+	world.end_structural_batch()
+	return result
+
+
+static func _compose_batched(
+	world: SimulationWorld,
+	intent: RoverIntent,
+	grid_frame: GridTransform,
+	store_id: String
+) -> Dictionary:
 	for archetype: ElementArchetype in Slice01Archetypes.load_rover_archetypes():
 		world.get_archetype_registry().register(archetype)
 	var helper := AssemblyBuildHelper.new(world, store_id)

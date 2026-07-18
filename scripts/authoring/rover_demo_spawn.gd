@@ -16,7 +16,8 @@ static func find_flat_ground_near(
 	space_state: PhysicsDirectSpaceState3D,
 	center_hint: Vector3,
 	search_radius_m: float = FLAT_SEARCH_RADIUS_M,
-	step_m: float = FLAT_SEARCH_STEP_M
+	step_m: float = FLAT_SEARCH_STEP_M,
+	stop_on_first: bool = false
 ) -> Variant:
 	if terrain == null or tool == null or space_state == null:
 		return null
@@ -58,6 +59,8 @@ static func find_flat_ground_near(
 			)
 			if slope > MAX_FLAT_SLOPE_M:
 				continue
+			if stop_on_first:
+				return ground
 			var dist_sq := offset.length_squared()
 			if slope < best_slope - 0.001 or (
 				is_equal_approx(slope, best_slope)
@@ -113,8 +116,10 @@ static func spawn_on_terrain(
 		space_state
 	)
 	var grid_frame := GridSpawnUtil.grid_frame_from_transform(assembly_transform)
+	world.begin_structural_batch()
 	var assembly_id := _spawn_anchor(world, grid_frame, store_id)
 	if assembly_id <= 0:
+		world.end_structural_batch()
 		return {"ok": false, "error": "anchor_failed"}
 	var revision := _assembly_revision(world, assembly_id)
 	var module_ids: Dictionary = {}
@@ -158,11 +163,13 @@ static func spawn_on_terrain(
 			pair
 		)
 		if not bool(built.get("ok", false)):
+			world.end_structural_batch()
 			return built
 		revision = int(built.get("revision", revision))
 		module_ids[str(pair["key"])] = built.get("element_ids", {})
 	var placed := _place_chassis(world, assembly_id, revision, store_id)
 	if not bool(placed.get("ok", false)):
+		world.end_structural_batch()
 		return placed
 	module_ids.merge(placed.get("element_ids", {}))
 	_weld_assembly(world, assembly_id)
@@ -181,6 +188,7 @@ static func spawn_on_terrain(
 	motion.sleeping = false
 	motion.linear_velocity = Vector3.ZERO
 	motion.angular_velocity = Vector3.ZERO
+	world.end_structural_batch()
 	session.projection.project_assembly_now(assembly_id, motion)
 	if session.visuals != null:
 		session.visuals.rebuild_assembly(assembly_id)

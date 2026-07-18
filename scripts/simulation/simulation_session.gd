@@ -128,9 +128,9 @@ func spawn_blueprint_at_transform(
 		anchored
 	)
 	projection.project_assembly_now(assembly_id, motion)
-	visuals.rebuild_all()
-	piston_visuals.rebuild_all()
-	wheel_visuals.rebuild_all()
+	visuals.rebuild_assembly(assembly_id)
+	piston_visuals.rebuild_assembly(assembly_id)
+	wheel_visuals.rebuild_assembly(assembly_id)
 	return result
 
 

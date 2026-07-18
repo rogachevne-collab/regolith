@@ -13,6 +13,29 @@ static func spawn_at_transform(
 ) -> Dictionary:
 	if session == null or session.world == null:
 		return {"ok": false, "error": "no_session"}
+	session.world.begin_structural_batch()
+	var result := _spawn_batched(session, assembly_transform, store_id)
+	session.world.end_structural_batch()
+	if not bool(result.get("ok", false)):
+		return result
+	var assembly_id := int(result.get("assembly_id", 0))
+	var motion := GridSpawnUtil.motion_from_transform(assembly_transform, false)
+	if session.projection != null:
+		session.projection.project_assembly_now(assembly_id, motion)
+	if session.visuals != null:
+		session.visuals.rebuild_assembly(assembly_id)
+	if session.piston_visuals != null:
+		session.piston_visuals.rebuild_assembly(assembly_id)
+	if session.wheel_visuals != null:
+		session.wheel_visuals.rebuild_assembly(assembly_id)
+	return result
+
+
+static func _spawn_batched(
+	session: SimulationSession,
+	assembly_transform: Transform3D,
+	store_id: String
+) -> Dictionary:
 	for archetype: ElementArchetype in Slice01Archetypes.load_rover_archetypes():
 		session.world.get_archetype_registry().register(archetype)
 	for archetype: ElementArchetype in Slice01Archetypes.load_flight_archetypes():
@@ -81,8 +104,6 @@ static func spawn_at_transform(
 	)
 	session.world.get_locomotion_controller(helper.assembly_id).activate()
 	IndustryElectricBudget.apply_tick(session.world, 0.25)
-	if session.projection != null:
-		session.projection.rebuild_all()
 	return {
 		"ok": true,
 		"assembly_id": helper.assembly_id,

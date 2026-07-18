@@ -17,6 +17,18 @@ static func compose(
 	var unsupported := intent.unsupported_reason()
 	if not unsupported.is_empty():
 		return {"ok": false, "error": unsupported}
+	world.begin_structural_batch()
+	var result := _compose_batched(world, intent, grid_frame, store_id)
+	world.end_structural_batch()
+	return result
+
+
+static func _compose_batched(
+	world: SimulationWorld,
+	intent: MachineIntent,
+	grid_frame: GridTransform,
+	store_id: String
+) -> Dictionary:
 	_register_archetypes(world)
 	var helper := AssemblyBuildHelper.new(world, store_id)
 	helper.ensure_materials(2000.0)
