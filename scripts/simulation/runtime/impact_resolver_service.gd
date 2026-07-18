@@ -489,6 +489,13 @@ func apply_entry_for_test(entry: Dictionary) -> float:
 	return _apply_entry(entry)
 
 
+## Headless helpers: skip the real-time pair cooldown so a second sustained
+## bite can land in the same frame without letting physics destroy the
+## striker into the crater carved by the first bite.
+func clear_pair_cooldowns_for_test() -> void:
+	_cooldown_until.clear()
+
+
 func emit_actuator_sustained_entry_for_test(
 	striker_element_id: int,
 	striker_body: RigidBody3D,
