@@ -50,8 +50,11 @@ var _selection_archetype_id := ""
 var _selection_footprint_cells := 1
 const _AIM_ORIGIN_STEP := 0.04
 const _AIM_DIRECTION_STEP := 0.02
-const _LARGE_AIM_ORIGIN_STEP := 0.12
-const _LARGE_AIM_DIRECTION_STEP := 0.06
+## Large archetypes: a resolve costs ~ms (125-cell plan validation), and a
+## 2.5m ghost does not need cm-level aim tracking — quantize coarser so
+## walking/running does not re-resolve every physics frame.
+const _LARGE_AIM_ORIGIN_STEP := 0.25
+const _LARGE_AIM_DIRECTION_STEP := 0.1
 const _RESOLVE_HEARTBEAT_MSEC := 150
 var _last_resolve_msec := 0
 

@@ -339,6 +339,9 @@ func _notify_terrain_modified(
 	dig_radius_m: float = 0.0
 ) -> void:
 	terrain_modified.emit(removed_volume_m3, dig_center, dig_radius_m)
+	# A frozen parked rover must re-settle if the ground under it is dug away.
+	if _session != null and _session.projection != null and dig_radius_m > 0.0:
+		_session.projection.wake_frozen_near(dig_center, dig_radius_m)
 
 
 func stationary_drill_has_terrain_contact(element_id: int) -> bool:

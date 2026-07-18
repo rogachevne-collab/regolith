@@ -384,13 +384,24 @@ func _test_snap_resolver_voxel_below_magnetic() -> bool:
 		)
 	if float(candidates[0]["score"]) <= ConstructionSnapResolver.VOXEL_FALLBACK_SCORE:
 		return _fail("selected magnetic candidate score too low")
+	# The ground plan is lazy while a face wins, but manual cycling must
+	# still offer the voxel fallback in the pool.
+	var cycled := resolver.resolve({
+		"world": world,
+		"archetype": frame,
+		"orientation_index": 0,
+		"ray_origin": assembly_transform * Vector3(0.5, 1.5, 2.0),
+		"ray_direction": Vector3(0.0, -0.35, -1.0).normalized(),
+		"direct_hit": voxel_hit,
+		"manual_candidate_index": 0,
+	})
 	var has_voxel_candidate := false
-	for candidate: Dictionary in candidates:
+	for candidate: Dictionary in cycled["candidates"]:
 		if str(candidate["source"]) == "voxel_fallback":
 			has_voxel_candidate = true
 			break
 	if not has_voxel_candidate:
-		return _fail("voxel fallback candidate missing from merged pool")
+		return _fail("voxel fallback candidate missing from manual cycle pool")
 	_free_fixture(fixture)
 	return true
 

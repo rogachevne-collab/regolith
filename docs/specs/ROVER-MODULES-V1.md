@@ -445,8 +445,20 @@ element:
   После construction place/dismantle (mass/COM change) или recreate physics
   body якоря **сбрасываются** (`park_anchor_valid=false`) — иначе bristle
   тянет к устаревшим world-точкам и на powered rover поднимает physics spiral;
-- exit (E): снять routing / driver input; **не** freeze и не zero-vel;
-  без PB машина катится, с PB колёса держат;
+- **parking settle-freeze**: bristle-модель держит транспорт per-frame силами,
+  поэтому припаркованный body никогда не засыпает (raycast'ы колёс, пружины,
+  terrain-контакты — каждый кадр, навсегда). Когда PB включён, driver input
+  нулевой (`brake_command` не считается — seat-exit держит его в 1.0) и
+  скорость < `PARKING_BRAKE_SPEED_EPS` подряд `PARK_FREEZE_SETTLE_FRAMES`
+  (~0.5 s) — projection **замораживает** body (static pose, ноль per-frame
+  стоимости, wheel tick пропускается). Разморозка: любой driver input /
+  снятие PB (`_update_parking_freeze`), вход в seat (`_wake_rover_body`),
+  terrain-копка рядом (`wake_frozen_near` — иначе замороженный ровер висит
+  над вырытой ямой). После structural change транспорт свободен пару секунд
+  (settle) и замерзает снова;
+- exit (E): снять routing / driver input; **не** мгновенный freeze и не
+  zero-vel — freeze только по settle-правилу выше; без PB машина катится,
+  с PB колёса держат до заморозки;
 - обычный player locomotion выключается (`set_gameplay_input_enabled(false)`);
 - команды не идут через structural transaction — это frequent runtime state,
   читаемый `_tick_wheel_pairs`.

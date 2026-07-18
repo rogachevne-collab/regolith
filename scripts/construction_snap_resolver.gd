@@ -86,12 +86,12 @@ func resolve(params: Dictionary) -> Dictionary:
 	)
 	var direct_kind := StringName(direct_hit.get("target_kind", &""))
 	var direct_valid := bool(direct_hit.get("valid", false))
-	# Direct hit is planned once and reused everywhere below.
+	# Direct element hit is planned once and reused everywhere below. The
+	# voxel ground plan is planned lazily after the face scan: when a magnetic
+	# face wins anyway, the ground plan (seat raycasts, large footprints) is
+	# wasted work on every aim change.
 	var direct_plan: Dictionary = {}
-	if direct_valid and (
-		direct_kind == InteractionHit.KIND_SIMULATION_ELEMENT
-		or direct_kind == InteractionHit.KIND_VOXEL
-	):
+	if direct_valid and direct_kind == InteractionHit.KIND_SIMULATION_ELEMENT:
 		last_stats["plans_validated"] = 1
 		direct_plan = ConstructionPlacement.plan(
 			world,
@@ -140,29 +140,47 @@ func resolve(params: Dictionary) -> Dictionary:
 		held_attach_pivot
 	)
 
-	if bool(direct_plan.get("valid", false)):
-		if direct_kind == InteractionHit.KIND_SIMULATION_ELEMENT:
-			var command: PlaceElementCommand = direct_plan.get("command")
-			if command != null and command.assembly_id != 0:
-				candidates.append(
-					_make_candidate(
-						direct_hit,
-						direct_plan,
-						DIRECT_ELEMENT_SCORE,
-						&"direct_element"
-					)
-				)
-		elif direct_kind == InteractionHit.KIND_VOXEL:
-			# Voxel fallback scores below magnetic faces (policy §3): aiming at
-			# the ground next to a structure still snaps to the structure.
+	if (
+		direct_kind == InteractionHit.KIND_SIMULATION_ELEMENT
+		and bool(direct_plan.get("valid", false))
+	):
+		var command: PlaceElementCommand = direct_plan.get("command")
+		if command != null and command.assembly_id != 0:
 			candidates.append(
 				_make_candidate(
 					direct_hit,
 					direct_plan,
-					VOXEL_FALLBACK_SCORE,
-					&"voxel_fallback"
+					DIRECT_ELEMENT_SCORE,
+					&"direct_element"
 				)
 			)
+	elif direct_valid and direct_kind == InteractionHit.KIND_VOXEL:
+		# Voxel fallback scores below magnetic faces (policy §3): aiming at
+		# the ground next to a structure still snaps to the structure — so
+		# only pay for the ground plan when it can matter (no valid face, or
+		# manual cycling wants the full pool).
+		if candidates.is_empty() or manual_index >= 0:
+			last_stats["plans_validated"] = (
+				int(last_stats["plans_validated"]) + 1
+			)
+			direct_plan = ConstructionPlacement.plan(
+				world,
+				direct_hit,
+				archetype,
+				orientation_index,
+				store_id,
+				held_ground_pivot,
+				held_attach_pivot
+			)
+			if bool(direct_plan.get("valid", false)):
+				candidates.append(
+					_make_candidate(
+						direct_hit,
+						direct_plan,
+						VOXEL_FALLBACK_SCORE,
+						&"voxel_fallback"
+					)
+				)
 
 	candidates.sort_custom(
 		func(left: Dictionary, right: Dictionary) -> bool:
@@ -311,6 +329,7 @@ func _collect_face_candidates(
 	var validated: Array[Dictionary] = []
 	var attempts := 0
 	var have_first_valid := false
+	var use_prefilter := not held_attach_pivot.is_finite()
 	for entry: Dictionary in ranked:
 		if attempts >= TOP_K_VALIDATE:
 			break
@@ -319,6 +338,16 @@ func _collect_face_candidates(
 			and str(entry.get("key", "")) == _sticky_candidate_key
 		)
 		if have_first_valid and not is_sticky:
+			continue
+		# Footprint-overlap prefilter: a dictionary sweep instead of a full
+		# authoritative plan (~µs vs ~ms for a 125-cell archetype). The plan
+		# below still validates whatever passes.
+		if use_prefilter and not _prefilter_attach_fits(
+			world,
+			archetype,
+			orientation_index,
+			entry["target"]
+		):
 			continue
 		attempts += 1
 		last_stats["plans_validated"] = int(last_stats["plans_validated"]) + 1
@@ -349,6 +378,36 @@ func _collect_face_candidates(
 			return float(left["score"]) > float(right["score"])
 	)
 	return validated
+
+
+func _prefilter_attach_fits(
+	world: SimulationWorld,
+	archetype: ElementArchetype,
+	orientation_index: int,
+	target: Dictionary
+) -> bool:
+	var metadata: Dictionary = target.get("metadata", {})
+	if not metadata.has("snap_cell"):
+		return true
+	var assembly := world.get_assembly_raw(int(metadata.get("assembly_id", 0)))
+	if assembly == null:
+		return true
+	var occupancy: Dictionary = ConstructionOccupancyUtil.assembly_occupancy_index(
+		world,
+		assembly
+	)
+	var origin: Vector3i = GridPoseUtil.snap_origin_for_target_cell(
+		archetype,
+		metadata.get("snap_cell", Vector3i.ZERO),
+		metadata.get("snap_dir", Vector3i.UP),
+		orientation_index
+	)
+	for cell: Vector3i in archetype.footprint_cells:
+		if occupancy.has(
+			origin + OrientationUtil.rotate_cell(cell, orientation_index)
+		):
+			return false
+	return true
 
 
 ## March the aim ray through the assembly's occupancy grid and derive exposed

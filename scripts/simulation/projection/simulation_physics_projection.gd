@@ -8,6 +8,10 @@ const ROTOR_JOINT_NAME_PREFIX := "RotorJoint_"
 const HINGE_JOINT_NAME_PREFIX := "HingeJoint_"
 const MIN_MASS := 0.001
 const SUSTAINED_V_EPS := 0.05
+## Physics frames a parked rover must stay below the brake eps before its
+## body is frozen (~0.5s at 60Hz).
+const PARK_FREEZE_SETTLE_FRAMES := 30
+const WAKE_DIG_MARGIN_M := 3.0
 const FragmentBodyScript := preload(
 	"res://scripts/simulation/projection/projected_assembly_body.gd"
 )
@@ -21,6 +25,8 @@ const ASSEMBLY_FRICTION := 0.42
 var _world: SimulationWorld
 var _assembly_physics_material: PhysicsMaterial
 var _bodies: Dictionary = {}
+## assembly_id -> consecutive settled physics frames under parking brake.
+var _park_settle_frames: Dictionary = {}
 var _element_records: Dictionary = {}
 var _projected_revision: Dictionary = {}
 var _mounted_bodies: Dictionary = {}
@@ -1120,6 +1126,82 @@ func _is_active_locomotive(assembly_id: int) -> bool:
 		and _world.get_locomotion_controller(assembly_id).is_activated()
 	)
 
+## A parked rover held only by per-frame bristle/suspension forces never
+## sleeps: wheel raycasts, spring forces and terrain contacts grind every
+## physics frame forever. Once it has settled under the parking brake, freeze
+## the body (static pose, zero per-frame cost) and stop ticking wheels.
+## Wake paths: driver input / brake release (here), seat entry
+## (gateway._wake_rover_body), terrain digs nearby (wake_frozen_near).
+func _update_parking_freeze(assembly_id: int) -> void:
+	if (
+		_world == null
+		or not WheelSimulationService.is_locomotive_assembly(_world, assembly_id)
+	):
+		return
+	var body := get_physics_body(assembly_id)
+	if body is not RigidBody3D:
+		return
+	var rigid := body as RigidBody3D
+	var locomotion := _world.get_locomotion_controller(assembly_id)
+	if locomotion == null:
+		return
+	# Brake command does not block freezing: the seat-exit flow keeps
+	# brake_command at 1.0 while parked, and "braking while already still"
+	# is exactly the state we want to freeze.
+	var parked := (
+		locomotion.is_parking_brake()
+		and absf(locomotion.drive_command) <= 0.001
+		and absf(locomotion.steering_command) <= 0.001
+		and locomotion.translate_magnitude() <= 0.001
+		and absf(locomotion.pitch_command) <= 0.001
+		and absf(locomotion.yaw_command) <= 0.001
+		and absf(locomotion.roll_command) <= 0.001
+	)
+	if rigid.freeze:
+		if not parked:
+			rigid.freeze = false
+			rigid.sleeping = false
+			_park_settle_frames[assembly_id] = 0
+		return
+	if not parked:
+		_park_settle_frames[assembly_id] = 0
+		return
+	var eps := AssemblyLocomotionController.PARKING_BRAKE_SPEED_EPS
+	if (
+		rigid.linear_velocity.length() >= eps
+		or rigid.angular_velocity.length() >= eps
+	):
+		_park_settle_frames[assembly_id] = 0
+		return
+	var settled := int(_park_settle_frames.get(assembly_id, 0)) + 1
+	_park_settle_frames[assembly_id] = settled
+	if settled < PARK_FREEZE_SETTLE_FRAMES:
+		return
+	rigid.linear_velocity = Vector3.ZERO
+	rigid.angular_velocity = Vector3.ZERO
+	rigid.freeze = true
+
+
+## Frozen parked vehicles must not keep floating when the ground under them
+## is dug away — unfreeze anything frozen near a terrain edit and let physics
+## re-settle it.
+func wake_frozen_near(center: Vector3, radius: float) -> void:
+	for assembly_id: int in _sorted_int_keys(_bodies):
+		var body := get_physics_body(assembly_id)
+		if body is not RigidBody3D:
+			continue
+		var rigid := body as RigidBody3D
+		if not rigid.freeze:
+			continue
+		if not WheelSimulationService.is_locomotive_assembly(_world, assembly_id):
+			continue
+		if rigid.global_position.distance_to(center) > radius + WAKE_DIG_MARGIN_M:
+			continue
+		rigid.freeze = false
+		rigid.sleeping = false
+		_park_settle_frames[assembly_id] = 0
+
+
 func _should_tick_wheels(assembly_id: int) -> bool:
 	if (
 		_world == null
@@ -1140,6 +1222,7 @@ func _tick_wheel_pairs(delta: float) -> void:
 	if _world == null or delta <= 0.0:
 		return
 	for assembly_id: int in _sorted_int_keys(_bodies):
+		_update_parking_freeze(assembly_id)
 		if not _should_tick_wheels(assembly_id):
 			continue
 		WheelSimulationService.tick_assembly(

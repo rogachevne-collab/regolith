@@ -1280,6 +1280,11 @@ static func should_reconcile_assembly(world, assembly_id: int) -> bool:
 	var assembly: SimulationAssembly = world.get_assembly_raw(assembly_id)
 	if assembly == null or assembly.tombstoned:
 		return false
+	# Vehicles never terrain-anchor: a construction block bolted onto a rover
+	# must not weld the rover to the ground (or churn anchor reconciles with
+	# revision bumps every terrain edit).
+	if ThrusterSimulationService.is_mobile_assembly(world, assembly_id):
+		return false
 	for element_id: int in assembly.element_ids:
 		var element: SimulationElement = world.get_element(element_id)
 		if (
@@ -1372,6 +1377,9 @@ static func record_placement_terrain_contact(world,
 	joint_ids: Array[int]
 ) -> void:
 	if not TerrainAnchorProbe.is_construction_archetype(element.archetype_id):
+		return
+	# See should_reconcile_assembly: blocks placed on vehicles never anchor.
+	if ThrusterSimulationService.is_mobile_assembly(world, assembly.assembly_id):
 		return
 	if not world._terrain_contact_probe.is_valid():
 		return
