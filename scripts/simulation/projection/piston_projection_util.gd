@@ -288,9 +288,16 @@ static func _compute_velocity_tracking_force(
 	return {"force_n": force_n, "saturated": saturated}
 
 
+## Default SE-like angular compliance when definition is unavailable.
+const DEFAULT_ANGULAR_SOFT_LIMIT_RAD := 0.12
+const DEFAULT_ANGULAR_STIFFNESS_NM_PER_RAD := 18000.0
+const DEFAULT_ANGULAR_DAMPING_NM_S_PER_RAD := 600.0
+
+
 static func configure_slider_joint(
 	joint: Generic6DOFJoint3D,
-	motor: SimulationMotorState
+	motor: SimulationMotorState,
+	compliance: Dictionary = {}
 ) -> void:
 	for axis: String in ["x", "z"]:
 		joint.set("linear_limit_%s/enabled" % axis, true)
@@ -299,10 +306,42 @@ static func configure_slider_joint(
 	joint.set("linear_limit_y/enabled", true)
 	joint.set("linear_limit_y/lower_distance", motor.lower_limit_m)
 	joint.set("linear_limit_y/upper_distance", motor.upper_limit_m)
+	# Soft angular cone + springs (Jolt supports springs; *_limit_*/softness
+	# is unsupported in the built-in module — do not set those).
+	var soft_limit := float(
+		compliance.get("soft_limit_rad", DEFAULT_ANGULAR_SOFT_LIMIT_RAD)
+	)
+	var stiffness := float(
+		compliance.get(
+			"stiffness_nm_per_rad",
+			DEFAULT_ANGULAR_STIFFNESS_NM_PER_RAD
+		)
+	)
+	var damping := float(
+		compliance.get(
+			"damping_nm_s_per_rad",
+			DEFAULT_ANGULAR_DAMPING_NM_S_PER_RAD
+		)
+	)
+	soft_limit = maxf(soft_limit, 0.0)
 	for axis: String in ["x", "y", "z"]:
 		joint.set("angular_limit_%s/enabled" % axis, true)
-		joint.set("angular_limit_%s/lower_angle" % axis, 0.0)
-		joint.set("angular_limit_%s/upper_angle" % axis, 0.0)
+		joint.set("angular_limit_%s/lower_angle" % axis, -soft_limit)
+		joint.set("angular_limit_%s/upper_angle" % axis, soft_limit)
+		joint.set("angular_spring_%s/enabled" % axis, soft_limit > 0.0)
+		joint.set("angular_spring_%s/equilibrium_point" % axis, 0.0)
+		joint.set("angular_spring_%s/stiffness" % axis, stiffness)
+		joint.set("angular_spring_%s/damping" % axis, damping)
+
+
+static func compliance_from_definition(definition: PistonDefinition) -> Dictionary:
+	if definition == null:
+		return {
+			"soft_limit_rad": DEFAULT_ANGULAR_SOFT_LIMIT_RAD,
+			"stiffness_nm_per_rad": DEFAULT_ANGULAR_STIFFNESS_NM_PER_RAD,
+			"damping_nm_s_per_rad": DEFAULT_ANGULAR_DAMPING_NM_S_PER_RAD,
+		}
+	return definition.angular_compliance()
 
 
 static func is_piston_powered(

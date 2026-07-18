@@ -620,6 +620,21 @@ static func validate_driven_place_element(world,
 		)
 		if moving_error != null:
 			return moving_error
+		var chain_error: StructuralCommandResult = (
+			ConstructionCommandService.validate_prospective_driven_compile(
+				world,
+				assembly.assembly_id,
+				base_preview,
+				head_preview,
+				base_connections,
+				head_connections,
+				command.archetype,
+				is_rotor,
+				is_hinge
+			)
+		)
+		if chain_error != null:
+			return chain_error
 
 	return StructuralCommandResult.ok({
 		"placement_resource_id": first_requirement.resource_id,
@@ -823,6 +838,77 @@ static func place_driven_element(world,
 		"resource_id": resource_id,
 		"resource_remaining": store.amount(resource_id),
 	})
+
+static func validate_prospective_driven_compile(
+	world,
+	assembly_id: int,
+	base_preview: SimulationElement,
+	head_preview: SimulationElement,
+	base_connections: Array[Dictionary],
+	head_connections: Array[Dictionary],
+	base_archetype: ElementArchetype,
+	is_rotor: bool,
+	is_hinge: bool
+) -> StructuralCommandResult:
+	var assembly: SimulationAssembly = world.get_assembly_raw(assembly_id)
+	if assembly == null:
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INVALID_REFERENCE
+		)
+	var elements_by_id: Dictionary = {}
+	for element_id: int in assembly.element_ids:
+		elements_by_id[element_id] = world.get_element(element_id)
+	var driven_joint: SimulationJoint
+	if is_rotor:
+		driven_joint = SimulationJoint.rotor(
+			-1,
+			assembly_id,
+			base_preview.element_id,
+			head_preview.element_id,
+			base_archetype.rotor_definition
+		)
+	elif is_hinge:
+		driven_joint = SimulationJoint.hinge(
+			-1,
+			assembly_id,
+			base_preview.element_id,
+			head_preview.element_id,
+			base_archetype.hinge_definition
+		)
+	else:
+		driven_joint = SimulationJoint.piston(
+			-1,
+			assembly_id,
+			base_preview.element_id,
+			head_preview.element_id,
+			base_archetype.piston_definition
+		)
+	var compiled := BodyGroupCompiler.compile_prospective_driven_place(
+		assembly.element_ids,
+		elements_by_id,
+		world._joints_for_assembly(assembly_id),
+		base_preview,
+		head_preview,
+		base_connections,
+		head_connections,
+		driven_joint
+	)
+	if bool(compiled.get("valid", false)):
+		return null
+	var reason := StringName(compiled.get("reason", &"invalid_body_groups"))
+	if reason == &"driven_joint_chain_too_long":
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_DRIVEN_JOINT_CHAIN_TOO_LONG
+		)
+	if reason == &"driven_joint_cycle":
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_DRIVEN_JOINT_CYCLE
+		)
+	return StructuralCommandResult.failed(
+		StructuralCommandResult.REASON_INVALID_TARGET,
+		{"detail": reason}
+	)
+
 
 static func validate_new_rigid_connections(world, 
 	assembly_id: int,

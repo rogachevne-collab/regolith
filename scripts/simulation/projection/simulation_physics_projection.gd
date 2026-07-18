@@ -1012,9 +1012,20 @@ func _project_assembly_multibody(
 		)
 		joint_node.node_a = joint_node.get_path_to(base_body)
 		joint_node.node_b = joint_node.get_path_to(head_body)
+		var compliance := PistonProjectionUtil.compliance_from_definition(
+			(
+				base_element.get_archetype().piston_definition
+				if (
+					base_element != null
+					and base_element.get_archetype() != null
+				)
+				else null
+			)
+		)
 		PistonProjectionUtil.configure_slider_joint(
 			joint_node,
-			sim_joint.motor
+			sim_joint.motor,
+			compliance
 		)
 		piston_records.append({
 			"joint_id": sim_joint.joint_id,
@@ -1025,6 +1036,7 @@ func _project_assembly_multibody(
 			"base_anchor_local": base_anchor,
 			"head_anchor_local": head_anchor,
 			"axis_local": axis_local,
+			"angular_compliance": compliance,
 			"carriage_element_ids": groups.get(
 				int(spec.get("head_group_id", 0)),
 				[]
@@ -1418,7 +1430,8 @@ func _tick_piston_actuators(delta: float) -> void:
 			if constraint != null:
 				PistonProjectionUtil.configure_slider_joint(
 					constraint,
-					sim_joint.motor
+					sim_joint.motor,
+					record.get("angular_compliance", {})
 				)
 			sim_joint.motor.applied_force_n = absf(force_n)
 			sim_joint.motor.force_saturated = saturated

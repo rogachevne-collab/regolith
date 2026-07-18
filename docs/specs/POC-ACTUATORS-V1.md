@@ -120,23 +120,40 @@ Validator отклоняет definition, если:
 
 ### Slice fixture
 
-Первый fixture:
+Малый fixture:
 
 ```text
 construction item       piston
 base archetype          piston_base
 head archetype          piston_head
 home footprint          2 cells вдоль local +Y: base, затем head
+head_offset_cells       1
 lower / upper limit     0.0 m / 2.0 m
 speed limit             0.25 m/s
-force limit             5000 N
+force limit             30000 N (runtime fixture; может тюниться)
 power draw              1500 W while commanded
 overload policy         stop
 ```
 
+Большой fixture (как large rotor — отдельный placeable item):
+
+```text
+construction item       piston_base_large
+base archetype          piston_base_large
+head archetype          piston_head_large (internal)
+home footprint          base 3×3×2 cells, head 3×3×1 над base (+Y)
+head_offset_cells       2
+lower / upper limit     0.0 m / 5.0 m
+extend/retract velocity 0.20 m/s
+force limit             80000 N
+power draw              4000 W while commanded
+overload policy         stop
+```
+
 Числа являются initial tuning fixture, а не универсальными константами kernel.
-`piston_head` — internal archetype: он имеет собственные `ElementId`, mass,
-integrity и colliders, но не появляется отдельным item в construction toolbar.
+`piston_head` / `piston_head_large` — internal archetypes: собственные
+`ElementId`, mass, integrity и colliders, но не появляются отдельным item в
+construction toolbar.
 
 ## Topology и identity
 
@@ -234,6 +251,13 @@ head.
 в обход существующего Piston и образует mechanical cycle. Причина:
 `driven_joint_cycle`.
 
+Цепочка поршней (head → base следующего) — штатный сценарий, как в Space
+Engineers. Placement **обязан** прогонять prospective `BodyGroupCompiler`
+до commit: пятый driven joint на path к root отклоняется с
+`driven_joint_chain_too_long` (материалы не списываются; silent fallback
+projection в single-body не допускается). Лимит `MAX_DRIVEN_JOINTS_ON_PATH = 4`
+остаётся нормативным (PHYSICAL-LANGUAGE: цепи > 3–4 физически рискованны).
+
 ## Control command
 
 `set_actuator_target` — frequent last-write-wins command, не structural command:
@@ -287,7 +311,12 @@ ConfigureActuatorCommand {
 - physics projection пересинхронизирует `Generic6DOFJoint3D` limits каждый tick;
 - **E** на прицеленном поршне открывает центральную панель настроек с видимым
   курсором; угловая панель цели — только readout;
-- HUD target panel показывает текущие значения и подсказку `E — настройки`.
+- HUD target panel показывает текущие значения и подсказку `E — настройки`;
+- панель даёт toggle **мотор вкл/выкл** (`set_actuator_target` с
+  `enabled`, mode stop при выключении);
+- панель даёт toggle **цепь** (sync): `+` / `-` / `Y` применяют ту же
+  velocity/stop команду ко всем `Piston` joints той же Assembly (удобство
+  для стека, как групповое управление в SE terminal).
 
 Motor никогда не пишет body transform, linear velocity или joint position
 напрямую.
@@ -319,15 +348,28 @@ Dynamic head position не меняет topology electric graph. Electric wire
    `RigidBody3D`;
 3. маршрутизирует каждый collider в body своего element group;
 4. создаёт один `Generic6DOFJoint3D` на `Piston`;
-5. блокирует три angular DOF и две linear DOF;
-6. оставляет translation только вдоль piston axis с authored limits;
+5. блокирует две linear DOF (поперечные оси); оставляет translation вдоль
+   piston axis с authored travel limits;
+6. angular DOF — **мягкая** модель в духе Space Engineers (длинные цепочки
+   слегка пружинят/прогибаются под нагрузкой), а не идеально жёсткий lock:
+   - hard cone `±angular_soft_limit_rad` как safety stop;
+   - `angular_spring_*` к equilibrium 0 (Jolt module поддерживает springs;
+     `*_limit_*/softness` built-in Jolt **не** использовать — unsupported);
 7. base/head body groups **сталкиваются** (нет group-wide collision
-   exception); clearance стыка — authored меньший box collider у
-   `piston_base` / `piston_head` (чуть ниже cell);
+   exception); clearance стыка — authored меньший collider у base/head;
 8. сохраняет lookup `AssemblyId + body_group_id → PhysicsBody3D` и
    `ElementId → body/collider`.
 
+`PistonDefinition` задаёт compliance (`angular_soft_limit_rad`,
+`angular_stiffness_nm_per_rad`, `angular_damping_nm_s_per_rad`). Большой
+поршень жёстче малого; оба остаются заметно «живыми» на длинной цепочке.
+
 Никакой presentation mesh не участвует в constraint anchors или limits.
+
+Справка: [Using Jolt Physics](https://docs.godotengine.org/en/stable/tutorials/physics/using_jolt_physics.html)
+(soft limit properties на stock joint nodes unsupported); SE mechanical blocks /
+physics overhaul — bead-chain wobble на длинных piston stacks как целевой feel,
+не баг.
 
 ### Motor
 
@@ -533,8 +575,12 @@ status
 7. power loss снимает force и даёт `no_power`;
 8. dismantle base/head отделяет carriage с корректной world velocity;
 9. rebuild при добавлении/удалении head branch сохраняет world pose;
-10. cycle и пятый driven joint на path отклоняются;
-11. rigid-only snapshot v6 и projection остаются семантически эквивалентны
+10. cycle и пятый driven joint на path отклоняются (compiler **и**
+    placement prospective compile);
+11. стек из 2–4 поршней компилируется в отдельные body groups и сохраняет
+    driven constraints;
+12. large piston atomic placement (footprint, travel, force scaling);
+13. rigid-only snapshot v6 и projection остаются семантически эквивалентны
     поведению до добавления Piston.
 
 Gameplay/HUD/presentation не подтверждаются headless-тестом. В запущенной игре:
