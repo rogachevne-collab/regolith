@@ -93,13 +93,24 @@ const CONSTRUCTION_ARCHETYPES: PackedStringArray = [
 
 const TOOLBAR_SLOTS_PER_PAGE := 9
 ## Continuous demolition rate when drilling construction blocks (integrity/s).
-const DRILL_DPS := 5.0
-const DRILL_INTERVAL := 0.05
+## Authoritative values: Game Balance `construction.block_drill_*`.
+static var DRILL_DPS: float:
+	get:
+		return GameBalance.construction_float("block_drill_dps", 5.0)
+static var DRILL_INTERVAL: float:
+	get:
+		return GameBalance.construction_float("block_drill_interval_s", 0.05)
 ## Continuous demolition rate for the grinder (integrity units per second).
-const GRINDER_DPS := 200.0
-const GRINDER_INTERVAL := 0.05
+static var GRINDER_DPS: float:
+	get:
+		return GameBalance.construction_float("grinder_dps", 200.0)
+static var GRINDER_INTERVAL: float:
+	get:
+		return GameBalance.construction_float("grinder_interval_s", 0.05)
 ## Material refund when grinder destroys a block (same as dismantle).
-const GRINDER_REFUND_FRACTION := 0.5
+static var GRINDER_REFUND_FRACTION: float:
+	get:
+		return GameBalance.construction_float("grinder_refund_fraction", 0.5)
 
 const TOOLBAR_PAGES: Array = [
 	[

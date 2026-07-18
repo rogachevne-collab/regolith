@@ -16,6 +16,7 @@ structural commands, kinematic sync). Логика разнесена по се�
 | facade: queries, command queue, motion, snapshot hooks | `scripts/simulation/simulation_world.gd` |
 | snapshot capture/restore | `scripts/simulation/simulation_snapshot.gd` |
 | industry tick / cargo / recipes | `scripts/simulation/industry/` |
+| баланс (cost/mass/drill/actuators) | `resources/balance/game_balance.json`; `GameBalance` |
 | actuators / wheels (уже вынесены) | `actuator_simulation_service.gd`, `wheel_simulation_service.gd` |
 
 ## Правила

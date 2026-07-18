@@ -53,6 +53,7 @@ static func load_required(archetype_id: String) -> ElementArchetype:
 			% [path, archetype_id, archetype.archetype_id]
 		)
 		return null
+	GameBalance.apply_element(archetype)
 	return archetype
 
 

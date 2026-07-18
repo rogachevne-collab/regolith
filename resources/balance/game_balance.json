@@ -1,0 +1,588 @@
+{
+  "version": 1,
+  "comment": "Authoritative Game Balance v0. Edit this file to tune items, recipes, economy, drills, power, and per-element mass/BOM/actuator numbers. Geometry/ports stay in resources/archetypes/slice01/*.tres. See docs/specs/GAME-BALANCE-V0.md.",
+  "items": {
+    "raw_regolith": {
+      "category": "ore",
+      "mass_per_unit_kg": 2.0,
+      "volume_per_unit_l": 2.5,
+      "unit": "bulk"
+    },
+    "regolith_fines": {
+      "category": "ore",
+      "mass_per_unit_kg": 1.5,
+      "volume_per_unit_l": 1.8,
+      "unit": "bulk"
+    },
+    "sintered_basalt": {
+      "category": "material",
+      "mass_per_unit_kg": 3.0,
+      "volume_per_unit_l": 1.5,
+      "unit": "bulk"
+    },
+    "calcined_oxide": {
+      "category": "material",
+      "mass_per_unit_kg": 1.2,
+      "volume_per_unit_l": 1.0,
+      "unit": "bulk"
+    },
+    "metal_ingot": {
+      "category": "ingot",
+      "mass_per_unit_kg": 4.0,
+      "volume_per_unit_l": 0.6,
+      "unit": "bulk"
+    },
+    "construction_component": {
+      "category": "component",
+      "mass_per_unit_kg": 2.5,
+      "volume_per_unit_l": 3.0,
+      "unit": "discrete"
+    },
+    "tool_hand_drill": {
+      "category": "tool",
+      "mass_per_unit_kg": 3.0,
+      "volume_per_unit_l": 8.0,
+      "unit": "discrete"
+    },
+    "tool_welder": {
+      "category": "tool",
+      "mass_per_unit_kg": 2.5,
+      "volume_per_unit_l": 6.0,
+      "unit": "discrete"
+    },
+    "tool_grinder": {
+      "category": "tool",
+      "mass_per_unit_kg": 2.8,
+      "volume_per_unit_l": 7.0,
+      "unit": "discrete"
+    },
+    "tool_connector": {
+      "category": "tool",
+      "mass_per_unit_kg": 1.5,
+      "volume_per_unit_l": 4.0,
+      "unit": "discrete"
+    }
+  },
+  "recipes": {
+    "crush_regolith": {
+      "machine": "processor",
+      "inputs": {
+        "raw_regolith": 1.0
+      },
+      "outputs": {
+        "regolith_fines": 1.0
+      },
+      "duration_s": 6.0,
+      "power_w": 200.0
+    },
+    "sinter_basalt": {
+      "machine": "processor",
+      "inputs": {
+        "regolith_fines": 2.0
+      },
+      "outputs": {
+        "sintered_basalt": 1.0
+      },
+      "duration_s": 8.0,
+      "power_w": 250.0
+    },
+    "calcine_fines": {
+      "machine": "processor",
+      "inputs": {
+        "regolith_fines": 2.0
+      },
+      "outputs": {
+        "calcined_oxide": 1.0
+      },
+      "duration_s": 10.0,
+      "power_w": 400.0
+    },
+    "reduce_oxide": {
+      "machine": "fabricator",
+      "inputs": {
+        "calcined_oxide": 1.0
+      },
+      "outputs": {
+        "metal_ingot": 1.0
+      },
+      "duration_s": 12.0,
+      "power_w": 600.0
+    },
+    "sinter_component": {
+      "machine": "fabricator",
+      "inputs": {
+        "metal_ingot": 1.0
+      },
+      "outputs": {
+        "construction_component": 1.0
+      },
+      "duration_s": 10.0,
+      "power_w": 500.0
+    }
+  },
+  "industry": {
+    "player_carry_capacity_l": 100.0,
+    "queue_max_depth": 4,
+    "keyed_store_capacity_l": {
+      "cargo_store": 2000.0
+    },
+    "internal_buffer_capacity_l": {
+      "stationary_drill": 200.0,
+      "processor": 100.0,
+      "fabricator": 100.0
+    },
+    "default_recipes": {
+      "processor": "crush_regolith",
+      "fabricator": "reduce_oxide"
+    },
+    "stationary_drill": {
+      "body_size_m": 1.0,
+      "carve_radius_m": 1.25,
+      "head_offset_m": 1.45,
+      "contact_reach_m": 1.4,
+      "carve_center_offset_factor": 0.2,
+      "requires_power": true
+    },
+    "hand_drill": {
+      "carve_radius_m": 0.65,
+      "bite_depth_m": 0.18,
+      "sdf_scale": 0.8,
+      "reach_m": 3.2,
+      "terrain_collectible_fraction": 0.01,
+      "loot_pile_max_mass_kg": 32.0,
+      "loot_base_radius_m": 0.16,
+      "loot_mass_reference_kg": 12.0,
+      "loot_scale_min": 0.75,
+      "loot_scale_max": 1.35,
+      "loot_merge_contact_epsilon_m": 0.02,
+      "interval_s": 0.08,
+      "path_max_span_m": 1.4,
+      "path_max_gap_ms": 250,
+      "loot_despawn_s": 600.0
+    }
+  },
+  "electric": {
+    "defaults": {
+      "output_w": 2000.0,
+      "idle_w": 50.0,
+      "supply_radius_m": 12.0,
+      "battery_max_kwh": 10.0,
+      "battery_charge_w": 500.0,
+      "battery_discharge_w": 500.0
+    },
+    "archetypes": {
+      "power_source": {
+        "is_source": true,
+        "output_w": 2000.0
+      },
+      "power_distributor": {
+        "is_distributor": true,
+        "supply_radius_m": 12.0
+      },
+      "power_battery": {
+        "is_battery": true,
+        "max_kwh": 10.0,
+        "charge_w": 500.0,
+        "discharge_w": 500.0
+      },
+      "processor": {
+        "is_consumer": true,
+        "idle_w": 50.0
+      },
+      "fabricator": {
+        "is_consumer": true,
+        "idle_w": 50.0
+      },
+      "stationary_drill": {
+        "is_consumer": true,
+        "idle_w": 80.0
+      },
+      "piston_base": {
+        "is_consumer": true,
+        "idle_w": 0.0
+      },
+      "rotor_base": {
+        "is_consumer": true,
+        "idle_w": 0.0
+      },
+      "rotor_base_large": {
+        "is_consumer": true,
+        "idle_w": 0.0
+      },
+      "hinge_base": {
+        "is_consumer": true,
+        "idle_w": 0.0
+      },
+      "drive_wheel": {
+        "is_consumer": true,
+        "idle_w": 20.0
+      },
+      "thruster": {
+        "is_consumer": true,
+        "idle_w": 10.0
+      },
+      "gyro": {
+        "is_consumer": true,
+        "idle_w": 5.0
+      },
+      "power_battery_small": {
+        "is_battery": true,
+        "max_kwh": 2.5,
+        "charge_w": 250.0,
+        "discharge_w": 1500.0
+      },
+      "power_distributor_small": {
+        "is_distributor": true,
+        "supply_radius_m": 6.0
+      }
+    }
+  },
+  "construction": {
+    "weld_repair_integrity_fraction": 0.25,
+    "dismantle_refund_fraction": 0.5,
+    "grinder_refund_fraction": 0.5,
+    "grinder_dps": 200.0,
+    "grinder_interval_s": 0.05,
+    "block_drill_dps": 5.0,
+    "block_drill_interval_s": 0.05
+  },
+  "starter": {
+    "player_resources": {
+      "raw_regolith": 6.0,
+      "regolith_fines": 6.0,
+      "sintered_basalt": 4.0,
+      "calcined_oxide": 3.0,
+      "metal_ingot": 3.0,
+      "construction_component": 12.0
+    },
+    "playtest_carry_capacity_l": 2000.0,
+    "playtest_resources": {
+      "raw_regolith": 250.0,
+      "regolith_fines": 150.0,
+      "sintered_basalt": 60.0,
+      "calcined_oxide": 40.0,
+      "metal_ingot": 50.0,
+      "construction_component": 300.0
+    }
+  },
+  "elements": {
+    "cargo_pipe": {
+      "mass_kg": 30.0,
+      "build_requirements": [
+        {
+          "resource_id": "construction_component",
+          "amount": 1.0
+        }
+      ]
+    },
+    "cargo_store": {
+      "mass_kg": 90.0,
+      "build_requirements": [
+        {
+          "resource_id": "construction_component",
+          "amount": 6.0
+        }
+      ]
+    },
+    "cockpit": {
+      "mass_kg": 60.0,
+      "build_requirements": [
+        {
+          "resource_id": "construction_component",
+          "amount": 8.0
+        }
+      ]
+    },
+    "drive_wheel": {
+      "mass_kg": 15.0,
+      "build_requirements": [
+        {
+          "resource_id": "construction_component",
+          "amount": 2.0
+        }
+      ],
+      "wheel": {
+        "radius_m": 0.4,
+        "width_m": 0.3,
+        "drive_torque_n_m": 65.0,
+        "brake_torque_n_m": 180.0,
+        "longitudinal_grip": 1.2,
+        "lateral_grip": 0.9,
+        "slip_stiffness": 800.0,
+        "lateral_stiffness": 1000.0,
+        "wheel_inertia": 0.65,
+        "angular_damping": 0.2,
+        "max_angular_speed_rad_s": 150.0,
+        "max_steering_angle_rad": 0.4887,
+        "steering_response": 2.5,
+        "power_draw_w": 300.0,
+        "idle_w": 20.0
+      }
+    },
+    "fabricator": {
+      "mass_kg": 160.0,
+      "build_requirements": [
+        {
+          "resource_id": "construction_component",
+          "amount": 10.0
+        }
+      ]
+    },
+    "foundation": {
+      "mass_kg": 500.0,
+      "build_requirements": [
+        {
+          "resource_id": "construction_component",
+          "amount": 8.0
+        }
+      ]
+    },
+    "frame": {
+      "mass_kg": 50.0,
+      "build_requirements": [
+        {
+          "resource_id": "construction_component",
+          "amount": 4.0
+        }
+      ]
+    },
+    "frame_basalt": {
+      "mass_kg": 50.0,
+      "build_requirements": [
+        {
+          "resource_id": "sintered_basalt",
+          "amount": 2.0
+        }
+      ]
+    },
+    "frame_beam": {
+      "mass_kg": 100.0,
+      "build_requirements": [
+        {
+          "resource_id": "construction_component",
+          "amount": 6.0
+        }
+      ]
+    },
+    "gyro": {
+      "mass_kg": 20.0,
+      "build_requirements": [
+        {
+          "resource_id": "construction_component",
+          "amount": 3.0
+        }
+      ],
+      "gyro": {
+        "max_torque_nm": 400.0,
+        "power_draw_w": 200.0,
+        "idle_w": 5.0,
+        "dampen_gain": 80.0
+      }
+    },
+    "hinge_base": {
+      "mass_kg": 50.0,
+      "build_requirements": [
+        {
+          "resource_id": "construction_component",
+          "amount": 4.0
+        }
+      ],
+      "hinge": {
+        "top_offset_cells": 1,
+        "min_angle_rad": -1.5707963267949,
+        "max_angle_rad": 1.5707963267949,
+        "default_speed_limit_rad_s": 0.5,
+        "forward_velocity_rad_s": 1.0,
+        "reverse_velocity_rad_s": 1.0,
+        "torque_limit_nm": 3000.0,
+        "max_velocity_rad_s": 2.0,
+        "max_torque_limit_nm": 20000.0,
+        "damping_nm_s_per_rad": 50.0,
+        "power_draw_w": 800.0
+      }
+    },
+    "hinge_top": {
+      "mass_kg": 15.0,
+      "build_requirements": []
+    },
+    "landing_leg": {
+      "mass_kg": 18.0,
+      "build_requirements": [
+        {
+          "resource_id": "construction_component",
+          "amount": 3.0
+        }
+      ],
+      "max_integrity": 400.0
+    },
+    "large_frame": {
+      "mass_kg": 625.0,
+      "build_requirements": [
+        {
+          "resource_id": "construction_component",
+          "amount": 25.0
+        }
+      ]
+    },
+    "piston_base": {
+      "mass_kg": 40.0,
+      "build_requirements": [
+        {
+          "resource_id": "construction_component",
+          "amount": 4.0
+        }
+      ],
+      "piston": {
+        "default_speed_limit_mps": 0.1,
+        "extend_velocity_mps": 0.15,
+        "force_limit_n": 30000.0,
+        "stiffness_n_per_m": 0.0,
+        "damping_n_s_per_m": 4000.0
+      }
+    },
+    "piston_head": {
+      "mass_kg": 20.0,
+      "build_requirements": []
+    },
+    "power_battery": {
+      "mass_kg": 150.0,
+      "build_requirements": [
+        {
+          "resource_id": "construction_component",
+          "amount": 6.0
+        }
+      ]
+    },
+    "power_battery_small": {
+      "mass_kg": 80.0,
+      "build_requirements": [
+        {
+          "resource_id": "construction_component",
+          "amount": 4.0
+        }
+      ]
+    },
+    "power_distributor": {
+      "mass_kg": 100.0,
+      "build_requirements": [
+        {
+          "resource_id": "construction_component",
+          "amount": 8.0
+        }
+      ]
+    },
+    "power_distributor_small": {
+      "mass_kg": 40.0,
+      "build_requirements": [
+        {
+          "resource_id": "construction_component",
+          "amount": 4.0
+        }
+      ]
+    },
+    "power_source": {
+      "mass_kg": 120.0,
+      "build_requirements": [
+        {
+          "resource_id": "construction_component",
+          "amount": 8.0
+        }
+      ]
+    },
+    "processor": {
+      "mass_kg": 140.0,
+      "build_requirements": [
+        {
+          "resource_id": "construction_component",
+          "amount": 10.0
+        }
+      ]
+    },
+    "rotor_base": {
+      "mass_kg": 60.0,
+      "build_requirements": [
+        {
+          "resource_id": "construction_component",
+          "amount": 4.0
+        }
+      ]
+    },
+    "rotor_base_large": {
+      "mass_kg": 4700.0,
+      "build_requirements": [
+        {
+          "resource_id": "construction_component",
+          "amount": 40.0
+        }
+      ],
+      "rotor": {
+        "top_offset_cells": 4,
+        "default_speed_limit_rad_s": 2.5,
+        "forward_velocity_rad_s": 5.0,
+        "reverse_velocity_rad_s": 5.0,
+        "torque_limit_nm": 15000.0,
+        "max_velocity_rad_s": 15.7,
+        "max_torque_limit_nm": 100000.0,
+        "damping_nm_s_per_rad": 250.0,
+        "power_draw_w": 4000.0
+      }
+    },
+    "rotor_top": {
+      "mass_kg": 20.0,
+      "build_requirements": []
+    },
+    "rotor_top_large": {
+      "mass_kg": 500.0,
+      "build_requirements": []
+    },
+    "rover_frame": {
+      "mass_kg": 30.90909090909091,
+      "build_requirements": [
+        {
+          "resource_id": "construction_component",
+          "amount": 2.0
+        }
+      ]
+    },
+    "stationary_drill": {
+      "mass_kg": 180.0,
+      "build_requirements": [
+        {
+          "resource_id": "construction_component",
+          "amount": 10.0
+        }
+      ]
+    },
+    "thruster": {
+      "mass_kg": 25.0,
+      "build_requirements": [
+        {
+          "resource_id": "construction_component",
+          "amount": 4.0
+        }
+      ],
+      "thruster": {
+        "max_thrust_n": 2000.0,
+        "power_draw_w": 800.0,
+        "idle_w": 10.0
+      }
+    },
+    "wheel_suspension": {
+      "mass_kg": 18.0,
+      "build_requirements": [
+        {
+          "resource_id": "construction_component",
+          "amount": 3.0
+        }
+      ],
+      "suspension": {
+        "suspension_travel_m": 0.6,
+        "spring_stiffness_n_per_m": 1600.0,
+        "spring_damping_n_s_per_m": 400.0,
+        "max_suspension_force_n": 5000.0,
+        "min_travel_m": 0.2,
+        "max_travel_m": 1.0
+      }
+    }
+  }
+}

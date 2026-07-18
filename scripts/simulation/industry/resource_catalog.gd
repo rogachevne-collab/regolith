@@ -1,77 +1,19 @@
 class_name ResourceCatalog
 extends RefCounted
 
-## Authoritative ItemCatalog fixture for Industry v1.
-## Amounts remain in item units; volume limits capacity, mass couples physics.
+## ItemCatalog accessors. Authoritative values live in
+## `res://resources/balance/game_balance.json` (Game Balance v0).
 
 const EPSILON := 0.000001
 
-const ENTRIES: Dictionary = {
-	"raw_regolith": {
-		"category": "ore",
-		"mass_per_unit_kg": 2.0,
-		"volume_per_unit_l": 2.5,
-		"unit": "bulk",
-	},
-	"regolith_fines": {
-		"category": "ore",
-		"mass_per_unit_kg": 1.5,
-		"volume_per_unit_l": 1.8,
-		"unit": "bulk",
-	},
-	"sintered_basalt": {
-		"category": "material",
-		"mass_per_unit_kg": 3.0,
-		"volume_per_unit_l": 1.5,
-		"unit": "bulk",
-	},
-	"calcined_oxide": {
-		"category": "material",
-		"mass_per_unit_kg": 1.2,
-		"volume_per_unit_l": 1.0,
-		"unit": "bulk",
-	},
-	"metal_ingot": {
-		"category": "ingot",
-		"mass_per_unit_kg": 4.0,
-		"volume_per_unit_l": 0.6,
-		"unit": "bulk",
-	},
-	"construction_component": {
-		"category": "component",
-		"mass_per_unit_kg": 2.5,
-		"volume_per_unit_l": 3.0,
-		"unit": "discrete",
-	},
-	"tool_hand_drill": {
-		"category": "tool",
-		"mass_per_unit_kg": 3.0,
-		"volume_per_unit_l": 8.0,
-		"unit": "discrete",
-	},
-	"tool_welder": {
-		"category": "tool",
-		"mass_per_unit_kg": 2.5,
-		"volume_per_unit_l": 6.0,
-		"unit": "discrete",
-	},
-	"tool_grinder": {
-		"category": "tool",
-		"mass_per_unit_kg": 2.8,
-		"volume_per_unit_l": 7.0,
-		"unit": "discrete",
-	},
-	"tool_connector": {
-		"category": "tool",
-		"mass_per_unit_kg": 1.5,
-		"volume_per_unit_l": 4.0,
-		"unit": "discrete",
-	},
-}
+## Compatibility alias for callers that still iterate `ResourceCatalog.ENTRIES`.
+static var ENTRIES: Dictionary:
+	get:
+		return GameBalance.items()
 
 
 static func has_resource(resource_id: String) -> bool:
-	return ENTRIES.has(resource_id)
+	return GameBalance.items().has(resource_id)
 
 
 static func category(resource_id: String) -> String:
@@ -239,5 +181,5 @@ static func is_buffer_full(buffer: ElementIndustryBuffer, capacity_l: float) -> 
 
 
 static func _entry(resource_id: String) -> Dictionary:
-	var entry: Variant = ENTRIES.get(resource_id, {})
+	var entry: Variant = GameBalance.items().get(resource_id, {})
 	return entry if entry is Dictionary else {}

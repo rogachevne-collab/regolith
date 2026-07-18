@@ -1,82 +1,28 @@
 class_name IndustryElectricProfile
 extends RefCounted
 
-## Placeholder fixture values until archetype `.tres` export fields land.
-## Keys are `archetype_id`; roles provide fallback classification.
+## Electric archetype defaults. Authoritative values live in
+## `res://resources/balance/game_balance.json` (Game Balance v0).
 
-const DEFAULT_OUTPUT_W := 2000.0
-const DEFAULT_IDLE_W := 50.0
-const DEFAULT_SUPPLY_RADIUS_M := 12.0
-const DEFAULT_BATTERY_MAX_KWH := 10.0
-const DEFAULT_BATTERY_CHARGE_W := 500.0
-const DEFAULT_BATTERY_DISCHARGE_W := 500.0
-
-const _ARCHETYPE_DEFAULTS := {
-	"power_source": {
-		"is_source": true,
-		"output_w": 2000.0,
-	},
-	"power_distributor": {
-		"is_distributor": true,
-		"supply_radius_m": 12.0,
-	},
-	"power_battery": {
-		"is_battery": true,
-		"max_kwh": 10.0,
-		"charge_w": 500.0,
-		"discharge_w": 500.0,
-	},
-	"processor": {
-		"is_consumer": true,
-		"idle_w": 50.0,
-	},
-	"fabricator": {
-		"is_consumer": true,
-		"idle_w": 50.0,
-	},
-	"stationary_drill": {
-		"is_consumer": true,
-		"idle_w": 80.0,
-	},
-	"piston_base": {
-		"is_consumer": true,
-		"idle_w": 0.0,
-	},
-	"rotor_base": {
-		"is_consumer": true,
-		"idle_w": 0.0,
-	},
-	"rotor_base_large": {
-		"is_consumer": true,
-		"idle_w": 0.0,
-	},
-	"hinge_base": {
-		"is_consumer": true,
-		"idle_w": 0.0,
-	},
-	"drive_wheel": {
-		"is_consumer": true,
-		"idle_w": 20.0,
-	},
-	"thruster": {
-		"is_consumer": true,
-		"idle_w": 10.0,
-	},
-	"gyro": {
-		"is_consumer": true,
-		"idle_w": 5.0,
-	},
-	"power_battery_small": {
-		"is_battery": true,
-		"max_kwh": 2.5,
-		"charge_w": 250.0,
-		"discharge_w": 1500.0,
-	},
-	"power_distributor_small": {
-		"is_distributor": true,
-		"supply_radius_m": 6.0,
-	},
-}
+## Compatibility aliases for callers that still reference DEFAULT_* constants.
+static var DEFAULT_OUTPUT_W: float:
+	get:
+		return _default_float("output_w", 2000.0)
+static var DEFAULT_IDLE_W: float:
+	get:
+		return _default_float("idle_w", 50.0)
+static var DEFAULT_SUPPLY_RADIUS_M: float:
+	get:
+		return _default_float("supply_radius_m", 12.0)
+static var DEFAULT_BATTERY_MAX_KWH: float:
+	get:
+		return _default_float("battery_max_kwh", 10.0)
+static var DEFAULT_BATTERY_CHARGE_W: float:
+	get:
+		return _default_float("battery_charge_w", 500.0)
+static var DEFAULT_BATTERY_DISCHARGE_W: float:
+	get:
+		return _default_float("battery_discharge_w", 500.0)
 
 
 static func for_element(element: SimulationElement) -> Dictionary:
@@ -84,7 +30,7 @@ static func for_element(element: SimulationElement) -> Dictionary:
 	if archetype == null:
 		return _empty_profile()
 	var profile: Dictionary = _empty_profile()
-	var archetype_defaults: Variant = _ARCHETYPE_DEFAULTS.get(
+	var archetype_defaults: Variant = GameBalance.electric_archetypes().get(
 		archetype.archetype_id,
 		{}
 	)
@@ -100,7 +46,7 @@ static func for_element(element: SimulationElement) -> Dictionary:
 			or not (archetype_defaults as Dictionary).has("idle_w")
 		)
 	):
-		profile["idle_w"] = DEFAULT_IDLE_W
+		profile["idle_w"] = _default_float("idle_w", 50.0)
 	return profile
 
 
@@ -138,28 +84,49 @@ static func idle_w(element: SimulationElement) -> float:
 
 static func supply_radius_m(element: SimulationElement) -> float:
 	return float(
-		for_element(element).get("supply_radius_m", DEFAULT_SUPPLY_RADIUS_M)
+		for_element(element).get(
+			"supply_radius_m",
+			_default_float("supply_radius_m", 12.0)
+		)
 	)
 
 
 static func battery_max_kwh(element: SimulationElement) -> float:
-	return float(for_element(element).get("max_kwh", DEFAULT_BATTERY_MAX_KWH))
+	return float(
+		for_element(element).get(
+			"max_kwh",
+			_default_float("battery_max_kwh", 10.0)
+		)
+	)
 
 
 static func battery_charge_w(element: SimulationElement) -> float:
 	return float(
-		for_element(element).get("charge_w", DEFAULT_BATTERY_CHARGE_W)
+		for_element(element).get(
+			"charge_w",
+			_default_float("battery_charge_w", 500.0)
+		)
 	)
 
 
 static func battery_discharge_w(element: SimulationElement) -> float:
 	return float(
-		for_element(element).get("discharge_w", DEFAULT_BATTERY_DISCHARGE_W)
+		for_element(element).get(
+			"discharge_w",
+			_default_float("battery_discharge_w", 500.0)
+		)
 	)
 
 
-static func archetype_default(archetype_id: String, key: String, fallback: Variant = null) -> Variant:
-	var defaults: Variant = _ARCHETYPE_DEFAULTS.get(archetype_id, {})
+static func archetype_default(
+	archetype_id: String,
+	key: String,
+	fallback: Variant = null
+) -> Variant:
+	var defaults: Variant = GameBalance.electric_archetypes().get(
+		archetype_id,
+		{}
+	)
 	if defaults is Dictionary and (defaults as Dictionary).has(key):
 		return (defaults as Dictionary)[key]
 	return fallback
@@ -173,10 +140,10 @@ static func _empty_profile() -> Dictionary:
 		"is_consumer": false,
 		"output_w": 0.0,
 		"idle_w": 0.0,
-		"supply_radius_m": DEFAULT_SUPPLY_RADIUS_M,
-		"max_kwh": DEFAULT_BATTERY_MAX_KWH,
-		"charge_w": DEFAULT_BATTERY_CHARGE_W,
-		"discharge_w": DEFAULT_BATTERY_DISCHARGE_W,
+		"supply_radius_m": _default_float("supply_radius_m", 12.0),
+		"max_kwh": _default_float("battery_max_kwh", 10.0),
+		"charge_w": _default_float("battery_charge_w", 500.0),
+		"discharge_w": _default_float("battery_discharge_w", 500.0),
 	}
 
 
@@ -189,9 +156,13 @@ static func _apply_role_fallback(
 			"Source":
 				profile["is_source"] = true
 				if float(profile["output_w"]) <= 0.0:
-					profile["output_w"] = DEFAULT_OUTPUT_W
+					profile["output_w"] = _default_float("output_w", 2000.0)
 			"Tank":
 				if not profile["is_source"]:
 					profile["is_battery"] = true
 			"Processor", "Fabricator", "Tool":
 				profile["is_consumer"] = true
+
+
+static func _default_float(key: String, fallback: float) -> float:
+	return float(GameBalance.electric_defaults().get(key, fallback))

@@ -21,6 +21,7 @@ KERNEL=(
 	test_construction_damage
 	test_industry_ports
 	test_industry_v1
+	test_game_balance
 	test_player_inventory_hotbar
 	test_suit_state
 	test_connected_block_visual

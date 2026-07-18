@@ -23,6 +23,10 @@ Rule 1 - отвечай коротко, по делу и понятным язы
 Задачи на kernel/runtime/`SimulationWorld`: сначала
 `docs/cheatsheets/simulation-world.md` — не читать монолит целиком.
 
+Баланс (стоимость/масса блоков, items, recipes, буры, актуаторы, electric):
+`resources/balance/game_balance.json` + `docs/cheatsheets/game-balance.md` —
+не размазывать числа по GDScript-константам.
+
 ## Инварианты (нарушать НЕЛЬЗЯ)
 
 - **R1** — новые типы машин/элементов сначала в `PHYSICAL-LANGUAGE.md` или
