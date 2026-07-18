@@ -4,8 +4,8 @@ extends Node3D
 ## Not the old multi-hour VoxelLodTerrain region crawl.
 ## Usage: ./run.sh res://scenes/moon_bake_stream.tscn
 
-const WIDTH := 2048
-const HEIGHT := 1024
+const WIDTH := 8192
+const HEIGHT := 4096
 const _HeightmapUtil := preload("res://scripts/simulation/runtime/moon_heightmap_util.gd")
 
 

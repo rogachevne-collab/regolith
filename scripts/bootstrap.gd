@@ -6,18 +6,27 @@ extends Node3D
 const MIN_WARMUP_FRAMES := 30
 ## Lunar g=1.62: settle can take a few seconds once a floor exists.
 const MAX_SPAWN_SETTLE_FRAMES := 360
-## Baked stream should produce colliders faster than live HQ gen.
-const PHYSICS_GROUND_TIMEOUT_MS := 20000
-## Save load: don't burn 20s on collider stream — pad + play, retire pad later.
-const PHYSICS_GROUND_TIMEOUT_LOAD_MS := 2500
+## Voxel trimesh colliders lag SDF (VT #677 / scale≠1). Don't block play for
+## LOD0 physics — short probe, then temp landing pad; retire when voxel floor
+## appears (_retire_landing_pad_when_voxel_floor_ready).
+const PHYSICS_GROUND_TIMEOUT_MS := 1500
+const PHYSICS_GROUND_TIMEOUT_LOAD_MS := 1500
 const BASE_SPAWN_TIMEOUT_MS := 60000
 const AUTOSAVE_INTERVAL_S := 90.0
+## Coalesce carve spam before writing digs; flush only after async save completes.
+const DIG_PERSIST_DEBOUNCE_S := 1.5
+const DIG_SAVE_TIMEOUT_MS := 15000
 const LANDING_PAD_SIZE_M := Vector3(48.0, 4.0, 48.0)
 ## Cross-fade LOD mesh swaps (requires get_lod_fade_discard in terrain shader).
 const TERRAIN_LOD_FADE_DURATION_S := 0.25
 ## Detail normalmaps from LOD 2+ — illusion of geometry on distant blocks.
 const TERRAIN_NORMALMAP_BEGIN_LOD := 2
 const DEMO_HOPPER_OFFSET_M := 14.0
+## Shrink streaming during spawn so VT finishes local colliders first
+## (full shell budget restored at world_ready).
+const SPAWN_FOCUS_VIEW_DISTANCE_VOXELS := 512
+## LOD0+LOD1 colliders — coarser shell often ready before LOD0 (VT #676).
+const SPAWN_COLLISION_LOD_COUNT := 2
 
 @onready var _terrain: Node3D = $VoxelTerrain
 @onready var _boulder_instancer: VoxelInstancer = $VoxelTerrain/VoxelInstancer
@@ -47,13 +56,10 @@ const DEMO_HOPPER_OFFSET_M := 14.0
 ## Preferred play path: bake H(n) crust to a panorama heightmap and feed the
 ## native NODE_SDF_SPHERE_HEIGHTMAP (SE-like relief in game, not just noise).
 @export var use_baked_heightmap := true
-@export var heightmap_size := Vector2i(2048, 1024)
-## The node samples the heightmap bilinearly; at 2048 a texel (~1.5 m) is
-## coarser than a voxel (0.65 m), so texel-boundary creases show up as ribbed
-## facets. Cubic-upsampling the loaded image (no re-bake) smooths those creases.
-## 8192x4096 (~0.38 m/texel, sub-voxel) keeps steep crater rims from
-## scalloping; drop to 4096x2048 if memory is tight.
-@export var heightmap_smooth_size := Vector2i(8192, 4096)
+## Bake/play resolution for NODE_SDF_SPHERE_HEIGHTMAP. 8192×4096 ≈ 0.38 m/texel
+## (sub-voxel at scale 0.65) so bilinear sampling stays smooth without a runtime
+## cubic upsample. Drop to 4096×2048 if memory/bake time is tight.
+@export var heightmap_size := Vector2i(8192, 4096)
 @export_subgroup("Knobs (only if Planet Graph is empty)")
 @export_range(0.0, 80.0, 0.5, "or_greater") var height_amp_m := 22.0
 @export_range(10.0, 400.0, 1.0, "or_greater") var noise_period_m := 95.0
@@ -76,6 +82,10 @@ var _landing_pad: StaticBody3D
 var _far_impostor: MeshInstance3D
 var _player_camera: Camera3D
 var _applied_view_distance := -1
+var _digs_dirty := false
+var _dig_persist_cooldown_s := 0.0
+var _dig_persist_in_flight := false
+var _quit_after_dig_persist := false
 
 
 func is_world_ready() -> bool:
@@ -83,6 +93,8 @@ func is_world_ready() -> bool:
 
 
 func _ready() -> void:
+	## Hold quit until dig SQLite save+flush finishes (cave/base must survive reload).
+	get_tree().auto_accept_quit = false
 	WorldPersistence.save_path_override = MoonGeometry.world_save_path()
 	_loading.visible = true
 	_coordinates.visible = debug_overlay
@@ -133,6 +145,11 @@ func _process(delta: float) -> void:
 		if _autosave_accum >= AUTOSAVE_INTERVAL_S:
 			_autosave_accum = 0.0
 			_persist_world()
+		if _digs_dirty and not _dig_persist_in_flight:
+			if _dig_persist_cooldown_s > 0.0:
+				_dig_persist_cooldown_s -= delta
+			if _dig_persist_cooldown_s <= 0.0:
+				_persist_digs_durable()
 	if not debug_overlay:
 		return
 	var player_position: Vector3 = _player.global_position
@@ -147,13 +164,16 @@ func _process(delta: float) -> void:
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
-		_persist_world(true)
+		_request_quit_after_persist()
 	elif what == NOTIFICATION_APPLICATION_PAUSED:
 		_persist_world(true)
 
 
 func _exit_tree() -> void:
-	_persist_world(true)
+	## Best-effort if Stop/kill skipped WM_CLOSE; no flush race here.
+	_persist_world_snapshot_only(true)
+	if persist_digs and _terrain is VoxelLodTerrain and _digs_dirty:
+		(_terrain as VoxelLodTerrain).save_modified_blocks()
 	WorldPersistence.save_path_override = ""
 
 
@@ -168,7 +188,7 @@ func _configure_terrain() -> void:
 		lod.voxel_bounds = MoonGeometry.voxel_bounds_aabb()
 		lod.view_distance = MoonGeometry.DEFAULT_VIEW_DISTANCE_VOXELS
 		lod.generate_collisions = true
-		lod.collision_lod_count = 1
+		lod.collision_lod_count = SPAWN_COLLISION_LOD_COUNT
 		lod.lod_count = MoonGeometry.DEFAULT_LOD_COUNT
 		lod.lod_distance = MoonGeometry.DEFAULT_LOD_DISTANCE
 		lod.lod_fade_duration = TERRAIN_LOD_FADE_DURATION_S
@@ -177,6 +197,7 @@ func _configure_terrain() -> void:
 		lod.normalmap_tile_resolution_min = 4
 		lod.normalmap_tile_resolution_max = 16
 		lod.cache_generated_blocks = true
+		lod.threaded_update_enabled = true
 	if _terrain.material != null:
 		var mat: Material = (_terrain.material as Material).duplicate()
 		_terrain.material = mat
@@ -201,7 +222,6 @@ func _make_planet_generator() -> VoxelGenerator:
 			heightmap_size.x, heightmap_size.y
 		)
 		if height_image != null and height_image.get_width() > 0:
-			_smooth_heightmap(height_image)
 			return MoonSphereGeneratorFactory.create_play_heightmap(
 				MoonGeometry.radius_voxels(), height_image, 1.0
 			)
@@ -231,17 +251,6 @@ func _away_from_pole(dir: Vector3) -> Vector3:
 	const LAT_Y := 0.6  # sin(~37°)
 	var ring := sqrt(maxf(0.0, 1.0 - LAT_Y * LAT_Y))
 	return Vector3(horiz.x * ring, signf(n.y) * LAT_Y, horiz.y * ring).normalized()
-
-
-func _smooth_heightmap(height_image: Image) -> void:
-	## Cubic-upsample so the node's bilinear sampling no longer shows
-	## texel-boundary creases as ribbed facets on the voxel surface.
-	var tw := heightmap_smooth_size.x
-	var th := heightmap_smooth_size.y
-	if tw <= height_image.get_width() or th <= height_image.get_height():
-		return
-	height_image.resize(tw, th, Image.INTERPOLATE_CUBIC)
-	print("MoonExperiment: heightmap cubic-upsampled to %dx%d (smooth surface)" % [tw, th])
 
 
 func _configure_dig_stream() -> void:
@@ -275,6 +284,17 @@ func _configure_boulder_instancer() -> void:
 
 
 func _persist_world(force := false) -> void:
+	_persist_world_snapshot_only(force)
+	if force:
+		_digs_dirty = true
+		_dig_persist_cooldown_s = 0.0
+		await _persist_digs_durable()
+	elif _digs_dirty and not _dig_persist_in_flight:
+		_dig_persist_cooldown_s = 0.0
+		_persist_digs_durable()
+
+
+func _persist_world_snapshot_only(force := false) -> void:
 	if not _world_ready or _session == null:
 		return
 	if (
@@ -288,16 +308,55 @@ func _persist_world(force := false) -> void:
 		return
 	if WorldPersistence.save(_session.world, _player):
 		_last_save_ms = now_ms
-	_persist_digs()
 
 
-func _persist_digs() -> void:
-	if not persist_digs or not (_terrain is VoxelLodTerrain):
+func _request_quit_after_persist() -> void:
+	_quit_after_dig_persist = true
+	_persist_world_snapshot_only(true)
+	_digs_dirty = true
+	_dig_persist_cooldown_s = 0.0
+	if _dig_persist_in_flight:
 		return
+	_persist_digs_durable()
+
+
+## save_modified_blocks (async) → wait tracker → flush once.
+## Avoids SQLite lock spam and incomplete cave walls on reload.
+func _persist_digs_durable() -> void:
+	if _dig_persist_in_flight:
+		return
+	if not persist_digs or not (_terrain is VoxelLodTerrain):
+		if _quit_after_dig_persist:
+			get_tree().quit()
+		return
+	_dig_persist_in_flight = true
 	var lod := _terrain as VoxelLodTerrain
-	lod.save_modified_blocks()
-	if _voxel_stream != null:
-		_voxel_stream.flush()
+	while true:
+		_digs_dirty = false
+		var tracker: VoxelSaveCompletionTracker = lod.save_modified_blocks()
+		if tracker != null:
+			var deadline_ms := Time.get_ticks_msec() + DIG_SAVE_TIMEOUT_MS
+			while (
+				is_inside_tree()
+				and not tracker.is_complete()
+				and not tracker.is_aborted()
+			):
+				if Time.get_ticks_msec() >= deadline_ms:
+					push_warning(
+						(
+							"MoonExperiment: dig save timed out (%d tasks left)"
+							% tracker.get_remaining_tasks()
+						)
+					)
+					break
+				await get_tree().process_frame
+		if _voxel_stream != null:
+			_voxel_stream.flush()
+		if not _digs_dirty:
+			break
+	_dig_persist_in_flight = false
+	if _quit_after_dig_persist:
+		get_tree().quit()
 
 
 func _on_terrain_modified(
@@ -305,7 +364,8 @@ func _on_terrain_modified(
 	_dig_center: Vector3,
 	_dig_radius_m: float
 ) -> void:
-	_persist_digs()
+	_digs_dirty = true
+	_dig_persist_cooldown_s = DIG_PERSIST_DEBOUNCE_S
 
 
 func _begin_fresh_world(player_position: Vector3) -> void:
@@ -334,6 +394,8 @@ func _finish_world_entry(player_position: Vector3) -> void:
 			break
 	_loading.visible = false
 	_world_ready = true
+	## Keep spawn-focus VD until demos finish — restoring 2048 here hitch-stacked
+	## with vehicle compose.
 	print(
 		"MoonExperiment: world_ready player=%s r=%.2f"
 		% [str(_player.global_position), _player.global_position.length()]
@@ -343,8 +405,10 @@ func _finish_world_entry(player_position: Vector3) -> void:
 	_apply_playtest_cargo_if_enabled()
 	if spawn_demo_rover:
 		await _spawn_demo_rover_near_player()
+		await get_tree().process_frame
 	if spawn_demo_hopper:
 		await _spawn_demo_hopper_near_player()
+	_set_spawn_streaming_focus(false)
 
 
 func _finish_loaded_world_entry(spawn_position: Vector3) -> void:
@@ -352,6 +416,7 @@ func _finish_loaded_world_entry(spawn_position: Vector3) -> void:
 	_resync_player_camera()
 	_loading.visible = false
 	_world_ready = true
+	_set_spawn_streaming_focus(false)
 	print(
 		(
 			"MoonExperiment: world_ready (loaded) player=%s r=%.2f"
@@ -382,7 +447,10 @@ func _spawn_demo_rover_near_player() -> void:
 			_terrain,
 			tool,
 			_physics_space_state(),
-			_base_spawn.global_position
+			_base_spawn.global_position,
+			12.0,
+			4.0,
+			true
 		)
 		if ground_variant is Vector3:
 			ground = ground_variant as Vector3
@@ -444,7 +512,10 @@ func _spawn_demo_hopper_near_player() -> void:
 			_terrain,
 			tool,
 			_physics_space_state(),
-			hint
+			hint,
+			12.0,
+			4.0,
+			true
 		)
 		if ground_variant is Vector3:
 			ground = ground_variant as Vector3
@@ -500,6 +571,7 @@ func _place_when_ground_exists() -> void:
 	tool.channel = VoxelBuffer.CHANNEL_SDF
 	var probe_origin := MoonGeometry.spawn_hold_point(_player_spawn_hint)
 	var probe_dir := _gravity_field.probe_direction_toward_ground(probe_origin)
+	_set_spawn_streaming_focus(true)
 
 	while _warmup_frames < MIN_WARMUP_FRAMES:
 		_warmup_frames += 1
@@ -670,6 +742,28 @@ func _ensure_player_viewer_for_planet() -> void:
 	_applied_view_distance = MoonGeometry.DEFAULT_VIEW_DISTANCE_VOXELS
 
 
+func _set_spawn_streaming_focus(enabled: bool) -> void:
+	## Tight VD during spawn: local mesh/collider first. Full shell after ready.
+	if not (_terrain is VoxelLodTerrain):
+		return
+	var lod := _terrain as VoxelLodTerrain
+	var viewer := _find_voxel_viewer()
+	var vd := (
+		SPAWN_FOCUS_VIEW_DISTANCE_VOXELS
+		if enabled
+		else MoonGeometry.DEFAULT_VIEW_DISTANCE_VOXELS
+	)
+	lod.view_distance = vd
+	if viewer != null:
+		viewer.view_distance = vd
+	_applied_view_distance = vd
+	if enabled:
+		print(
+			"MoonExperiment: spawn streaming focus vd=%d collision_lod=%d"
+			% [vd, SPAWN_COLLISION_LOD_COUNT]
+		)
+
+
 func _find_voxel_viewer() -> VoxelViewer:
 	## On foot: child of player. In a vehicle: reparented to the world root.
 	if _player != null:
@@ -683,6 +777,8 @@ func _update_streaming_budget() -> void:
 	## Surface: modest VD so the mesher finishes the whole Ø1 km shell.
 	## Altitude: grow with |cam|+R so the planet LODs instead of unloading.
 	## A fixed 50k on foot was the "moon ends / cubic scraps" failure mode.
+	if not _world_ready:
+		return
 	if not (_terrain is VoxelLodTerrain):
 		return
 	if _player_camera == null:
@@ -806,8 +902,9 @@ func _resolve_spawn_with_floor(
 	var surface := sdf_point
 	if not _is_finite_vec3(surface):
 		surface = MoonGeometry.surface_point(_player_spawn_hint)
-	push_warning(
-		"Voxel collider slow; installing temporary landing pad at %s" % str(surface)
+	print(
+		"MoonExperiment: voxel collider pending; landing pad at %s (waited %d ms)"
+		% [str(surface), timeout_ms]
 	)
 	_player_spawn_pos = _install_landing_pad(surface)
 	return _player_spawn_pos

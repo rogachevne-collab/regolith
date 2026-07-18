@@ -121,6 +121,11 @@ Legacy flat yard: `scenes/flat_moon.tscn` + `scripts/flat_moon_bootstrap.gd`.
   **`SdfSphere` + height noise** на `normalize(p)` (native C++). Без bake коры.
 - Digs: `VoxelStreamSQLite` modified-only (`save_generator_output=false`);
   DB path `gen_v{N}/moon.sqlite` via `MoonTerrainParams.stream_database_path()`.
+  Durable persist: debounce carve → `save_modified_blocks` → wait
+  `VoxelSaveCompletionTracker` → `flush` once (no flush-per-bite; avoids
+  SQLite lock races that can leave cave walls incomplete after reload).
+  Quit waits for dig flush (`auto_accept_quit=false`). Editor Stop still
+  kills without drain — prefer window close after big digs.
 - **Декор (камни):** `VoxelInstancer` child of terrain, `up_mode=Sphere`,
   library `resources/moon_boulder_instance_library.tres` (3 persistent MultiMesh
   tiers). Стримится с чанками; удаления после копок сохраняются в SQLite.
@@ -140,14 +145,17 @@ Legacy flat yard: `scenes/flat_moon.tscn` + `scripts/flat_moon_bootstrap.gd`.
   ≥2048 вокселей, с высотой растёт до 50k. `VoxelViewer` синхронизируется в
   bootstrap. Орбита — camera-relative impostor (не раздувать `Camera.far`:
   ломает light culler / `create_frustum_points`). Туман выключен (вакуум).
-- Spawn: ждать meshed + physics; temp landing pad — только fallback.
+- Spawn: SDF gate → short physics probe (~1.5s) → temp landing pad if
+  collider lag; pad retires when voxel floor appears. Spawn-focus
+  `view_distance` (512) + `collision_lod_count=2` until world_ready.
 - Смена рельефа → bump `GENERATOR_VERSION` + повторный bake.
-- **Heightmap bake:** `MoonHeightmapUtil.bake_heightmap` (2048×1024 EXR) —
+- **Heightmap bake:** `MoonHeightmapUtil.bake_heightmap` (8192×4096 EXR) —
   native `MoonHeightmapBake` (`addons/regolith_moon_bake/`): crater math +
   local Auburn FastNoiseLite (ZN-equivalent: `period → freq = 1/period`,
   same seeds/octaves as `MoonTerrainGenerator`), multithreaded workers.
-  Fallback — GDScript `WorkerThreadPool` + live ZN. Bump `GENERATOR_VERSION`
-  on relief change. Повторный play грузит
+  Play loads EXR into `NODE_SDF_SPHERE_HEIGHTMAP` at final res (no runtime
+  cubic upsample). Fallback — GDScript `WorkerThreadPool` + live ZN. Bump
+  `GENERATOR_VERSION` on relief change. Повторный play грузит
   `user://moon_experiment/gen_v{N}/crust_heightmap.exr`.
 - Мир-сейв сборок: `gen_v{N}/world_save.json` (отдельно от flat_moon).
 

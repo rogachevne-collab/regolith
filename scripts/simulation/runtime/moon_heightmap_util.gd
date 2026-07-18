@@ -35,8 +35,8 @@ static func absolute_heightmap_path() -> String:
 
 
 static func ensure_heightmap(
-	width: int = 2048,
-	height: int = 1024
+	width: int = 8192,
+	height: int = 4096
 ) -> Image:
 	var abs_path := absolute_heightmap_path()
 	var dir := abs_path.get_base_dir()
@@ -52,12 +52,23 @@ static func ensure_heightmap(
 	if version_ok and FileAccess.file_exists(abs_path):
 		var existing := Image.new()
 		var err := existing.load(abs_path)
-		if err == OK and existing.get_width() > 0:
+		if (
+			err == OK
+			and existing.get_width() == width
+			and existing.get_height() == height
+		):
 			print(
 				"MoonHeightmap: loaded %s (%dx%d)"
 				% [heightmap_path(), existing.get_width(), existing.get_height()]
 			)
 			return existing
+		if err == OK and existing.get_width() > 0:
+			print(
+				(
+					"MoonHeightmap: cached %dx%d ≠ requested %dx%d — rebaking"
+				)
+				% [existing.get_width(), existing.get_height(), width, height]
+			)
 	return bake_heightmap(width, height, abs_path)
 
 
