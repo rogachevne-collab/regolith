@@ -44,9 +44,7 @@ var _queue: Array[Dictionary] = []
 var _flush_scheduled := false
 var _next_command_id := 1
 var _archetype_cache: Dictionary = {}
-var _snap_face_cache := ConstructionSnapFaceCache.new()
 var _snap_resolver := ConstructionSnapResolver.new()
-var _snap_event_bound := false
 var _excavation := TerrainExcavationService.new()
 var _material_source := TerrainMaterialSource.new()
 var _hand_drill_last_bite_center: Variant = null
@@ -68,8 +66,6 @@ func _ready() -> void:
 	var piston_head := Slice01Archetypes.piston_head()
 	if piston_head != null:
 		_archetype_cache["piston_head"] = piston_head
-	_snap_resolver.bind_cache(_snap_face_cache)
-	call_deferred("_bind_snap_cache_events")
 	call_deferred("_bind_terrain_contact_probe")
 
 
@@ -975,7 +971,6 @@ func resolve_construction_placement(params: Dictionary) -> Dictionary:
 			"sticky_key": "",
 			"stats": ConstructionSnapResolver._empty_stats(),
 		}
-	_bind_snap_cache_events()
 	# No result cache here: ConstructionPreview already reuses results via its
 	# quantized context key, and deep-copying the resolve payload every physics
 	# frame cost more than it saved.
@@ -999,8 +994,13 @@ func resolve_construction_placement(params: Dictionary) -> Dictionary:
 	return result
 
 
-func snap_cache_generation() -> int:
-	return _snap_face_cache.generation
+## Cheap staleness token for preview resolve reuse: any structural mutation
+## bumps it. Motion/parking flips are covered by the preview's resolve
+## heartbeat, not by this counter.
+func snap_context_revision() -> int:
+	if _session == null or _session.world == null:
+		return 0
+	return _session.world.topology_generation
 
 
 func snap_resolve_stats() -> Dictionary:
@@ -1009,22 +1009,6 @@ func snap_resolve_stats() -> Dictionary:
 
 func reset_construction_snap() -> void:
 	_snap_resolver.reset_sticky()
-
-
-func _bind_snap_cache_events() -> void:
-	if _session == null or _session.world == null:
-		return
-	_snap_face_cache.bind_world(_session.world)
-	if _snap_event_bound:
-		return
-	_session.world.structural_event.connect(_on_structural_event_for_snap)
-	_snap_event_bound = true
-
-
-func _on_structural_event_for_snap(event: Dictionary) -> void:
-	match StringName(event.get("kind", &"")):
-		&"world_restored", &"assembly_spawned", &"assembly_changed", &"assembly_removed", &"assembly_split", &"assembly_merged":
-			_snap_face_cache.apply_structural_event(event)
 
 
 func construction_resource_amount() -> float:

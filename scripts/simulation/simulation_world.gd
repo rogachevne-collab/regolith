@@ -27,6 +27,9 @@ signal structural_command_completed(
 )
 signal player_inventory_changed()
 
+## Monotonic world-wide topology counter: bumps on every structural mutation.
+## Cheap staleness check for presentation-side caches (snap resolve reuse).
+var topology_generation := 0
 var _allocator := SimulationIdAllocator.new()
 var _archetypes := ArchetypeRegistry.new()
 var _assemblies: Dictionary = {}
@@ -1180,6 +1183,7 @@ func _reconcile_terrain_anchors_for_assemblies(
 	return ConstructionCommandServiceScript.reconcile_terrain_anchors_for_assemblies(self, assembly_ids)
 
 func _notify_topology_changed() -> void:
+	topology_generation += 1
 	_body_group_compile_cache.clear()
 	_occupancy_index_cache.clear()
 	# Origin-keyed surface lookups must not grow unbounded across places.

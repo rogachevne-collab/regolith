@@ -50,9 +50,9 @@ func _run() -> void:
 		return
 	if not _test_gateway_attach_orientation_replay():
 		return
-	if not _test_snap_face_cache_motion_invalidation():
+	if not _test_snap_scan_tracks_assembly_motion():
 		return
-	if not _test_snap_face_cache_vehicle_anchor_refresh():
+	if not _test_snap_vehicle_attach_follows_velocity():
 		return
 	if not _test_snap_resolver_invalid_direct_red_ghost():
 		return
@@ -1165,66 +1165,91 @@ func _test_gateway_attach_orientation_replay() -> bool:
 	return true
 
 
-func _test_snap_face_cache_motion_invalidation() -> bool:
-	var fixture := _new_fixture()
-	var world: SimulationWorld = fixture["world"]
-	var anchor := _spawn_anchored_frame(world)
-	if not anchor.is_ok():
-		return _fail("snap cache motion anchor spawn failed")
-	var assembly_id := int(anchor.data["assembly_id"])
-	var assembly := world.get_assembly_raw(assembly_id)
-	var cache := ConstructionSnapFaceCache.new()
-	cache.bind_world(world)
-	cache.ensure_current()
-	var generation_before := cache.generation
-	var face_before: Dictionary = {}
-	for face: Dictionary in cache.faces():
-		if int(face.get("assembly_id", 0)) == assembly_id:
-			face_before = face.duplicate(true)
-			break
-	if face_before.is_empty():
-		return _fail("snap cache motion fixture missing assembly face")
-	var moved := assembly.motion.duplicate_state()
-	moved.transform.origin += Vector3(3.0, 0.0, 0.0)
-	if not world.sync_assembly_motion(assembly_id, moved):
-		return _fail("snap cache motion sync failed")
-	cache.ensure_current()
-	# Anchored/frozen assemblies skip continuous pose sync (walk/aim FPS).
-	# Motion must not bump generation or thrash world_point rebuilds.
-	if cache.generation != generation_before:
-		return _fail("snap cache bumped generation on motion-only update")
-	var face_after: Dictionary = {}
-	for face: Dictionary in cache.faces():
-		if (
-			int(face.get("assembly_id", 0)) == assembly_id
-			and str(face.get("port_id", "")) == str(face_before.get("port_id", ""))
-		):
-			face_after = face
-			break
-	if face_after.is_empty():
-		return _fail("snap cache lost assembly face after motion update")
-	var point_before: Vector3 = face_before["world_point"]
-	var point_after: Vector3 = face_after["world_point"]
-	if point_after.distance_to(point_before) > 0.05:
-		return _fail(
-			"anchored snap cache unexpectedly rewrote face point on motion"
-		)
-	_free_fixture(fixture)
-	return true
+## Ray aimed at the center of some exposed (free-neighbor) occupied cell of
+## the assembly, from 2m outside along the exposed face normal. Keeps scan
+## tests independent of the fixture's exact block layout.
+func _exposed_face_ray(
+	world: SimulationWorld,
+	assembly: SimulationAssembly
+) -> Dictionary:
+	var occupancy: Dictionary = ConstructionOccupancyUtil.assembly_occupancy_index(
+		world,
+		assembly
+	)
+	for cell_variant: Variant in occupancy.keys():
+		var cell: Vector3i = cell_variant
+		for direction: Vector3i in ConstructionOccupancyUtil.CELL_NEIGHBOURS:
+			if occupancy.has(cell + direction):
+				continue
+			var normal := Vector3(direction)
+			var center: Vector3 = (
+				assembly.motion.transform
+				* GridMetric.cell_center_meters(cell)
+			)
+			var world_normal: Vector3 = (
+				assembly.motion.transform.basis * normal
+			).normalized()
+			return {
+				"origin": center + world_normal * 2.0,
+				"direction": -world_normal,
+			}
+	return {}
 
 
-func _count_cache_faces(
-	cache: ConstructionSnapFaceCache,
-	assembly_id: int
-) -> int:
+func _count_face_scan_candidates(result: Dictionary) -> int:
 	var count := 0
-	for face: Dictionary in cache.faces():
-		if int(face.get("assembly_id", 0)) == assembly_id:
+	for candidate: Dictionary in result.get("candidates", []):
+		if str(candidate.get("source", "")) == "face_scan":
 			count += 1
 	return count
 
 
-func _test_snap_face_cache_vehicle_anchor_refresh() -> bool:
+func _test_snap_scan_tracks_assembly_motion() -> bool:
+	var fixture := _new_fixture()
+	var world: SimulationWorld = fixture["world"]
+	var anchor := _spawn_anchored_frame(world)
+	if not anchor.is_ok():
+		return _fail("snap motion anchor spawn failed")
+	var assembly_id := int(anchor.data["assembly_id"])
+	var assembly := world.get_assembly_raw(assembly_id)
+	var resolver := ConstructionSnapResolver.new()
+	var frame: ElementArchetype = Slice01Archetypes.frame()
+	var aim := func() -> Dictionary:
+		var origin: Vector3 = assembly.motion.transform * Vector3(0.5, 0.5, 2.5)
+		return resolver.resolve({
+			"world": world,
+			"archetype": frame,
+			"orientation_index": 0,
+			"ray_origin": origin,
+			"ray_direction": (
+				assembly.motion.transform * Vector3(0.5, 0.5, 0.5) - origin
+			).normalized(),
+			"direct_hit": {},
+		})
+	if _count_face_scan_candidates(aim.call()) == 0:
+		return _fail("snap scan found no faces at initial pose")
+	# Stateless scan must follow the live transform with no invalidation step.
+	var moved := assembly.motion.duplicate_state()
+	moved.transform.origin += Vector3(30.0, 0.0, 0.0)
+	if not world.sync_assembly_motion(assembly_id, moved):
+		return _fail("snap motion sync failed")
+	if _count_face_scan_candidates(aim.call()) == 0:
+		return _fail("snap scan lost faces after assembly moved")
+	var stale := resolver.resolve({
+		"world": world,
+		"archetype": frame,
+		"orientation_index": 0,
+		"ray_origin": Vector3(0.5, 0.5, 2.5),
+		"ray_direction": Vector3(0.0, 0.0, -1.0),
+		"direct_hit": {},
+	})
+	if _count_face_scan_candidates(stale) != 0:
+		return _fail("snap scan kept faces at the old pose")
+	_free_fixture(fixture)
+	return true
+
+
+func _test_snap_vehicle_attach_follows_velocity() -> bool:
 	var fixture := _new_fixture()
 	var world: SimulationWorld = fixture["world"]
 	world.set_resource_amount("player", "construction_component", 2000.0)
@@ -1247,26 +1272,32 @@ func _test_snap_face_cache_vehicle_anchor_refresh() -> bool:
 	assembly.bump_revision()
 	if world.assembly_has_anchor(assembly_id):
 		return _fail("vehicle anchor fixture still terrain-anchored")
-	var cache := ConstructionSnapFaceCache.new()
-	cache.bind_world(world)
+	var resolver := ConstructionSnapResolver.new()
+	var frame: ElementArchetype = Slice01Archetypes.frame()
+	var aim_ray := _exposed_face_ray(world, assembly)
+	if aim_ray.is_empty():
+		return _fail("vehicle fixture has no exposed face to aim at")
+	var aim := func() -> Dictionary:
+		return resolver.resolve({
+			"world": world,
+			"archetype": frame,
+			"orientation_index": 0,
+			"ray_origin": aim_ray["origin"],
+			"ray_direction": aim_ray["direction"],
+			"direct_hit": {},
+		})
 	# Moving rover: attach not allowed, no magnetic faces.
 	assembly.motion.linear_velocity = Vector3(3.0, 0.0, 0.0)
-	cache.ensure_current()
-	if _count_cache_faces(cache, assembly_id) != 0:
-		return _fail("moving rover leaked magnetic faces into snap cache")
+	if _count_face_scan_candidates(aim.call()) != 0:
+		return _fail("moving rover offered magnetic faces")
 	# Parked (coast-to-stop): faces must appear without any structural event.
 	assembly.motion.linear_velocity = Vector3.ZERO
-	var generation_before := cache.generation
-	cache.ensure_current()
-	if _count_cache_faces(cache, assembly_id) == 0:
+	if _count_face_scan_candidates(aim.call()) == 0:
 		return _fail("parked rover did not become magnetic")
-	if cache.generation == generation_before:
-		return _fail("parked rover faces appeared without generation bump")
-	# Driving away again: stale faces must drop out of the cache.
+	# Driving away again: candidates must vanish just as statelessly.
 	assembly.motion.linear_velocity = Vector3(3.0, 0.0, 0.0)
-	cache.ensure_current()
-	if _count_cache_faces(cache, assembly_id) != 0:
-		return _fail("departed rover kept stale magnetic faces")
+	if _count_face_scan_candidates(aim.call()) != 0:
+		return _fail("departed rover kept magnetic faces")
 	_free_fixture(fixture)
 	return true
 
@@ -1453,31 +1484,26 @@ func _test_snap_resolver_performance() -> bool:
 		"orientation_index": 0,
 	}
 	var first := gateway.resolve_construction_placement(params)
-	var first_stats: Dictionary = gateway.snap_resolve_stats()
-	if int(first_stats.get("faces_in_cache", 0)) < 40:
-		return _fail(
-			"performance cache too small: %d faces"
-			% int(first_stats.get("faces_in_cache", 0))
-		)
-	if not bool(first_stats.get("cache_rebuilt", false)):
-		return _fail("performance first resolve did not rebuild cache")
-	var rebuild_count_after_first := int(first_stats.get("cache_rebuilds", 0))
+	if not bool(first.get("selected_plan", {}).get("valid", false)):
+		return _fail("performance resolve produced no valid plan")
 	for _repeat: int in range(12):
 		gateway.resolve_construction_placement(params)
 	var repeat_stats: Dictionary = gateway.snap_resolve_stats()
-	if int(repeat_stats.get("cache_rebuilds", 0)) != rebuild_count_after_first:
-		return _fail("performance repeat resolves rebuilt snap cache")
-	if int(repeat_stats.get("plans_validated", 0)) > (
-		ConstructionSnapResolver.TOP_K_VALIDATE + 1
-	):
+	# The scan is stateless; the budget invariant is that a resolve validates
+	# only a handful of plans (first valid + sticky + direct/voxel), never a
+	# per-face sweep.
+	if int(repeat_stats.get("plans_validated", 0)) > 4:
 		return _fail(
-			"performance plans_validated %d exceeds top-K cap"
+			"performance plans_validated %d exceeds lazy-validation budget"
 			% int(repeat_stats.get("plans_validated", 0))
 		)
-	if int(repeat_stats.get("faces_scanned", 0)) > int(
-		repeat_stats.get("faces_in_cache", 0)
-	):
-		return _fail("performance faces_scanned exceeds faces_in_cache")
+	if int(repeat_stats.get("assemblies_scanned", 0)) > 1:
+		return _fail("performance scanned assemblies outside the aim corridor")
+	if int(repeat_stats.get("faces_scanned", 0)) > 64:
+		return _fail(
+			"performance faces_scanned %d exceeds corridor bound"
+			% int(repeat_stats.get("faces_scanned", 0))
+		)
 	_free_fixture(fixture)
 	return true
 
@@ -1588,7 +1614,6 @@ func _new_gateway_fixture() -> Dictionary:
 	gateway.placed_blocks_path = NodePath("../PlacedBlocks")
 	gateway.simulation_session_path = NodePath("../SimulationSession")
 	gateway._ready()
-	gateway._bind_snap_cache_events()
 	return {
 		"root": root,
 		"world": world,

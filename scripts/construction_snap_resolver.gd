@@ -1,11 +1,20 @@
 class_name ConstructionSnapResolver
 extends RefCounted
+## Resolves where the build ghost goes. One pipeline for every aim case:
+##
+## 1. Direct hit on a compatible element face → that face wins, no scan.
+## 2. Everything else (ground, miss, invalid direct) → stateless magnet scan:
+##    march the aim ray through each attach-allowed assembly's occupancy grid
+##    (already indexed per topology revision by the kernel) and derive exposed
+##    faces near the ray. No world-space face cache, no invalidation, no
+##    structural-event plumbing — occupancy + current transforms are always
+##    fresh, so parked rovers magnetize and moving ones drop out for free.
+## 3. Voxel fallback scores below magnetic faces; if nothing is placeable the
+##    invalid direct plan is surfaced so the preview can render the red ghost.
 
 const MAX_CANDIDATES := 8
+## Cap on authoritative plan validations per resolve (the expensive part).
 const TOP_K_VALIDATE := 12
-## Authoritative plan validation is the expensive part of a resolve; stop after
-## this many valid face candidates — enough for selection + manual cycling.
-const VALID_FACE_STOP := 4
 const DIRECT_ELEMENT_SCORE := 1000.0
 const VOXEL_FALLBACK_SCORE := 3.0
 const HYSTERESIS_SCORE_BONUS := 0.12
@@ -14,15 +23,30 @@ const MAX_RAY_DISTANCE := 4.0
 const MAX_RAY_LATERAL := 1.2
 const MIN_FORWARD_DOT := 0.15
 const MAX_SCREEN_PENALTY_RADIUS := 0.65
+const _RAY_STEP_M := GridMetric.HALF_CELL_SIZE_M
 
 var last_stats: Dictionary = _empty_stats()
 
 var _sticky_candidate_key: String = ""
-var _face_cache: ConstructionSnapFaceCache
+## assembly_id -> {revision, aabb}: local-space grid bounds for quick ray
+## rejection. Revision-keyed like the kernel occupancy index it derives from.
+var _bounds_cache: Dictionary = {}
+
+## Magnet probe offsets around each ray cell (Manhattan distance <= 2): which
+## occupied cells near the aim line may contribute an exposed face.
+static var _magnet_offsets: Array[Vector3i] = _build_magnet_offsets()
 
 
-func bind_cache(cache: ConstructionSnapFaceCache) -> void:
-	_face_cache = cache
+static func _build_magnet_offsets() -> Array[Vector3i]:
+	var offsets: Array[Vector3i] = []
+	for x: int in range(-2, 3):
+		for y: int in range(-2, 3):
+			for z: int in range(-2, 3):
+				var manhattan: int = absi(x) + absi(y) + absi(z)
+				if manhattan == 0 or manhattan > 2:
+					continue
+				offsets.append(Vector3i(x, y, z))
+	return offsets
 
 
 func reset_sticky() -> void:
@@ -80,7 +104,7 @@ func resolve(params: Dictionary) -> Dictionary:
 		)
 
 	# Direct compatible element hit always wins (magnetic snap policy §1); no
-	# face scan needed — cheapest and by far the most common aim case.
+	# scan needed — cheapest and by far the most common aim case.
 	if (
 		manual_index < 0
 		and direct_kind == InteractionHit.KIND_SIMULATION_ELEMENT
@@ -104,16 +128,7 @@ func resolve(params: Dictionary) -> Dictionary:
 				"stats": last_stats.duplicate(true),
 			}
 
-	if _face_cache != null:
-		_face_cache.bind_world(world)
-		last_stats["cache_rebuilt"] = _face_cache.ensure_current()
-		last_stats["cache_rebuilds"] = _face_cache.cache_rebuilds
-		last_stats["faces_in_cache"] = _face_cache.last_faces_in_cache
-	else:
-		last_stats["cache_rebuilt"] = true
-
-	var candidates: Array[Dictionary] = []
-	for candidate: Dictionary in _collect_face_candidates(
+	var candidates: Array[Dictionary] = _collect_face_candidates(
 		world,
 		archetype,
 		orientation_index,
@@ -123,10 +138,7 @@ func resolve(params: Dictionary) -> Dictionary:
 		camera,
 		held_ground_pivot,
 		held_attach_pivot
-	):
-		candidates.append(candidate)
-		if candidates.size() >= MAX_CANDIDATES:
-			break
+	)
 
 	if bool(direct_plan.get("valid", false)):
 		if direct_kind == InteractionHit.KIND_SIMULATION_ELEMENT:
@@ -193,15 +205,11 @@ func resolve(params: Dictionary) -> Dictionary:
 	}
 
 
-
 static func _empty_stats() -> Dictionary:
 	return {
 		"resolve_calls": 0,
-		"cache_rebuilds": 0,
-		"cache_rebuilt": false,
-		"faces_in_cache": 0,
+		"assemblies_scanned": 0,
 		"faces_scanned": 0,
-		"faces_corridor_pass": 0,
 		"plans_validated": 0,
 	}
 
@@ -225,7 +233,7 @@ static func _make_candidate(
 	key: String = ""
 ) -> Dictionary:
 	if key.is_empty():
-		key = _target_key(target, plan)
+		key = _target_key(target)
 	return {
 		"key": key,
 		"target": target,
@@ -235,18 +243,13 @@ static func _make_candidate(
 	}
 
 
-static func _target_key(target: Dictionary, plan: Dictionary) -> String:
+static func _target_key(target: Dictionary) -> String:
 	var metadata: Dictionary = target.get("metadata", {})
-	var command: PlaceElementCommand = plan.get("command")
-	var origin := Vector3i.ZERO
-	if command != null:
-		origin = command.origin_cell
-	return "%s|%s|%s|%s|%s" % [
+	return "%s|%s|%s|%s" % [
 		target.get("target_kind", &""),
 		metadata.get("element_id", -1),
-		metadata.get("collider_local_cell", Vector3i.ZERO),
-		origin,
-		target.get("point", Vector3.ZERO),
+		metadata.get("snap_cell", Vector3i.ZERO),
+		metadata.get("snap_dir", Vector3i.ZERO),
 	]
 
 
@@ -279,71 +282,47 @@ func _collect_face_candidates(
 	held_attach_pivot: Vector3 = Vector3(INF, INF, INF)
 ) -> Array[Dictionary]:
 	var ranked: Array[Dictionary] = []
-	if _face_cache != null:
-		var corridor_bounds := _corridor_bounds(
+	for assembly: SimulationAssembly in world.list_assemblies():
+		if assembly == null or assembly.tombstoned:
+			continue
+		var faces := _scan_assembly_faces(
+			world,
+			assembly,
 			ray_origin,
 			ray_direction,
-			MAX_RAY_DISTANCE
+			camera
 		)
-		for face: Dictionary in _face_cache.faces_in_aabb(corridor_bounds):
-			last_stats["faces_scanned"] = int(last_stats["faces_scanned"]) + 1
-			var world_point: Vector3 = face["world_point"]
-			if not _is_in_corridor(
-				ray_origin,
-				ray_direction,
-				world_point,
-				MAX_RAY_DISTANCE
-			):
-				continue
-			last_stats["faces_corridor_pass"] = (
-				int(last_stats["faces_corridor_pass"]) + 1
-			)
-			var score := _score_geometric(
-				ray_origin,
-				ray_direction,
-				camera,
-				world_point,
-				ray_origin.distance_to(world_point)
-			)
-			ranked.append({
-				"face": face,
-				"score": score,
-			})
-	else:
-		ranked.append_array(
-			_legacy_rank_faces(
-				world,
-				ray_origin,
-				ray_direction,
-				camera
-			)
-		)
+		if faces.is_empty():
+			continue
+		# Attach permission is checked only for assemblies the aim actually
+		# reaches — it is the (joint-scan) expensive check, not the scan.
+		if not world.construction_attach_allowed(assembly.assembly_id):
+			continue
+		ranked.append_array(faces)
 
 	ranked.sort_custom(
 		func(left: Dictionary, right: Dictionary) -> bool:
 			return float(left["score"]) > float(right["score"])
 	)
 
+	# Only the selected candidate needs an authoritative plan this frame:
+	# validate best-first and stop at the first valid face, plus the sticky
+	# face (hysteresis must be able to keep it selected).
 	var validated: Array[Dictionary] = []
-	var validate_limit := mini(
-		_validate_limit_for(archetype),
-		ranked.size()
-	)
-	for index: int in range(validate_limit):
-		var entry: Dictionary = ranked[index]
-		var face: Dictionary = entry["face"]
-		var element := world.get_element(int(face["element_id"]))
-		if element == null:
-			continue
-		var assembly := world.get_assembly_raw(int(face["assembly_id"]))
-		if assembly == null:
-			continue
-		var target := _target_from_face(
-			face,
-			ray_direction,
-			ray_origin
+	var attempts := 0
+	var have_first_valid := false
+	for entry: Dictionary in ranked:
+		if attempts >= TOP_K_VALIDATE:
+			break
+		var is_sticky := (
+			not _sticky_candidate_key.is_empty()
+			and str(entry.get("key", "")) == _sticky_candidate_key
 		)
+		if have_first_valid and not is_sticky:
+			continue
+		attempts += 1
 		last_stats["plans_validated"] = int(last_stats["plans_validated"]) + 1
+		var target: Dictionary = entry["target"]
 		var plan := ConstructionPlacement.plan(
 			world,
 			target,
@@ -355,23 +334,16 @@ func _collect_face_candidates(
 		)
 		if not bool(plan.get("valid", false)):
 			continue
-		var score := float(entry["score"])
-		var command: PlaceElementCommand = plan.get("command")
 		validated.append(
 			_make_candidate(
 				target,
 				plan,
-				score,
+				float(entry["score"]),
 				&"face_scan",
-				"%d|%s|%s" % [
-					element.element_id,
-					str(face["port_id"]),
-					command.origin_cell if command != null else Vector3i.ZERO,
-				]
+				str(entry["key"])
 			)
 		)
-		if validated.size() >= VALID_FACE_STOP:
-			break
+		have_first_valid = true
 	validated.sort_custom(
 		func(left: Dictionary, right: Dictionary) -> bool:
 			return float(left["score"]) > float(right["score"])
@@ -379,101 +351,249 @@ func _collect_face_candidates(
 	return validated
 
 
-static func _validate_limit_for(archetype: ElementArchetype) -> int:
-	if archetype != null and archetype.footprint_cells.size() >= 64:
-		return 4
-	return TOP_K_VALIDATE
-
-
-func _legacy_rank_faces(
+## March the aim ray through the assembly's occupancy grid and derive exposed
+## faces near the ray. Stateless: occupancy is revision-cached by the kernel,
+## transforms are read fresh, so motion and parking need no invalidation.
+func _scan_assembly_faces(
 	world: SimulationWorld,
+	assembly: SimulationAssembly,
 	ray_origin: Vector3,
 	ray_direction: Vector3,
 	camera: Camera3D
 ) -> Array[Dictionary]:
-	var ranked: Array[Dictionary] = []
-	for assembly: SimulationAssembly in world.list_assemblies():
-		if assembly.tombstoned:
+	var faces: Array[Dictionary] = []
+	var occupancy: Dictionary = ConstructionOccupancyUtil.assembly_occupancy_index(
+		world,
+		assembly
+	)
+	if occupancy.is_empty():
+		return faces
+	var root_transform := assembly.motion.transform
+	var inverse := root_transform.affine_inverse()
+	var local_origin := inverse * ray_origin
+	var local_direction := (inverse.basis * ray_direction).normalized()
+	if not _ray_hits_bounds(assembly, occupancy, local_origin, local_direction):
+		return faces
+	last_stats["assemblies_scanned"] = int(last_stats["assemblies_scanned"]) + 1
+	var single_group := world.assembly_is_single_body_group(assembly.assembly_id)
+
+	var visited: Dictionary = {}
+	var seen_faces: Dictionary = {}
+	var previous_cell := GridMetric.meters_to_cell_floor(local_origin)
+	var travelled := 0.0
+	while travelled <= MAX_RAY_DISTANCE:
+		var sample := local_origin + local_direction * travelled
+		travelled += _RAY_STEP_M
+		var cell := GridMetric.meters_to_cell_floor(sample)
+		if visited.has(cell):
 			continue
-		if not world.construction_attach_allowed(assembly.assembly_id):
-			continue
-		for element_id: int in assembly.element_ids:
-			var element := world.get_element(element_id)
-			if element == null:
-				continue
-			var element_archetype := element.get_archetype()
-			if element_archetype == null:
-				continue
-			var group_transform := world.element_group_transform(element_id)
-			for descriptor: GridSurfaceUtil.SurfaceFaceDescriptor in (
-				GridSurfaceUtil.get_surface_descriptors(
-					element_archetype,
-					element.orientation_index
-				)
-			):
-				last_stats["faces_scanned"] = (
-					int(last_stats["faces_scanned"]) + 1
-				)
-				var world_point := ConstructionSnapFaceCache._surface_face_world_point(
-					element,
-					descriptor,
-					group_transform
-				)
-				if not _is_in_corridor(
+		visited[cell] = true
+		if occupancy.has(cell):
+			# Ray entered the structure: the entry face is a candidate, and
+			# nothing behind the wall should magnetize.
+			var entry_dir := _entry_face_direction(
+				previous_cell,
+				cell,
+				local_direction,
+				occupancy
+			)
+			if entry_dir != Vector3i.ZERO:
+				_append_face(
+					faces,
+					seen_faces,
+					world,
+					assembly,
+					occupancy,
+					cell,
+					entry_dir,
+					root_transform,
+					single_group,
 					ray_origin,
 					ray_direction,
-					world_point,
-					MAX_RAY_DISTANCE
-				):
+					camera
+				)
+			break
+		for offset: Vector3i in _magnet_offsets:
+			var occupied := cell + offset
+			if not occupancy.has(occupied):
+				continue
+			for face_dir: Vector3i in _face_directions_toward(offset):
+				if occupancy.has(occupied + face_dir):
 					continue
-				last_stats["faces_corridor_pass"] = (
-					int(last_stats["faces_corridor_pass"]) + 1
+				_append_face(
+					faces,
+					seen_faces,
+					world,
+					assembly,
+					occupancy,
+					occupied,
+					face_dir,
+					root_transform,
+					single_group,
+					ray_origin,
+					ray_direction,
+					camera
 				)
-				var port_direction := OrientationUtil.rotate_direction(
-					OrientationUtil.face_to_vector(descriptor.local_face),
-					element.orientation_index
-				)
-				ranked.append({
-					"face": {
-						"assembly_id": assembly.assembly_id,
-						"element_id": element.element_id,
-						"port_id": descriptor.structural_id,
-						"collider_local_cell": descriptor.local_cell,
-						"world_point": world_point,
-						"world_normal": (
-							group_transform.basis
-							* Vector3(port_direction).normalized()
-						),
-					},
-					"score": _score_geometric(
-						ray_origin,
-						ray_direction,
-						camera,
-						world_point,
-						ray_origin.distance_to(world_point)
-					),
-				})
-	return ranked
+		previous_cell = cell
+	return faces
 
 
-static func _corridor_bounds(
+## Axis-aligned face directions of an occupied cell that point back toward the
+## empty ray cell it was probed from.
+static func _face_directions_toward(offset: Vector3i) -> Array[Vector3i]:
+	var directions: Array[Vector3i] = []
+	if offset.x != 0:
+		directions.append(Vector3i(-signi(offset.x), 0, 0))
+	if offset.y != 0:
+		directions.append(Vector3i(0, -signi(offset.y), 0))
+	if offset.z != 0:
+		directions.append(Vector3i(0, 0, -signi(offset.z)))
+	return directions
+
+
+static func _entry_face_direction(
+	previous_cell: Vector3i,
+	cell: Vector3i,
+	local_direction: Vector3,
+	occupancy: Dictionary
+) -> Vector3i:
+	var delta := previous_cell - cell
+	for face_dir: Vector3i in _face_directions_toward(-delta):
+		if not occupancy.has(cell + face_dir):
+			return face_dir
+	var dominant := _dominant_grid_direction(-local_direction)
+	if not occupancy.has(cell + dominant):
+		return dominant
+	return Vector3i.ZERO
+
+
+static func _dominant_grid_direction(direction: Vector3) -> Vector3i:
+	var absolute := direction.abs()
+	if absolute.x >= absolute.y and absolute.x >= absolute.z:
+		return Vector3i.RIGHT if direction.x >= 0.0 else Vector3i.LEFT
+	if absolute.y >= absolute.z:
+		return Vector3i.UP if direction.y >= 0.0 else Vector3i.DOWN
+	return Vector3i.BACK if direction.z >= 0.0 else Vector3i.FORWARD
+
+
+func _append_face(
+	faces: Array[Dictionary],
+	seen_faces: Dictionary,
+	world: SimulationWorld,
+	assembly: SimulationAssembly,
+	occupancy: Dictionary,
+	face_cell: Vector3i,
+	face_dir: Vector3i,
+	root_transform: Transform3D,
+	single_group: bool,
 	ray_origin: Vector3,
 	ray_direction: Vector3,
-	max_distance: float
-) -> AABB:
-	var ray_end := ray_origin + ray_direction * max_distance
-	var padding := Vector3.ONE * MAX_RAY_LATERAL
-	var minimum := Vector3(
-		minf(ray_origin.x, ray_end.x),
-		minf(ray_origin.y, ray_end.y),
-		minf(ray_origin.z, ray_end.z)
-	) - padding
-	var maximum := Vector3(
-		maxf(ray_origin.x, ray_end.x),
-		maxf(ray_origin.y, ray_end.y),
-		maxf(ray_origin.z, ray_end.z)
-	) + padding
-	return AABB(minimum, maximum - minimum)
+	camera: Camera3D
+) -> void:
+	var face_key := "%s|%s" % [face_cell, face_dir]
+	if seen_faces.has(face_key):
+		return
+	seen_faces[face_key] = true
+	var element_id := int(occupancy.get(face_cell, 0))
+	var element := world.get_element(element_id)
+	if element == null:
+		return
+	# Occupancy cells live in assembly grid space; elements on driven body
+	# groups (extended piston carriage etc.) are physically elsewhere, so a
+	# root-space face would ghost at the retracted pose. Direct aim still
+	# covers those; skip them here.
+	if not single_group and not world.element_group_transform(
+		element_id
+	).is_equal_approx(root_transform):
+		return
+	var local_normal := Vector3(face_dir)
+	var local_point := (
+		GridMetric.cell_center_meters(face_cell)
+		+ local_normal * GridMetric.HALF_CELL_SIZE_M
+	)
+	var world_point := root_transform * local_point
+	if not _is_in_corridor(ray_origin, ray_direction, world_point, MAX_RAY_DISTANCE):
+		return
+	last_stats["faces_scanned"] = int(last_stats["faces_scanned"]) + 1
+	var world_normal := (root_transform.basis * local_normal).normalized()
+	var target := InteractionHit.create(
+		world_point,
+		world_normal,
+		ray_origin.distance_to(world_point),
+		InteractionHit.KIND_SIMULATION_ELEMENT,
+		null,
+		StringName(str(element_id)),
+		{
+			"element_id": element_id,
+			"assembly_id": assembly.assembly_id,
+			"collider_local_cell": _element_local_cell(element, face_cell),
+			"aim_direction": ray_direction,
+			"snap_cell": face_cell,
+			"snap_dir": face_dir,
+		}
+	).snapshot()
+	faces.append({
+		"key": "%d|%s|%s" % [element_id, face_cell, face_dir],
+		"target": target,
+		"score": _score_geometric(
+			ray_origin,
+			ray_direction,
+			camera,
+			world_point,
+			ray_origin.distance_to(world_point)
+		),
+	})
+
+
+static func _element_local_cell(
+	element: SimulationElement,
+	assembly_cell: Vector3i
+) -> Vector3i:
+	var delta := Vector3(assembly_cell - element.origin_cell)
+	var local := OrientationUtil.orientation_basis(
+		element.orientation_index
+	).inverse() * delta
+	return Vector3i(roundi(local.x), roundi(local.y), roundi(local.z))
+
+
+## Local-space grid bounds per assembly, revision-cached, inflated by magnet
+## reach — cheap slab test so far-away assemblies cost nothing per resolve.
+func _ray_hits_bounds(
+	assembly: SimulationAssembly,
+	occupancy: Dictionary,
+	local_origin: Vector3,
+	local_direction: Vector3
+) -> bool:
+	var cached: Dictionary = _bounds_cache.get(assembly.assembly_id, {})
+	var bounds: AABB
+	if int(cached.get("revision", -1)) == assembly.topology_revision:
+		bounds = cached["aabb"]
+	else:
+		var minimum := Vector3i(2147483647, 2147483647, 2147483647)
+		var maximum := Vector3i(-2147483648, -2147483648, -2147483648)
+		for cell_variant: Variant in occupancy.keys():
+			var cell: Vector3i = cell_variant
+			minimum = Vector3i(
+				mini(minimum.x, cell.x),
+				mini(minimum.y, cell.y),
+				mini(minimum.z, cell.z)
+			)
+			maximum = Vector3i(
+				maxi(maximum.x, cell.x),
+				maxi(maximum.y, cell.y),
+				maxi(maximum.z, cell.z)
+			)
+		var lower := GridMetric.cell_to_meters(minimum)
+		var upper := GridMetric.cell_to_meters(maximum + Vector3i.ONE)
+		bounds = AABB(lower, upper - lower).grow(MAX_RAY_LATERAL)
+		_bounds_cache[assembly.assembly_id] = {
+			"revision": assembly.topology_revision,
+			"aabb": bounds,
+		}
+	return bounds.intersects_segment(
+		local_origin,
+		local_origin + local_direction * MAX_RAY_DISTANCE
+	) != null
 
 
 static func _is_in_corridor(
@@ -530,27 +650,3 @@ static func _score_geometric(
 	score -= distance_penalty * 0.5
 	score -= screen_penalty * 0.3
 	return score
-
-
-static func _target_from_face(
-	face: Dictionary,
-	aim_direction: Vector3,
-	ray_origin: Vector3
-) -> Dictionary:
-	var world_point: Vector3 = face["world_point"]
-	var world_normal: Vector3 = face["world_normal"]
-	return InteractionHit.create(
-		world_point,
-		world_normal,
-		ray_origin.distance_to(world_point),
-		InteractionHit.KIND_SIMULATION_ELEMENT,
-		null,
-		StringName(str(face["element_id"])),
-		{
-			"element_id": int(face["element_id"]),
-			"assembly_id": int(face["assembly_id"]),
-			"collider_local_cell": face["collider_local_cell"],
-			"aim_direction": aim_direction,
-			"snap_port_id": str(face["port_id"]),
-		}
-	).snapshot()

@@ -52,6 +52,8 @@ const _AIM_ORIGIN_STEP := 0.04
 const _AIM_DIRECTION_STEP := 0.02
 const _LARGE_AIM_ORIGIN_STEP := 0.12
 const _LARGE_AIM_DIRECTION_STEP := 0.06
+const _RESOLVE_HEARTBEAT_MSEC := 150
+var _last_resolve_msec := 0
 
 
 func _ready() -> void:
@@ -164,12 +166,19 @@ func _update_resolution() -> void:
 	if context_key != _cached_resolve_context_key and _manual_lock:
 		_manual_lock = false
 		_manual_candidate_index = -1
+	# Heartbeat: attach permission follows vehicle velocity (parking brake)
+	# without any structural event, so an unchanged context key must still
+	# re-resolve occasionally or a rover parked in the crosshair never
+	# becomes magnetic until the aim moves.
+	var now_msec := Time.get_ticks_msec()
 	if (
 		not _manual_lock
 		and context_key == _cached_resolve_context_key
+		and now_msec - _last_resolve_msec < _RESOLVE_HEARTBEAT_MSEC
 	):
 		return
 	_cached_resolve_context_key = context_key
+	_last_resolve_msec = now_msec
 
 	var resolved := _gateway.resolve_construction_placement({
 		"direct_hit": direct_hit,
@@ -227,7 +236,7 @@ func _resolve_context_key(
 	if not bool(direct_hit.get("valid", false)):
 		aim_step = maxf(aim_step, 0.35)
 	return "%d|%s|%s|%s|%d|%s|%s|%s" % [
-		_gateway.snap_cache_generation(),
+		_gateway.snap_context_revision(),
 		_quantize_vec3(origin, aim_step),
 		_quantize_vec3(direction, aim_step * 0.5),
 		_tools.selected_archetype_id,
