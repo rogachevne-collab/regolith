@@ -430,8 +430,12 @@ func _setup_debug_button() -> void:
 	_debug_button = Button.new()
 	_debug_button.name = "DebugMeteorButton"
 	_debug_button.text = "Метеорит (F8)"
-	_debug_button.tooltip_text = "Устроить падение метеорита рядом с игроком"
+	_debug_button.tooltip_text = (
+		"Падение метеорита перед камерой. F8 всегда; кнопка — при свободной мыши (Esc)."
+	)
 	_debug_button.focus_mode = Control.FOCUS_NONE
+	_debug_button.mouse_filter = Control.MOUSE_FILTER_STOP
+	_debug_button.z_index = 128
 	_debug_button.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
 	_debug_button.offset_left = -168.0
 	_debug_button.offset_top = -52.0
@@ -439,6 +443,8 @@ func _setup_debug_button() -> void:
 	_debug_button.offset_bottom = -16.0
 	_debug_button.pressed.connect(debug_spawn_near_player)
 	_canvas.add_child(_debug_button)
+	# Ensure the control is above other CanvasLayer HUD panels.
+	_canvas.move_child(_debug_button, -1)
 
 
 func _register_console_command() -> void:
