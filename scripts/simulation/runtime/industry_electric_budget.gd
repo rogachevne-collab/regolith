@@ -22,7 +22,7 @@ static func apply_tick(world: SimulationWorld, dt: float) -> void:
 
 	var supplied_networks: Array[Dictionary] = []
 	for component: Array in graph.components():
-		var component_network := _build_component_network(world, component)
+		var component_network := build_component_network(world, component)
 		if bool(component_network["supplied"]):
 			supplied_networks.append(component_network)
 
@@ -62,7 +62,7 @@ static func is_element_on_supplied_network(
 	for component: Array in graph.components():
 		if not component.has(element_id):
 			continue
-		return bool(_build_component_network(world, component)["supplied"])
+		return bool(build_component_network(world, component)["supplied"])
 	return false
 
 
@@ -75,10 +75,55 @@ static func element_world_position(
 	return world.element_world_transform(element.element_id).origin
 
 
+## First-time charge for a placed/spawned battery. Never refills after drain:
+## once `battery_initialized` is set, empty means empty until a source charges it.
+static func seed_battery_if_needed(
+	world: SimulationWorld,
+	battery_element_id: int
+) -> void:
+	if world == null or battery_element_id <= 0:
+		return
+	var element := world.get_element(battery_element_id)
+	if element == null or not IndustryElectricProfile.is_battery(element):
+		return
+	var runtime := world.ensure_industry_element_runtime(battery_element_id)
+	if runtime.battery_initialized:
+		return
+	runtime.battery_kwh = IndustryElectricProfile.battery_max_kwh(element)
+	runtime.battery_initialized = true
+
+
+static func mark_battery_charged(
+	world: SimulationWorld,
+	battery_element_id: int,
+	kwh: float = -1.0
+) -> void:
+	if world == null or battery_element_id <= 0:
+		return
+	var element := world.get_element(battery_element_id)
+	if element == null or not IndustryElectricProfile.is_battery(element):
+		return
+	var runtime := world.ensure_industry_element_runtime(battery_element_id)
+	var max_kwh := IndustryElectricProfile.battery_max_kwh(element)
+	if kwh < 0.0:
+		runtime.battery_kwh = max_kwh
+	else:
+		runtime.battery_kwh = clampf(kwh, 0.0, max_kwh)
+	runtime.battery_initialized = true
+
+
+static func nearest_covering_network(
+	world: SimulationWorld,
+	consumer: SimulationElement,
+	networks: Array[Dictionary]
+) -> int:
+	return _nearest_covering_network(world, consumer, networks)
+
+
 ## A component is "supplied" when it has an enabled operational source or
 ## battery. Distributors are no longer required for supply itself — they only
 ## extend it wirelessly to unwired consumers within supply_radius_m.
-static func _build_component_network(
+static func build_component_network(
 	world: SimulationWorld,
 	component: Array
 ) -> Dictionary:
@@ -278,6 +323,7 @@ static func _charge_batteries(
 		if deliver_w <= 0.000001:
 			continue
 		runtime.battery_kwh += energy_kwh
+		runtime.battery_initialized = true
 		remaining_surplus -= deliver_w
 
 

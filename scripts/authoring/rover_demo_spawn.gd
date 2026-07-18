@@ -677,13 +677,7 @@ static func _charge_demo_battery(
 	world: SimulationWorld,
 	battery_element_id: int
 ) -> void:
-	if battery_element_id <= 0:
-		return
-	var element := world.get_element(battery_element_id)
-	if element == null:
-		return
-	var runtime := world.ensure_industry_element_runtime(battery_element_id)
-	runtime.battery_kwh = IndustryElectricProfile.battery_max_kwh(element)
+	IndustryElectricBudget.mark_battery_charged(world, battery_element_id)
 
 
 static func _configure_steerable(

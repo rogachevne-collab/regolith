@@ -466,6 +466,20 @@ element:
 Кокпит владеет **всеми** complete `WheelPair` своей assembly. Steer применяется
 только к колёсам с `steerable = true`; остальные получают лишь drive/brake.
 
+### Cabin power HUD
+
+Пока игрок сидит в кокпите, presentation-виджет `VehiclePower`
+(`scripts/ui/hud_vehicle_power.gd`, контракт `HUD-UI-01.md`) показывает:
+
+- суммарный заряд батарей assembly (`battery_kwh` / `max_kwh`);
+- текущую электрическую нагрузку consumers (колёса / thruster / gyro /
+  actuators — `dynamic_power_w` + idle);
+- предикт длительности поездки при текущем `net_drain_w`.
+
+Батарея **не** пополняется при повторной посадке: `seed_battery_if_needed`
+заряжает только неинициализированную батарею один раз; пустая после разряда
+остаётся пустой, пока её не зарядит `power_source`.
+
 ### Passenger
 
 Стоящий на палубе игрок наследует движение через существующий `SupportFrame` +
@@ -637,6 +651,9 @@ status            # ok | airborne | no_power | no_wheel
     wheel body ownership;
 15. electric demand равен сумме idle+traction всех wheels; недостаток мощности
     выключает весь supplied component симметрично, без частичного torque.
+16. cabin power snapshot: `VehiclePowerSnapshotBuilder` даёт finite ETA под
+    тягой; `seed_battery_if_needed` не рефилит initialized empty battery
+    (`scenes/test_vehicle_power.tscn`).
 
 Геймплей/HUD/презентация/визуал headless-тестом не подтверждаются. В запущенной
 игре (Beckett):

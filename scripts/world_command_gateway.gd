@@ -834,14 +834,8 @@ func _ensure_rover_power_network(
 			distributor_id,
 			"power_in"
 		)
-	var battery := world.get_element(battery_id)
-	if battery == null:
-		return
-	var battery_runtime := world.ensure_industry_element_runtime(battery_id)
-	if battery_runtime.battery_kwh <= 0.001:
-		battery_runtime.battery_kwh = IndustryElectricProfile.battery_max_kwh(
-			battery
-		)
+	# Seed only once. Empty after drain must stay empty (no infinite drive).
+	IndustryElectricBudget.seed_battery_if_needed(world, battery_id)
 
 
 func _wake_rover_body(assembly_id: int) -> void:
@@ -1040,6 +1034,19 @@ func store_snapshot(store_id: String) -> Dictionary:
 	if _session == null or _session.world == null:
 		return StoreSnapshotBuilder.failure(&"not_ready")
 	return StoreSnapshotBuilder.build(_session.world, store_id)
+
+
+## Cabin power read model for seated transport HUD (charge + trip ETA).
+## `assembly_id` 0 → currently seated rover assembly when available.
+func vehicle_power_snapshot(assembly_id: int = 0) -> Dictionary:
+	if _session == null or _session.world == null:
+		return VehiclePowerSnapshotBuilder.failure(&"not_ready")
+	var resolved_id := assembly_id
+	if resolved_id <= 0:
+		resolved_id = _resolve_active_rover_assembly_id()
+	if resolved_id <= 0:
+		return VehiclePowerSnapshotBuilder.failure(&"not_seated")
+	return VehiclePowerSnapshotBuilder.build(_session.world, resolved_id)
 
 
 func player_inventory() -> PlayerInventoryRegistry:
