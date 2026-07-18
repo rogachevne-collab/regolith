@@ -27,16 +27,14 @@ var _open := false
 var _target_hit: InteractionHit
 var _pending_command_ids: Dictionary = {}
 var _interact_release_latch := false
-var _tool_controller: Node
+var _tools: ToolController
 
 
 func setup(ctx: Dictionary) -> void:
 	_gateway = ctx.get("gateway")
 	_query = ctx.get("query")
 	_player = ctx.get("player")
-	_tool_controller = ctx.get("tools")
-	if _tool_controller == null and _player != null:
-		_tool_controller = _player.get_node_or_null("ToolController")
+	_tools = ctx.get("tools")
 	if (
 		_gateway != null
 		and not _gateway.command_completed.is_connected(_on_command_completed)
@@ -326,31 +324,20 @@ func _refresh_control_buttons(meta: Dictionary) -> void:
 	if _motor_btn != null:
 		_motor_btn.text = "МОТОР: ВКЛ" if enabled else "МОТОР: ВЫКЛ"
 	if _chain_btn != null:
-		var sync := false
-		if (
-			_tool_controller != null
-			and _tool_controller.has_method("is_actuator_chain_sync")
-		):
-			sync = bool(_tool_controller.call("is_actuator_chain_sync"))
+		var sync := _tools != null and _tools.actuator_chain_sync
 		_chain_btn.text = "ЦЕПЬ: ВКЛ" if sync else "ЦЕПЬ: ВЫКЛ"
 
 
 func _on_motor_toggle_pressed() -> void:
-	if _tool_controller == null or not _target_hit.valid:
+	if _tools == null or not _target_hit.valid:
 		return
-	if _tool_controller.has_method("toggle_actuator_motor"):
-		_tool_controller.call("toggle_actuator_motor", _current_hit())
+	_tools.toggle_actuator_motor(_current_hit())
 
 
 func _on_chain_toggle_pressed() -> void:
-	if _tool_controller == null:
+	if _tools == null:
 		return
-	if not _tool_controller.has_method("set_actuator_chain_sync"):
-		return
-	var sync := false
-	if _tool_controller.has_method("is_actuator_chain_sync"):
-		sync = bool(_tool_controller.call("is_actuator_chain_sync"))
-	_tool_controller.call("set_actuator_chain_sync", not sync)
+	_tools.actuator_chain_sync = not _tools.actuator_chain_sync
 	_refresh_control_buttons(_current_hit().metadata)
 
 

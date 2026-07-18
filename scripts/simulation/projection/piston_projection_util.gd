@@ -336,11 +336,7 @@ static func configure_slider_joint(
 
 static func compliance_from_definition(definition: PistonDefinition) -> Dictionary:
 	if definition == null:
-		return {
-			"soft_limit_rad": DEFAULT_ANGULAR_SOFT_LIMIT_RAD,
-			"stiffness_nm_per_rad": DEFAULT_ANGULAR_STIFFNESS_NM_PER_RAD,
-			"damping_nm_s_per_rad": DEFAULT_ANGULAR_DAMPING_NM_S_PER_RAD,
-		}
+		return {}
 	return definition.angular_compliance()
 
 

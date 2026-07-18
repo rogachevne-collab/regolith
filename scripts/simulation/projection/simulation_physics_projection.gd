@@ -1012,15 +1012,11 @@ func _project_assembly_multibody(
 		)
 		joint_node.node_a = joint_node.get_path_to(base_body)
 		joint_node.node_b = joint_node.get_path_to(head_body)
+		var base_archetype: ElementArchetype = (
+			base_element.get_archetype() if base_element != null else null
+		)
 		var compliance := PistonProjectionUtil.compliance_from_definition(
-			(
-				base_element.get_archetype().piston_definition
-				if (
-					base_element != null
-					and base_element.get_archetype() != null
-				)
-				else null
-			)
+			base_archetype.piston_definition if base_archetype != null else null
 		)
 		PistonProjectionUtil.configure_slider_joint(
 			joint_node,

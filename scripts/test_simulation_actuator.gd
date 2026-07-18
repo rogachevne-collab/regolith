@@ -359,7 +359,7 @@ func _test_piston_angular_compliance_config() -> bool:
 	):
 		joint.free()
 		return _fail("angular soft cone not applied")
-	if is_equal_approx(float(joint.get("angular_spring_x/stiffness")), 0.0):
+	if is_zero_approx(float(joint.get("angular_spring_x/stiffness"))):
 		joint.free()
 		return _fail("angular spring stiffness missing")
 	var large_compliance := PistonProjectionUtil.compliance_from_definition(

@@ -909,8 +909,7 @@ static func validate_prospective_driven_compile(
 		{"detail": reason}
 	)
 
-
-static func validate_new_rigid_connections(world, 
+static func validate_new_rigid_connections(world,
 	assembly_id: int,
 	_preview: SimulationElement,
 	connections: Array[Dictionary]

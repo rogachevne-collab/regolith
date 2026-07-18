@@ -27,6 +27,9 @@ extends Resource
 
 
 func head_axis_offset_cell() -> Vector3i:
+	# .tres saved before head_offset_cells existed deserialize it as 0;
+	# clamp to the historical offset of 1 instead of collapsing the head
+	# onto the base.
 	return OrientationUtil.face_to_vector(axis_face) * maxi(head_offset_cells, 1)
 
 
@@ -71,10 +74,6 @@ func validate_base_archetype(base_archetype: ElementArchetype) -> Array[String]:
 	var errors: Array[String] = []
 	if head_archetype_id.is_empty():
 		errors.append("head_archetype_id is empty")
-	if head_offset_cells < 1:
-		# Godot may leave newly added @export ints at 0 until the .tres
-		# is resaved; treat that as the historical default of 1.
-		head_offset_cells = 1
 	if lower_limit_m < 0.0 or upper_limit_m <= lower_limit_m:
 		errors.append("invalid piston travel limits")
 	if (

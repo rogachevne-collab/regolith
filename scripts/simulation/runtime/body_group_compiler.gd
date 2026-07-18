@@ -70,6 +70,9 @@ const PROSPECTIVE_BASE_ELEMENT_ID := 900000001
 const PROSPECTIVE_HEAD_ELEMENT_ID := 900000002
 const PROSPECTIVE_JOINT_ID_BASE := 900001000
 
+
+## `driven_joint` is a throwaway built for this call; its endpoints are
+## rewritten onto the prospective temp elements.
 static func compile_prospective_driven_place(
 	assembly_element_ids: Array[int],
 	elements_by_id: Dictionary,
@@ -103,18 +106,10 @@ static func compile_prospective_driven_place(
 	element_ids.append(temp_base.element_id)
 	element_ids.append(temp_head.element_id)
 	var joints: Array[SimulationJoint] = existing_joints.duplicate()
-	# Reuse rigid() factory for allocation, then overwrite kind/endpoints.
-	var temp_driven := SimulationJoint.rigid(
-		PROSPECTIVE_JOINT_ID_BASE,
-		driven_joint.assembly_id,
-		temp_base.element_id,
-		driven_joint.port_a_id,
-		temp_head.element_id,
-		driven_joint.port_b_id
-	)
-	temp_driven.kind = driven_joint.kind
-	temp_driven.motor = driven_joint.motor
-	joints.append(temp_driven)
+	driven_joint.joint_id = PROSPECTIVE_JOINT_ID_BASE
+	driven_joint.element_a_id = temp_base.element_id
+	driven_joint.element_b_id = temp_head.element_id
+	joints.append(driven_joint)
 	var next_joint_id := PROSPECTIVE_JOINT_ID_BASE + 1
 	for connection_variant: Variant in base_connections:
 		var connection: Dictionary = connection_variant

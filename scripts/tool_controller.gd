@@ -1306,17 +1306,9 @@ func _try_actuator_stop(hit: InteractionHit) -> bool:
 	)
 
 
-func set_actuator_chain_sync(enabled: bool) -> void:
-	actuator_chain_sync = enabled
-
-
-func is_actuator_chain_sync() -> bool:
-	return actuator_chain_sync
-
-
 func _emit_actuator_target(
 	hit: InteractionHit,
-	mode: int,
+	mode: SimulationMotorState.ControlMode,
 	target_velocity_mps: float,
 	enabled: bool
 ) -> bool:
