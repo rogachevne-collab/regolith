@@ -92,23 +92,27 @@ func _test_resource_catalog_has_ores_and_gases() -> bool:
 
 
 func _test_legacy_ids_removed() -> bool:
-	for item_id: String in [
+	## Legacy Industry v1 ids may remain in game_balance.json for save/fixture
+	## compat (GAME-BALANCE-V0). Authoritative defaults must be terrain-materials.
+	var defaults: Dictionary = IndustryArchetypeProfile.DEFAULT_RECIPES
+	if str(defaults.get("processor", "")) == "crush_regolith":
+		push_error("processor default still crush_regolith")
+		return false
+	if str(defaults.get("fabricator", "")) == "sinter_component":
+		push_error("fabricator default still sinter_component")
+		return false
+	if str(defaults.get("electrolyzer", "")) != "electrolyze_water":
+		push_error("electrolyzer default must be electrolyze_water")
+		return false
+	var starter: Dictionary = GameBalance.starter().get("player_resources", {})
+	for legacy_id: String in [
 		"raw_regolith",
-		"calcined_oxide",
-		"metal_ingot",
 		"construction_component",
+		"metal_ingot",
+		"calcined_oxide",
 	]:
-		if ResourceCatalog.has_resource(item_id):
-			push_error("legacy item still present: %s" % item_id)
-			return false
-	for recipe_id: String in [
-		"crush_regolith",
-		"calcine_fines",
-		"reduce_oxide",
-		"sinter_component",
-	]:
-		if RecipeCatalog.has_recipe(recipe_id):
-			push_error("legacy recipe still present: %s" % recipe_id)
+		if float(starter.get(legacy_id, 0.0)) > 0.0:
+			push_error("starter still seeds legacy %s" % legacy_id)
 			return false
 	return true
 

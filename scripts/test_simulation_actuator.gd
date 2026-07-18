@@ -163,7 +163,9 @@ func _test_piston_atomic_placement() -> bool:
 func _test_piston_large_atomic_placement() -> bool:
 	var world := SimulationWorld.new()
 	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "construction_component", 200.0)
+	world.set_resource_amount("player", "plate_metal", 200.0)
+	world.set_resource_amount("player", "girder", 200.0)
+	world.set_resource_amount("player", "mechanism", 200.0)
 	world.get_archetype_registry().register(PISTON_HEAD_LARGE)
 	var foundation := _spawn(
 		world,
@@ -237,7 +239,9 @@ func _test_piston_large_atomic_placement() -> bool:
 func _test_piston_stack_chain() -> bool:
 	var world := SimulationWorld.new()
 	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "construction_component", 200.0)
+	world.set_resource_amount("player", "plate_metal", 200.0)
+	world.set_resource_amount("player", "girder", 200.0)
+	world.set_resource_amount("player", "mechanism", 200.0)
 	world.get_archetype_registry().register(PISTON_HEAD)
 	var foundation := _spawn(
 		world,
@@ -294,7 +298,9 @@ func _test_piston_stack_chain() -> bool:
 func _test_piston_fifth_rejected_at_placement() -> bool:
 	var world := SimulationWorld.new()
 	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "construction_component", 200.0)
+	world.set_resource_amount("player", "plate_metal", 200.0)
+	world.set_resource_amount("player", "girder", 200.0)
+	world.set_resource_amount("player", "mechanism", 200.0)
 	world.get_archetype_registry().register(PISTON_HEAD)
 	var foundation := _spawn(
 		world,
@@ -323,9 +329,7 @@ func _test_piston_fifth_rejected_at_placement() -> bool:
 				% [index + 1, piston.reason]
 			)
 		prior = piston
-	var before_amount := world.get_resource_store("player").amount(
-		"construction_component"
-	)
+	var before_amount := world.get_resource_store("player").amount("mechanism")
 	var fifth := _place_piston(world, assembly_id, Vector3i(5, 8, 0), prior)
 	if fifth.reason != StructuralCommandResult.REASON_DRIVEN_JOINT_CHAIN_TOO_LONG:
 		world.free()
@@ -333,9 +337,7 @@ func _test_piston_fifth_rejected_at_placement() -> bool:
 			"fifth piston should be driven_joint_chain_too_long, got %s"
 			% fifth.reason
 		)
-	var after_amount := world.get_resource_store("player").amount(
-		"construction_component"
-	)
+	var after_amount := world.get_resource_store("player").amount("mechanism")
 	if not is_equal_approx(before_amount, after_amount):
 		world.free()
 		return _fail("rejected fifth piston spent materials")

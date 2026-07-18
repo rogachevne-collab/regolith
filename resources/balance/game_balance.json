@@ -608,6 +608,10 @@
       "electrolyzer": {
         "is_consumer": true,
         "idle_w": 40.0
+      },
+      "piston_base_large": {
+        "is_consumer": true,
+        "idle_w": 0.0
       }
     }
   },
@@ -828,6 +832,32 @@
         "stiffness_n_per_m": 0.0,
         "damping_n_s_per_m": 4000.0
       }
+    },
+    "piston_base_large": {
+      "mass_kg": 180.0,
+      "build_requirements": [
+        {
+          "resource_id": "mechanism",
+          "amount": 20.0
+        }
+      ],
+      "piston": {
+        "default_speed_limit_mps": 0.2,
+        "extend_velocity_mps": 0.2,
+        "retract_velocity_mps": 0.2,
+        "force_limit_n": 80000.0,
+        "max_force_limit_n": 200000.0,
+        "stiffness_n_per_m": 0.0,
+        "damping_n_s_per_m": 8000.0,
+        "angular_soft_limit_rad": 0.08,
+        "angular_stiffness_nm_per_rad": 45000.0,
+        "angular_damping_nm_s_per_rad": 1200.0,
+        "power_draw_w": 4000.0
+      }
+    },
+    "piston_head_large": {
+      "mass_kg": 80.0,
+      "build_requirements": []
     },
     "piston_head": {
       "mass_kg": 20.0,
