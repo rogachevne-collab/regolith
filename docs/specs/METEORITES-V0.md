@@ -74,8 +74,9 @@ kinetic_impact_burst VFX
 
 ## Debug
 
-- Input action `debug_spawn_meteor` (F8) → `debug_spawn_near_player()`.
-- Кнопка «Метеорит (F8)» на `CanvasLayer` (если `show_debug_button`).
+- Input action `debug_spawn_meteor` (F9) → `debug_spawn_near_player()`.
+  Не F8: в редакторе Godot F8 = Stop Running Scene.
+- Кнопка «Метеорит (F9)» на `CanvasLayer` (если `show_debug_button`).
 - LimboConsole: `meteor` → тот же путь.
 
 Debug-удар всегда рядом с игроком (`debug_offset_m`), независимо от

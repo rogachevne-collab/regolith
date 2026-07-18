@@ -304,6 +304,9 @@ func apply_terrain_carve(
 	op: Dictionary,
 	volume_budget_m3: float = INF
 ) -> float:
+	if _voxel_tool == null or _excavation == null or _terrain == null:
+		push_warning("WorldCommandGateway.apply_terrain_carve: not ready")
+		return 0.0
 	var request := op.duplicate(true)
 	request["terrain"] = _terrain
 	request["volume_budget_m3"] = volume_budget_m3

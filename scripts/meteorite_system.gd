@@ -249,7 +249,9 @@ func _make_meteor() -> RigidBody3D:
 	body.name = "Meteorite"
 	body.mass = meteor_mass_kg
 	body.gravity_scale = 1.0
-	body.continuous_cd = true
+	# CCD + free-during-contact is a known Jolt crash class; raycast backup
+	# in _physics_process already catches missed voxel contacts.
+	body.continuous_cd = false
 	body.contact_monitor = true
 	body.max_contacts_reported = 8
 	body.collision_layer = 2
@@ -274,7 +276,8 @@ func _make_meteor() -> RigidBody3D:
 			_other_shape_index: int,
 			_local_shape_index: int
 		) -> void:
-			_on_meteor_contact(body, other)
+			# Never carve/free inside the physics contact callback (Jolt).
+			call_deferred("_on_meteor_contact", body, other)
 	)
 	return body
 
@@ -339,7 +342,8 @@ func _try_raycast_impact(body: RigidBody3D) -> void:
 	var collider = hit.get("collider")
 	if collider == null or not ImpactResolver.is_world_surface_partner(collider):
 		return
-	_on_meteor_contact(body, collider as Node)
+	# Match contact path: never handle impact mid-physics flush.
+	call_deferred("_on_meteor_contact", body, collider as Node)
 
 
 func _on_meteor_contact(body: RigidBody3D, other: Node) -> void:
@@ -347,11 +351,18 @@ func _on_meteor_contact(body: RigidBody3D, other: Node) -> void:
 		return
 	if body.has_meta("meteorite_spent"):
 		return
-	var hits_terrain := ImpactResolver.is_world_surface_partner(other)
-	var suit := ImpactResolver.player_suit_state(other)
+	var hits_terrain := (
+		other != null and ImpactResolver.is_world_surface_partner(other)
+	)
+	var suit := (
+		ImpactResolver.player_suit_state(other) if other != null else null
+	)
 	if not hits_terrain and suit == null:
 		return
 	body.set_meta("meteorite_spent", true)
+	# Stop further physics callbacks before carve/free.
+	body.set_deferred("contact_monitor", false)
+	body.set_deferred("freeze", true)
 	var contact := body.global_position
 	var up := _up_at(contact)
 	print(
@@ -372,6 +383,9 @@ func _on_meteor_contact(body: RigidBody3D, other: Node) -> void:
 func _carve_crater(contact_world: Vector3, carve_direction: Vector3) -> void:
 	if _gateway == null or not _gateway.has_method("apply_terrain_carve"):
 		return
+	if _gateway.has_method("get_voxel_tool") and _gateway.call("get_voxel_tool") == null:
+		push_warning("MeteoriteSystem: voxel tool not ready, skip crater")
+		return
 	var direction := carve_direction
 	if direction.length_squared() <= 0.000001:
 		direction = Vector3.DOWN
@@ -379,6 +393,9 @@ func _carve_crater(contact_world: Vector3, carve_direction: Vector3) -> void:
 		direction = direction.normalized()
 	var radius := maxf(crater_radius_m, 0.4)
 	var center := contact_world + direction * (radius * 0.45)
+	if not _is_finite_vec3(center):
+		push_warning("MeteoriteSystem: non-finite crater center, skip")
+		return
 	var op := {
 		"stamp_kind": &"sphere",
 		"center": center,
@@ -389,15 +406,20 @@ func _carve_crater(contact_world: Vector3, carve_direction: Vector3) -> void:
 
 
 func _spawn_vfx(contact_world: Vector3, up: Vector3) -> void:
+	if not _is_finite_vec3(contact_world) or not _is_finite_vec3(up):
+		return
 	var burst: Node3D = _IMPACT_VFX.instantiate()
 	var parent := get_parent()
 	if parent == null:
 		parent = self
 	parent.add_child(burst)
 	burst.global_position = contact_world
-	var look_target := contact_world + up
-	if (look_target - burst.global_position).length_squared() > 0.0001:
-		burst.look_at(look_target, Vector3.UP if absf(up.dot(Vector3.UP)) < 0.95 else Vector3.RIGHT)
+	var look_dir := up.normalized()
+	if look_dir.length_squared() > 0.0001:
+		var axis := Vector3.UP if absf(look_dir.dot(Vector3.UP)) < 0.95 else Vector3.RIGHT
+		# Avoid look_at crash when eye≈target or up∥forward.
+		if absf(look_dir.dot(axis)) < 0.999:
+			burst.look_at(contact_world + look_dir, axis)
 	_prime_vfx(burst)
 	var duration := float(burst.get_meta("vfx_duration", 2.4))
 	get_tree().create_timer(duration).timeout.connect(
@@ -429,9 +451,9 @@ func _setup_debug_button() -> void:
 		return
 	_debug_button = Button.new()
 	_debug_button.name = "DebugMeteorButton"
-	_debug_button.text = "Метеорит (F8)"
+	_debug_button.text = "Метеорит (F9)"
 	_debug_button.tooltip_text = (
-		"Падение метеорита перед камерой. F8 всегда; кнопка — при свободной мыши (Esc)."
+		"Падение метеорита перед камерой. F9 всегда (не F8 — в редакторе Godot это Stop); кнопка — при свободной мыши (Esc)."
 	)
 	_debug_button.focus_mode = Control.FOCUS_NONE
 	_debug_button.mouse_filter = Control.MOUSE_FILTER_STOP
