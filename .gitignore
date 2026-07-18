@@ -19,3 +19,8 @@ addons/zylann.voxel/bin/libvoxel.windows.*
 
 # Local godot-cpp checkout/symlink for native bake (see README)
 native/godot-cpp
+
+# Windows moon bake link side-products (DLL itself is local/optional)
+addons/regolith_moon_bake/bin/*.exp
+addons/regolith_moon_bake/bin/*.lib
+addons/regolith_moon_bake/bin/*.pdb

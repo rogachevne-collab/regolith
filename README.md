@@ -14,18 +14,29 @@ chmod +x run.sh tests/run_tests.sh
 ./run.sh res://scenes/main.tscn
 ```
 
+Windows (PowerShell):
+
+```powershell
+cd Y:\regolith
+.\run.ps1 res://scenes/main.tscn
+```
+
 Редактор:
 
 ```bash
-./run.sh --editor
+./run.sh --editor          # macOS/Linux
+.\run.ps1 --editor         # Windows
 ```
 
 `run.sh` ищет stock Godot в `/Applications/Godot.app`, `$GODOT` или `PATH`.
+`run.ps1` (Windows) — **`Y:\Godot\Godot_v4.7.1-stable_win64*.exe`**, затем `$GODOT` / `PATH`.
+Проект ожидает **Godot 4.7+** (`project.godot` → `config/features`).
 
 После клонирования (один раз, пока нет `.godot/`):
 
 ```bash
-./run.sh --headless --import
+./run.sh --headless --import     # macOS/Linux
+.\run.ps1 --headless --import    # Windows
 ```
 
 ## Тесты
@@ -58,17 +69,24 @@ unzip -o bin/GodotVoxelExtension.zip -d .
 C++ GDExtension для быстрого бейка `crust_heightmap.exr` (MIT FastNoiseLite +
 godot-cpp). macOS `template_debug` binary в `addons/regolith_moon_bake/bin/`.
 
-Пересборка (нужен слинкованный `native/godot-cpp` → Erebus `thirdparty/godot-cpp`
-с готовым `.a`):
+Пересборка (нужен `native/godot-cpp` → Erebus `thirdparty/godot-cpp` с готовой
+статической библиотекой godot-cpp):
 
 ```bash
-./native/build_moon_bake.sh
+./native/build_moon_bake.sh      # macOS (universal .dylib)
+.\native\build_moon_bake.ps1     # Windows (MSVC x64 .dll)
 ```
 
-После клона, если Godot не видит класс `MoonHeightmapBake`:
+По умолчанию скрипты ждут Erebus godot-cpp:
+`~/Desktop/Erebus/thirdparty/godot-cpp` (macOS) или
+`Y:\Erebus\thirdparty\godot-cpp` (Windows). Переопределение: `$EREBUS_CPP`.
+Windows: нужен VS 2022 Build Tools (MSVC x64) + Python + SCons.
+
+После клона / сборки, если Godot не видит класс `MoonHeightmapBake`:
 
 ```bash
-./run.sh --headless --import
+./run.sh --headless --import     # macOS/Linux
+.\run.ps1 --headless --import    # Windows
 ```
 
 ## Управление

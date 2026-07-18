@@ -41,7 +41,7 @@ window/stretch/mode="canvas_items"
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/beckett/plugin.cfg", "res://addons/limbo_console/plugin.cfg", "res://addons/proton_scatter/plugin.cfg")
+enabled=PackedStringArray("res://addons/beckett/plugin.cfg", "res://addons/limbo_console/plugin.cfg", "res://addons/proton_scatter/plugin.cfg", "res://addons/regolith_tools/plugin.cfg")
 
 [input]
 

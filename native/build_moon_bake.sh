@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Build regolith_moon_bake GDExtension using Erebus godot-cpp (precompiled .a).
+# Windows: use build_moon_bake.ps1 instead.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 EREBUS_CPP="${EREBUS_CPP:-$HOME/Desktop/Erebus/thirdparty/godot-cpp}"

@@ -18,13 +18,17 @@ explicitly asks for a full wipe including heightmap rebake.
 
 ## Command
 
-From repo root:
+Editor: **Project → Tools → Regolith → Clear Save (keep heightmap)**.
+
+From repo root (headless):
 
 ```bash
 ./run.sh --headless --script res://scripts/tools/clear_moon_progress.gd
+# Windows: .\run.ps1 --headless --script res://scripts/tools/clear_moon_progress.gd
 ```
 
-Script: `scripts/tools/clear_moon_progress.gd`.
+Logic: `scripts/tools/moon_dev_tools.gd` (`MoonDevTools.clear_progress`).
+Headless entry: `scripts/tools/clear_moon_progress.gd`.
 
 ## What it removes / keeps
 

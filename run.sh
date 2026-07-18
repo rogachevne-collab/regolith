@@ -12,6 +12,22 @@ pick_godot() {
 		echo "/Applications/Godot.app/Contents/MacOS/Godot"
 		return
 	fi
+	# Windows (native / Git Bash / MSYS): prefer Y:\Godot 4.7.1
+	for candidate in \
+		"/y/Godot/Godot_v4.7.1-stable_win64_console.exe" \
+		"/Y/Godot/Godot_v4.7.1-stable_win64_console.exe" \
+		"Y:/Godot/Godot_v4.7.1-stable_win64_console.exe" \
+		"Y:\\Godot\\Godot_v4.7.1-stable_win64_console.exe" \
+		"/y/Godot/Godot_v4.7.1-stable_win64.exe" \
+		"/Y/Godot/Godot_v4.7.1-stable_win64.exe" \
+		"Y:/Godot/Godot_v4.7.1-stable_win64.exe" \
+		"Y:\\Godot\\Godot_v4.7.1-stable_win64.exe"
+	do
+		if [[ -x "$candidate" || -f "$candidate" ]]; then
+			echo "$candidate"
+			return
+		fi
+	done
 	if command -v godot >/dev/null 2>&1; then
 		command -v godot
 		return
@@ -21,8 +37,8 @@ pick_godot() {
 
 GODOT_BIN="$(pick_godot)"
 if [[ -z "$GODOT_BIN" ]]; then
-	echo "Stock Godot 4.5+ not found." >&2
-	echo "Install Godot or set GODOT=/path/to/Godot" >&2
+	echo "Stock Godot 4.7+ not found." >&2
+	echo "Install Godot 4.7.1 (Windows: Y:\\Godot\\) or set GODOT=/path/to/Godot" >&2
 	exit 1
 fi
 
