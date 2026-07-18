@@ -34,6 +34,7 @@ ADR. Интеграция в Erebus — через Erebus Lite addon, когда
 | id элементов, топология, structural commands | «Identity и topology (Kernel v0)» |
 | строительство, прочность, ремонт | «Строительство, прочность и ремонт» |
 | кинетический удар, разрушение, упор актуатора | «Кинетический удар (Impact Destruction v0)» |
+| метеориты, падение, кратер, debug spawn | «Метеориты v0»; `specs/METEORITES-V0.md` |
 | логи, инспекция, отладка симуляции | «Диагностируемость» |
 | скафандр (кислород, энергия) | «Состояние скафандра (SuitState)» |
 | бюджеты производительности | «Производительность» |
@@ -782,6 +783,16 @@ carve идёт в окне насыщения до `OVERLOADED`. Subgrid immunit
 
 PoC-спеки impact: `docs/specs/IMPACT-DESTRUCTION-V0.md` (база),
 `docs/specs/KINETIC-INTERACTION-V1.md` (актуаторы, carriage, sustained).
+
+### Метеориты v0
+
+Редкое environment-событие на planetoid: падающее тело → удар о voxel terrain →
+кратер. Не Assembly и не `ImpactResolver`: планировщик спавнит `RigidBody3D`,
+Jolt ведёт полёт; при первом контакте с terrain вызывается мировая операция
+`terrain_carve` (sphere stamp) через `WorldCommandGateway`. Yield как у kinetic
+impact — грунт исчезает. Настройки интервала, offset, высоты, размера кратера и
+debug-спавна рядом с игроком — на узле `MeteoriteSystem`
+(`docs/specs/METEORITES-V0.md`).
 
 ## Диагностируемость
 
