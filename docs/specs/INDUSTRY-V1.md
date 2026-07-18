@@ -222,8 +222,10 @@ max_addable  = (capacity_l - used_l) / volume_per_unit_l
 | `construction_component` | Precision-деталь (стройка, сварка, industry BOM) |
 
 Каждый `resource_id` в recipes — `item_id` из § Система предметов. Recipe I/O
-остаётся в amount; volume и mass derived через ItemCatalog. Отдельный `.tres`
-catalog может появиться позже без смены команд.
+остаётся в amount; volume и mass derived через ItemCatalog. Authoritative
+fixture-значения ItemCatalog / Recipe / capacities / drill tuning вынесены в
+`resources/balance/game_balance.json` (`docs/specs/GAME-BALANCE-V0.md`) без
+смены команд.
 
 ## Dual-path ISRU
 

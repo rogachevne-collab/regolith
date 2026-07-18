@@ -8,6 +8,7 @@ var _fingerprints: Dictionary = {}
 func register(archetype: ElementArchetype) -> bool:
 	if archetype == null or archetype.archetype_id.is_empty():
 		return false
+	GameBalance.apply_element(archetype)
 	var archetype_id := archetype.archetype_id
 	var fingerprint := fingerprint_of(archetype)
 	if _definitions.has(archetype_id):

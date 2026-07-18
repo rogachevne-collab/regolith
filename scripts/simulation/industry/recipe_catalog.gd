@@ -1,52 +1,22 @@
 class_name RecipeCatalog
 extends RefCounted
 
+## Recipe accessors. Authoritative values live in
+## `res://resources/balance/game_balance.json` (Game Balance v0).
+
 const EPSILON := 0.000001
 
 const MACHINE_PROCESSOR := "processor"
 const MACHINE_FABRICATOR := "fabricator"
 
-const RECIPES: Dictionary = {
-	"crush_regolith": {
-		"machine": MACHINE_PROCESSOR,
-		"inputs": {"raw_regolith": 1.0},
-		"outputs": {"regolith_fines": 1.0},
-		"duration_s": 6.0,
-		"power_w": 200.0,
-	},
-	"sinter_basalt": {
-		"machine": MACHINE_PROCESSOR,
-		"inputs": {"regolith_fines": 2.0},
-		"outputs": {"sintered_basalt": 1.0},
-		"duration_s": 8.0,
-		"power_w": 250.0,
-	},
-	"calcine_fines": {
-		"machine": MACHINE_PROCESSOR,
-		"inputs": {"regolith_fines": 2.0},
-		"outputs": {"calcined_oxide": 1.0},
-		"duration_s": 10.0,
-		"power_w": 400.0,
-	},
-	"reduce_oxide": {
-		"machine": MACHINE_FABRICATOR,
-		"inputs": {"calcined_oxide": 1.0},
-		"outputs": {"metal_ingot": 1.0},
-		"duration_s": 12.0,
-		"power_w": 600.0,
-	},
-	"sinter_component": {
-		"machine": MACHINE_FABRICATOR,
-		"inputs": {"metal_ingot": 1.0},
-		"outputs": {"construction_component": 1.0},
-		"duration_s": 10.0,
-		"power_w": 500.0,
-	},
-}
+## Compatibility alias for callers that still iterate `RecipeCatalog.RECIPES`.
+static var RECIPES: Dictionary:
+	get:
+		return GameBalance.recipes()
 
 
 static func has_recipe(recipe_id: String) -> bool:
-	return RECIPES.has(recipe_id)
+	return GameBalance.recipes().has(recipe_id)
 
 
 static func recipe_ids_for_machine(for_machine_id: String) -> PackedStringArray:
@@ -58,7 +28,7 @@ static func recipe_ids_for_machine(for_machine_id: String) -> PackedStringArray:
 
 
 static func get_recipe(recipe_id: String) -> Dictionary:
-	var recipe: Variant = RECIPES.get(recipe_id, {})
+	var recipe: Variant = GameBalance.recipes().get(recipe_id, {})
 	if recipe is Dictionary:
 		return recipe
 	return {}
@@ -89,19 +59,16 @@ static func power_w(recipe_id: String) -> float:
 
 
 static func default_recipe_for_machine(for_machine_id: String) -> String:
-	var defaults: Variant = IndustryArchetypeProfile.DEFAULT_RECIPES.get(
-		for_machine_id,
-		""
-	)
-	return str(defaults)
+	var defaults: Variant = GameBalance.industry().get("default_recipes", {})
+	if defaults is Dictionary:
+		return str((defaults as Dictionary).get(for_machine_id, ""))
+	return ""
 
 
 static func _sorted_recipe_ids() -> PackedStringArray:
-	var ids: Array = RECIPES.keys()
+	var ids: Array = GameBalance.recipes().keys()
 	ids.sort()
 	var result := PackedStringArray()
 	for recipe_id: Variant in ids:
 		result.append(str(recipe_id))
 	return result
-
-

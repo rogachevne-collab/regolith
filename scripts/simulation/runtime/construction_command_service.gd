@@ -1047,7 +1047,7 @@ static func weld_element(world,
 			)
 		var integrity_per_component := (
 			archetype.max_integrity
-			* SimulationElement.WELD_REPAIR_INTEGRITY_FRACTION
+			* SimulationElement.weld_repair_integrity_fraction()
 		)
 		var material_amount := minf(
 			command.max_material_amount,
@@ -1272,7 +1272,7 @@ static func dismantle_element(world,
 	return world._remove_element_from_topology(
 		element,
 		command.command_id,
-		0.5,
+		GameBalance.construction_float("dismantle_refund_fraction", 0.5),
 		store
 	)
 

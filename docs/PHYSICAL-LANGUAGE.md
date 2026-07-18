@@ -25,6 +25,7 @@ ADR. Интеграция в Erebus — через Erebus Lite addon, когда
 | Control Graph (визуальная автоматика) | «Примитивы» → «Control Graph»; `specs/CONTROL-GRAPH-V0.md` |
 | Network, Flow, Store (сети и потоки) | «Примитивы» → «Network, Flow и Store» |
 | Resource, Recipe, производство | «Примитивы» → «Resource, Recipe и производство» |
+| баланс / стоимость / масса / тюнинг буров и актуаторов | `specs/GAME-BALANCE-V0.md`; cheatsheet `game-balance` |
 | Volume, Atmosphere (герметичность) | «Примитивы» → «Volume и Atmosphere» |
 | Blueprint (чертежи, baked) | «Примитивы» → «Blueprint» |
 | id элементов, топология, structural commands | «Identity и topology (Kernel v0)» |
@@ -576,7 +577,9 @@ store_mass_kg  = Σ(amount[item_id] × mass_per_unit_kg)
 `consumable` и `bottle` — discrete. Player tools — unique instances (не stack
 count); hotbar ссылается на `instance_id`. См. `docs/specs/INDUSTRY-V1.md`
 § Player tool instances и hotbar. Полный fixture-каталог и ёмкости Industry
-v1 определены в `docs/specs/INDUSTRY-V1.md` § Система предметов.
+v1 определены в `docs/specs/INDUSTRY-V1.md` § Система предметов. Authoritative
+числа (items, recipes, capacities, drill/actuator tuning, BOM/mass) живут в
+`resources/balance/game_balance.json` — см. `docs/specs/GAME-BALANCE-V0.md`.
 
 `ResourceType` — устаревшее имя для ItemType в старых командах и fixtures;
 новые доменные контракты используют `item_id` и `ItemType`. Рецепт по-прежнему

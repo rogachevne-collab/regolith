@@ -5,28 +5,22 @@ const PLAYER_STORE_ID := "player"
 const ELEMENT_STORE_PREFIX := "element:"
 const BUFFER_STORE_PREFIX := "buffer:"
 
-## Fresh-world player cargo fixture for manual playtest (INDUSTRY-V1 § Player store).
-## Volumes must fit `player_carry_capacity_l` together with `PlayerInventoryRegistry`
-## starter tool instances (25 L); current mix uses 72.6 L of store + 25 L tools.
-const PLAYER_STARTER_RESOURCES: Dictionary = {
-	"raw_regolith": 6.0,
-	"regolith_fines": 6.0,
-	"sintered_basalt": 4.0,
-	"calcined_oxide": 3.0,
-	"metal_ingot": 3.0,
-	"construction_component": 12.0,
-}
+## Fresh-world / playtest cargo — authoritative values in Game Balance v0.
+static var PLAYER_STARTER_RESOURCES: Dictionary:
+	get:
+		var resources: Variant = GameBalance.starter().get("player_resources", {})
+		return resources if resources is Dictionary else {}
 
-## Dev playtest cargo — fills player store on world entry when enabled in bootstrap.
-const PLAYTEST_PLAYER_CARRY_CAPACITY_L := 2000.0
-const PLAYTEST_PLAYER_RESOURCES: Dictionary = {
-	"raw_regolith": 250.0,
-	"regolith_fines": 150.0,
-	"sintered_basalt": 60.0,
-	"calcined_oxide": 40.0,
-	"metal_ingot": 50.0,
-	"construction_component": 300.0,
-}
+static var PLAYTEST_PLAYER_CARRY_CAPACITY_L: float:
+	get:
+		return float(
+			GameBalance.starter().get("playtest_carry_capacity_l", 2000.0)
+		)
+
+static var PLAYTEST_PLAYER_RESOURCES: Dictionary:
+	get:
+		var resources: Variant = GameBalance.starter().get("playtest_resources", {})
+		return resources if resources is Dictionary else {}
 
 
 static func element_store_id(element_id: int) -> String:

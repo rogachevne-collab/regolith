@@ -17,7 +17,9 @@ var installed_materials: Dictionary = {}
 ## Structural integrity at placement (1% of max_integrity).
 const PLACEMENT_STRUCTURAL_FRACTION := 0.01
 ## Integrity restored per construction_component when BOM is already complete.
-const WELD_REPAIR_INTEGRITY_FRACTION := 0.25
+## Authoritative value: Game Balance `construction.weld_repair_integrity_fraction`.
+static func weld_repair_integrity_fraction() -> float:
+	return GameBalance.construction_float("weld_repair_integrity_fraction", 0.25)
 # Persistent record of whether this block was found resting on / embedded in the
 # voxel terrain. Set at placement and re-verified on structural split/dismantle
 # (terrain is destructible). Drives ground anchoring so a construction keeps every
