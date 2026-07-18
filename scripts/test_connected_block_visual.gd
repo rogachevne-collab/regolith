@@ -1,11 +1,13 @@
 extends Node
 
+const _HeadlessTestHarness := preload("res://scripts/testing/headless_test_harness.gd")
 
 func _ready() -> void:
 	call_deferred("_run")
 
 
 func _run() -> void:
+	_HeadlessTestHarness.arm_watchdog(self, "CONNECTED-BLOCK-VISUAL-POC")
 	if not _test_isolated_mask_and_mesh():
 		return
 	if not _test_mesh_winding_and_normals():

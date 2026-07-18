@@ -1,11 +1,13 @@
 extends Node
 
+const _HeadlessTestHarness := preload("res://scripts/testing/headless_test_harness.gd")
 
 func _ready() -> void:
 	call_deferred("_run_tests")
 
 
 func _run_tests() -> void:
+	_HeadlessTestHarness.arm_watchdog(self, "CONSTRUCTION-DAMAGE-V1")
 	var tests: Array[Callable] = [
 		_test_partial_damage_remains,
 		_test_lethal_damage_removes_element_without_refund,

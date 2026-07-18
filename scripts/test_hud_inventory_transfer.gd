@@ -1,4 +1,6 @@
 extends Node
+
+const _HeadlessTestHarness := preload("res://scripts/testing/headless_test_harness.gd")
 ## Headless pure-logic gate for terminal inventory drag payload and slot mapping
 ## (INDUSTRY-V1 § Terminal inventory, Phase 2b).
 
@@ -10,6 +12,7 @@ func _ready() -> void:
 
 
 func _run() -> void:
+	_HeadlessTestHarness.arm_watchdog(self, "HUD-INVENTORY-TRANSFER")
 	if not _test_half_transfer_amounts():
 		_abort()
 		return

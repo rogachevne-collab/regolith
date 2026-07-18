@@ -1,11 +1,13 @@
 extends Node
 
+const _HeadlessTestHarness := preload("res://scripts/testing/headless_test_harness.gd")
 
 func _ready() -> void:
 	call_deferred("_run")
 
 
 func _run() -> void:
+	_HeadlessTestHarness.arm_watchdog(self, "INDUSTRY-PORTS-V1")
 	if not _test_distance_pair_across_assemblies():
 		return
 	if not _test_overlength_rejected():

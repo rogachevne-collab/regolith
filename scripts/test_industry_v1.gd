@@ -1,5 +1,6 @@
 extends Node
 
+const _HeadlessTestHarness := preload("res://scripts/testing/headless_test_harness.gd")
 ## Headless acceptance scaffold for docs/specs/INDUSTRY-V1.md.
 ## Uses test-only fixtures; does not modify production archetypes or runtime.
 
@@ -92,6 +93,7 @@ func _ready() -> void:
 
 
 func _run_tests() -> void:
+	_HeadlessTestHarness.arm_watchdog(self, "INDUSTRY-V1", 30.0)
 	var tests: Array[Callable] = [
 		_test_resource_catalog_contract,
 		_test_capacity_store_no_overflow,

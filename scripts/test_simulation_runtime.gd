@@ -1,5 +1,6 @@
 extends Node
 
+const _HeadlessTestHarness := preload("res://scripts/testing/headless_test_harness.gd")
 const FIXTURE := preload(
 	"res://resources/blueprints/baked/kernel_fixture_valid.tres"
 )
@@ -16,6 +17,7 @@ func _ready() -> void:
 
 
 func _run_tests() -> void:
+	_HeadlessTestHarness.arm_watchdog(self, "KERNEL-RUNTIME-V0")
 	var tests: Array[Callable] = [
 		_test_typed_spawn_and_unique_ids,
 		_test_grid_transform_roundtrip,

@@ -1,5 +1,6 @@
 extends Node3D
 
+const _HeadlessTestHarness := preload("res://scripts/testing/headless_test_harness.gd")
 const PISTON_BASE := preload(
 	"res://resources/archetypes/slice01/piston_base.tres"
 )
@@ -8,19 +9,12 @@ const PISTON_HEAD := preload(
 )
 
 
-const TEST_WATCHDOG_SEC := 25.0
-
-
 func _ready() -> void:
 	call_deferred("_run_tests")
 
 
 func _run_tests() -> void:
-	# Script errors inside an awaited test abort that coroutine without
-	# quit(); without a watchdog the headless process prints FPS forever.
-	get_tree().create_timer(TEST_WATCHDOG_SEC).timeout.connect(
-		_on_test_watchdog_timeout
-	)
+	_HeadlessTestHarness.arm_watchdog(self, "KINETIC-INTERACTION-V1", 25.0)
 	var tests: Array[Callable] = [
 		_test_damage_scales_with_impulse,
 		_test_weak_impulse_ignored,
@@ -1027,18 +1021,6 @@ func _seed_flat_terrain(
 					VoxelBuffer.CHANNEL_SDF
 				)
 	return terrain.try_set_block_data(block_pos, buffer)
-
-
-func _on_test_watchdog_timeout() -> void:
-	push_error(
-		"KINETIC-INTERACTION-V1: FAIL watchdog timeout after %.0fs"
-		% TEST_WATCHDOG_SEC
-	)
-	print(
-		"KINETIC-INTERACTION-V1: FAIL watchdog timeout after %.0fs"
-		% TEST_WATCHDOG_SEC
-	)
-	get_tree().quit(1)
 
 
 func _fail(reason: String) -> bool:

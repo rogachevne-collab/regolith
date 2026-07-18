@@ -1,4 +1,6 @@
 extends Node
+
+const _HeadlessTestHarness := preload("res://scripts/testing/headless_test_harness.gd")
 ## Headless layout gate for the BlockPalette overlay (docs/specs/HUD-UI-01.md
 ## Phase 4). Asserts clipped scroll layout, readable Cyrillic labels, and drag
 ## payload contract without driving the drag gesture itself.
@@ -12,6 +14,7 @@ func _ready() -> void:
 
 
 func _run() -> void:
+	_HeadlessTestHarness.arm_watchdog(self, "HUD-PALETTE-LAYOUT")
 	if not _test_labels():
 		return
 	if not await _test_layout_at_default_viewport():

@@ -49,8 +49,12 @@ physics/gameplay/UI scenes are in `EXTRA=()` and run only with `--all`.
 2. Iterate with `./tests/run_one.sh test_<name>` (never claim pass without executing)
 3. **Do not wait on hung Godot.** `run_one.sh` hard-kills after
    `REGOLITH_TEST_TIMEOUT_SEC` (default 20s) and aborts immediately on
-   `SCRIPT ERROR` / `Parse Error`. If a scene is still running past ~20s, treat
-   it as FAIL and inspect the filtered output — do not sit on the process.
+   `SCRIPT ERROR` / `Parse Error`. Headless suites preload
+   `scripts/testing/headless_test_harness.gd` and call
+   `_HeadlessTestHarness.arm_watchdog` so a stuck await still `quit(1)`.
+   If a scene is still running past ~20s, treat it as FAIL and inspect the
+   filtered output — do not sit on the process. New headless tests must arm
+   the watchdog at suite start.
 4. Before "done"/commit: `./tests/run_tests.sh` once **only if** the change
    touched simulation-kernel logic (or added/changed a kernel test). Skip for
    gameplay, bake, HUD, VFX, docs-only, etc. — use the matching DoD row in

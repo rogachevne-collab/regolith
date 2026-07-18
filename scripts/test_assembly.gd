@@ -1,5 +1,6 @@
 extends Node3D
 
+const _HeadlessTestHarness := preload("res://scripts/testing/headless_test_harness.gd")
 @onready var _assembly: RigidBody3D = $Assembly
 
 var _fragments: Array[RigidBody3D] = []
@@ -23,6 +24,7 @@ func _ready() -> void:
 
 
 func _run_test() -> void:
+	_HeadlessTestHarness.arm_watchdog(self, "POC2")
 	await get_tree().create_timer(4.0).timeout
 	if _assembly.linear_velocity.length() >= 0.05:
 		_fail(

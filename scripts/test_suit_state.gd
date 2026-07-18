@@ -1,4 +1,6 @@
 extends Node
+
+const _HeadlessTestHarness := preload("res://scripts/testing/headless_test_harness.gd")
 ## Headless PoC gate for the authoritative SuitState (docs/specs/HUD-UI-01.md
 ## Phase 2). Asserts normalized fractions, clamping at 0..max, the change signal
 ## firing (and staying quiet on no-op), and the placeholder drain/regen stub.
@@ -13,6 +15,7 @@ func _ready() -> void:
 
 
 func _run() -> void:
+	_HeadlessTestHarness.arm_watchdog(self, "SUITSTATE")
 	if not _test_fractions():
 		return
 	if not _test_clamping():
