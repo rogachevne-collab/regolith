@@ -12,17 +12,17 @@ const _Field := preload(
 	"res://scripts/simulation/runtime/moon_material_field.gd"
 )
 
-const PREVIEW_W := 192
-const PREVIEW_H := 96
+const PREVIEW_W := 384
+const PREVIEW_H := 192
 const SAMPLE_DEPTHS_M: PackedFloat32Array = [2.0, 5.0, 9.0, 14.0]
 
-## Soft tints over heightmap relief (alpha kept moderate).
+## Soft stained patches — muted so DEM relief stays the hero.
 const DEPOSIT_COLORS: Dictionary = {
-	_Catalog.MAT_ILMENITE: Color(0.62, 0.18, 0.32, 0.58),
-	_Catalog.MAT_ANORTHITE: Color(0.82, 0.86, 0.95, 0.52),
-	_Catalog.MAT_OLIVINE: Color(0.42, 0.68, 0.28, 0.52),
-	_Catalog.MAT_PYROXENE: Color(0.78, 0.48, 0.22, 0.52),
-	_Catalog.MAT_ICE_LENS: Color(0.35, 0.78, 0.95, 0.60),
+	_Catalog.MAT_ILMENITE: Color(0.62, 0.22, 0.30, 0.32),
+	_Catalog.MAT_ANORTHITE: Color(0.86, 0.88, 0.92, 0.28),
+	_Catalog.MAT_OLIVINE: Color(0.40, 0.58, 0.30, 0.30),
+	_Catalog.MAT_PYROXENE: Color(0.72, 0.48, 0.28, 0.30),
+	_Catalog.MAT_ICE_LENS: Color(0.40, 0.72, 0.88, 0.34),
 }
 
 
@@ -52,7 +52,11 @@ static func build_texture(spawn_world: Vector3 = Vector3.ZERO) -> ImageTexture:
 			var dir := MoonHeightmapUtil.direction_from_node_uv(u, v)
 			var material_id := sample_near_surface(field, dir, spawn_world)
 			img.set_pixel(x, y, color_for(material_id))
-	return ImageTexture.create_from_image(img)
+	## Soft stains (two passes) — avoid blocky neon tiles on the globe.
+	img = _soften_patches(img)
+	img = _soften_patches(img)
+	var tex := ImageTexture.create_from_image(img)
+	return tex
 
 
 static func sample_near_surface(
@@ -97,3 +101,33 @@ static func legend_rows() -> Array[Dictionary]:
 			"color": color_for(material_id),
 		})
 	return rows
+
+
+static func _soften_patches(src: Image) -> Image:
+	var w := src.get_width()
+	var h := src.get_height()
+	var out := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	for y in h:
+		for x in w:
+			var acc := Color(0, 0, 0, 0)
+			var weight := 0.0
+			for oy in range(-1, 2):
+				for ox in range(-1, 2):
+					var xx := clampi(x + ox, 0, w - 1)
+					var yy := clampi(y + oy, 0, h - 1)
+					var c := src.get_pixel(xx, yy)
+					if c.a <= 0.001:
+						continue
+					var wgt := 1.0 if ox == 0 and oy == 0 else 0.45
+					acc += Color(c.r * wgt, c.g * wgt, c.b * wgt, c.a * wgt)
+					weight += wgt
+			if weight <= 0.001:
+				out.set_pixel(x, y, Color(0, 0, 0, 0))
+			else:
+				var a := clampf(acc.a / weight, 0.0, 1.0)
+				out.set_pixel(
+					x,
+					y,
+					Color(acc.r / weight, acc.g / weight, acc.b / weight, a)
+				)
+	return out

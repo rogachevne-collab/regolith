@@ -1,26 +1,31 @@
 extends Control
-## "КАРТА ЛУНЫ" overlay (toggle_map / M). Equirectangular planetoid map with
-## coordinates, user markers, loot piles and structure icons. Presentation only
-## — see docs/specs/MAP-UI-01.md.
+## "КАРТА ЛУНЫ" overlay (toggle_map / M). Orthographic satellite globe of the
+## planetoid (displaced crust mesh) + flat XZ fallback for legacy yard.
+## Presentation only — see docs/specs/MAP-UI-01.md.
+
+const _MoonMapGlobe := preload("res://scripts/ui/moon_map_globe.gd")
 
 const PANEL_WIDTH := 920.0
-const PANEL_HEIGHT := 560.0
-const MAP_SIZE := Vector2(640, 320)
-const SIDEBAR_WIDTH := 220.0
+const PANEL_HEIGHT := 640.0
+const MAP_SIZE := Vector2(560, 560)
+const SIDEBAR_WIDTH := 228.0
 const FLAT_HALF_EXTENT_M := 250.0
-const MARKER_HIT_PX := 10.0
+const MARKER_HIT_ARC_M := 22.0
 
 var _gateway: WorldCommandGateway
 var _player: Node
 var _camera: Camera3D
 
+var _dimmer: ColorRect
 var _panel: Panel
 var _panel_overlay: ColorRect
 var _coords_label: Label
 var _cursor_label: Label
 var _hint_label: Label
 var _marker_list: ItemList
-var _map_view: _MapCanvas
+var _globe: Control
+var _flat_view: _FlatMapCanvas
+var _map_host: Control
 var _chk_loot: CheckBox
 var _chk_structures: CheckBox
 var _chk_markers: CheckBox
@@ -34,8 +39,6 @@ var _selected_marker_id := ""
 var _user_markers: Array[Dictionary] = []
 var _overlay_entries: Array[Dictionary] = []
 var _refresh_accum := 0.0
-var _deposit_texture: ImageTexture
-var _deposit_texture_built := false
 var _spawn_world_hint := Vector3.ZERO
 
 
@@ -70,8 +73,10 @@ func _process(delta: float) -> void:
 		_refresh_accum = 0.0
 		_refresh_overlay_entries()
 	_update_coords_readout()
-	if _map_view != null:
-		_map_view.queue_redraw()
+	if _planetoid and _globe != null:
+		_globe.queue_redraw_markers()
+	elif _flat_view != null:
+		_flat_view.queue_redraw()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -100,22 +105,30 @@ func _open_map() -> void:
 	_load_user_markers()
 	_refresh_overlay_entries()
 	_rebuild_marker_list()
-	_ensure_deposit_texture()
-	if _map_view != null:
-		_map_view.planetoid = _planetoid
-		_map_view.ensure_backdrop()
-		_map_view.deposit_texture = _deposit_texture
+	_spawn_world_hint = player_world_position()
+	if _spawn_world_hint.length() <= 0.001:
+		_spawn_world_hint = Vector3(MoonGeometry.SURFACE_RADIUS_M, 0.0, 0.0)
+	_sync_map_mode()
+	if _planetoid and _globe != null:
+		_globe.ensure_built(_spawn_world_hint)
+		_globe.set_deposit_visible(show_deposit_layer())
+		_globe.focus_world(player_world_position())
+		_globe.set_active(true)
 	_apply_open_state()
 
 
 func _close() -> void:
 	_open = false
+	if _globe != null:
+		_globe.set_active(false)
 	_apply_open_state()
 
 
 func _apply_open_state() -> void:
 	if _panel == null:
 		return
+	if _dimmer != null:
+		_dimmer.visible = _open
 	_panel.visible = _open
 	mouse_filter = Control.MOUSE_FILTER_STOP if _open else Control.MOUSE_FILTER_IGNORE
 	if _player != null and _player.has_method("set_gameplay_input_enabled"):
@@ -125,7 +138,23 @@ func _apply_open_state() -> void:
 	)
 
 
+func _sync_map_mode() -> void:
+	if _globe != null:
+		_globe.visible = _planetoid
+	if _flat_view != null:
+		_flat_view.visible = not _planetoid
+		_flat_view.planetoid = false
+
+
 func _build() -> void:
+	_dimmer = ColorRect.new()
+	_dimmer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_dimmer.color = Color(0.01, 0.02, 0.035, 0.82)
+	_dimmer.mouse_filter = Control.MOUSE_FILTER_STOP
+	_dimmer.visible = false
+	_dimmer.gui_input.connect(_on_dimmer_gui_input)
+	add_child(_dimmer)
+
 	_panel = Panel.new()
 	_panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	_panel.clip_contents = true
@@ -162,11 +191,19 @@ func _build() -> void:
 	title_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root_vb.add_child(title_row)
 	title_row.add_child(HudTokens.make_emblem())
+	var title_col := VBoxContainer.new()
+	title_col.add_theme_constant_override("separation", 1)
+	title_col.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	title_row.add_child(title_col)
 	var title := Label.new()
 	title.text = "КАРТА ЛУНЫ"
 	title.theme_type_variation = &"HudTitle"
-	title.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	title_row.add_child(title)
+	title_col.add_child(title)
+	var subtitle := Label.new()
+	subtitle.text = "ОРБИТАЛЬНЫЙ ВИД  ·  Ø1 км  ·  ортографическая проекция"
+	subtitle.theme_type_variation = &"HudSmall"
+	subtitle.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	title_col.add_child(subtitle)
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -194,13 +231,25 @@ func _build() -> void:
 	body.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root_vb.add_child(body)
 
-	_map_view = _MapCanvas.new()
-	_map_view.custom_minimum_size = MAP_SIZE
-	_map_view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_map_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_map_view.planetoid = _planetoid
-	_map_view.owner_panel = self
-	body.add_child(_map_view)
+	_map_host = Control.new()
+	_map_host.custom_minimum_size = MAP_SIZE
+	_map_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_map_host.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_map_host.clip_contents = true
+	body.add_child(_map_host)
+
+	_globe = _MoonMapGlobe.new()
+	_globe.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_globe.owner_panel = self
+	_globe.cursor_world_changed.connect(_on_globe_cursor)
+	_globe.surface_clicked.connect(_on_globe_clicked)
+	_map_host.add_child(_globe)
+
+	_flat_view = _FlatMapCanvas.new()
+	_flat_view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_flat_view.owner_panel = self
+	_flat_view.visible = false
+	_map_host.add_child(_flat_view)
 
 	var sidebar := VBoxContainer.new()
 	sidebar.custom_minimum_size = Vector2(SIDEBAR_WIDTH, 0)
@@ -223,6 +272,7 @@ func _build() -> void:
 	sidebar.add_child(_chk_deposits)
 	sidebar.add_child(_chk_structures)
 	sidebar.add_child(_chk_markers)
+	_chk_deposits.toggled.connect(_on_deposits_toggled)
 
 	_deposit_legend = VBoxContainer.new()
 	_deposit_legend.add_theme_constant_override("separation", 2)
@@ -250,13 +300,19 @@ func _build() -> void:
 	_hint_label.theme_type_variation = &"HudSmall"
 	_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_hint_label.text = (
-		"ЛКМ — метка · ПКМ/Del — удалить · слой «Залежи» — рудные зоны · M/Esc — закрыть"
+		"Тяни глобус — вращение · колёсико — масштаб · ЛКМ — метка · ПКМ/Del — удалить · M/Esc — закрыть"
 	)
 	_hint_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root_vb.add_child(_hint_label)
 
 	_panel_overlay = HudTokens.make_panel_overlay(Vector2(PANEL_WIDTH, PANEL_HEIGHT))
 	_panel.add_child(_panel_overlay)
+	_sync_map_mode()
+
+
+func _on_dimmer_gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		_close()
 
 
 func _make_layer_check(text: String, pressed: bool) -> CheckBox:
@@ -264,10 +320,17 @@ func _make_layer_check(text: String, pressed: bool) -> CheckBox:
 	box.text = text
 	box.button_pressed = pressed
 	box.toggled.connect(func(_v: bool) -> void:
-		if _map_view != null:
-			_map_view.queue_redraw()
+		if _globe != null:
+			_globe.queue_redraw_markers()
+		if _flat_view != null:
+			_flat_view.queue_redraw()
 	)
 	return box
+
+
+func _on_deposits_toggled(pressed: bool) -> void:
+	if _globe != null:
+		_globe.set_deposit_visible(pressed)
 
 
 func _load_user_markers() -> void:
@@ -339,8 +402,12 @@ func _rebuild_marker_list() -> void:
 func _on_marker_list_selected(index: int) -> void:
 	var meta: Variant = _marker_list.get_item_metadata(index)
 	_selected_marker_id = str(meta)
-	if _map_view != null:
-		_map_view.queue_redraw()
+	if _planetoid and _globe != null:
+		for marker: Dictionary in _user_markers:
+			if str(marker["id"]) == _selected_marker_id:
+				_globe.focus_world(marker["position"])
+				break
+		_globe.queue_redraw_markers()
 
 
 func _update_coords_readout() -> void:
@@ -374,7 +441,6 @@ func _current_heading() -> float:
 
 
 static func lat_lon_altitude(world_pos: Vector3) -> Vector3:
-	## Returns (lat_deg, lon_deg, altitude_m). Lon: 0 = -Z (N), + toward +X (E).
 	var r := world_pos.length()
 	if r <= 0.000001:
 		return Vector3.ZERO
@@ -385,44 +451,51 @@ static func lat_lon_altitude(world_pos: Vector3) -> Vector3:
 	return Vector3(lat, lon, alt)
 
 
-func world_to_map_uv(world_pos: Vector3) -> Vector2:
-	if _planetoid:
-		return MoonHeightmapUtil.node_uv_from_direction(world_pos)
-	var origin := Vector3.ZERO
-	if _player != null and is_instance_valid(_player):
-		origin = (_player as Node3D).global_position
-	var u := (world_pos.x - origin.x) / (FLAT_HALF_EXTENT_M * 2.0) + 0.5
-	var v := (world_pos.z - origin.z) / (FLAT_HALF_EXTENT_M * 2.0) + 0.5
-	return Vector2(clampf(u, 0.0, 1.0), clampf(v, 0.0, 1.0))
+func _on_globe_cursor(world_pos: Vector3, inside: bool) -> void:
+	if _cursor_label == null:
+		return
+	if not inside or world_pos.length_squared() < 0.0001:
+		_cursor_label.text = "Курсор: —"
+		return
+	_set_cursor_readout(world_pos)
 
 
-func map_uv_to_world(uv: Vector2) -> Vector3:
-	if _planetoid:
-		var dir := MoonHeightmapUtil.direction_from_node_uv(uv.x, uv.y)
-		return MoonGeometry.surface_point(dir)
-	var origin := Vector3.ZERO
-	if _player != null and is_instance_valid(_player):
-		origin = (_player as Node3D).global_position
-	return Vector3(
-		origin.x + (uv.x - 0.5) * FLAT_HALF_EXTENT_M * 2.0,
-		origin.y,
-		origin.z + (uv.y - 0.5) * FLAT_HALF_EXTENT_M * 2.0,
-	)
+func _on_globe_clicked(world_pos: Vector3, button: MouseButton) -> void:
+	if world_pos.length_squared() < 0.0001:
+		return
+	if button == MOUSE_BUTTON_LEFT:
+		var hit_id := _hit_user_marker_world(world_pos)
+		if not hit_id.is_empty():
+			_selected_marker_id = hit_id
+			_rebuild_marker_list()
+			return
+		_add_marker_at_world(world_pos)
+	elif button == MOUSE_BUTTON_RIGHT:
+		var hit_id_r := _hit_user_marker_world(world_pos)
+		if not hit_id_r.is_empty():
+			_selected_marker_id = hit_id_r
+			_delete_selected_marker()
 
 
 func on_map_cursor(uv: Vector2, inside: bool) -> void:
-	if _cursor_label == null:
-		return
+	## Flat-map path.
 	if not inside:
-		_cursor_label.text = "Курсор: —"
+		if _cursor_label != null:
+			_cursor_label.text = "Курсор: —"
 		return
+	_set_cursor_readout(map_uv_to_world(uv))
+
+
+func on_map_click(uv: Vector2, button: MouseButton) -> void:
+	## Flat-map path.
 	var world := map_uv_to_world(uv)
+	_on_globe_clicked(world, button)
+
+
+func _set_cursor_readout(world: Vector3) -> void:
 	var deposit_id := ""
 	if _planetoid and show_deposit_layer():
-		deposit_id = MoonMapDepositOverlay.sample_at_world(
-			world,
-			_spawn_world_hint
-		)
+		deposit_id = MoonMapDepositOverlay.sample_at_world(world, _spawn_world_hint)
 	var deposit_txt := ""
 	if not deposit_id.is_empty():
 		deposit_txt = "   ·   %s" % MoonMapDepositOverlay.display_name(deposit_id)
@@ -439,42 +512,45 @@ func on_map_cursor(uv: Vector2, inside: bool) -> void:
 		)
 
 
-func on_map_click(uv: Vector2, button: MouseButton) -> void:
-	if button == MOUSE_BUTTON_LEFT:
-		var hit_id := _hit_user_marker(uv)
-		if not hit_id.is_empty():
-			_selected_marker_id = hit_id
-			_rebuild_marker_list()
-			return
-		_add_marker_at_uv(uv)
-	elif button == MOUSE_BUTTON_RIGHT:
-		var hit_id_r := _hit_user_marker(uv)
-		if not hit_id_r.is_empty():
-			_selected_marker_id = hit_id_r
-			_delete_selected_marker()
+func map_uv_to_world(uv: Vector2) -> Vector3:
+	var origin := Vector3.ZERO
+	if _player != null and is_instance_valid(_player):
+		origin = (_player as Node3D).global_position
+	return Vector3(
+		origin.x + (uv.x - 0.5) * FLAT_HALF_EXTENT_M * 2.0,
+		origin.y,
+		origin.z + (uv.y - 0.5) * FLAT_HALF_EXTENT_M * 2.0,
+	)
 
 
-func _hit_user_marker(uv: Vector2) -> String:
-	if _map_view == null or not _chk_markers.button_pressed:
+func world_to_map_uv(world_pos: Vector3) -> Vector2:
+	var origin := Vector3.ZERO
+	if _player != null and is_instance_valid(_player):
+		origin = (_player as Node3D).global_position
+	var u := (world_pos.x - origin.x) / (FLAT_HALF_EXTENT_M * 2.0) + 0.5
+	var v := (world_pos.z - origin.z) / (FLAT_HALF_EXTENT_M * 2.0) + 0.5
+	return Vector2(clampf(u, 0.0, 1.0), clampf(v, 0.0, 1.0))
+
+
+func _hit_user_marker_world(world: Vector3) -> String:
+	if not show_marker_layer():
+		return ""
+	var dir := world.normalized()
+	if dir.length_squared() < 0.0001:
 		return ""
 	var best_id := ""
-	var best_d := MARKER_HIT_PX
-	var map_size := _map_view.size
-	if map_size.x <= 1.0 or map_size.y <= 1.0:
-		map_size = MAP_SIZE
-	var click_px := Vector2(uv.x * map_size.x, uv.y * map_size.y)
+	var best_arc := MARKER_HIT_ARC_M
 	for marker: Dictionary in _user_markers:
-		var muv := world_to_map_uv(marker["position"])
-		var mpx := Vector2(muv.x * map_size.x, muv.y * map_size.y)
-		var d := click_px.distance_to(mpx)
-		if d <= best_d:
-			best_d = d
+		var mdir: Vector3 = (marker["position"] as Vector3).normalized()
+		var ang := acos(clampf(dir.dot(mdir), -1.0, 1.0))
+		var arc_m := ang * MoonGeometry.SURFACE_RADIUS_M
+		if arc_m <= best_arc:
+			best_arc = arc_m
 			best_id = str(marker["id"])
 	return best_id
 
 
-func _add_marker_at_uv(uv: Vector2) -> void:
-	var world := map_uv_to_world(uv)
+func _add_marker_at_world(world: Vector3) -> void:
 	var marker_id := "m:%d" % _next_marker_serial
 	var label := "МЕТКА %d" % _next_marker_serial
 	_next_marker_serial += 1
@@ -486,22 +562,23 @@ func _add_marker_at_uv(uv: Vector2) -> void:
 	_selected_marker_id = marker_id
 	_persist_user_markers()
 	_rebuild_marker_list()
-	if _map_view != null:
-		_map_view.queue_redraw()
+	if _globe != null:
+		_globe.queue_redraw_markers()
 
 
 func _delete_selected_marker() -> void:
 	if _selected_marker_id.is_empty():
 		return
-	for i in range(_user_markers.size() - 1, -1, -1):
-		if str(_user_markers[i]["id"]) == _selected_marker_id:
-			_user_markers.remove_at(i)
-			break
+	var next: Array[Dictionary] = []
+	for marker: Dictionary in _user_markers:
+		if str(marker["id"]) != _selected_marker_id:
+			next.append(marker)
+	_user_markers = next
 	_selected_marker_id = ""
 	_persist_user_markers()
 	_rebuild_marker_list()
-	if _map_view != null:
-		_map_view.queue_redraw()
+	if _globe != null:
+		_globe.queue_redraw_markers()
 
 
 func _rebuild_deposit_legend() -> void:
@@ -511,29 +588,25 @@ func _rebuild_deposit_legend() -> void:
 		child.queue_free()
 	for row: Dictionary in MoonMapDepositOverlay.legend_rows():
 		var line := HBoxContainer.new()
-		line.add_theme_constant_override("separation", 6)
+		line.add_theme_constant_override("separation", 8)
 		line.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		var swatch := ColorRect.new()
-		swatch.custom_minimum_size = Vector2(12, 12)
-		swatch.color = row["color"]
-		swatch.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		line.add_child(swatch)
+		var swatch_wrap := Panel.new()
+		swatch_wrap.custom_minimum_size = Vector2(14, 14)
+		swatch_wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var swatch_sb := StyleBoxFlat.new()
+		var c: Color = row["color"]
+		swatch_sb.bg_color = Color(c.r, c.g, c.b, 0.95)
+		swatch_sb.border_color = Color(HudTokens.COL_BORDER, 0.9)
+		swatch_sb.set_border_width_all(1)
+		swatch_sb.set_corner_radius_all(2)
+		swatch_wrap.add_theme_stylebox_override("panel", swatch_sb)
+		line.add_child(swatch_wrap)
 		var lab := Label.new()
 		lab.text = str(row["label"])
 		lab.theme_type_variation = &"HudSmall"
 		lab.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		line.add_child(lab)
 		_deposit_legend.add_child(line)
-
-
-func _ensure_deposit_texture() -> void:
-	if _deposit_texture_built and _deposit_texture != null:
-		return
-	_spawn_world_hint = player_world_position()
-	if _spawn_world_hint.length() <= 0.001:
-		_spawn_world_hint = Vector3(MoonGeometry.SURFACE_RADIUS_M, 0.0, 0.0)
-	_deposit_texture = MoonMapDepositOverlay.build_texture(_spawn_world_hint)
-	_deposit_texture_built = true
 
 
 func show_loot_layer() -> bool:
@@ -550,10 +623,6 @@ func show_structure_layer() -> bool:
 
 func show_marker_layer() -> bool:
 	return _chk_markers != null and _chk_markers.button_pressed
-
-
-func deposit_texture() -> Texture2D:
-	return _deposit_texture
 
 
 func player_world_position() -> Vector3:
@@ -592,67 +661,16 @@ func entry_label(entry: Dictionary) -> String:
 	return str(entry.get("id", ""))
 
 
-## Drawing surface for the map image + markers.
-class _MapCanvas:
+## Legacy flat XZ map for flat_moon yard.
+class _FlatMapCanvas:
 	extends Control
 
 	var owner_panel: Node
-	var planetoid := true
-	var deposit_texture: Texture2D
-	var _backdrop: Texture2D
-	var _backdrop_tried := false
+	var planetoid := false
 
 	func _ready() -> void:
 		mouse_filter = Control.MOUSE_FILTER_STOP
 		clip_contents = true
-
-	func ensure_backdrop() -> void:
-		if _backdrop != null or _backdrop_tried:
-			return
-		_backdrop_tried = true
-		if not planetoid:
-			return
-		var path := MoonHeightmapUtil.heightmap_path()
-		if not FileAccess.file_exists(path):
-			return
-		var img := Image.new()
-		if img.load(path) != OK or img.get_width() <= 0:
-			return
-		_backdrop = _heightmap_preview_texture(img)
-		queue_redraw()
-
-	func _heightmap_preview_texture(src: Image) -> ImageTexture:
-		var work: Image = src.duplicate()
-		## Small preview — full EXR is huge; UI only needs a soft relief cue.
-		const PREVIEW_W := 512
-		const PREVIEW_H := 256
-		if work.get_width() != PREVIEW_W or work.get_height() != PREVIEW_H:
-			work.resize(PREVIEW_W, PREVIEW_H, Image.INTERPOLATE_TRILINEAR)
-		var w: int = work.get_width()
-		var h: int = work.get_height()
-		var min_h := INF
-		var max_h := -INF
-		## Strided range pass keeps first open snappy on soft render.
-		for y in range(0, h, 2):
-			for x in range(0, w, 2):
-				var v: float = work.get_pixel(x, y).r
-				min_h = minf(min_h, v)
-				max_h = maxf(max_h, v)
-		var span := maxf(max_h - min_h, 0.0001)
-		var out := Image.create(w, h, false, Image.FORMAT_RGB8)
-		for y in h:
-			for x in w:
-				var t: float = (work.get_pixel(x, y).r - min_h) / span
-				out.set_pixel(
-					x,
-					y,
-					Color(
-						lerpf(0.08, 0.55, t),
-						lerpf(0.07, 0.48, t),
-						lerpf(0.06, 0.40, t)
-					)
-				)
-		return ImageTexture.create_from_image(out)
 
 	func _gui_input(event: InputEvent) -> void:
 		if owner_panel == null:
@@ -663,8 +681,7 @@ class _MapCanvas:
 		elif event is InputEventMouseButton and event.pressed:
 			if not _inside(event.position):
 				return
-			var uv2 := _event_uv(event.position)
-			owner_panel.call("on_map_click", uv2, event.button_index)
+			owner_panel.call("on_map_click", _event_uv(event.position), event.button_index)
 			accept_event()
 
 	func _event_uv(local_pos: Vector2) -> Vector2:
@@ -681,30 +698,21 @@ class _MapCanvas:
 
 	func _draw() -> void:
 		var rect := Rect2(Vector2.ZERO, size)
-		draw_rect(rect, Color(0.03, 0.045, 0.06, 1.0), true)
-		if _backdrop != null:
-			draw_texture_rect(_backdrop, rect, false)
-		else:
-			_draw_fallback_grid()
-		if (
-			deposit_texture != null
-			and owner_panel != null
-			and bool(owner_panel.call("show_deposit_layer"))
-		):
-			draw_texture_rect(deposit_texture, rect, false)
-		_draw_lon_lat_grid()
+		draw_rect(rect, Color(0.04, 0.05, 0.06, 1.0), true)
+		var grid := Color(HudTokens.COL_BORDER, 0.45)
+		for i in 9:
+			var t := float(i) / 8.0
+			draw_line(Vector2(t * size.x, 0.0), Vector2(t * size.x, size.y), grid, 1.0)
+			draw_line(Vector2(0.0, t * size.y), Vector2(size.x, t * size.y), grid, 1.0)
 		if owner_panel == null:
 			return
-		var col_structure := HudTokens.COL_OK
-		var col_loot := HudTokens.COL_WARNING
-		var col_player := HudTokens.COL_VALID
 		if bool(owner_panel.call("show_structure_layer")):
 			for entry: Dictionary in owner_panel.call("overlay_entries"):
 				if str(entry.get("kind", "")) != "structure":
 					continue
 				_draw_dot(
 					owner_panel.call("world_to_map_uv", entry["position"]),
-					col_structure,
+					HudTokens.COL_OK,
 					3.5
 				)
 		if bool(owner_panel.call("show_loot_layer")):
@@ -713,84 +721,27 @@ class _MapCanvas:
 					continue
 				_draw_dot(
 					owner_panel.call("world_to_map_uv", entry["position"]),
-					col_loot,
+					HudTokens.COL_WARNING,
 					4.5
 				)
 		if bool(owner_panel.call("show_marker_layer")):
 			for marker: Dictionary in owner_panel.call("user_markers"):
-				var selected := (
-					str(marker["id"]) == str(owner_panel.call("selected_marker_id"))
-				)
-				_draw_user_marker(
+				_draw_dot(
 					owner_panel.call("world_to_map_uv", marker["position"]),
-					selected
+					HudTokens.COL_VALID,
+					5.0
 				)
-		var player_uv: Vector2 = owner_panel.call(
-			"world_to_map_uv",
-			owner_panel.call("player_world_position")
+		_draw_dot(
+			owner_panel.call(
+				"world_to_map_uv",
+				owner_panel.call("player_world_position")
+			),
+			HudTokens.COL_VALID,
+			4.0
 		)
-		_draw_player(player_uv, float(owner_panel.call("player_heading")))
-
-	func _draw_fallback_grid() -> void:
-		var grid := Color(HudTokens.COL_BORDER, 0.45)
-		for i in 9:
-			var t := float(i) / 8.0
-			draw_line(Vector2(t * size.x, 0.0), Vector2(t * size.x, size.y), grid, 1.0)
-			draw_line(Vector2(0.0, t * size.y), Vector2(size.x, t * size.y), grid, 1.0)
-
-	func _draw_lon_lat_grid() -> void:
-		## Cardinal ticks: node_uv of N/E/S/W (MAP-UI-01 / heightmap convention).
-		## N(-Z)→u=0.25, E(+X)→0.5, S(+Z)→0.75, W(-X)→0.0
-		var font := get_theme_default_font()
-		if font == null:
-			font = ThemeDB.fallback_font
-		var tick := Color(HudTokens.COL_DIM, 0.35)
-		var cardinal_u := {"С": 0.25, "В": 0.5, "Ю": 0.75, "З": 0.0}
-		for glyph: String in cardinal_u.keys():
-			var u: float = cardinal_u[glyph]
-			var x := u * size.x
-			draw_line(Vector2(x, 0.0), Vector2(x, size.y), tick, 1.0)
-			if font != null:
-				draw_string(
-					font,
-					Vector2(x + 4.0, 14.0),
-					glyph,
-					HORIZONTAL_ALIGNMENT_LEFT,
-					-1,
-					12,
-					HudTokens.COL_DIM
-				)
-		draw_line(
-			Vector2(0.0, size.y * 0.5),
-			Vector2(size.x, size.y * 0.5),
-			tick,
-			1.0
-		)
+		draw_rect(rect, Color(HudTokens.COL_OK, 0.5), false, 1.0)
 
 	func _draw_dot(uv: Vector2, color: Color, radius: float) -> void:
 		var p := Vector2(uv.x * size.x, uv.y * size.y)
-		draw_circle(p, radius + 1.2, Color(0, 0, 0, 0.55))
+		draw_circle(p, radius + 1.5, Color(0, 0, 0, 0.55))
 		draw_circle(p, radius, color)
-
-	func _draw_user_marker(uv: Vector2, selected: bool) -> void:
-		var p := Vector2(uv.x * size.x, uv.y * size.y)
-		var r := 6.0 if selected else 5.0
-		var fill := Color(0.85, 0.95, 1.0, 1.0 if selected else 0.85)
-		var points := PackedVector2Array([
-			p + Vector2(0, -r),
-			p + Vector2(r * 0.7, r * 0.6),
-			p + Vector2(-r * 0.7, r * 0.6),
-		])
-		draw_colored_polygon(points, fill)
-		var outline := points.duplicate()
-		outline.append(points[0])
-		draw_polyline(outline, HudTokens.COL_VALID, 1.2, true)
-
-	func _draw_player(uv: Vector2, heading_deg: float) -> void:
-		var p := Vector2(uv.x * size.x, uv.y * size.y)
-		var col := HudTokens.COL_VALID
-		draw_circle(p, 5.0, Color(0, 0, 0, 0.65))
-		draw_circle(p, 3.5, col)
-		var rad := deg_to_rad(heading_deg)
-		var tip := p + Vector2(sin(rad), -cos(rad)) * 12.0
-		draw_line(p, tip, col, 2.0)

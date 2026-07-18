@@ -17,6 +17,9 @@
 и заметные построенные объекты — без debug overlay и без новых доменных типов
 машин.
 
+Карта должна читаться как **спутниковый / орбитальный снимок планеты**
+(ортографический диск), а не как плоская equirect-развёртка.
+
 ## Core principle
 
 Карта — presentation-слой (как остальной HUD):
@@ -25,8 +28,9 @@
   позиции элементов через `WorldCommandGateway`, и **детерминированное поле
   материалов** `MoonMaterialField` (тот же источник, что и yield бура);
 - **не мутирует** simulation / voxel / stores;
-- единственное собственное состояние — эфемерное «открыта/закрыта» и
-  **пользовательские метки** (аннотации игрока, не kernel snapshot).
+- единственное собственное состояние — эфемерное «открыта/закрыта»,
+  **ориентация глобуса** (yaw/pitch/zoom) и **пользовательские метки**
+  (аннотации игрока, не kernel snapshot).
 
 Пользовательские метки сохраняются в `WorldPersistence` (`map_markers` в
 `world_save.json`), рядом с player pose, **вне** `simulation` snapshot.
@@ -37,20 +41,23 @@
 | | |
 |---|---|
 | Сцена | узел `MapPanel` в `scenes/ui/hud_root.tscn` |
-| Скрипт | `scripts/ui/hud_map_panel.gd` |
+| Скрипт | `scripts/ui/hud_map_panel.gd` + `scripts/ui/moon_map_globe.gd` |
 | Input | `toggle_map` (клавиша `M`); закрытие также `release_mouse` (Esc) |
 | Тема | `HudTokens` / `hud_theme.tres` |
 
 ### Проекция (planetoid / `main.tscn`)
 
-- Экваториальная развёртка, совпадающая с panorama UV heightmap
-  (`MoonHeightmapUtil.node_uv_from_direction` /
-  `direction_from_node_uv`).
-- Фон — downsample heightmap → grayscale texture (если файл есть);
-  иначе тёмная сетка.
-- Поверх фона — полупрозрачный слой **залежей** (`MoonMapDepositOverlay`,
-  ~192×96), если включён чекбокс «Залежи».
-- Компасная конвенция как у HUD Compass: `N`/`С` = `-Z`, `В` = `+X`.
+- **Ортографический глобус** (satellite / planetary science view):
+  displaced **cube-sphere** mesh из baked `crust_heightmap`
+  (`MoonGlobeMeshBuilder` — без UV-sphere pinch на полюсах),
+  UV = `MoonHeightmapUtil` NODE_SDF panorama.
+- Вращение: trackball (без лимита pitch); wheel — zoom.
+- Рендер в `SubViewport` (`MoonMapGlobe`): directional light + hillshade
+  albedo + слой залежей (`hud_moon_globe.gdshader`).
+- Открытие карты **центрирует** текущую позицию игрока на лицевой полусфере.
+- Ввод: drag — вращение; wheel — zoom; ЛКМ без drag — метка / выбор;
+  ПКМ — удалить метку.
+- Chrome: dimmer за панелью, угловые скобки, пульс маркера игрока.
 
 ### Проекция (legacy `flat_moon`)
 
@@ -66,7 +73,7 @@
 - высота над номинальной поверхностью `\|p\| − R` (planetoid);
 - курс (градусы), как у Compass.
 
-Курсор над картой дополнительно показывает **имя залежи** под точкой
+Курсор над диском глобуса показывает **имя залежи** под точкой
 (если слой «Залежи» включён и в ближней коре есть линза).
 
 ### Слои маркеров
@@ -79,20 +86,22 @@
 | Объекты | выбранные archetypes (бур, склад, питание, …) | steel (`ok`) |
 | Метки | пользовательские, `WorldPersistence.map_markers` | cyan outline |
 
-**Залежи:** на развёртке отмечаются линзы (ильменит, анортозит, оливин,
-пироксен, лёд), сэмплированные на нескольких глубинах у поверхности
-(2…14 м). Фон mare/highland не заливает карту — только «цветные пятна»
-руд. Starting-area overlay от seed игрока учитывается (как у добычи).
+**Залежи:** на глобусе — **редкие крупные линзы** (ильменит, анортозит,
+оливин, пироксен, лёд), сэмплированные на глубинах 2…14 м. Фон
+mare/highland не заливает шар — только мягкие цветные пятна. Стартовая
+зона — дискретные карманы у spawn, не сплошной рудный диск.
 
 Кучи `WorldLootPile` остаются отдельным слоем (добытое/сброшенное на
 поверхности), не путать с нетронутыми залежами в коре.
 
+Маркеры на обратной (невидимой) полусфере не рисуются.
+
 ### Взаимодействие с метками
 
-- ЛКМ по пустому месту карты → добавить метку на поверхности в этой
-  точке (автоимя `МЕТКА N`);
+- ЛКМ по поверхности глобуса (без drag) → добавить метку (автоимя `МЕТКА N`);
 - ЛКМ по своей метке → выбрать; `Delete` / ПКМ → удалить;
-- курсор над картой → readout координат + залежь под курсором.
+- выбор метки в списке → доворачивает глобус к ней;
+- курсор над диском → readout координат + залежь.
 
 Пока карта открыта: курсор видим, gameplay input паузится
 (`set_gameplay_input_enabled(false)`), как у BlockPalette.
@@ -106,10 +115,21 @@ structures. HUD только читает.
 Слой залежей **не** идёт через gateway: это чистая функция поля материалов
 (`MoonMapDepositOverlay`), без simulation mutation.
 
+## Файлы
+
+| Роль | Путь |
+|---|---|
+| Панель | `scripts/ui/hud_map_panel.gd` |
+| Глобус | `scripts/ui/moon_map_globe.gd` |
+| Меш | `scripts/presentation/moon_globe_mesh_builder.gd` |
+| Шейдер | `resources/ui/shaders/hud_moon_globe.gdshader` |
+| Залежи | `scripts/simulation/runtime/moon_map_deposit_overlay.gd` |
+
 ## Не входит
 
 - fog of war / разведка (залежи видны сразу — sandbox);
 - GPS-навигация / автопилот к метке;
 - запись `CHANNEL_INDICES` в voxel (визуал в мире — отдельный follow-up);
-- 3D globe spinner (только 2D развёртка v1);
+- полноценный 3D-редактор орбиты / cinematic spin (есть отдельные
+  `moon_baked_space_*` сцены для превью);
 - меню вне игрового HUD.
