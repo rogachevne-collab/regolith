@@ -68,7 +68,9 @@ public:
 
 	explicit MoonTerrainSampler(float radius_voxels);
 
-	float height_voxels(const Vector3f &n) const;
+	/// stride_m > 0 fades out features smaller than the sampling step
+	/// (LOD-aware: cheaper far blocks, no sub-voxel aliasing). 0 = full detail.
+	float height_voxels(const Vector3f &n, float stride_m = 0.f) const;
 	static Vector3f direction_from_node_uv(float u, float v);
 
 	/// Same config as MoonHeightmapUtil._make_zn_noise / MoonTerrainGenerator._setup_noise.
@@ -106,11 +108,25 @@ private:
 			float depth_m,
 			float rim_frac);
 
-	float height_meters(const Vector3f &n) const;
+	float height_meters(const Vector3f &n, float stride_m) const;
 	float mare_factor(const Vector3f &domain) const;
 	float highland_meso_roughness(const Vector3f &domain, float highland) const;
-	float surface_texture(const Vector3f &domain, float mare, float highland) const;
-	float crater_field(const Vector3f &n, float mare, float highland) const;
+	float surface_texture(
+			const Vector3f &domain, float mare, float highland, float stride_m) const;
+	float crater_field(
+			const Vector3f &n, float mare, float highland, float stride_m) const;
+
+	/// AMPLITUDE-based LOD fade: 1 when amp >= 0.08*stride, 0 when <=
+	/// 0.03*stride. Cull only truly sub-quantization features: the SDF
+	/// disagreement between adjacent LODs stays ≤3% of a coarse cell, which
+	/// Transvoxel stitching absorbs invisibly (higher thresholds showed up
+	/// as hairline gaps at LOD ring boundaries).
+	static float detail_fade(float amp_m, float stride_m) {
+		if (stride_m <= 0.f) {
+			return 1.f;
+		}
+		return clampf((amp_m / stride_m - 0.03f) / 0.05f, 0.f, 1.f);
+	}
 	float crater_visibility(int cclass, float highland) const;
 	void crater_contribution(
 			float t,

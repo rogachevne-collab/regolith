@@ -1,4 +1,4 @@
-#include "moon_heightmap_bake.hpp"
+﻿#include "moon_heightmap_bake.hpp"
 
 #include "moon_terrain_sampler.hpp"
 
@@ -94,7 +94,10 @@ int MoonHeightmapBake::classify_block(
 		return BLOCK_MIXED;
 	}
 	const float radius = sampler_radius_voxels_;
-	const float shell = height_clamp_voxels() + kShellMarginVoxels;
+	/// Widen with stride: at coarse LODs a mesh cell spans `stride` voxels —
+	/// cells that can touch the crust must classify as MIXED (exact SDF).
+	const float shell =
+			height_clamp_voxels() + kShellMarginVoxels + 4.f * float(stride);
 
 	/// AABB of sampled voxel centers: [origin, origin + (size-1)*stride].
 	const float min_c[3] = { float(origin.x), float(origin.y), float(origin.z) };
@@ -124,7 +127,8 @@ int MoonHeightmapBake::classify_block(
 	return BLOCK_MIXED;
 }
 
-float MoonHeightmapBake::sample_sdf(float px, float py, float pz, float shell_margin) const {
+float MoonHeightmapBake::sample_sdf(
+		float px, float py, float pz, float shell_margin, float stride_m) const {
 	const float r = std::sqrt(px * px + py * py + pz * pz);
 	const float radius = sampler_radius_voxels_;
 	if (r <= 0.000001f) {
@@ -138,7 +142,7 @@ float MoonHeightmapBake::sample_sdf(float px, float py, float pz, float shell_ma
 	}
 	const float inv = 1.f / r;
 	const Vector3f n{ px * inv, py * inv, pz * inv };
-	return sphere_sd - sampler_->height_voxels(n);
+	return sphere_sd - sampler_->height_voxels(n, stride_m);
 }
 
 PackedFloat32Array MoonHeightmapBake::sample_block_sdf_f(
@@ -149,7 +153,15 @@ PackedFloat32Array MoonHeightmapBake::sample_block_sdf_f(
 	if (sampler_ == nullptr || size.x <= 0 || size.y <= 0 || size.z <= 0 || stride <= 0) {
 		return out;
 	}
-	const float shell = height_clamp_voxels() + kShellMarginVoxels;
+	/// 4*stride: every corner of a surface-crossing mesh cell (diagonal +
+	/// slope) must get the EXACT sdf at any LOD, or far vertices shift.
+	const float shell =
+			height_clamp_voxels() + kShellMarginVoxels + 4.f * float(stride);
+	const float stride_m = float(stride) * MoonTerrainSampler::kVoxelScale;
+	/// Linear per-LOD compression keeps coarse-cell corner values inside the
+	/// 16-bit quantizer's ±500-voxel window (zero crossings are invariant
+	/// under a constant scale; clamping is NOT and tears LOD seams).
+	const float lod_scale = std::min(1.f, 90.f / float(stride));
 	out.resize(int64_t(size.x) * size.y * size.z);
 	float *dst = out.ptrw();
 	/// VoxelBuffer memory order: index = y + sy * (x + sx * z).
@@ -159,7 +171,7 @@ PackedFloat32Array MoonHeightmapBake::sample_block_sdf_f(
 			const float px = float(origin.x + x * stride);
 			for (int y = 0; y < size.y; ++y) {
 				const float py = float(origin.y + y * stride);
-				*dst++ = sample_sdf(px, py, pz, shell);
+				*dst++ = sample_sdf(px, py, pz, shell, stride_m) * lod_scale;
 			}
 		}
 	}
@@ -175,7 +187,11 @@ PackedByteArray MoonHeightmapBake::sample_block_sdf16(
 	if (sampler_ == nullptr || size.x <= 0 || size.y <= 0 || size.z <= 0 || stride <= 0) {
 		return out;
 	}
-	const float shell = height_clamp_voxels() + kShellMarginVoxels;
+	const float shell =
+			height_clamp_voxels() + kShellMarginVoxels + 4.f * float(stride);
+	const float stride_m = float(stride) * MoonTerrainSampler::kVoxelScale;
+	/// See sample_block_sdf_f: keep coarse corners inside the s16 window.
+	const float lod_scale = std::min(1.f, 90.f / float(stride));
 	out.resize(int64_t(size.x) * size.y * size.z * 2);
 	uint8_t *dst = out.ptrw();
 	for (int z = 0; z < size.z; ++z) {
@@ -184,7 +200,9 @@ PackedByteArray MoonHeightmapBake::sample_block_sdf16(
 			const float px = float(origin.x + x * stride);
 			for (int y = 0; y < size.y; ++y) {
 				const float py = float(origin.y + y * stride);
-				const uint16_t raw = encode_sdf_s16(sample_sdf(px, py, pz, shell), encode_scale);
+				const uint16_t raw = encode_sdf_s16(
+						sample_sdf(px, py, pz, shell, stride_m) * lod_scale,
+						encode_scale);
 				/// Little-endian, matching VoxelBuffer channel bytes on x86/ARM.
 				dst[0] = uint8_t(raw & 0xFF);
 				dst[1] = uint8_t(raw >> 8);

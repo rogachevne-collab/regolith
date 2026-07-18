@@ -1,10 +1,12 @@
 class_name MoonTerrainParams
 extends RefCounted
 
+## 26: Ø19 km geometry experiment (MoonGeometry.DIAMETER_M) — fresh dig/save
+## catalog; prior caches assume Ø1 km bounds/stream paths.
 ## 25: play switched from panorama NODE_SDF_SPHERE_HEIGHTMAP to the analytic
 ## native SDF (MoonNativeSdfGenerator) — same H(n), but exact at poles/seam,
 ## so cached digs from the panorama crust don't line up anymore.
-const GENERATOR_VERSION := 25
+const GENERATOR_VERSION := 26
 const SEED := 0x4D004E
 
 

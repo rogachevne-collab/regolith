@@ -4,7 +4,7 @@ extends RefCounted
 ## Shared moon experiment geometry — single source for scale/radius/bounds.
 ## Matches docs/specs/MOON-EXPERIMENT-V0.md and INDUSTRY-V1 voxel scale.
 
-const DIAMETER_M := 1000.0
+const DIAMETER_M := 19000.0
 const SURFACE_RADIUS_M := DIAMETER_M * 0.5
 ## Same uniform node scale as main (Voxel Tools has no separate voxel_size).
 const VOXEL_SCALE := 0.65
@@ -20,25 +20,26 @@ const GRAVITY_M_S2 := 1.62
 ## Area shell beyond surface so near-surface bodies stay inside override.
 const GRAVITY_AREA_RADIUS_FACTOR := 1.35
 ## Streaming budget for VoxelLodTerrain / VoxelViewer (voxels, local).
-## World metres ≈ value * VOXEL_SCALE. Fixed 50k on foot over-requests mid
-## LODs → half-baked cliff scraps. Floor covers the Ø1 km shell from any
-## surface point; ceiling grows with altitude (bootstrap).
+## World metres ≈ value * VOXEL_SCALE. Floor covers near-surface streaming;
+## ceiling grows with altitude (bootstrap). Ø19 km needs a higher ceiling
+## so the far limb stays inside the load sphere.
 ## Do NOT push Camera.far to orbital scales — Godot's light culler breaks
 ## (create_frustum_points) when near/far ratio is extreme.
 const MIN_VIEW_DISTANCE_VOXELS := 2_048
-const MAX_VIEW_DISTANCE_VOXELS := 50_000
+const MAX_VIEW_DISTANCE_VOXELS := 80_000
 ## Initial / editor fallback (= surface floor).
 const DEFAULT_VIEW_DISTANCE_VOXELS := MIN_VIEW_DISTANCE_VOXELS
 ## Extra radius so the far limb stays inside the load sphere.
 const VIEW_DISTANCE_RADIUS_MARGIN := 1.15
-## Coarsest mesh block = 16 * 2^(lod_count-1). For Ø1 km (bounds ~±960)
-## lod_count 8 → block 2048 > bounds → cubic cuts / floating scraps.
-## 6 → block 512, fits; enough for altitude before the impostor.
-const DEFAULT_LOD_COUNT := 6
+## Coarsest mesh block = 16 * 2^(lod_count-1). For Ø19 km (bounds ~±18269)
+## lod_count 12 → block 32768 > bounds → cubic cuts / floating scraps.
+## 11 → block 16384 ≤ half-extent, fits.
+const DEFAULT_LOD_COUNT := 11
 const DEFAULT_LOD_DISTANCE := 56.0
-## Beyond this distance from planet center, show a camera-relative impostor
-## (real mesh would be clipped by Camera.far ≈ 20 km).
-const FAR_IMPOSTOR_START_M := 16_000.0
+## Beyond this distance from planet center, show a camera-relative impostor.
+## Parked far out for Ø19 km: billboard was baked for the Ø1 km moon and
+## would lie at this scale. Stay below ~5–6 km altitude until scaled-space.
+const FAR_IMPOSTOR_START_M := 500_000.0
 ## Place the impostor this far in front of the camera (must be < Camera.far).
 const FAR_IMPOSTOR_VISUAL_DIST_M := 8_000.0
 const DIG_STREAM_DIR := "user://moon_experiment"

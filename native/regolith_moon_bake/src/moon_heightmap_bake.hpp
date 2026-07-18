@@ -74,7 +74,9 @@ protected:
 	static void _bind_methods();
 
 private:
-	float sample_sdf(float px, float py, float pz, float shell_margin) const;
+	/// stride_m flows as a parameter — generation threads share this object.
+	float sample_sdf(
+			float px, float py, float pz, float shell_margin, float stride_m) const;
 
 	std::shared_ptr<const MoonTerrainSampler> sampler_;
 	float sampler_radius_voxels_ = -1.f;

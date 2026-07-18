@@ -91,19 +91,22 @@ void MoonTerrainSampler::rebuild_crater_index() {
 	register_class(kSmallCraterCount, kSeed + 300, kClassSmall, 0.005f, 0.015f, kCraterSmallAmpM, 0.12f);
 }
 
-float MoonTerrainSampler::height_voxels(const Vector3f &n) const {
-	const float h_m = height_meters(n);
+float MoonTerrainSampler::height_voxels(const Vector3f &n, float stride_m) const {
+	const float h_m = height_meters(n, stride_m);
 	return meters_to_voxels(clampf(h_m, -kHeightClampM, kHeightClampM));
 }
 
-float MoonTerrainSampler::height_meters(const Vector3f &n) const {
+float MoonTerrainSampler::height_meters(const Vector3f &n, float stride_m) const {
 	const Vector3f domain = n * radius_voxels_;
 	const float mare = mare_factor(domain);
 	const float highland = 1.f - mare;
 	float h = lerpf(-kMariaDepthM, kHighlandLiftM, highland);
-	h += highland_meso_roughness(domain, highland);
-	h += crater_field(n, mare, highland);
-	h += surface_texture(domain, mare, highland);
+	const float rough_fade = detail_fade(kHighlandRoughAmpM, stride_m);
+	if (rough_fade > 0.f) {
+		h += highland_meso_roughness(domain, highland) * rough_fade;
+	}
+	h += crater_field(n, mare, highland, stride_m);
+	h += surface_texture(domain, mare, highland, stride_m);
 	return h;
 }
 
@@ -135,15 +138,25 @@ float MoonTerrainSampler::highland_meso_roughness(const Vector3f &domain, float 
 	return highland * r * kHighlandRoughAmpM;
 }
 
-float MoonTerrainSampler::surface_texture(const Vector3f &domain, float /*mare*/, float highland) const {
-	const float mid = sample_fnl(surface_, domain);
-	const float fine = sample_fnl(regolith_, domain);
-	const float mid_amp = lerpf(kPlainsTextureM, kSurfaceTextureM, highland);
-	const float fine_amp = lerpf(kMicroAmpM * 0.45f, kMicroAmpM, highland);
-	return mid * mid_amp + fine * fine_amp;
+float MoonTerrainSampler::surface_texture(
+		const Vector3f &domain, float /*mare*/, float highland, float stride_m) const {
+	/// Fade each band by its max amplitude; skip the sample entirely at zero.
+	const float mid_fade = detail_fade(kSurfaceTextureM, stride_m);
+	const float fine_fade = detail_fade(kMicroAmpM, stride_m);
+	float h = 0.f;
+	if (mid_fade > 0.f) {
+		h += sample_fnl(surface_, domain) *
+				lerpf(kPlainsTextureM, kSurfaceTextureM, highland) * mid_fade;
+	}
+	if (fine_fade > 0.f) {
+		h += sample_fnl(regolith_, domain) *
+				lerpf(kMicroAmpM * 0.45f, kMicroAmpM, highland) * fine_fade;
+	}
+	return h;
 }
 
-float MoonTerrainSampler::crater_field(const Vector3f &n, float mare, float highland) const {
+float MoonTerrainSampler::crater_field(
+		const Vector3f &n, float mare, float highland, float stride_m) const {
 	float carve = 0.f;
 	float rim = 0.f;
 	const int cell = dir_to_cell_index(n);
@@ -168,12 +181,18 @@ float MoonTerrainSampler::crater_field(const Vector3f &n, float mare, float high
 					seen[idx] = true;
 					++seen_count;
 					const Crater &crater = craters_[idx];
+					/// LOD fade by crater DEPTH (see detail_fade: height-based
+					/// culling keeps LOD seams tight; diameter-based tears them).
+					const float lod_fade = detail_fade(crater.depth, stride_m);
+					if (lod_fade <= 0.f) {
+						continue;
+					}
 					const float cos_a = clampf(n.dot(crater.center), -1.f, 1.f);
 					if (cos_a < std::cos(crater.rad * 1.35f)) {
 						continue;
 					}
 					const float t = std::acos(cos_a) / crater.rad;
-					float visibility = crater_visibility(crater.cclass, highland);
+					float visibility = lod_fade * crater_visibility(crater.cclass, highland);
 					visibility *= lerpf(1.f, 0.03f, mare);
 					if (visibility <= 0.001f) {
 						continue;
