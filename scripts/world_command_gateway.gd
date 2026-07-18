@@ -15,6 +15,20 @@ const _GROUND_SEAT_SAMPLES: Array[Vector2] = [
 	Vector2(-0.5, 0.5),
 	Vector2(0.5, 0.5),
 ]
+## Archetypes shown on the moon map overlay (MAP-UI-01).
+const MAP_STRUCTURE_ARCHETYPES := {
+	"power_source": true,
+	"power_distributor": true,
+	"power_battery": true,
+	"power_battery_small": true,
+	"power_distributor_small": true,
+	"stationary_drill": true,
+	"cargo_store": true,
+	"processor": true,
+	"fabricator": true,
+	"foundation": true,
+	"cockpit": true,
+}
 
 @export var terrain_path: NodePath = NodePath("../VoxelTerrain")
 @export var placed_blocks_path: NodePath = NodePath("../PlacedBlocks")
@@ -1069,6 +1083,45 @@ func archetype_display_name(archetype_id: String) -> String:
 	if archetype != null and not archetype.display_name.is_empty():
 		gateway_name = archetype.display_name
 	return HudTokens.archetype_label(archetype_id, gateway_name)
+
+
+## Read-only map overlay rows for MapPanel (docs/specs/MAP-UI-01.md).
+## Presentation only: never mutates simulation state.
+func map_overlay_entries() -> Array[Dictionary]:
+	var rows: Array[Dictionary] = []
+	if _session == null or _session.world == null:
+		return rows
+	var world := _session.world
+	for pile: Dictionary in world.list_world_loot_piles():
+		var pile_pos: Vector3 = SnapshotCodec.vector3_from_variant(
+			pile.get("position", Vector3.ZERO)
+		)
+		if not pile_pos.is_finite():
+			continue
+		var resource_id := str(pile.get("resource_id", ""))
+		rows.append({
+			"kind": "loot",
+			"id": "loot:%d" % int(pile.get("pile_id", 0)),
+			"resource_id": resource_id,
+			"amount_kg": float(pile.get("amount_kg", 0.0)),
+			"position": pile_pos,
+		})
+	for element: SimulationElement in world.list_elements():
+		if element == null:
+			continue
+		if not MAP_STRUCTURE_ARCHETYPES.has(element.archetype_id):
+			continue
+		var pos := IndustryElectricBudget.element_world_position(world, element)
+		if not pos.is_finite():
+			continue
+		rows.append({
+			"kind": "structure",
+			"id": "el:%d" % element.element_id,
+			"archetype_id": element.archetype_id,
+			"element_id": element.element_id,
+			"position": pos,
+		})
+	return rows
 
 
 func _damage_element(

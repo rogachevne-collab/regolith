@@ -49,6 +49,7 @@ HUD является presentation-слоем в том же смысле, что
 | `Compass` | camera yaw | — |
 | `Inventory` + `StoreView` | resource stores | — |
 | `BlockPalette` | `ToolController` archetypes | assign в toolbar-слот |
+| `MapPanel` | player pose, camera yaw, loot/structures via gateway, user markers | — (метки — player annotation в save) |
 
 ### HUDRoot
 
@@ -145,6 +146,15 @@ overlay-панели (inventory, palette). Логики симуляции не 
 - drag-in-progress — эфемерное presentation-состояние; назначение слота
   применяется через существующий toolbar API `ToolController`, а не прямой записью
   в `TOOLBAR_PAGES`.
+
+### MapPanel
+
+- контракт: `docs/specs/MAP-UI-01.md`;
+- overlay «КАРТА ЛУНЫ», toggle `toggle_map` (`M`); закрытие также Esc;
+- equirectangular развёртка planetoid (+ local XZ на legacy flat yard);
+- readout координат / курса; слои loot piles, structures, user markers;
+- пользовательские метки живут в `WorldPersistence` (`map_markers`), не в
+  simulation snapshot.
 
 ## SuitState — новое authoritative состояние игрока
 
@@ -323,6 +333,12 @@ HUD переиспользует язык цветов состояний из `
   headless-тестом `scenes/test_construction_toolbar_remap.tscn`
   (`CONSTRUCTION-REMAP: PASS`; сам drag-жест проверяется вручную в игре, MCP Lite
   ввод не эмулирует).
+- **Phase 5 — moon map. (реализовано)** Overlay `MapPanel`
+  (`scripts/ui/hud_map_panel.gd`, узел `MapPanel` в `hud_root.tscn`) —
+  карта луны по `toggle_map` (`M`). Спека `docs/specs/MAP-UI-01.md`.
+  Координаты/курс, heightmap backdrop, loot/structure markers через
+  `WorldCommandGateway.map_overlay_entries()`, пользовательские метки в
+  `WorldPersistence.map_markers`. Verified in running game (не headless).
 
 ## Acceptance
 

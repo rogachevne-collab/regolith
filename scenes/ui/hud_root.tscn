@@ -1,4 +1,4 @@
-[gd_scene load_steps=13 format=3 uid="uid://c8hudroot0ui01"]
+[gd_scene load_steps=14 format=3 uid="uid://c8hudroot0ui01"]
 
 [ext_resource type="Script" path="res://scripts/ui/hud_root.gd" id="1"]
 [ext_resource type="Theme" uid="uid://b8hudthemeui01" path="res://resources/ui/hud_theme.tres" id="2"]
@@ -13,6 +13,7 @@
 
 [ext_resource type="Script" path="res://scripts/ui/hud_actuator_panel.gd" id="11"]
 [ext_resource type="Script" path="res://scripts/ui/hud_wheel_panel.gd" id="12"]
+[ext_resource type="Script" path="res://scripts/ui/hud_map_panel.gd" id="13"]
 
 [node name="HUDRoot" type="CanvasLayer"]
 layer = 5
@@ -127,3 +128,13 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 script = ExtResource("12")
+
+[node name="MapPanel" type="Control" parent="Screen"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("13")

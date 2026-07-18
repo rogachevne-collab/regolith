@@ -299,10 +299,12 @@ func _place_when_ground_exists() -> void:
 						payload.get("player", {}),
 						spawn_position
 					)
+					WorldPersistence.restore_map_markers_from_payload(payload)
 					await _finish_loaded_world_entry(spawn_position)
 					call_deferred("_finalize_loaded_world_after_entry")
 					return
 				var rejected_backup := WorldPersistence.backup_rejected_save()
+				WorldPersistence.clear_map_markers()
 				if rejected_backup.is_empty():
 					push_warning(
 						"Save rejected or corrupt; starting a fresh world."

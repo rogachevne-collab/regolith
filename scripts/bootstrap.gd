@@ -541,10 +541,12 @@ func _place_when_ground_exists() -> void:
 				payload.get("player", {}),
 				loaded_spawn
 			)
+			WorldPersistence.restore_map_markers_from_payload(payload)
 			_finish_loaded_world_entry(loaded_spawn)
 			call_deferred("_finalize_loaded_world_after_entry")
 			return
 		var rejected_backup := WorldPersistence.backup_rejected_save()
+		WorldPersistence.clear_map_markers()
 		if rejected_backup.is_empty():
 			push_warning(
 				"Save rejected or corrupt; starting a fresh world."
@@ -559,6 +561,8 @@ func _place_when_ground_exists() -> void:
 			)
 
 	## Fresh world (or rejected save): stream SDF, then wait for physics floor.
+	if not WorldPersistence.has_save():
+		WorldPersistence.clear_map_markers()
 	while true:
 		var player_hit: VoxelRaycastResult = VoxelSpaceUtil.raycast_world(
 			tool,

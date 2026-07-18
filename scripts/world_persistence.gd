@@ -7,6 +7,10 @@ const SAVE_VERSION := 1
 ## Optional override for alternate scenes (moon experiment). Empty → SAVE_PATH.
 static var save_path_override := ""
 
+## Player map annotations (MAP-UI-01). Not part of the simulation snapshot —
+## stored alongside player pose in world_save.json.
+static var _map_markers: Array = []
+
 
 static func active_save_path() -> String:
 	if save_path_override.is_empty():
@@ -43,6 +47,18 @@ static func read_payload() -> Dictionary:
 	return payload
 
 
+static func get_map_markers() -> Array:
+	return _map_markers.duplicate(true)
+
+
+static func set_map_markers(markers: Array) -> void:
+	_map_markers = markers.duplicate(true)
+
+
+static func clear_map_markers() -> void:
+	_map_markers = []
+
+
 static func save(world: SimulationWorld, player: Node3D) -> bool:
 	if world == null or player == null:
 		return false
@@ -51,6 +67,7 @@ static func save(world: SimulationWorld, player: Node3D) -> bool:
 		"saved_at_unix": int(Time.get_unix_time_from_system()),
 		"simulation": world.capture_snapshot(),
 		"player": _serialize_player(player),
+		"map_markers": _map_markers.duplicate(true),
 	}
 	if not save_path_override.is_empty():
 		payload["generator_version"] = MoonTerrainParams.GENERATOR_VERSION
@@ -105,17 +122,54 @@ static func finalize_loaded_world(world: SimulationWorld) -> void:
 static func load_into(world: SimulationWorld, player: Node3D) -> bool:
 	var payload := read_payload()
 	if payload.is_empty():
+		clear_map_markers()
 		return false
 	var simulation: Variant = payload.get("simulation", {})
 	if not simulation is Dictionary:
 		_backup_corrupt_save()
+		clear_map_markers()
 		return false
 	if not restore_snapshot_data(world, simulation):
 		return false
 	finalize_loaded_world(world)
+	_restore_map_markers(payload.get("map_markers", []))
 	if player != null:
 		_apply_player(player, payload.get("player", {}))
 	return true
+
+
+static func restore_map_markers_from_payload(payload: Dictionary) -> void:
+	_restore_map_markers(payload.get("map_markers", []))
+
+
+static func _restore_map_markers(raw: Variant) -> void:
+	_map_markers = []
+	if not raw is Array:
+		return
+	for item: Variant in raw:
+		if not item is Dictionary:
+			continue
+		var row: Dictionary = item
+		var marker_id := str(row.get("id", "")).strip_edges()
+		var label := str(row.get("label", "")).strip_edges()
+		var pos_data: Variant = row.get("position", [])
+		if marker_id.is_empty() or not pos_data is Array:
+			continue
+		var pos_arr: Array = pos_data
+		if pos_arr.size() < 3:
+			continue
+		var pos := Vector3(
+			float(pos_arr[0]),
+			float(pos_arr[1]),
+			float(pos_arr[2]),
+		)
+		if not pos.is_finite():
+			continue
+		_map_markers.append({
+			"id": marker_id,
+			"label": label if not label.is_empty() else marker_id,
+			"position": [pos.x, pos.y, pos.z],
+		})
 
 
 static func apply_player_view(

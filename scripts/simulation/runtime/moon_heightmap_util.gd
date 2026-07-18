@@ -247,6 +247,20 @@ static func direction_from_node_uv(u: float, v: float) -> Vector3:
 	return Vector3(r * cos(lon), ny, r * sin(lon)).normalized()
 
 
+static func node_uv_from_direction(direction: Vector3) -> Vector2:
+	## Forward of direction_from_node_uv — map / HUD projection must match
+	## the baked crust panorama (docs/specs/MAP-UI-01.md).
+	var n := direction
+	if n.length_squared() <= 0.000001:
+		n = Vector3.UP
+	else:
+		n = n.normalized()
+	var u := -atan2(n.z, n.x) / TAU + 0.5
+	var skew3 := (n.y * n.y * n.y + n.y) * 0.5
+	var v := -0.5 * skew3 + 0.5
+	return Vector2(fposmod(u, 1.0), clampf(v, 0.0, 1.0))
+
+
 static func _inv_skew3(s: float) -> float:
 	## Solve x^3 + x - 2s = 0 (single real root, Cardano); s,x in [-1,1].
 	var d := sqrt(s * s + 1.0 / 27.0)
