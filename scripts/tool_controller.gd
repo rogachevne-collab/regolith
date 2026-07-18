@@ -281,7 +281,11 @@ func _physics_process(delta: float) -> void:
 
 	var profile: Dictionary = ACTIONS[active_action]
 	if active_action == &"tool_primary" and active_tool == &"build":
+		# Place must use the same reach as InteractionQuery.build_max_distance
+		# (preview aim); tool_secondary's 4m was rejecting valid ghosts past that.
 		profile = ACTIONS[&"tool_secondary"].duplicate()
+		if _query != null:
+			profile["max_range"] = _query.build_max_distance
 	elif active_action == &"tool_primary" and active_tool == &"grinder":
 		profile = profile.duplicate()
 		profile["interval"] = GRINDER_INTERVAL

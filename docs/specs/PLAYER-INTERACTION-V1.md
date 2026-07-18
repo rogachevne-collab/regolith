@@ -152,7 +152,10 @@ InteractionHit {
 - player RID исключается;
 - physics collider проверяется первым, voxel SDF — fallback;
 - query хранит hit независимо от активного инструмента;
+- reach луча: `max_distance = 4.0` по умолчанию; в build tool —
+  `build_max_distance = 10.0` (preview ghost);
 - инструмент применяет собственный `max_range` к готовому hit;
+  build place обязан использовать тот же reach, что и `build_max_distance`;
 - пустой результат представлен явно, не `null`-словарём;
 - presentation может читать hit, но не менять его.
 
@@ -260,7 +263,8 @@ Gameplay-код не читает физические keycode или mouse butt
 При нажатии ЛКМ с выбранным слотом блока:
 
 - `construction_apply` в режиме `place` через `CommandGateway`;
-- single press на валидный preview (`interval = 0.22`, `max_range = 4.0`);
+- single press на валидный preview (`interval = 0.22`,
+  `max_range = InteractionQuery.build_max_distance` = 10.0);
 - ПКМ/F при выбранном блоке не выполняет действий.
 
 ### Welder command routing
