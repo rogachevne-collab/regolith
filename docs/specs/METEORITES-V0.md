@@ -56,7 +56,8 @@ kinetic_impact_burst VFX
 | `damage_player` | урон SuitState при попадании в игрока | `true` |
 | `show_debug_button` | UI-кнопка на CanvasLayer | `true` |
 | `debug_spawn_enabled` | hotkey / кнопка / console | `true` |
-| `debug_offset_m` | offset от игрока для debug-удара | 18 |
+| `debug_offset_m` | offset от игрока для debug-удара (вперёд по камере) | 18 |
+| `debug_spawn_height_m` | высота debug-спавна над поверхностью | 48 |
 
 Интервалы и радиусы — tunable в инспекторе на `Main/MeteoriteSystem`; не magic
 в других скриптах.

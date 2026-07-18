@@ -26,6 +26,7 @@ const _IMPACT_VFX := preload("res://scenes/vfx/kinetic_impact_burst.tscn")
 @export var debug_spawn_enabled := true
 @export var show_debug_button := true
 @export_range(4.0, 80.0, 0.5, "or_greater") var debug_offset_m := 18.0
+@export_range(15.0, 200.0, 1.0, "or_greater") var debug_spawn_height_m := 48.0
 
 @export_group("Paths")
 @export var bootstrap_path: NodePath = NodePath("..")
@@ -88,6 +89,16 @@ func _process(delta: float) -> void:
 	_schedule_next()
 
 
+func _physics_process(_delta: float) -> void:
+	## Backup when RigidBody contact_monitor misses streaming voxel colliders.
+	for body in _active:
+		if body == null or not is_instance_valid(body):
+			continue
+		if body.has_meta("meteorite_spent"):
+			continue
+		_try_raycast_impact(body)
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if not debug_spawn_enabled:
 		return
@@ -117,15 +128,21 @@ func spawn_near_player(debug_near: bool) -> RigidBody3D:
 		minf(spawn_offset_min_m, spawn_offset_max_m),
 		maxf(spawn_offset_min_m, spawn_offset_max_m)
 	)
-	var tangent := _random_tangent(up)
+	var tangent := (
+		_forward_tangent(up) if debug_near else _random_tangent(up)
+	)
 	var aim := player_pos + tangent * offset_m
 	var surface := _probe_surface(aim)
 	if not _is_finite_vec3(surface):
 		surface = MoonGeometry.surface_point(aim)
-	var spawn_pos := surface + up * spawn_height_m
+	var height := debug_spawn_height_m if debug_near else spawn_height_m
+	var spawn_pos := surface + up * height
 	var velocity := -up * impact_speed_m_s
 	var meteor := _make_meteor()
-	add_child(meteor)
+	var host := get_parent()
+	if host == null:
+		host = self
+	host.add_child(meteor)
 	meteor.global_position = spawn_pos
 	meteor.linear_velocity = velocity
 	meteor.angular_velocity = Vector3(
@@ -134,6 +151,10 @@ func spawn_near_player(debug_near: bool) -> RigidBody3D:
 		_rng.randf_range(-1.5, 1.5)
 	)
 	_active.append(meteor)
+	print(
+		"MeteoriteSystem: spawn debug=%s pos=%s vel=%s offset=%.1f"
+		% [debug_near, spawn_pos, velocity, offset_m]
+	)
 	get_tree().create_timer(lifetime_s).timeout.connect(
 		func() -> void:
 			if is_instance_valid(meteor):
@@ -158,6 +179,17 @@ func _up_at(world_position: Vector3) -> Vector3:
 	if _gravity != null:
 		return _gravity.up_at(world_position)
 	return GravityField.resolve_up(self, world_position)
+
+
+func _forward_tangent(up: Vector3) -> Vector3:
+	var camera := _player.get_node_or_null("Camera") as Camera3D if _player else null
+	var forward := Vector3.FORWARD
+	if camera != null:
+		forward = -camera.global_transform.basis.z
+	forward = forward.slide(up)
+	if forward.length_squared() <= 0.0001:
+		return _random_tangent(up)
+	return forward.normalized()
 
 
 func _random_tangent(up: Vector3) -> Vector3:
@@ -250,13 +282,16 @@ func _make_meteor() -> RigidBody3D:
 func _make_meteor_visual() -> Node3D:
 	var root := Node3D.new()
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.42, 0.38, 0.34)
-	mat.roughness = 0.92
-	mat.metallic = 0.05
+	mat.albedo_color = Color(0.55, 0.42, 0.32)
+	mat.roughness = 0.88
+	mat.metallic = 0.08
+	mat.emission_enabled = true
+	mat.emission = Color(1.0, 0.45, 0.12)
+	mat.emission_energy_multiplier = 2.8
 	for _i in 4:
 		var blob := MeshInstance3D.new()
 		var mesh := SphereMesh.new()
-		mesh.radius = meteor_radius_m * _rng.randf_range(0.4, 0.85)
+		mesh.radius = meteor_radius_m * _rng.randf_range(0.45, 0.95)
 		mesh.height = mesh.radius * 2.0
 		mesh.radial_segments = 12
 		mesh.rings = 8
@@ -268,7 +303,43 @@ func _make_meteor_visual() -> Node3D:
 			_rng.randf_range(-0.45, 0.45)
 		) * meteor_radius_m * 0.55
 		root.add_child(blob)
+	# Hot core so the body reads against lunar dusk on soft renderers.
+	var core := MeshInstance3D.new()
+	var core_mesh := SphereMesh.new()
+	core_mesh.radius = meteor_radius_m * 0.55
+	core_mesh.height = core_mesh.radius * 2.0
+	core_mesh.radial_segments = 10
+	core_mesh.rings = 6
+	core.mesh = core_mesh
+	core.material_override = mat
+	root.add_child(core)
 	return root
+
+
+func _try_raycast_impact(body: RigidBody3D) -> void:
+	var space := get_viewport().world_3d.direct_space_state if get_viewport() else null
+	if space == null:
+		return
+	var velocity := body.linear_velocity
+	var direction := velocity
+	if direction.length_squared() < 0.25:
+		direction = -_up_at(body.global_position)
+	else:
+		direction = direction.normalized()
+	var probe_len := maxf(meteor_radius_m * 2.5, velocity.length() * (1.0 / 60.0) * 2.0)
+	var query := PhysicsRayQueryParameters3D.create(
+		body.global_position,
+		body.global_position + direction * probe_len
+	)
+	query.collision_mask = 1
+	query.exclude = [body.get_rid()]
+	var hit := space.intersect_ray(query)
+	if hit.is_empty():
+		return
+	var collider = hit.get("collider")
+	if collider == null or not ImpactResolver.is_world_surface_partner(collider):
+		return
+	_on_meteor_contact(body, collider as Node)
 
 
 func _on_meteor_contact(body: RigidBody3D, other: Node) -> void:
@@ -283,8 +354,15 @@ func _on_meteor_contact(body: RigidBody3D, other: Node) -> void:
 	body.set_meta("meteorite_spent", true)
 	var contact := body.global_position
 	var up := _up_at(contact)
+	print(
+		"MeteoriteSystem: impact terrain=%s player=%s at %s"
+		% [hits_terrain, suit != null, contact]
+	)
 	if hits_terrain:
 		_carve_crater(contact, -up)
+		_spawn_vfx(contact, up)
+	elif suit != null and damage_player:
+		# Still show a burst if we only clipped the player.
 		_spawn_vfx(contact, up)
 	if damage_player and suit != null:
 		suit.apply_damage(player_damage, &"meteorite")
