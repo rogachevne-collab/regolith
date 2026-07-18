@@ -161,7 +161,7 @@ PackedFloat32Array MoonHeightmapBake::sample_block_sdf_f(
 	/// Linear per-LOD compression keeps coarse-cell corner values inside the
 	/// 16-bit quantizer's ±500-voxel window (zero crossings are invariant
 	/// under a constant scale; clamping is NOT and tears LOD seams).
-	const float lod_scale = std::min(1.f, 90.f / float(stride));
+	const float lod_scale = std::min(1.f, 460.f / (4.f * float(stride) + height_clamp_voxels() + 8.f));
 	out.resize(int64_t(size.x) * size.y * size.z);
 	float *dst = out.ptrw();
 	/// VoxelBuffer memory order: index = y + sy * (x + sx * z).
@@ -191,7 +191,7 @@ PackedByteArray MoonHeightmapBake::sample_block_sdf16(
 			height_clamp_voxels() + kShellMarginVoxels + 4.f * float(stride);
 	const float stride_m = float(stride) * MoonTerrainSampler::kVoxelScale;
 	/// See sample_block_sdf_f: keep coarse corners inside the s16 window.
-	const float lod_scale = std::min(1.f, 90.f / float(stride));
+	const float lod_scale = std::min(1.f, 460.f / (4.f * float(stride) + height_clamp_voxels() + 8.f));
 	out.resize(int64_t(size.x) * size.y * size.z * 2);
 	uint8_t *dst = out.ptrw();
 	for (int z = 0; z < size.z; ++z) {

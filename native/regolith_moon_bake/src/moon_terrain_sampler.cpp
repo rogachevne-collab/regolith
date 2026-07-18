@@ -58,7 +58,11 @@ void MoonTerrainSampler::register_class(
 		const Vector3f center = seed_dir(seed_base + i * 17);
 		const float u = hash01(seed_base + i * 31);
 		const float rad = lerpf(rad_min, rad_max, u);
-		const float depth = depth_m * lerpf(0.82f, 1.0f, hash01(seed_base + i * 47));
+		/// depth_m is a depth/diameter FACTOR (lunar simple craters ~0.1-0.2):
+		/// meter depths on km-wide bowls read as flat noise on big moons.
+		const float diameter_m = 2.f * rad * radius_voxels_ * kVoxelScale;
+		const float depth = std::min(depth_m * diameter_m, kMaxCraterDepthM) *
+				lerpf(0.82f, 1.0f, hash01(seed_base + i * 47));
 		const int idx = static_cast<int>(craters_.size());
 		craters_.push_back(Crater{center, rad, depth, rim_frac, class_id, seed_base + i * 17});
 
@@ -95,12 +99,14 @@ void MoonTerrainSampler::rebuild_crater_index() {
 	const float area = (radius_m / 500.f) * (radius_m / 500.f);
 	const float s = std::min(std::pow(area, 0.7f), 100.f);
 	const int huge_n = std::min(12, std::max(kHugeCraterCount, int(5.f * std::pow(s, 0.35f))));
-	register_class(huge_n, kSeed + 50, kClassHuge, 0.11f, 0.20f, kCraterHugeAmpM, 0.18f);
-	register_class(int(kLargeCraterCount * s), kSeed + 100, kClassLarge, 0.040f, 0.095f, kCraterLargeAmpM, 0.16f);
-	register_class(int(kMedCraterCount * s), kSeed + 200, kClassMed, 0.015f, 0.044f, kCraterMedAmpM, 0.14f);
-	register_class(int(kSmallCraterCount * s), kSeed + 300, kClassSmall, 0.005f, 0.015f, kCraterSmallAmpM, 0.12f);
+	/// 6th arg = depth/diameter factor (basins shallower, small craters
+	/// relatively deeper — real lunar morphology).
+	register_class(huge_n, kSeed + 50, kClassHuge, 0.11f, 0.20f, 0.05f, 0.18f);
+	register_class(int(kLargeCraterCount * s), kSeed + 100, kClassLarge, 0.040f, 0.095f, 0.12f, 0.16f);
+	register_class(int(kMedCraterCount * s), kSeed + 200, kClassMed, 0.015f, 0.044f, 0.14f, 0.14f);
+	register_class(int(kSmallCraterCount * s), kSeed + 300, kClassSmall, 0.005f, 0.015f, 0.15f, 0.12f);
 	/// Meter-scale peppering near the player; amp-faded away by LOD 2-3.
-	register_class(int(kTinyCraterCount * s), kSeed + 400, kClassTiny, 0.0008f, 0.0025f, kCraterTinyAmpM, 0.10f);
+	register_class(int(kTinyCraterCount * s), kSeed + 400, kClassTiny, 0.0008f, 0.0025f, 0.16f, 0.10f);
 }
 
 float MoonTerrainSampler::height_voxels(const Vector3f &n, float stride_m) const {

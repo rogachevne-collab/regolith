@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "FastNoiseLite.h"
 
@@ -69,7 +69,8 @@ public:
 	static constexpr float kSurfaceTextureM = 0.9f;
 	static constexpr float kPlainsTextureM = 0.3f;
 	static constexpr float kMicroAmpM = 0.3f;
-	static constexpr float kHeightClampM = 45.f;
+	static constexpr float kMaxCraterDepthM = 200.f;
+	static constexpr float kHeightClampM = 240.f;
 
 	explicit MoonTerrainSampler(float radius_voxels);
 

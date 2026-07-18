@@ -8,7 +8,9 @@ extends RefCounted
 ## so cached digs from the panorama crust don't line up anymore.
 ## 27: area-scaled crater density + tiny class (native sampler) — relief
 ## changed everywhere, prior digs don't line up.
-const GENERATOR_VERSION := 27
+## 28: crater depth ∝ diameter (lunar depth/diameter ratios), relief clamp
+## 240 m — meter-deep km-wide bowls read as flat noise on Ø19 km.
+const GENERATOR_VERSION := 28
 const SEED := 0x4D004E
 
 
