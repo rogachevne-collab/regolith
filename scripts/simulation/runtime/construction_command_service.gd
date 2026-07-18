@@ -836,11 +836,7 @@ static func validate_new_rigid_connections(world,
 		return StructuralCommandResult.failed(
 			StructuralCommandResult.REASON_INVALID_REFERENCE
 		)
-	var compiled := BodyGroupCompiler.compile(
-		assembly.element_ids,
-		world._elements,
-		world._joints_for_assembly(assembly_id)
-	)
+	var compiled: Dictionary = world.compile_body_groups(assembly_id)
 	if not bool(compiled.get("valid", false)):
 		return StructuralCommandResult.failed(
 			StructuralCommandResult.REASON_INVALID_TARGET,

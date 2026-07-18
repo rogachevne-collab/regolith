@@ -32,10 +32,8 @@ var _rotor_constraints: Dictionary = {}
 var _root_group_ids: Dictionary = {}
 var _impact_service: ImpactResolverService
 
-
 func bind_impact_service(service: ImpactResolverService) -> void:
 	_impact_service = service
-
 
 func bind_world(world: SimulationWorld) -> void:
 	if _world == world:
@@ -46,7 +44,6 @@ func bind_world(world: SimulationWorld) -> void:
 		_world.structural_event.connect(_on_structural_event)
 		rebuild_all()
 
-
 func unbind_world() -> void:
 	if (
 		_world != null
@@ -54,7 +51,6 @@ func unbind_world() -> void:
 	):
 		_world.structural_event.disconnect(_on_structural_event)
 	_world = null
-
 
 func rebuild_all() -> void:
 	_clear_all_bodies()
@@ -64,17 +60,14 @@ func rebuild_all() -> void:
 		if not assembly.tombstoned:
 			_project_assembly(assembly.assembly_id, null)
 
-
 func get_physics_body(assembly_id: int) -> PhysicsBody3D:
 	return _bodies.get(assembly_id) as PhysicsBody3D
-
 
 func get_group_physics_body(assembly_id: int, group_id: int) -> PhysicsBody3D:
 	var groups: Variant = _assembly_group_bodies.get(assembly_id)
 	if groups is Dictionary:
 		return groups.get(group_id) as PhysicsBody3D
 	return null
-
 
 func list_piston_constraint_records(assembly_id: int) -> Array:
 	if not _piston_constraints.has(assembly_id):
@@ -84,7 +77,6 @@ func list_piston_constraint_records(assembly_id: int) -> Array:
 		return (records as Array).duplicate()
 	return []
 
-
 func list_rotor_constraint_records(assembly_id: int) -> Array:
 	if not _rotor_constraints.has(assembly_id):
 		return []
@@ -93,13 +85,11 @@ func list_rotor_constraint_records(assembly_id: int) -> Array:
 		return (records as Array).duplicate()
 	return []
 
-
 func get_element_projection(element_id: int) -> Dictionary:
 	var record: Variant = _element_records.get(element_id)
 	if record is Dictionary:
 		return record
 	return {}
-
 
 func get_element_colliders(
 	element_id: int
@@ -110,7 +100,6 @@ func get_element_colliders(
 		result.append(collider)
 	return result
 
-
 func compute_b_to_a_grid(
 	assembly_a_id: int,
 	assembly_b_id: int
@@ -120,7 +109,6 @@ func compute_b_to_a_grid(
 		assembly_a_id,
 		assembly_b_id
 	)
-
 
 func set_collision_profile(
 	assembly_id: int,
@@ -135,7 +123,6 @@ func set_collision_profile(
 	if body != null:
 		_apply_collision_profile(assembly_id, body)
 
-
 func add_body_group(assembly_id: int, group_name: String) -> void:
 	if group_name.is_empty():
 		return
@@ -147,7 +134,6 @@ func add_body_group(assembly_id: int, group_name: String) -> void:
 	if body != null and body is RigidBody3D:
 		(body as RigidBody3D).add_to_group(group_name)
 
-
 func project_assembly_now(
 	assembly_id: int,
 	motion_override: AssemblyMotionState = null
@@ -155,7 +141,6 @@ func project_assembly_now(
 	if get_physics_body(assembly_id) != null:
 		_remove_body(assembly_id)
 	_project_assembly(assembly_id, motion_override)
-
 
 func sync_body_motion_now(assembly_id: int) -> bool:
 	if _world == null:
@@ -167,7 +152,6 @@ func sync_body_motion_now(assembly_id: int) -> bool:
 		assembly_id,
 		_capture_body_motion(body)
 	)
-
 
 func align_body_motion(
 	target_assembly_id: int,
@@ -181,7 +165,6 @@ func align_body_motion(
 	target.linear_velocity = reference_body.linear_velocity
 	target.angular_velocity = reference_body.angular_velocity
 	return sync_body_motion_now(target_assembly_id)
-
 
 func _physics_process(delta: float) -> void:
 	if _world == null:
@@ -212,11 +195,9 @@ func _physics_process(delta: float) -> void:
 			continue
 		_world.sync_assembly_motion(assembly_id, _capture_body_motion(body))
 
-
 func _exit_tree() -> void:
 	unbind_world()
 	_clear_all_bodies()
-
 
 func _on_structural_event(event: Dictionary) -> void:
 	match StringName(event.get("kind", &"")):
@@ -225,7 +206,27 @@ func _on_structural_event(event: Dictionary) -> void:
 		&"assembly_spawned":
 			_project_assembly(int(event["assembly_id"]), null)
 		&"assembly_changed":
-			_reproject_assembly(int(event["assembly_id"]))
+			var changed_assembly_id := int(event["assembly_id"])
+			var placed_element_id := int(event.get("placed_element_id", 0))
+			var removed_element_id := int(event.get("removed_element_id", 0))
+			if (
+				placed_element_id > 0
+				and _try_append_placed_element(
+					changed_assembly_id,
+					placed_element_id
+				)
+			):
+				pass
+			elif (
+				removed_element_id > 0
+				and _try_remove_projected_element(
+					changed_assembly_id,
+					removed_element_id
+				)
+			):
+				pass
+			else:
+				_reproject_assembly(changed_assembly_id)
 		&"assembly_removed":
 			_remove_body(int(event["assembly_id"]))
 		&"rigid_joint_broken":
@@ -235,6 +236,126 @@ func _on_structural_event(event: Dictionary) -> void:
 		&"assembly_merged":
 			_handle_merge(event)
 
+## Place/dismantle on a single-body assembly: mutate colliders in place instead
+## of destroying the RigidBody (avoids parking-bristle + contact graph storms on
+## large powered rovers). Multibody / actuator topology still full-reprojects.
+func _try_append_placed_element(
+	assembly_id: int,
+	element_id: int
+) -> bool:
+	var fail_reason := &""
+	if _world == null or element_id <= 0 or _element_records.has(element_id):
+		fail_reason = &"already_projected_or_bad_id"
+	elif _assembly_group_bodies.has(assembly_id):
+		fail_reason = &"multibody_groups"
+	elif _mounted_bodies.has(assembly_id):
+		fail_reason = &"mounted"
+	var assembly: SimulationAssembly = null
+	var body: PhysicsBody3D = null
+	if fail_reason == &"":
+		assembly = _world.get_assembly_raw(assembly_id)
+		body = get_physics_body(assembly_id)
+		if (
+			assembly == null
+			or assembly.tombstoned
+			or body == null
+			or not (body is RigidBody3D)
+		):
+			fail_reason = &"not_rigid_body"
+	var compiled: Dictionary = {}
+	if fail_reason == &"":
+		compiled = _compile_assembly_groups(assembly)
+		if not bool(compiled.get("valid", false)):
+			fail_reason = &"compile_invalid"
+		elif not (compiled.get("driven_specs", []) as Array).is_empty():
+			fail_reason = &"driven_specs"
+	var element: SimulationElement = null
+	if fail_reason == &"":
+		element = _world.get_element(element_id)
+		if element == null or element.assembly_id != assembly_id:
+			fail_reason = &"bad_element"
+	var records: Array[Dictionary] = []
+	if fail_reason == &"":
+		records = PistonProjectionUtil.build_collision_shapes_for_elements(
+			_world,
+			assembly,
+			[element_id] as Array[int]
+		)
+		if records.is_empty():
+			fail_reason = &"empty_colliders"
+	if fail_reason != &"":
+		return false
+	WheelSimulationService.invalidate_park_anchors(_world, assembly_id)
+	_attach_colliders_to_body(
+		body,
+		records,
+		assembly_id,
+		[element_id] as Array[int]
+	)
+	_refresh_single_body_mass_com(assembly_id, body as RigidBody3D, assembly)
+	_projected_revision[assembly_id] = assembly.topology_revision
+	return true
+
+func _try_remove_projected_element(
+	assembly_id: int,
+	element_id: int
+) -> bool:
+	if _world == null or element_id <= 0:
+		return false
+	if _assembly_group_bodies.has(assembly_id) or _mounted_bodies.has(assembly_id):
+		return false
+	var assembly := _world.get_assembly_raw(assembly_id)
+	var body := get_physics_body(assembly_id)
+	if (
+		assembly == null
+		or assembly.tombstoned
+		or body == null
+		or not (body is RigidBody3D)
+	):
+		return false
+	var compiled := _compile_assembly_groups(assembly)
+	if (
+		not bool(compiled.get("valid", false))
+		or not (compiled.get("driven_specs", []) as Array).is_empty()
+	):
+		return false
+	var record: Variant = _element_records.get(element_id)
+	if not record is Dictionary:
+		return false
+	var colliders: Array = (record as Dictionary).get("colliders", [])
+	for collider_variant: Variant in colliders:
+		if collider_variant is CollisionShape3D and is_instance_valid(collider_variant):
+			var collider := collider_variant as CollisionShape3D
+			collider.disabled = true
+			collider.queue_free()
+	_element_records.erase(element_id)
+	WheelSimulationService.invalidate_park_anchors(_world, assembly_id)
+	_refresh_single_body_mass_com(assembly_id, body as RigidBody3D, assembly)
+	_projected_revision[assembly_id] = assembly.topology_revision
+	return true
+
+func _refresh_single_body_mass_com(
+	assembly_id: int,
+	rigid: RigidBody3D,
+	assembly: SimulationAssembly
+) -> void:
+	if rigid == null or assembly == null:
+		return
+	rigid.mass = maxf(
+		ColliderProjectionUtil.assembly_dry_mass(_world, assembly),
+		MIN_MASS
+	)
+	rigid.center_of_mass_mode = RigidBody3D.CENTER_OF_MASS_MODE_CUSTOM
+	rigid.center_of_mass = ColliderProjectionUtil.assembly_center_of_mass_local(
+		_world,
+		assembly
+	)
+	rigid.inertia = Vector3.ZERO
+	# Quiet residual motion after COM shift so parking bristle can re-seat.
+	var locomotion := _world.get_locomotion_controller(assembly_id)
+	if locomotion != null and locomotion.is_parking_brake():
+		rigid.linear_velocity = Vector3.ZERO
+		rigid.angular_velocity = Vector3.ZERO
 
 func _reproject_assembly(assembly_id: int) -> void:
 	var body := get_physics_body(assembly_id)
@@ -243,9 +364,9 @@ func _reproject_assembly(assembly_id: int) -> void:
 		if body != null
 		else null
 	)
+	WheelSimulationService.invalidate_park_anchors(_world, assembly_id)
 	_remove_body(assembly_id)
 	_project_assembly(assembly_id, motion)
-
 
 func _handle_split(event: Dictionary) -> void:
 	var survivor_id: int = int(event["survivor_assembly_id"])
@@ -271,7 +392,6 @@ func _handle_split(event: Dictionary) -> void:
 		parent_motion,
 		parent_com_world
 	)
-
 
 func _project_split_child(
 	assembly_id: int,
@@ -308,7 +428,6 @@ func _project_split_child(
 		motion.frozen = false
 	_project_assembly(assembly_id, motion)
 
-
 func _handle_merge(event: Dictionary) -> void:
 	var survivor_id: int = int(event["survivor_assembly_id"])
 	var loser_id: int = int(event["loser_assembly_id"])
@@ -322,7 +441,6 @@ func _handle_merge(event: Dictionary) -> void:
 	_remove_body(loser_id)
 	_remove_body(survivor_id)
 	_project_assembly(survivor_id, merged_motion)
-
 
 func _merged_motion(
 	survivor_id: int,
@@ -409,7 +527,6 @@ func _merged_motion(
 	survivor_motion.frozen = false
 	return survivor_motion
 
-
 func _project_assembly(
 	assembly_id: int,
 	motion_override: AssemblyMotionState
@@ -439,7 +556,6 @@ func _project_assembly(
 		)
 		return
 	_project_assembly_single(assembly_id, motion_override)
-
 
 func _project_assembly_single(
 	assembly_id: int,
@@ -590,7 +706,6 @@ func _project_assembly_single(
 		}
 	_world.sync_assembly_motion(assembly_id, motion)
 	_projected_revision[assembly_id] = assembly.topology_revision
-
 
 func _project_assembly_multibody(
 	assembly_id: int,
@@ -927,25 +1042,10 @@ func _project_assembly_multibody(
 	_world.sync_assembly_motion(assembly_id, motion)
 	_projected_revision[assembly_id] = assembly.topology_revision
 
-
 func _compile_assembly_groups(
 	assembly: SimulationAssembly
 ) -> Dictionary:
-	var elements_by_id: Dictionary = {}
-	for element_id: int in assembly.element_ids:
-		var element: SimulationElement = _world.get_element(element_id)
-		if element != null:
-			elements_by_id[element_id] = element
-	var joints: Array[SimulationJoint] = []
-	for joint: SimulationJoint in _world.list_joints():
-		if joint.assembly_id == assembly.assembly_id:
-			joints.append(joint)
-	return BodyGroupCompiler.compile(
-		assembly.element_ids,
-		elements_by_id,
-		joints
-	)
-
+	return _world.compile_body_groups(assembly.assembly_id)
 
 func _create_group_body(
 	assembly_id: int,
@@ -969,7 +1069,6 @@ func _create_group_body(
 	body.set_meta("assembly_id", assembly_id)
 	body.set_meta("body_group_id", group_id)
 	return body
-
 
 func _attach_colliders_to_body(
 	body: PhysicsBody3D,
@@ -1010,19 +1109,16 @@ func _attach_colliders_to_body(
 			"colliders": colliders_by_element[element_id],
 		}
 
-
 func _is_locomotive_assembly(assembly_id: int) -> bool:
 	if _world == null:
 		return false
 	return ThrusterSimulationService.is_mobile_assembly(_world, assembly_id)
-
 
 func _is_active_locomotive(assembly_id: int) -> bool:
 	return (
 		_is_locomotive_assembly(assembly_id)
 		and _world.get_locomotion_controller(assembly_id).is_activated()
 	)
-
 
 func _should_tick_wheels(assembly_id: int) -> bool:
 	if (
@@ -1040,7 +1136,6 @@ func _should_tick_wheels(assembly_id: int) -> bool:
 				return not (body_variant as RigidBody3D).freeze
 	return false
 
-
 func _tick_wheel_pairs(delta: float) -> void:
 	if _world == null or delta <= 0.0:
 		return
@@ -1054,7 +1149,6 @@ func _tick_wheel_pairs(delta: float) -> void:
 			Callable(self, "_wheel_body_for_suspension"),
 			_wheel_exclude_rids(assembly_id)
 		)
-
 
 func _tick_thrusters(delta: float) -> void:
 	if _world == null or delta <= 0.0:
@@ -1080,7 +1174,6 @@ func _tick_thrusters(delta: float) -> void:
 			continue
 		for gyro: SimulationElement in gyros:
 			_apply_gyro_torque(gyro, locomotion, gyro_count)
-
 
 func _apply_thruster_force(
 	element: SimulationElement,
@@ -1120,7 +1213,6 @@ func _apply_thruster_force(
 	# v0: central thrust keeps hop stable before nozzle torque / RCS tuning.
 	body.apply_central_force(axis_world * thrust_n)
 
-
 func _apply_gyro_torque(
 	element: SimulationElement,
 	locomotion: AssemblyLocomotionController,
@@ -1150,13 +1242,11 @@ func _apply_gyro_torque(
 	body.sleeping = false
 	body.apply_torque(body.global_transform.basis * torque_local)
 
-
 func _wheel_body_for_suspension(
 	suspension_element_id: int
 ) -> RigidBody3D:
 	var record := get_element_projection(suspension_element_id)
 	return record.get("body") as RigidBody3D
-
 
 func _wheel_exclude_rids(assembly_id: int) -> Array[RID]:
 	var result: Array[RID] = []
@@ -1170,7 +1260,6 @@ func _wheel_exclude_rids(assembly_id: int) -> Array[RID]:
 	if body != null:
 		result.append(body.get_rid())
 	return result
-
 
 func _tick_rotor_actuators(delta: float) -> void:
 	if _world == null or delta <= 0.0:
@@ -1256,7 +1345,6 @@ func _tick_rotor_actuators(delta: float) -> void:
 				absf(torque_nm),
 				saturated
 			)
-
 
 func _tick_piston_actuators(delta: float) -> void:
 	if _world == null or delta <= 0.0:
@@ -1360,7 +1448,6 @@ func _tick_piston_actuators(delta: float) -> void:
 			)
 	_world.tick_actuators(delta)
 
-
 func _emit_piston_sustained_kinetic(
 	record: Dictionary,
 	head_body: PhysicsBody3D,
@@ -1402,7 +1489,6 @@ func _emit_piston_sustained_kinetic(
 		striker_shape_index
 	)
 
-
 func _pick_carriage_striker_element_id(carriage_element_ids: Array) -> int:
 	var fallback_id := 0
 	for element_variant: Variant in carriage_element_ids:
@@ -1420,7 +1506,6 @@ func _pick_carriage_striker_element_id(carriage_element_ids: Array) -> int:
 		):
 			fallback_id = element_id
 	return fallback_id
-
 
 func _carriage_touches_terrain(
 	head_body: RigidBody3D,
@@ -1444,7 +1529,6 @@ func _carriage_touches_terrain(
 			return true
 	return false
 
-
 func _clear_piston_constraints(assembly_id: int) -> void:
 	for constraints: Dictionary in [_piston_constraints, _rotor_constraints]:
 		var records: Variant = constraints.get(assembly_id, [])
@@ -1459,7 +1543,6 @@ func _clear_piston_constraints(assembly_id: int) -> void:
 					constraint.queue_free()
 		constraints.erase(assembly_id)
 	_root_group_ids.erase(assembly_id)
-
 
 func _remove_group_bodies(assembly_id: int) -> void:
 	var groups: Variant = _assembly_group_bodies.get(assembly_id)
@@ -1477,7 +1560,6 @@ func _remove_group_bodies(assembly_id: int) -> void:
 			body.process_mode = Node.PROCESS_MODE_DISABLED
 			body.queue_free()
 	_assembly_group_bodies.erase(assembly_id)
-
 
 func _create_body(
 	assembly_id: int,
@@ -1505,7 +1587,6 @@ func _create_body(
 	_apply_collision_profile(assembly_id, body)
 	return body
 
-
 func _apply_collision_profile(
 	assembly_id: int,
 	body: PhysicsBody3D
@@ -1515,14 +1596,12 @@ func _apply_collision_profile(
 		body.collision_layer = int(profile.get("layer", body.collision_layer))
 		body.collision_mask = int(profile.get("mask", body.collision_mask))
 
-
 func _get_assembly_physics_material() -> PhysicsMaterial:
 	if _assembly_physics_material == null:
 		_assembly_physics_material = PhysicsMaterial.new()
 		_assembly_physics_material.friction = ASSEMBLY_FRICTION
 		_assembly_physics_material.bounce = ASSEMBLY_BOUNCE
 	return _assembly_physics_material
-
 
 func _apply_body_groups(
 	assembly_id: int,
@@ -1532,7 +1611,6 @@ func _apply_body_groups(
 		if body is RigidBody3D:
 			(body as RigidBody3D).add_to_group(str(group_name))
 
-
 func _clear_body_colliders(body: PhysicsBody3D) -> void:
 	var stale: Array[CollisionShape3D] = []
 	for child_node: Node in body.get_children():
@@ -1541,7 +1619,6 @@ func _clear_body_colliders(body: PhysicsBody3D) -> void:
 	for collider: CollisionShape3D in stale:
 		collider.disabled = true
 		collider.queue_free()
-
 
 func _capture_body_motion(
 	body: PhysicsBody3D
@@ -1559,7 +1636,6 @@ func _capture_body_motion(
 		motion.frozen = true
 	return motion
 
-
 func _body_mass(body: PhysicsBody3D) -> float:
 	if body is RigidBody3D:
 		return maxf((body as RigidBody3D).mass, MIN_MASS)
@@ -1570,14 +1646,12 @@ func _body_mass(body: PhysicsBody3D) -> float:
 		MIN_MASS
 	)
 
-
 func _body_center_of_mass_world(
 	body: PhysicsBody3D
 ) -> Vector3:
 	if body is RigidBody3D:
 		return body.to_global((body as RigidBody3D).center_of_mass)
 	return body.global_position
-
 
 func _estimate_body_inertia(body: PhysicsBody3D) -> Vector3:
 	var records: Array[Dictionary] = []
@@ -1598,7 +1672,6 @@ func _estimate_body_inertia(body: PhysicsBody3D) -> Vector3:
 		local_com
 	)
 
-
 func _remove_body(assembly_id: int) -> void:
 	_clear_piston_constraints(assembly_id)
 	_remove_group_bodies(assembly_id)
@@ -1617,7 +1690,6 @@ func _remove_body(assembly_id: int) -> void:
 	_bodies.erase(assembly_id)
 	_projected_revision.erase(assembly_id)
 
-
 func _remove_element_records_for_assembly(
 	assembly_id: int
 ) -> void:
@@ -1628,7 +1700,6 @@ func _remove_element_records_for_assembly(
 			stale.append(element_id)
 	for element_id: int in stale:
 		_element_records.erase(element_id)
-
 
 func _clear_all_bodies() -> void:
 	for assembly_id: int in _sorted_int_keys(_piston_constraints):
@@ -1645,10 +1716,10 @@ func _clear_all_bodies() -> void:
 	_piston_constraints.clear()
 	_rotor_constraints.clear()
 
-
 func _sorted_int_keys(dictionary: Dictionary) -> Array[int]:
 	var result: Array[int] = []
 	for key: Variant in dictionary:
 		result.append(int(key))
 	result.sort()
 	return result
+

@@ -101,7 +101,7 @@ static func port_world_transform(
 	if world.get_assembly_raw(element.assembly_id) == null:
 		return Transform3D.IDENTITY
 	return (
-		world.element_group_motion(element.element_id).transform
+		world.element_group_transform(element.element_id)
 		* port_local_transform(element, port, face_offset)
 	)
 
@@ -136,7 +136,7 @@ static func port_marker_world_transform(
 	if world == null or element == null or port == null:
 		return Transform3D.IDENTITY
 	return (
-		world.element_group_motion(element.element_id).transform
+		world.element_group_transform(element.element_id)
 		* port_marker_local_transform(element, port, face_offset)
 	)
 

@@ -32,8 +32,6 @@ var _next_command_id := 1
 var _archetype_cache: Dictionary = {}
 var _snap_face_cache := ConstructionSnapFaceCache.new()
 var _snap_resolver := ConstructionSnapResolver.new()
-var _resolve_result_cache_key: String = ""
-var _resolve_result_cache: Dictionary = {}
 var _snap_event_bound := false
 var _excavation := TerrainExcavationService.new()
 var _material_source := TerrainMaterialSource.new()
@@ -448,7 +446,7 @@ func _stationary_drill_working_frame(element: SimulationElement) -> Transform3D:
 		return body.global_transform
 	if _session == null or _session.world == null or element == null:
 		return Transform3D.IDENTITY
-	return _session.world.element_group_motion(element.element_id).transform
+	return _session.world.element_group_transform(element.element_id)
 
 
 func _stationary_drill_physics_body(
@@ -964,9 +962,9 @@ func resolve_construction_placement(params: Dictionary) -> Dictionary:
 			"stats": ConstructionSnapResolver._empty_stats(),
 		}
 	_bind_snap_cache_events()
-	var cache_key := _resolve_cache_key(params)
-	if manual_index < 0 and cache_key == _resolve_result_cache_key:
-		return _resolve_result_cache.duplicate(true)
+	# No result cache here: ConstructionPreview already reuses results via its
+	# quantized context key, and deep-copying the resolve payload every physics
+	# frame cost more than it saved.
 	var archetype := _get_archetype(archetype_id)
 	var result := _snap_resolver.resolve({
 		"world": _session.world,
@@ -984,9 +982,6 @@ func resolve_construction_placement(params: Dictionary) -> Dictionary:
 	result["selected_plan"] = _seat_ground_plan(
 		result.get("selected_plan", {})
 	)
-	if manual_index < 0:
-		_resolve_result_cache_key = cache_key
-		_resolve_result_cache = result.duplicate(true)
 	return result
 
 
@@ -1000,12 +995,6 @@ func snap_resolve_stats() -> Dictionary:
 
 func reset_construction_snap() -> void:
 	_snap_resolver.reset_sticky()
-	_clear_resolve_result_cache()
-
-
-func _clear_resolve_result_cache() -> void:
-	_resolve_result_cache_key = ""
-	_resolve_result_cache = {}
 
 
 func _bind_snap_cache_events() -> void:
@@ -1022,52 +1011,6 @@ func _on_structural_event_for_snap(event: Dictionary) -> void:
 	match StringName(event.get("kind", &"")):
 		&"world_restored", &"assembly_spawned", &"assembly_changed", &"assembly_removed", &"assembly_split", &"assembly_merged":
 			_snap_face_cache.apply_structural_event(event)
-			_clear_resolve_result_cache()
-
-
-func _resolve_cache_key(params: Dictionary) -> String:
-	var ray_origin: Vector3 = params.get("ray_origin", Vector3.ZERO)
-	var ray_direction: Vector3 = Vector3(
-		params.get("ray_direction", Vector3.FORWARD)
-	).normalized()
-	var direct_hit: Dictionary = params.get("direct_hit", {})
-	var target_id := StringName(direct_hit.get("target_id", &""))
-	var aim_step := _aim_quantize_step_for_id(str(params.get("archetype_id", "frame")))
-	return "%d|%s|%s|%s|%d|%s|%s|%s|%s" % [
-		_snap_face_cache.generation,
-		_quantize_vec3(ray_origin, aim_step),
-		_quantize_vec3(ray_direction, aim_step * 0.5),
-		params.get("archetype_id", "frame"),
-		int(params.get("orientation_index", 0)),
-		target_id,
-		str(bool(direct_hit.get("valid", false))),
-		_pivot_cache_token(params.get("held_ground_pivot", Vector3(INF, INF, INF))),
-		_pivot_cache_token(params.get("held_attach_pivot", Vector3(INF, INF, INF))),
-	]
-
-
-static func _quantize_vec3(value: Vector3, step: float) -> Vector3:
-	if step <= 0.0:
-		return value
-	return Vector3(
-		snapped(value.x, step),
-		snapped(value.y, step),
-		snapped(value.z, step),
-	)
-
-
-static func _pivot_cache_token(value: Variant) -> String:
-	var pivot := Vector3(value)
-	if not pivot.is_finite():
-		return "unset"
-	return str(_quantize_vec3(pivot, 0.05))
-
-
-func _aim_quantize_step_for_id(archetype_id: String) -> float:
-	var archetype := _get_archetype(archetype_id)
-	if archetype != null and archetype.footprint_cells.size() >= 64:
-		return 0.12
-	return 0.04
 
 
 func construction_resource_amount() -> float:

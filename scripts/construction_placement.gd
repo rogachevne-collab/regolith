@@ -222,7 +222,7 @@ static func _attach_frame_for_target(
 ) -> Transform3D:
 	var element_id := int(metadata.get("element_id", 0))
 	if element_id > 0 and world.get_element(element_id) != null:
-		return world.element_group_motion(element_id).transform
+		return world.element_group_transform(element_id)
 	if assembly != null and assembly.motion != null:
 		return assembly.motion.transform
 	return Transform3D.IDENTITY

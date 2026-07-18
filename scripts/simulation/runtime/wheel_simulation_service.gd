@@ -392,3 +392,34 @@ static func _is_wheel_powered(
 		wheel_element.element_id
 	)
 	return runtime.machine_enabled and runtime.powered
+
+
+## Parking bristle anchors are world-space. After physics body recreate or
+## construction mass/COM change they must be cleared so the next grounded tick
+## reseats at the current contact (otherwise bristle springs fight the new COM).
+static func invalidate_park_anchors(
+	world: SimulationWorld,
+	assembly_id: int
+) -> int:
+	if world == null or assembly_id <= 0:
+		return 0
+	var cleared := 0
+	for pair: Dictionary in discover_pairs(world, assembly_id):
+		var wheel_element_id := int(pair.get("wheel_element_id", 0))
+		if wheel_element_id <= 0:
+			continue
+		var runtime: Dictionary = world.get_wheel_runtime(wheel_element_id)
+		if runtime.is_empty():
+			continue
+		if not bool(runtime.get("park_anchor_valid", false)):
+			continue
+		var next := runtime.duplicate(true)
+		next["park_anchor_valid"] = false
+		next["park_anchor_world"] = Vector3.ZERO
+		world.store_wheel_runtime(
+			wheel_element_id,
+			int(pair.get("suspension_element_id", 0)),
+			next
+		)
+		cleared += 1
+	return cleared

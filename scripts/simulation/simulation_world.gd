@@ -55,19 +55,19 @@ var _archetype_validation_cache: Dictionary = {}
 ## Cache for ConstructionOccupancyUtil.assembly_occupancy_index
 ## (key: assembly_id → {revision, cells}).
 var _occupancy_index_cache: Dictionary = {}
-
+## Cache BodyGroupCompiler results (key: assembly_id → {revision, result}).
+## Without this, element_group_motion / preview validate recompile large
+## rover graphs hundreds of times per second.
+var _body_group_compile_cache: Dictionary = {}
 
 func set_terrain_contact_probe(probe: Callable) -> void:
 	_terrain_contact_probe = probe
 
-
 func get_allocator() -> SimulationIdAllocator:
 	return _allocator
 
-
 func get_archetype_registry() -> ArchetypeRegistry:
 	return _archetypes
-
 
 func list_assemblies() -> Array[SimulationAssembly]:
 	var result: Array[SimulationAssembly] = []
@@ -75,13 +75,11 @@ func list_assemblies() -> Array[SimulationAssembly]:
 		result.append(_assemblies[assembly_id])
 	return result
 
-
 func list_elements() -> Array[SimulationElement]:
 	var result: Array[SimulationElement] = []
 	for element_id: int in _sorted_keys(_elements):
 		result.append(_elements[element_id])
 	return result
-
 
 func list_joints() -> Array[SimulationJoint]:
 	var result: Array[SimulationJoint] = []
@@ -89,10 +87,8 @@ func list_joints() -> Array[SimulationJoint]:
 		result.append(_joints[joint_id])
 	return result
 
-
 func list_redirect_from_ids() -> Array[int]:
 	return _sorted_keys(_redirects)
-
 
 func list_resource_stores() -> Array[SimulationResourceStore]:
 	var result: Array[SimulationResourceStore] = []
@@ -102,25 +98,20 @@ func list_resource_stores() -> Array[SimulationResourceStore]:
 		result.append(_resource_stores[store_id])
 	return result
 
-
 func get_resource_store(store_id: String) -> SimulationResourceStore:
 	return _resource_stores.get(store_id) as SimulationResourceStore
-
 
 func get_player_inventory() -> PlayerInventoryRegistry:
 	return _player_inventory
 
-
 func get_player_inventory_revision() -> int:
 	return _player_inventory_revision
-
 
 func ensure_player_inventory() -> PlayerInventoryRegistry:
 	if _player_inventory == null:
 		_player_inventory = PlayerInventoryRegistry.new()
 		_player_inventory.seed_starter_tools(false)
 	return _player_inventory
-
 
 func assign_player_hotbar_instance(
 	page: int,
@@ -133,29 +124,23 @@ func assign_player_hotbar_instance(
 	_bump_player_inventory_revision()
 	return true
 
-
 func _bump_player_inventory_revision() -> void:
 	_player_inventory_revision += 1
 	emit_signal("player_inventory_changed")
 
-
 func get_industry_network() -> IndustryNetworkState:
 	return _industry_network
 
-
 func get_cargo_graph() -> CargoGraph:
 	return _cargo_graph
-
 
 func ensure_cargo_graph_current() -> CargoGraph:
 	if _cargo_graph_needs_rebuild():
 		_cargo_graph.rebuild(self)
 	return _cargo_graph
 
-
 func get_cargo_adjacency_graph() -> Array[Dictionary]:
 	return ensure_cargo_graph_current().list_edges()
-
 
 func industry_tick(delta_s: float) -> void:
 	if _industry_runner == null:
@@ -163,11 +148,9 @@ func industry_tick(delta_s: float) -> void:
 		(_industry_runner as IndustrySimulation).bind_world(self)
 	(_industry_runner as IndustrySimulation).tick(self, delta_s)
 
-
 func advance_industry_time(delta_s: float) -> void:
 	_simulation_time_s += maxf(delta_s, 0.0)
 	_purge_expired_loot_piles()
-
 
 func get_element_industry_buffer(element_id: int) -> ElementIndustryBuffer:
 	var element := get_element(element_id)
@@ -175,20 +158,17 @@ func get_element_industry_buffer(element_id: int) -> ElementIndustryBuffer:
 		return null
 	return element.industry_buffer
 
-
 func get_element_content_mass_kg(element_id: int) -> float:
 	return IndustryStoreService.content_mass_kg(
 		self,
 		get_element(element_id)
 	)
 
-
 func list_electric_links() -> Array[Dictionary]:
 	var rows: Array[Dictionary] = []
 	for link: IndustryElectricLink in _industry_network.list_links():
 		rows.append(link.to_dict())
 	return rows
-
 
 func connect_network(
 	element_a_id: int,
@@ -207,7 +187,6 @@ func connect_network(
 	command.waypoints = waypoints
 	return apply_structural_command_now(command)
 
-
 func disconnect_network(
 	element_a_id: int = 0,
 	port_a_id: String = "",
@@ -225,14 +204,12 @@ func disconnect_network(
 	command.expected_assembly_revision = expected_assembly_revision
 	return apply_structural_command_now(command)
 
-
 func apply_transfer_resource(command: TransferResourceCommand) -> Dictionary:
 	var service := CargoTransferService.new()
 	var result := service.transfer_resource_command(self, command)
 	if StringName(result.get("reason", &"")) == &"ok":
 		_bump_player_inventory_revision()
 	return result
-
 
 func apply_set_machine_enabled(
 	command: SetMachineEnabledCommand
@@ -244,30 +221,25 @@ func apply_set_machine_enabled(
 		command
 	)
 
-
 func apply_set_actuator_target(
 	command: SetActuatorTargetCommand
 ) -> Dictionary:
 	return ActuatorSimulationService.apply_set_actuator_target(self, command)
-
 
 func apply_configure_actuator(
 	command: ConfigureActuatorCommand
 ) -> Dictionary:
 	return ActuatorSimulationService.apply_configure_actuator(self, command)
 
-
 func apply_configure_wheel(
 	command: ConfigureWheelCommand
 ) -> Dictionary:
 	return WheelSimulationService.apply_configure_wheel(self, command)
 
-
 func apply_configure_suspension(
 	command: ConfigureSuspensionCommand
 ) -> Dictionary:
 	return WheelSimulationService.apply_configure_suspension(self, command)
-
 
 func get_locomotion_controller(
 	assembly_id: int
@@ -275,7 +247,6 @@ func get_locomotion_controller(
 	if not _assembly_locomotion.has(assembly_id):
 		_assembly_locomotion[assembly_id] = AssemblyLocomotionController.new()
 	return _assembly_locomotion[assembly_id] as AssemblyLocomotionController
-
 
 func list_locomotion_rows() -> Array[Dictionary]:
 	var rows: Array[Dictionary] = []
@@ -298,7 +269,6 @@ func list_locomotion_rows() -> Array[Dictionary]:
 		})
 	return rows
 
-
 func register_locomotion_state(
 	assembly_id: int,
 	state: Dictionary
@@ -308,10 +278,8 @@ func register_locomotion_state(
 	var controller := get_locomotion_controller(assembly_id)
 	controller.apply_dict(state)
 
-
 func clear_assembly_locomotion(assembly_id: int) -> void:
 	_assembly_locomotion.erase(assembly_id)
-
 
 func ensure_wheel_instance_state(element_id: int) -> WheelInstanceState:
 	if not _wheel_instances.has(element_id):
@@ -327,14 +295,12 @@ func ensure_wheel_instance_state(element_id: int) -> WheelInstanceState:
 		_wheel_instances[element_id] = state
 	return _wheel_instances[element_id] as WheelInstanceState
 
-
 func ensure_suspension_instance_state(
 	element_id: int
 ) -> SuspensionInstanceState:
 	if not _suspension_instances.has(element_id):
 		_suspension_instances[element_id] = SuspensionInstanceState.new()
 	return _suspension_instances[element_id] as SuspensionInstanceState
-
 
 func list_wheel_instance_rows() -> Array[Dictionary]:
 	var rows: Array[Dictionary] = []
@@ -347,7 +313,6 @@ func list_wheel_instance_rows() -> Array[Dictionary]:
 		})
 	return rows
 
-
 func list_suspension_instance_rows() -> Array[Dictionary]:
 	var rows: Array[Dictionary] = []
 	for element_id: int in _sorted_keys(_suspension_instances):
@@ -359,14 +324,12 @@ func list_suspension_instance_rows() -> Array[Dictionary]:
 		})
 	return rows
 
-
 func register_wheel_instance_state(
 	element_id: int,
 	state: WheelInstanceState
 ) -> void:
 	if element_id > 0 and state != null:
 		_wheel_instances[element_id] = state
-
 
 func register_suspension_instance_state(
 	element_id: int,
@@ -375,10 +338,8 @@ func register_suspension_instance_state(
 	if element_id > 0 and state != null:
 		_suspension_instances[element_id] = state
 
-
 func get_wheel_runtime(wheel_element_id: int) -> Dictionary:
 	return _wheel_runtime.get(wheel_element_id, {})
-
 
 func store_wheel_runtime(
 	wheel_element_id: int,
@@ -420,12 +381,10 @@ func store_wheel_runtime(
 		runtime[key] = value
 	_wheel_runtime[wheel_element_id] = runtime
 
-
 func clear_wheel_element_state(element_id: int) -> void:
 	_wheel_instances.erase(element_id)
 	_suspension_instances.erase(element_id)
 	_wheel_runtime.erase(element_id)
-
 
 func sync_actuator_observation(
 	joint_id: int,
@@ -446,7 +405,6 @@ func sync_actuator_observation(
 	)
 	ActuatorSimulationService.tick_joint(self, joint, 0.0)
 
-
 func tick_actuators(delta_s: float) -> void:
 	if delta_s <= 0.0:
 		return
@@ -455,13 +413,11 @@ func tick_actuators(delta_s: float) -> void:
 			continue
 		ActuatorSimulationService.tick_joint(self, joint, delta_s)
 
-
 func apply_enqueue_recipe(command: EnqueueRecipeCommand) -> Dictionary:
 	if _industry_runner == null:
 		_industry_runner = IndustrySimulation.new()
 		(_industry_runner as IndustrySimulation).bind_world(self)
 	return (_industry_runner as IndustrySimulation).apply_enqueue_recipe(command)
-
 
 func apply_dequeue_recipe(command: DequeueRecipeCommand) -> Dictionary:
 	if _industry_runner == null:
@@ -469,10 +425,8 @@ func apply_dequeue_recipe(command: DequeueRecipeCommand) -> Dictionary:
 		(_industry_runner as IndustrySimulation).bind_world(self)
 	return (_industry_runner as IndustrySimulation).apply_dequeue_recipe(command)
 
-
 func get_simulation_time_s() -> float:
 	return _simulation_time_s
-
 
 func list_world_loot_piles() -> Array[Dictionary]:
 	return WorldLootServiceScript.list_world_loot_piles(self)
@@ -522,7 +476,6 @@ func get_industry_element_runtime(
 ) -> IndustryElementRuntime:
 	return _industry_elements.get(element_id) as IndustryElementRuntime
 
-
 func ensure_industry_element_runtime(
 	element_id: int
 ) -> IndustryElementRuntime:
@@ -532,7 +485,6 @@ func ensure_industry_element_runtime(
 	var runtime := IndustryElementRuntime.create_default()
 	_industry_elements[element_id] = runtime
 	return runtime
-
 
 func list_industry_element_runtimes() -> Array[Dictionary]:
 	var rows: Array[Dictionary] = []
@@ -547,10 +499,8 @@ func list_industry_element_runtimes() -> Array[Dictionary]:
 		})
 	return rows
 
-
 func get_industry_network_revision() -> int:
 	return _industry_network.industry_network_revision
-
 
 func ensure_resource_store(store_id: String) -> SimulationResourceStore:
 	if store_id.is_empty():
@@ -564,7 +514,6 @@ func ensure_resource_store(store_id: String) -> SimulationResourceStore:
 		store.capacity_l = IndustryArchetypeProfile.player_carry_capacity_l()
 	_resource_stores[store_id] = store
 	return store
-
 
 func set_resource_amount(
 	store_id: String,
@@ -588,26 +537,20 @@ func set_resource_amount(
 	_resource_stores[store_id] = pending
 	return true
 
-
 func get_redirect_target_raw(assembly_id: int) -> int:
 	return int(_redirects.get(assembly_id, 0))
-
 
 func get_assembly(assembly_id: int) -> SimulationAssembly:
 	return get_assembly_raw(resolve_assembly_id(assembly_id))
 
-
 func get_assembly_raw(assembly_id: int) -> SimulationAssembly:
 	return _assemblies.get(assembly_id) as SimulationAssembly
-
 
 func get_element(element_id: int) -> SimulationElement:
 	return _elements.get(element_id) as SimulationElement
 
-
 func get_joint(joint_id: int) -> SimulationJoint:
 	return _joints.get(joint_id) as SimulationJoint
-
 
 func resolve_assembly_id(assembly_id: int) -> int:
 	var current := assembly_id
@@ -618,7 +561,6 @@ func resolve_assembly_id(assembly_id: int) -> int:
 		visited[current] = true
 		current = int(_redirects[current])
 	return current
-
 
 func submit_structural_command(command: StructuralCommand) -> int:
 	if command == null:
@@ -633,7 +575,6 @@ func submit_structural_command(command: StructuralCommand) -> int:
 		call_deferred("_flush_commands")
 	return queued.command_id
 
-
 func apply_structural_command_now(
 	command: StructuralCommand
 ) -> StructuralCommandResult:
@@ -647,7 +588,6 @@ func apply_structural_command_now(
 		)
 	command.command_id = _allocator.allocate_command_id()
 	return _execute_structural_command(command)
-
 
 func sync_assembly_motion(
 	assembly_id: int,
@@ -666,9 +606,25 @@ func sync_assembly_motion(
 	assembly.motion = motion_state.duplicate_state()
 	return true
 
-
 func compile_body_groups(assembly_id: int) -> Dictionary:
-	return BodyGroupMotionUtilScript.compile_for_assembly(self, assembly_id)
+	var assembly := get_assembly_raw(assembly_id)
+	if assembly == null or assembly.tombstoned:
+		return {"valid": false, "reason": &"missing_assembly"}
+	var cached: Variant = _body_group_compile_cache.get(assembly_id)
+	if (
+		cached is Dictionary
+		and int(cached.get("revision", -1)) == assembly.topology_revision
+	):
+		return cached["result"]
+	var result: Dictionary = BodyGroupMotionUtilScript.compile_for_assembly(
+		self,
+		assembly_id
+	)
+	_body_group_compile_cache[assembly_id] = {
+		"revision": assembly.topology_revision,
+		"result": result,
+	}
+	return result
 
 
 func root_body_group_id(assembly_id: int) -> int:
@@ -676,7 +632,6 @@ func root_body_group_id(assembly_id: int) -> int:
 	if not bool(compiled.get("valid", false)):
 		return 0
 	return int(compiled.get("root_group_id", 0))
-
 
 func body_group_id_for_element(element_id: int) -> int:
 	var element := get_element(element_id)
@@ -686,7 +641,6 @@ func body_group_id_for_element(element_id: int) -> int:
 	if not bool(compiled.get("valid", false)):
 		return 0
 	return int(compiled.get("element_to_group", {}).get(element_id, 0))
-
 
 func get_body_group_motion(
 	assembly_id: int,
@@ -711,6 +665,39 @@ func get_body_group_motion(
 		group_id
 	)
 
+## Read-only group transform for hot paths (wires / snap / preview).
+## One compile lookup, no AssemblyMotionState.duplicate_state().
+## Do not frame-cache: reconstruct-on-read (actuators) can change within a frame.
+func element_group_transform(element_id: int) -> Transform3D:
+	var element := get_element(element_id)
+	if element == null:
+		return Transform3D.IDENTITY
+	var assembly := get_assembly_raw(element.assembly_id)
+	if assembly == null or assembly.tombstoned or assembly.motion == null:
+		return Transform3D.IDENTITY
+	var compiled := compile_body_groups(element.assembly_id)
+	if not bool(compiled.get("valid", false)):
+		return assembly.motion.transform
+	var group_id := int(
+		compiled.get("element_to_group", {}).get(element_id, 0)
+	)
+	var root_id := int(compiled.get("root_group_id", 0))
+	if group_id <= 0 or group_id == root_id:
+		return assembly.motion.transform
+	var stored: Variant = assembly.body_group_motions.get(group_id)
+	if stored is AssemblyMotionState:
+		return (stored as AssemblyMotionState).transform
+	return BodyGroupMotionUtilScript.reconstruct_group_motion(
+		self,
+		element.assembly_id,
+		group_id
+	).transform
+
+func assembly_is_single_body_group(assembly_id: int) -> bool:
+	var compiled := compile_body_groups(assembly_id)
+	if not bool(compiled.get("valid", false)):
+		return false
+	return (compiled.get("groups", {}) as Dictionary).size() <= 1
 
 func sync_assembly_body_group_motion(
 	assembly_id: int,
@@ -731,7 +718,6 @@ func sync_assembly_body_group_motion(
 		return sync_assembly_motion(assembly_id, motion_state)
 	assembly.body_group_motions[group_id] = motion_state.duplicate_state()
 	return true
-
 
 func sync_assembly_body_group_motions(
 	assembly_id: int,
@@ -761,35 +747,49 @@ func sync_assembly_body_group_motions(
 		assembly.body_group_motions[group_id] = motion_state.duplicate_state()
 	return ok
 
-
 func element_world_transform(element_id: int) -> Transform3D:
 	var element := get_element(element_id)
 	if element == null:
 		return Transform3D.IDENTITY
-	var group_id := body_group_id_for_element(element_id)
-	var group_motion := get_body_group_motion(element.assembly_id, group_id)
 	return (
-		group_motion.transform
+		element_group_transform(element_id)
 		* GridPoseUtil.element_local_transform(
 			element.origin_cell,
 			element.orientation_index
 		)
 	)
 
-
 func element_group_motion(element_id: int) -> AssemblyMotionState:
 	var element := get_element(element_id)
 	if element == null:
 		return AssemblyMotionState.new()
-	return get_body_group_motion(
-		element.assembly_id,
-		body_group_id_for_element(element_id)
+	var compiled := compile_body_groups(element.assembly_id)
+	if not bool(compiled.get("valid", false)):
+		return AssemblyMotionState.new()
+	var group_id := int(
+		compiled.get("element_to_group", {}).get(element_id, 0)
 	)
-
+	var assembly := get_assembly_raw(element.assembly_id)
+	if assembly == null or assembly.tombstoned:
+		return AssemblyMotionState.new()
+	var root_id := int(compiled.get("root_group_id", 0))
+	if group_id <= 0 or group_id == root_id:
+		return (
+			assembly.motion.duplicate_state()
+			if assembly.motion != null
+			else AssemblyMotionState.new()
+		)
+	var stored: Variant = assembly.body_group_motions.get(group_id)
+	if stored is AssemblyMotionState:
+		return (stored as AssemblyMotionState).duplicate_state()
+	return BodyGroupMotionUtilScript.reconstruct_group_motion(
+		self,
+		element.assembly_id,
+		group_id
+	)
 
 func capture_snapshot() -> Dictionary:
 	return SimulationSnapshot.capture(self)
-
 
 func restore_snapshot(snapshot: Dictionary, emit_event := true) -> bool:
 	var restored = SimulationSnapshot.create_from_snapshot(snapshot)
@@ -814,15 +814,16 @@ func restore_snapshot(snapshot: Dictionary, emit_event := true) -> bool:
 	_simulation_time_s = restored._simulation_time_s
 	_command_queue.clear()
 	_flush_scheduled = false
+	_body_group_compile_cache.clear()
+	_archetype_validation_cache.clear()
+	_occupancy_index_cache.clear()
 	restored.free()
 	if emit_event:
 		emit_world_restored()
 	return true
 
-
 func emit_world_restored() -> void:
 	_emit_structural_event({"kind": &"world_restored"})
-
 
 func _flush_commands() -> void:
 	_flush_scheduled = false
@@ -830,7 +831,6 @@ func _flush_commands() -> void:
 		var command: StructuralCommand = _command_queue.pop_front()
 		var result := _execute_structural_command(command)
 		structural_command_completed.emit(command.command_id, result)
-
 
 func _execute_structural_command(
 	command: StructuralCommand
@@ -858,7 +858,6 @@ func _execute_structural_command(
 	return StructuralCommandResult.failed(
 		StructuralCommandResult.REASON_INVALID_TARGET
 	)
-
 
 func _spawn_blueprint(
 	command: SpawnBlueprintCommand
@@ -945,7 +944,6 @@ func _spawn_blueprint(
 		"joint_ids": joint_ids,
 	})
 
-
 func preview_place_element(
 	command: PlaceElementCommand
 ) -> StructuralCommandResult:
@@ -1020,7 +1018,6 @@ func _can_register_blueprint_archetypes(blueprint: Blueprint) -> bool:
 			pending[archetype.archetype_id] = fingerprint
 	return true
 
-
 func _archetype_has_anchor_port(archetype: ElementArchetype) -> bool:
 	if archetype == null:
 		return false
@@ -1032,7 +1029,6 @@ func _archetype_has_anchor_port(archetype: ElementArchetype) -> bool:
 		):
 			return true
 	return false
-
 
 func _validate_state_command(
 	element: SimulationElement,
@@ -1051,7 +1047,6 @@ func _validate_state_command(
 			}
 		)
 	return null
-
 
 func _emit_element_state_changed(
 	element: SimulationElement,
@@ -1076,7 +1071,6 @@ func _emit_element_state_changed(
 	if operational_changed:
 		_cargo_graph.rebuild(self)
 
-
 func _element_state_result(
 	element: SimulationElement,
 	extra: Dictionary = {}
@@ -1092,7 +1086,6 @@ func _element_state_result(
 	data.merge(extra, true)
 	return StructuralCommandResult.ok(data)
 
-
 func _preview_for_id(
 	previews: Array[SimulationElement],
 	element_id: int
@@ -1102,30 +1095,23 @@ func _preview_for_id(
 			return preview
 	return null
 
-
 func _register_assembly(assembly: SimulationAssembly) -> void:
 	_assemblies[assembly.assembly_id] = assembly
-
 
 func _register_element(element: SimulationElement) -> void:
 	_elements[element.element_id] = element
 
-
 func _register_joint(joint: SimulationJoint) -> void:
 	_joints[joint.joint_id] = joint
-
 
 func _register_redirect(from_id: int, to_id: int) -> void:
 	_redirects[from_id] = to_id
 
-
 func _register_resource_store(store: SimulationResourceStore) -> void:
 	_resource_stores[store.store_id] = store
 
-
 func _register_player_inventory(registry: PlayerInventoryRegistry) -> void:
 	_player_inventory = registry
-
 
 func _joints_for_assembly(assembly_id: int) -> Array[SimulationJoint]:
 	var result: Array[SimulationJoint] = []
@@ -1134,7 +1120,6 @@ func _joints_for_assembly(assembly_id: int) -> Array[SimulationJoint]:
 			result.append(joint)
 	return result
 
-
 func _joint_ids_for_assembly(assembly_id: int) -> Array[int]:
 	var ids: Array[int] = []
 	for joint: SimulationJoint in _joints_for_assembly(assembly_id):
@@ -1142,13 +1127,11 @@ func _joint_ids_for_assembly(assembly_id: int) -> Array[int]:
 	ids.sort()
 	return ids
 
-
 func _elements_for_ids(ids: Array[int]) -> Array[SimulationElement]:
 	var result: Array[SimulationElement] = []
 	for element_id: int in ids:
 		result.append(_elements[element_id])
 	return result
-
 
 func _cells_by_element_id(
 	elements: Array[SimulationElement]
@@ -1163,7 +1146,6 @@ func _occupancy_is_unique(
 
 func _cell_key(cell: Vector3i) -> String:
 	return ConstructionOccupancyUtilScript.cell_key(cell)
-
 
 func _assembly_occupancy_index(assembly: SimulationAssembly) -> Dictionary:
 	return ConstructionOccupancyUtilScript.assembly_occupancy_index(self, assembly)
@@ -1186,10 +1168,8 @@ func _joint_belongs_to_component(
 func assembly_has_anchor(assembly_id: int) -> bool:
 	return _assembly_has_anchor(assembly_id)
 
-
 func construction_attach_allowed(assembly_id: int) -> bool:
 	return _construction_attach_allowed(assembly_id)
-
 
 func _should_reconcile_assembly(assembly_id: int) -> bool:
 	return ConstructionCommandServiceScript.should_reconcile_assembly(self, assembly_id)
@@ -1200,11 +1180,14 @@ func _reconcile_terrain_anchors_for_assemblies(
 	return ConstructionCommandServiceScript.reconcile_terrain_anchors_for_assemblies(self, assembly_ids)
 
 func _notify_topology_changed() -> void:
+	_body_group_compile_cache.clear()
+	_occupancy_index_cache.clear()
+	# Origin-keyed surface lookups must not grow unbounded across places.
+	GridSurfaceUtil.clear_descriptor_cache()
 	_industry_network.prune_dangling_links(self)
 	_purge_industry_runtime_for_missing_elements()
 	IndustryStoreService.sync_all_elements(self)
 	_cargo_graph.rebuild(self)
-
 
 func _cargo_graph_needs_rebuild() -> bool:
 	for assembly: SimulationAssembly in list_assemblies():
@@ -1217,7 +1200,6 @@ func _cargo_graph_needs_rebuild() -> bool:
 			return true
 	return false
 
-
 func _purge_industry_runtime_for_missing_elements() -> void:
 	var stale: Array[int] = []
 	for element_id_variant: Variant in _industry_elements.keys():
@@ -1226,7 +1208,6 @@ func _purge_industry_runtime_for_missing_elements() -> void:
 			stale.append(element_id)
 	for element_id: int in stale:
 		_industry_elements.erase(element_id)
-
 
 func _connect_network(
 	command: ConnectNetworkCommand
@@ -1252,7 +1233,6 @@ func _register_industry_network(state: IndustryNetworkState) -> void:
 		return
 	_industry_network = state
 
-
 func _register_industry_element_runtime(
 	element_id: int,
 	runtime: IndustryElementRuntime
@@ -1261,16 +1241,13 @@ func _register_industry_element_runtime(
 		return
 	_industry_elements[element_id] = runtime
 
-
 func _register_world_loot_pile(pile: WorldLootPile) -> void:
 	if pile == null or pile.pile_id <= 0:
 		return
 	_world_loot_piles[pile.pile_id] = pile
 
-
 func _register_simulation_time(time_s: float) -> void:
 	_simulation_time_s = maxf(time_s, 0.0)
-
 
 func _purge_expired_loot_piles() -> void:
 	return WorldLootServiceScript.purge_expired_loot_piles(self)
@@ -1294,7 +1271,6 @@ func _element_anchor_joint_id(assembly_id: int, element_id: int) -> int:
 func _assembly_has_anchor(assembly_id: int) -> bool:
 	return ConstructionCommandServiceScript.assembly_has_anchor(self, assembly_id)
 
-
 ## Terrain-anchored builds always attach. Floating locomotives may expand only
 ## while nearly stopped (parking brake or coast-to-stop).
 func _construction_attach_allowed(assembly_id: int) -> bool:
@@ -1306,7 +1282,6 @@ func _sorted_keys(dictionary: Dictionary) -> Array[int]:
 		result.append(int(key))
 	result.sort()
 	return result
-
 
 func _emit_structural_event(event: Dictionary) -> void:
 	structural_event.emit(event)

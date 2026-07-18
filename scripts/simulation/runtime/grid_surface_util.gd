@@ -22,6 +22,7 @@ const _FACE_ORDER: Array[OrientationUtil.Face] = [
 ]
 
 static var _descriptor_cache: Dictionary = {}
+static var _world_face_lookup_cache: Dictionary = {}
 
 
 class SurfaceFaceDescriptor:
@@ -247,9 +248,50 @@ static func ground_anchor_structural_id(element: SimulationElement) -> String:
 
 static func clear_descriptor_cache() -> void:
 	_descriptor_cache.clear()
+	_world_face_lookup_cache.clear()
 
 
 static func _find_canonical_pair_specs(
+	left_archetype: ElementArchetype,
+	left_origin: Vector3i,
+	left_orientation: int,
+	right_archetype: ElementArchetype,
+	right_origin: Vector3i,
+	right_orientation: int
+) -> Dictionary:
+	# Iterate the smaller footprint; large_frame (125 cells / ~150 faces) as the
+	# scan side made every preview_place on a rover-with-L25 several ms.
+	if (
+		left_archetype != null
+		and right_archetype != null
+		and left_archetype.footprint_cells.size()
+		> right_archetype.footprint_cells.size()
+	):
+		var swapped := _find_canonical_pair_specs_scan(
+			right_archetype,
+			right_origin,
+			right_orientation,
+			left_archetype,
+			left_origin,
+			left_orientation
+		)
+		if swapped.is_empty():
+			return {}
+		return {
+			"left_port_id": str(swapped["right_port_id"]),
+			"right_port_id": str(swapped["left_port_id"]),
+		}
+	return _find_canonical_pair_specs_scan(
+		left_archetype,
+		left_origin,
+		left_orientation,
+		right_archetype,
+		right_origin,
+		right_orientation
+	)
+
+
+static func _find_canonical_pair_specs_scan(
 	left_archetype: ElementArchetype,
 	left_origin: Vector3i,
 	left_orientation: int,
@@ -332,6 +374,20 @@ static func _count_matching_contact_faces_specs(
 	right_origin: Vector3i,
 	right_orientation: int
 ) -> int:
+	if (
+		left_archetype != null
+		and right_archetype != null
+		and left_archetype.footprint_cells.size()
+		> right_archetype.footprint_cells.size()
+	):
+		return _count_matching_contact_faces_specs(
+			right_archetype,
+			right_origin,
+			right_orientation,
+			left_archetype,
+			left_origin,
+			left_orientation
+		)
 	var right_lookup := _world_face_lookup(
 		right_archetype,
 		right_origin,
@@ -436,6 +492,18 @@ static func _world_face_lookup(
 	origin_cell: Vector3i,
 	orientation_index: int
 ) -> Dictionary:
+	if archetype == null:
+		return {}
+	var cache_key := "%s|%d,%d,%d|%d" % [
+		archetype.archetype_id,
+		origin_cell.x,
+		origin_cell.y,
+		origin_cell.z,
+		orientation_index,
+	]
+	var cached: Variant = _world_face_lookup_cache.get(cache_key)
+	if cached is Dictionary:
+		return cached
 	var lookup: Dictionary = {}
 	for descriptor: SurfaceFaceDescriptor in get_surface_descriptors(
 		archetype,
@@ -446,6 +514,7 @@ static func _world_face_lookup(
 			"port_id": descriptor.structural_id,
 			"socket_tag": descriptor.socket_tag,
 		}
+	_world_face_lookup_cache[cache_key] = lookup
 	return lookup
 
 

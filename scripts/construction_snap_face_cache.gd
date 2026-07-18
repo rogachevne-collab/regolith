@@ -70,6 +70,20 @@ func ensure_current() -> bool:
 		var prev_topology: int = int(_assembly_topology.get(assembly_id, -1))
 		if prev_topology != assembly.topology_revision:
 			dirty_topology.append(assembly_id)
+	# Attach permission is dynamic (a rover parks / drives away), not only
+	# structural: re-check per resolve and rebuild faces of assemblies whose
+	# anchored state flipped. A parked rover becomes magnetic; a departing one
+	# drops out of the cache instead of dragging stale faces around.
+	for assembly_id: int in live_assembly_ids:
+		var anchored_now := _world.construction_attach_allowed(assembly_id)
+		if anchored_now == _anchored_assembly_ids.has(assembly_id):
+			continue
+		if anchored_now:
+			_anchored_assembly_ids[assembly_id] = true
+		else:
+			_anchored_assembly_ids.erase(assembly_id)
+		if not dirty_topology.has(assembly_id):
+			dirty_topology.append(assembly_id)
 	var topology_changed := not dirty_topology.is_empty()
 	if topology_changed:
 		for assembly_id: int in dirty_topology:
@@ -172,7 +186,7 @@ func _rebuild_assembly(assembly_id: int) -> void:
 		if archetype == null:
 			continue
 		var assembly_transform := (
-			_world.element_group_motion(element.element_id).transform
+			_world.element_group_transform(element.element_id)
 		)
 		for descriptor: GridSurfaceUtil.SurfaceFaceDescriptor in (
 			GridSurfaceUtil.get_surface_descriptors(
@@ -223,7 +237,7 @@ func _add_element_faces(assembly_id: int, element_id: int) -> void:
 	if archetype == null:
 		return
 	var assembly_transform := (
-		_world.element_group_motion(element.element_id).transform
+		_world.element_group_transform(element.element_id)
 	)
 	for descriptor: GridSurfaceUtil.SurfaceFaceDescriptor in (
 		GridSurfaceUtil.get_surface_descriptors(
@@ -310,11 +324,26 @@ func _sync_face_world_poses() -> void:
 
 func _refresh_assembly_world_points(assembly_id: int) -> void:
 	var assembly_faces: Array = _faces_by_assembly.get(assembly_id, [])
+	var assembly := _world.get_assembly_raw(assembly_id)
+	# Single body-group: one root transform for every face element.
+	var shared_xf := Transform3D.IDENTITY
+	var use_shared := (
+		assembly != null
+		and not assembly.tombstoned
+		and assembly.motion != null
+		and _world.assembly_is_single_body_group(assembly_id)
+	)
+	if use_shared:
+		shared_xf = assembly.motion.transform
 	for face: Dictionary in assembly_faces:
 		var element_id := int(face.get("element_id", 0))
 		if _world.get_element(element_id) == null:
 			continue
-		var xf := _world.element_group_motion(element_id).transform
+		var xf := (
+			shared_xf
+			if use_shared
+			else _world.element_group_transform(element_id)
+		)
 		var local_point: Vector3 = face.get("local_point", Vector3.ZERO)
 		var local_normal: Vector3 = face.get("local_normal", Vector3.UP)
 		face["world_point"] = xf * local_point

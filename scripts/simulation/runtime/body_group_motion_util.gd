@@ -30,7 +30,13 @@ static func compile_for_assembly(world, assembly_id: int) -> Dictionary:
 
 
 static func reconstruct_all_group_motions(world, assembly_id: int) -> Dictionary:
-	var compiled := compile_for_assembly(world, assembly_id)
+	# Prefer world.compile_body_groups so topology-revision cache is shared with
+	# element_group_motion / preview validation (avoids 100s of compiles/s).
+	var compiled: Dictionary = (
+		world.compile_body_groups(assembly_id)
+		if world != null and world.has_method("compile_body_groups")
+		else compile_for_assembly(world, assembly_id)
+	)
 	var result: Dictionary = {}
 	if not bool(compiled.get("valid", false)):
 		return result

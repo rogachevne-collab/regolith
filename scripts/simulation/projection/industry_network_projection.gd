@@ -33,7 +33,6 @@ var _event_bound := false
 ## link_id → last sampled tube path; skips remeshing static cables.
 var _tube_path_cache: Dictionary = {}
 
-
 func bind(
 	world: SimulationWorld,
 	physics_projection: SimulationPhysicsProjection
@@ -55,7 +54,6 @@ func bind(
 		_event_bound = true
 	rebuild_all()
 
-
 func rebuild_all() -> void:
 	if _world == null or _links_root == null:
 		return
@@ -67,7 +65,6 @@ func rebuild_all() -> void:
 		if wire != null:
 			_links_root.add_child(wire)
 	_cached_network_revision = _world.get_industry_network_revision()
-
 
 func _process(_delta: float) -> void:
 	if _world == null:
@@ -85,14 +82,17 @@ func _process(_delta: float) -> void:
 		if link != null:
 			_update_wire_body(body, link)
 
-
 func _on_structural_event(event: Dictionary) -> void:
 	match StringName(event.get("kind", &"")):
 		&"world_restored", &"electric_link_added", &"electric_link_removed":
 			rebuild_all()
-		&"assembly_spawned", &"assembly_changed", &"assembly_removed", &"assembly_split", &"assembly_merged":
+		&"assembly_removed", &"assembly_split", &"assembly_merged":
+			# Topology of links may be invalid; rebuild tubes.
 			rebuild_all()
-
+		&"assembly_spawned", &"assembly_changed":
+			# Wire graph unchanged — `_process` already updates endpoint poses.
+			# Full rebuild here was a place hitch on large powered rovers (L25).
+			pass
 
 ## Wires are StaticBody3D on an interaction-only layer so the aim ray can
 ## target them (grinder → disconnect_network). They collide with nothing.
@@ -114,7 +114,6 @@ func _make_wire_body(link: IndustryElectricLink) -> StaticBody3D:
 	)
 	_update_wire_body(body, link)
 	return body
-
 
 func _update_wire_body(
 	body: StaticBody3D,
@@ -141,7 +140,6 @@ func _update_wire_body(
 		mesh_instance.mesh = _build_tube_mesh(path)
 		_tube_path_cache[link.link_id] = path
 
-
 ## Rebuild the tube only when the sampled path actually moved (anchors follow
 ## their assemblies; скобы are world-pinned and static).
 func _tube_path_changed(link_id: int, path: PackedVector3Array) -> bool:
@@ -156,7 +154,6 @@ func _tube_path_changed(link_id: int, path: PackedVector3Array) -> bool:
 			return true
 	return false
 
-
 func _ensure_tube_mesh_instance(body: StaticBody3D) -> MeshInstance3D:
 	var mesh_instance := body.get_node_or_null("Tube") as MeshInstance3D
 	if mesh_instance == null:
@@ -166,7 +163,6 @@ func _ensure_tube_mesh_instance(body: StaticBody3D) -> MeshInstance3D:
 		mesh_instance.global_transform = Transform3D.IDENTITY
 		body.add_child(mesh_instance)
 	return mesh_instance
-
 
 ## Catmull-Rom smoothing through the routed points: скобы stay interpolated
 ## (the cable still touches every mount), corners round off naturally.
@@ -185,7 +181,6 @@ func _smooth_polyline(points: PackedVector3Array) -> PackedVector3Array:
 		curve.set_point_out(index, tangent)
 	var baked := curve.get_baked_points()
 	return baked if baked.size() >= 2 else points
-
 
 ## Single continuous tube (ring extrusion with parallel-transport frames, so
 ## the section never twists through bends).
@@ -246,7 +241,6 @@ func _build_tube_mesh(path: PackedVector3Array) -> ArrayMesh:
 			surface.add_vertex(d)
 	return surface.commit()
 
-
 ## Invisible aim capsules along the un-smoothed display polyline — enough for
 ## the grinder ray, no need to hug the spline exactly.
 func _update_wire_colliders(
@@ -273,7 +267,6 @@ func _update_wire_colliders(
 			(start + end) * 0.5
 		)
 
-
 ## Authoritative polyline: anchor_a → link.waypoints → anchor_b.
 func _wire_points(link: IndustryElectricLink) -> PackedVector3Array:
 	var element_a := _world.get_element(link.element_a)
@@ -297,7 +290,6 @@ func _wire_points(link: IndustryElectricLink) -> PackedVector3Array:
 		)
 	)
 	return points
-
 
 ## Decorative sag: each span is subdivided and dipped parabolically. The dip
 ## scales with the horizontal share of the span so vertical runs stay straight.
@@ -329,7 +321,6 @@ func _display_points(points: PackedVector3Array) -> PackedVector3Array:
 		result.append(end)
 	return result
 
-
 func _ensure_wire_segments(body: StaticBody3D, count: int) -> void:
 	var current := 0
 	while body.get_node_or_null("Col%d" % current) != null:
@@ -346,13 +337,11 @@ func _ensure_wire_segments(body: StaticBody3D, count: int) -> void:
 		collision.shape = capsule
 		body.add_child(collision)
 
-
 func _set_segments_disabled(body: StaticBody3D, disabled: bool) -> void:
 	for child_node: Node in body.get_children():
 		var collision := child_node as CollisionShape3D
 		if collision != null:
 			collision.disabled = disabled
-
 
 func _wire_basis(direction: Vector3) -> Basis:
 	if direction.is_equal_approx(Vector3.UP):
@@ -362,14 +351,12 @@ func _wire_basis(direction: Vector3) -> Basis:
 	var look := Basis.looking_at(direction, Vector3.UP)
 	return look.rotated(look.x, -PI * 0.5)
 
-
 func _create_wire_material() -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = WIRE_COLOR
 	mat.metallic = 0.3
 	mat.roughness = 0.5
 	return mat
-
 
 func _create_dormant_material() -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()

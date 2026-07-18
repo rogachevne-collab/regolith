@@ -275,6 +275,16 @@ context key в `ConstructionPreview` (gateway-слой result cache удалён
 copy каждый кадр стоил дороже, чем экономил). Preview mesh nodes строятся один
 раз на (archetype, orientation, valid) в origin ZERO и переносятся transform'ом
 контейнера на origin_cell — sweep по attach-целям не пересоздаёт ноды.
+`SimulationWorld.compile_body_groups` кэширует результат по
+`(assembly_id, topology_revision)` — preview/place validation и motion queries
+не перекомпилируют большой rover graph на каждый resolve. Place/dismantle на
+single-body assembly обновляет colliders in-place (без destroy RigidBody) и
+сбрасывает parking bristle anchors при смене mass/COM. Place с
+`placed_element_id` дописывает element visual + обновляет face-mask соседей
+вместо полного `_rebuild_assembly` ровера; electric wire mesh не
+пересоздаётся на `assembly_changed` (только pose sync).
+`find_rigid_connection` сканирует меньший footprint и кэширует world-face
+lookup (семантика контакта без изменений).
 
 ### Preview parity
 

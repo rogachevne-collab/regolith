@@ -441,7 +441,10 @@ element:
   склоне. Когда спрос превышает μ·N (сильный толчок) — bristle насыщается,
   якорь съезжает вместе с контактом: транспорт сдвигается и заново
   захватывается на новом месте (SE-style). Space/service brake не меняется;
-  body остаётся dynamic;
+  body остаётся dynamic.
+  После construction place/dismantle (mass/COM change) или recreate physics
+  body якоря **сбрасываются** (`park_anchor_valid=false`) — иначе bristle
+  тянет к устаревшим world-точкам и на powered rover поднимает physics spiral;
 - exit (E): снять routing / driver input; **не** freeze и не zero-vel;
   без PB машина катится, с PB колёса держат;
 - обычный player locomotion выключается (`set_gameplay_input_enabled(false)`);

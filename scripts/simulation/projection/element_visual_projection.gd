@@ -19,7 +19,6 @@ var _materials: Dictionary = {}
 var _known_bodies: Dictionary = {}
 var _drill_rotors: Dictionary = {}
 
-
 func bind(
 	world: SimulationWorld,
 	physics_projection: SimulationPhysicsProjection
@@ -35,7 +34,6 @@ func bind(
 		_world.structural_event.connect(_on_structural_event)
 	rebuild_all()
 
-
 func rebuild_all() -> void:
 	if _world == null or _physics_projection == null:
 		return
@@ -46,10 +44,8 @@ func rebuild_all() -> void:
 			continue
 		_rebuild_assembly(assembly.assembly_id)
 
-
 func rebuild_assembly(assembly_id: int) -> void:
 	_rebuild_assembly(assembly_id)
-
 
 func _process(delta: float) -> void:
 	if _world == null:
@@ -73,7 +69,6 @@ func _process(delta: float) -> void:
 		if running:
 			rotor.rotate_x(DRILL_SPIN_SPEED * delta)
 
-
 ## Physics may replace StaticBody→RigidBody (rover activate) without a
 ## structural event; visuals were children of the freed body.
 func _resync_replaced_bodies() -> void:
@@ -93,7 +88,6 @@ func _resync_replaced_bodies() -> void:
 	for assembly_id: int in stale:
 		_rebuild_assembly(assembly_id)
 
-
 func _stationary_drill_spinning(element: SimulationElement) -> bool:
 	if element == null or not element.is_operational():
 		return false
@@ -107,13 +101,34 @@ func _stationary_drill_spinning(element: SimulationElement) -> bool:
 		return false
 	return true
 
-
 func _on_structural_event(event: Dictionary) -> void:
 	match StringName(event.get("kind", &"")):
 		&"world_restored":
 			rebuild_all()
-		&"assembly_spawned", &"assembly_changed":
+		&"assembly_spawned":
 			_rebuild_assembly(int(event["assembly_id"]))
+		&"assembly_changed":
+			var changed_assembly_id := int(event["assembly_id"])
+			var placed_element_id := int(event.get("placed_element_id", 0))
+			var removed_element_id := int(event.get("removed_element_id", 0))
+			if (
+				placed_element_id > 0
+				and _try_append_placed_element(
+					changed_assembly_id,
+					placed_element_id
+				)
+			):
+				pass
+			elif (
+				removed_element_id > 0
+				and _try_remove_projected_element(
+					changed_assembly_id,
+					removed_element_id
+				)
+			):
+				pass
+			else:
+				_rebuild_assembly(changed_assembly_id)
 		&"assembly_removed":
 			_clear_known_body(int(event["assembly_id"]))
 		&"assembly_split":
@@ -130,7 +145,6 @@ func _on_structural_event(event: Dictionary) -> void:
 				_update_element_visual(int(event.get("element_id", 0)))
 			else:
 				_rebuild_assembly(int(event["assembly_id"]))
-
 
 func _update_element_visual(element_id: int) -> void:
 	if _world == null or _physics_projection == null or element_id <= 0:
@@ -159,6 +173,70 @@ func _update_element_visual(element_id: int) -> void:
 			if rim != null:
 				rim.material_override = rim_material
 
+## Place/dismantle: mutate visuals in place instead of destroying every mesh on
+## a large rover (L25 place was rebuilding 100+ element visuals each time).
+func _try_append_placed_element(
+	assembly_id: int,
+	element_id: int
+) -> bool:
+	if _world == null or _physics_projection == null or element_id <= 0:
+		return false
+	var root_body := _physics_projection.get_physics_body(assembly_id)
+	var known: Variant = _known_bodies.get(assembly_id)
+	if (
+		root_body == null
+		or not is_instance_valid(known)
+		or known != root_body
+	):
+		return false
+	var assembly := _world.get_assembly_raw(assembly_id)
+	var element := _world.get_element(element_id)
+	if (
+		assembly == null
+		or assembly.tombstoned
+		or element == null
+		or element.assembly_id != assembly_id
+	):
+		return false
+	var body := _body_for_element(element_id)
+	if body == null:
+		return false
+	if _element_has_visual(body, element_id):
+		return false
+	var connected_index := CONNECTED_BLOCK_VISUAL_SCRIPT.build_occupancy(
+		_world,
+		assembly
+	)
+	var occupancy_cells: Dictionary = connected_index.get("cells", {})
+	var archetype_by_element: Dictionary = connected_index.get(
+		"archetypes",
+		{}
+	)
+	if not _attach_element_visuals(
+		body,
+		assembly_id,
+		element,
+		occupancy_cells,
+		archetype_by_element
+	):
+		return false
+	_refresh_connected_neighbours(
+		assembly_id,
+		element,
+		occupancy_cells,
+		archetype_by_element
+	)
+	return true
+
+
+func _try_remove_projected_element(
+	_assembly_id: int,
+	_element_id: int
+) -> bool:
+	# Dismantle needs neighbour face-mask refresh after the element is gone;
+	# fall back to full rebuild until the event carries footprint/neighbours.
+	return false
+
 
 func _rebuild_assembly(assembly_id: int) -> void:
 	var assembly := _world.get_assembly_raw(assembly_id)
@@ -184,60 +262,169 @@ func _rebuild_assembly(assembly_id: int) -> void:
 		var body := _body_for_element(element_id)
 		if body == null:
 			continue
-		var archetype := element.get_archetype()
-		if archetype == null or archetype.colliders.is_empty():
-			continue
-		if PistonVisual.is_piston_element(element.archetype_id):
-			continue
-		if ROVER_MODULE_VISUAL_SCRIPT.is_rover_module(element.archetype_id):
-			_add_rover_module_visual(body, assembly_id, element)
-			continue
-		var use_connected := CONNECTED_BLOCK_VISUAL_SCRIPT.is_connected_archetype(
-			element.archetype_id
+		_attach_element_visuals(
+			body,
+			assembly_id,
+			element,
+			occupancy_cells,
+			archetype_by_element
 		)
-		var face_mask := 0
-		if use_connected:
-			face_mask = CONNECTED_BLOCK_VISUAL_SCRIPT.face_occlusion_mask(
+
+
+func _attach_element_visuals(
+	body: PhysicsBody3D,
+	assembly_id: int,
+	element: SimulationElement,
+	occupancy_cells: Dictionary,
+	archetype_by_element: Dictionary
+) -> bool:
+	var archetype := element.get_archetype()
+	if archetype == null or archetype.colliders.is_empty():
+		return false
+	if PistonVisual.is_piston_element(element.archetype_id):
+		return true
+	if ROVER_MODULE_VISUAL_SCRIPT.is_rover_module(element.archetype_id):
+		_add_rover_module_visual(body, assembly_id, element)
+		return true
+	var use_connected := CONNECTED_BLOCK_VISUAL_SCRIPT.is_connected_archetype(
+		element.archetype_id
+	)
+	var face_mask := 0
+	if use_connected:
+		face_mask = CONNECTED_BLOCK_VISUAL_SCRIPT.face_occlusion_mask(
+			element,
+			occupancy_cells,
+			archetype_by_element
+		)
+	for collider_index: int in range(archetype.colliders.size()):
+		var collider: ColliderDefinition = archetype.colliders[collider_index]
+		if (
+			use_connected
+			and collider.shape_kind == ColliderDefinition.ShapeKind.BOX
+		):
+			CONNECTED_BLOCK_VISUAL_SCRIPT.attach_element_visual(
+				body,
+				assembly_id,
 				element,
-				occupancy_cells,
-				archetype_by_element
-			)
-		for collider_index: int in range(archetype.colliders.size()):
-			var collider: ColliderDefinition = archetype.colliders[collider_index]
-			if (
-				use_connected
-				and collider.shape_kind == ColliderDefinition.ShapeKind.BOX
-			):
-				CONNECTED_BLOCK_VISUAL_SCRIPT.attach_element_visual(
-					body,
-					assembly_id,
-					element,
-					collider,
-					collider_index,
-					face_mask,
-					_material_for(element),
-					_rim_material_for(element)
-				)
-				continue
-			var mesh := collider.make_preview_mesh(0.96)
-			var visual := MeshInstance3D.new()
-			visual.name = "%s%d_%d" % [
-				VISUAL_PREFIX,
-				element_id,
+				collider,
 				collider_index,
-			]
-			visual.mesh = mesh
-			visual.material_override = _material_for(element)
-			visual.transform = GridPoseUtil.collider_local_transform(
-				element.origin_cell,
-				element.orientation_index,
-				collider
+				face_mask,
+				_material_for(element),
+				_rim_material_for(element)
 			)
-			visual.set_meta("element_visual", true)
-			visual.set_meta("assembly_id", assembly_id)
-			body.add_child(visual)
-		if element.archetype_id == "stationary_drill":
-			_add_stationary_drill_visual(body, assembly_id, element)
+			continue
+		var mesh := collider.make_preview_mesh(0.96)
+		var visual := MeshInstance3D.new()
+		visual.name = "%s%d_%d" % [
+			VISUAL_PREFIX,
+			element.element_id,
+			collider_index,
+		]
+		visual.mesh = mesh
+		visual.material_override = _material_for(element)
+		visual.transform = GridPoseUtil.collider_local_transform(
+			element.origin_cell,
+			element.orientation_index,
+			collider
+		)
+		visual.set_meta("element_visual", true)
+		visual.set_meta("assembly_id", assembly_id)
+		body.add_child(visual)
+	if element.archetype_id == "stationary_drill":
+		_add_stationary_drill_visual(body, assembly_id, element)
+	return true
+
+
+func _refresh_connected_neighbours(
+	assembly_id: int,
+	placed: SimulationElement,
+	occupancy_cells: Dictionary,
+	archetype_by_element: Dictionary
+) -> void:
+	var archetype := placed.get_archetype()
+	if archetype == null:
+		return
+	var neighbour_ids: Dictionary = {}
+	for cell: Vector3i in archetype.get_occupied_cells(
+		placed.origin_cell,
+		placed.orientation_index
+	):
+		for face: OrientationUtil.Face in CONNECTED_BLOCK_VISUAL_SCRIPT.FACE_ORDER:
+			var neighbour_id: Variant = occupancy_cells.get(
+				cell + OrientationUtil.face_to_vector(face)
+			)
+			if neighbour_id == null:
+				continue
+			var nid := int(neighbour_id)
+			if nid == placed.element_id:
+				continue
+			if not CONNECTED_BLOCK_VISUAL_SCRIPT.is_connected_archetype(
+				String(archetype_by_element.get(nid, ""))
+			):
+				continue
+			neighbour_ids[nid] = true
+	for neighbour_id_variant: Variant in neighbour_ids.keys():
+		_refresh_one_connected_visual(
+			assembly_id,
+			int(neighbour_id_variant),
+			occupancy_cells,
+			archetype_by_element
+		)
+
+
+func _refresh_one_connected_visual(
+	assembly_id: int,
+	element_id: int,
+	occupancy_cells: Dictionary,
+	archetype_by_element: Dictionary
+) -> void:
+	var element := _world.get_element(element_id)
+	if element == null:
+		return
+	if not CONNECTED_BLOCK_VISUAL_SCRIPT.is_connected_archetype(
+		element.archetype_id
+	):
+		return
+	var body := _body_for_element(element_id)
+	if body == null:
+		return
+	_clear_element_visuals(body, element_id)
+	_attach_element_visuals(
+		body,
+		assembly_id,
+		element,
+		occupancy_cells,
+		archetype_by_element
+	)
+
+
+func _element_has_visual(body: PhysicsBody3D, element_id: int) -> bool:
+	if body == null:
+		return false
+	var prefix := "%s%d_" % [VISUAL_PREFIX, element_id]
+	for child_node: Node in body.get_children():
+		if (
+			child_node.has_meta("element_visual")
+			and String(child_node.name).begins_with(prefix)
+		):
+			return true
+	return false
+
+
+func _clear_element_visuals(body: PhysicsBody3D, element_id: int) -> void:
+	if body == null:
+		return
+	var prefix := "%s%d_" % [VISUAL_PREFIX, element_id]
+	var to_free: Array[Node] = []
+	for child_node: Node in body.get_children():
+		if (
+			child_node.has_meta("element_visual")
+			and String(child_node.name).begins_with(prefix)
+		):
+			to_free.append(child_node)
+	for child_node: Node in to_free:
+		body.remove_child(child_node)
+		child_node.queue_free()
 
 
 func _add_rover_module_visual(
@@ -246,7 +433,6 @@ func _add_rover_module_visual(
 	element: SimulationElement
 ) -> void:
 	ROVER_MODULE_VISUAL_SCRIPT.attach_runtime(body, assembly_id, element)
-
 
 func _add_stationary_drill_visual(
 	body: PhysicsBody3D,
@@ -266,7 +452,6 @@ func _add_stationary_drill_visual(
 	if rotor != null:
 		_drill_rotors[element.element_id] = rotor
 
-
 func _clear_visuals(body: PhysicsBody3D, assembly_id: int = 0) -> void:
 	for child_node: Node in body.get_children():
 		if (
@@ -279,11 +464,9 @@ func _clear_visuals(body: PhysicsBody3D, assembly_id: int = 0) -> void:
 			body.remove_child(child_node)
 			child_node.queue_free()
 
-
 func _clear_known_body(assembly_id: int) -> void:
 	_clear_assembly_visuals(assembly_id)
 	_known_bodies.erase(assembly_id)
-
 
 func _body_for_element(element_id: int) -> PhysicsBody3D:
 	if _physics_projection == null or element_id <= 0:
@@ -297,7 +480,6 @@ func _body_for_element(element_id: int) -> PhysicsBody3D:
 	if element == null:
 		return null
 	return _physics_projection.get_physics_body(element.assembly_id)
-
 
 func _clear_assembly_visuals(assembly_id: int) -> void:
 	if _world == null or _physics_projection == null:
@@ -315,7 +497,6 @@ func _clear_assembly_visuals(assembly_id: int) -> void:
 			continue
 		_clear_visuals(body, assembly_id)
 		cleared[body_id] = true
-
 
 func _material_for(element: SimulationElement) -> StandardMaterial3D:
 	var archetype := element.get_archetype()
@@ -343,7 +524,6 @@ func _material_for(element: SimulationElement) -> StandardMaterial3D:
 		return _materials["damaged"]
 	return _materials["operational"]
 
-
 func _rim_material_for(element: SimulationElement) -> StandardMaterial3D:
 	if (
 		element.archetype_id.begins_with("rover_")
@@ -360,7 +540,6 @@ func _rim_material_for(element: SimulationElement) -> StandardMaterial3D:
 	if reason == &"damaged":
 		return _materials["rim_damaged"]
 	return _materials["rim_operational"]
-
 
 func _create_materials() -> void:
 	if not _materials.is_empty():
@@ -423,7 +602,6 @@ func _create_materials() -> void:
 		Color(0.08, 0.09, 0.1)
 	)
 
-
 func _material(
 	color: Color,
 	metallic: float,
@@ -437,7 +615,6 @@ func _material(
 	if transparent:
 		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	return material
-
 
 func _rim_material(
 	color: Color,

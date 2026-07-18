@@ -3,6 +3,9 @@ extends RefCounted
 
 const MAX_CANDIDATES := 8
 const TOP_K_VALIDATE := 12
+## Authoritative plan validation is the expensive part of a resolve; stop after
+## this many valid face candidates — enough for selection + manual cycling.
+const VALID_FACE_STOP := 4
 const DIRECT_ELEMENT_SCORE := 1000.0
 const VOXEL_FALLBACK_SCORE := 3.0
 const HYSTERESIS_SCORE_BONUS := 0.12
@@ -57,14 +60,16 @@ func resolve(params: Dictionary) -> Dictionary:
 		"held_attach_pivot",
 		Vector3(INF, INF, INF)
 	)
-	if (
-		manual_index < 0
-		and bool(direct_hit.get("valid", false))
-		and StringName(direct_hit.get("target_kind", &""))
-		== InteractionHit.KIND_SIMULATION_ELEMENT
+	var direct_kind := StringName(direct_hit.get("target_kind", &""))
+	var direct_valid := bool(direct_hit.get("valid", false))
+	# Direct hit is planned once and reused everywhere below.
+	var direct_plan: Dictionary = {}
+	if direct_valid and (
+		direct_kind == InteractionHit.KIND_SIMULATION_ELEMENT
+		or direct_kind == InteractionHit.KIND_VOXEL
 	):
 		last_stats["plans_validated"] = 1
-		var direct_plan := ConstructionPlacement.plan(
+		direct_plan = ConstructionPlacement.plan(
 			world,
 			direct_hit,
 			archetype,
@@ -73,12 +78,16 @@ func resolve(params: Dictionary) -> Dictionary:
 			held_ground_pivot,
 			held_attach_pivot
 		)
+
+	# Direct compatible element hit always wins (magnetic snap policy §1); no
+	# face scan needed — cheapest and by far the most common aim case.
+	if (
+		manual_index < 0
+		and direct_kind == InteractionHit.KIND_SIMULATION_ELEMENT
+		and bool(direct_plan.get("valid", false))
+	):
 		var direct_command: PlaceElementCommand = direct_plan.get("command")
-		if (
-			direct_command != null
-			and direct_command.assembly_id != 0
-			and bool(direct_plan.get("valid", false))
-		):
+		if direct_command != null and direct_command.assembly_id != 0:
 			var direct_candidate := _make_candidate(
 				direct_hit,
 				direct_plan,
@@ -91,39 +100,6 @@ func resolve(params: Dictionary) -> Dictionary:
 				"selected_index": 0,
 				"selected_target": direct_hit,
 				"selected_plan": direct_plan,
-				"sticky_key": _sticky_candidate_key,
-				"stats": last_stats.duplicate(true),
-			}
-
-	if (
-		manual_index < 0
-		and bool(direct_hit.get("valid", false))
-		and StringName(direct_hit.get("target_kind", &""))
-		== InteractionHit.KIND_VOXEL
-	):
-		last_stats["plans_validated"] = 1
-		var ground_plan := ConstructionPlacement.plan(
-			world,
-			direct_hit,
-			archetype,
-			orientation_index,
-			store_id,
-			held_ground_pivot,
-			held_attach_pivot
-		)
-		if bool(ground_plan.get("valid", false)):
-			var ground_candidate := _make_candidate(
-				direct_hit,
-				ground_plan,
-				DIRECT_ELEMENT_SCORE,
-				&"voxel_direct"
-			)
-			_sticky_candidate_key = str(ground_candidate["key"])
-			return {
-				"candidates": [ground_candidate],
-				"selected_index": 0,
-				"selected_target": direct_hit,
-				"selected_plan": ground_plan,
 				"sticky_key": _sticky_candidate_key,
 				"stats": last_stats.duplicate(true),
 			}
@@ -152,27 +128,10 @@ func resolve(params: Dictionary) -> Dictionary:
 		if candidates.size() >= MAX_CANDIDATES:
 			break
 
-	if bool(direct_hit.get("valid", false)):
-		var direct_kind := StringName(direct_hit.get("target_kind", &""))
+	if bool(direct_plan.get("valid", false)):
 		if direct_kind == InteractionHit.KIND_SIMULATION_ELEMENT:
-			last_stats["plans_validated"] = (
-				int(last_stats["plans_validated"]) + 1
-			)
-			var direct_plan := ConstructionPlacement.plan(
-				world,
-				direct_hit,
-				archetype,
-				orientation_index,
-				store_id,
-				held_ground_pivot,
-				held_attach_pivot
-			)
 			var command: PlaceElementCommand = direct_plan.get("command")
-			if (
-				bool(direct_plan.get("valid", false))
-				and command != null
-				and command.assembly_id != 0
-			):
+			if command != null and command.assembly_id != 0:
 				candidates.append(
 					_make_candidate(
 						direct_hit,
@@ -182,27 +141,16 @@ func resolve(params: Dictionary) -> Dictionary:
 					)
 				)
 		elif direct_kind == InteractionHit.KIND_VOXEL:
-			last_stats["plans_validated"] = (
-				int(last_stats["plans_validated"]) + 1
-			)
-			var voxel_plan := ConstructionPlacement.plan(
-				world,
-				direct_hit,
-				archetype,
-				orientation_index,
-				store_id,
-				held_ground_pivot,
-				held_attach_pivot
-			)
-			if bool(voxel_plan.get("valid", false)):
-				candidates.append(
-					_make_candidate(
-						direct_hit,
-						voxel_plan,
-						VOXEL_FALLBACK_SCORE,
-						&"voxel_fallback"
-					)
+			# Voxel fallback scores below magnetic faces (policy §3): aiming at
+			# the ground next to a structure still snaps to the structure.
+			candidates.append(
+				_make_candidate(
+					direct_hit,
+					direct_plan,
+					VOXEL_FALLBACK_SCORE,
+					&"voxel_fallback"
 				)
+			)
 
 	candidates.sort_custom(
 		func(left: Dictionary, right: Dictionary) -> bool:
@@ -222,6 +170,19 @@ func resolve(params: Dictionary) -> Dictionary:
 		selected = candidates[selected_index]
 		_sticky_candidate_key = str(selected.get("key", ""))
 
+	# No placeable candidate anywhere: surface the invalid direct-hit plan so
+	# the preview can render the red "cannot place here" ghost.
+	if selected.is_empty() and not direct_plan.is_empty():
+		_sticky_candidate_key = ""
+		return {
+			"candidates": [],
+			"selected_index": -1,
+			"selected_target": direct_hit,
+			"selected_plan": direct_plan,
+			"sticky_key": "",
+			"stats": last_stats.duplicate(true),
+		}
+
 	return {
 		"candidates": candidates,
 		"selected_index": selected_index,
@@ -230,6 +191,7 @@ func resolve(params: Dictionary) -> Dictionary:
 		"sticky_key": _sticky_candidate_key,
 		"stats": last_stats.duplicate(true),
 	}
+
 
 
 static func _empty_stats() -> Dictionary:
@@ -408,6 +370,8 @@ func _collect_face_candidates(
 				]
 			)
 		)
+		if validated.size() >= VALID_FACE_STOP:
+			break
 	validated.sort_custom(
 		func(left: Dictionary, right: Dictionary) -> bool:
 			return float(left["score"]) > float(right["score"])
@@ -440,9 +404,7 @@ func _legacy_rank_faces(
 			var element_archetype := element.get_archetype()
 			if element_archetype == null:
 				continue
-			var group_transform := (
-				world.element_group_motion(element_id).transform
-			)
+			var group_transform := world.element_group_transform(element_id)
 			for descriptor: GridSurfaceUtil.SurfaceFaceDescriptor in (
 				GridSurfaceUtil.get_surface_descriptors(
 					element_archetype,
@@ -568,28 +530,6 @@ static func _score_geometric(
 	score -= distance_penalty * 0.5
 	score -= screen_penalty * 0.3
 	return score
-
-
-static func _has_compatible_connection(
-	_world: SimulationWorld,
-	target_element: SimulationElement,
-	plan: Dictionary
-) -> bool:
-	var command: PlaceElementCommand = plan.get("command")
-	if command == null or command.assembly_id == 0:
-		return false
-	var preview := SimulationElement.frame(
-		-1,
-		command.assembly_id,
-		command.archetype,
-		command.origin_cell,
-		command.orientation_index,
-		{}
-	)
-	return RuntimeConnectivity.elements_have_rigid_connection(
-		target_element,
-		preview
-	)
 
 
 static func _target_from_face(
