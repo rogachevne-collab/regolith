@@ -13,18 +13,19 @@ config_version=5
 config/name="Regolith"
 config/description="First-person lunar engineering sandbox: voxel terrain, drill, modular rovers, structural rebuild."
 run/main_scene="res://scenes/main.tscn"
-config/features=PackedStringArray("4.6")
+config/features=PackedStringArray("4.7")
 config/icon="res://icon.svg"
 
 [autoload]
 
-BeckettRuntime="*uid://dspgi2nxto4e8"
 LimboConsole="*res://addons/limbo_console/limbo_console.gd"
+BeckettRuntime="*uid://dspgi2nxto4e8"
 
 [beckett]
 
 effort_schema=2
 dock_revealed=true
+effort=6
 
 [debug]
 

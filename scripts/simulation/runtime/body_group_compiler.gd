@@ -3,7 +3,6 @@ extends RefCounted
 
 const MAX_DRIVEN_JOINTS_ON_PATH := 4
 
-
 static func compile(
 	element_ids: Array[int],
 	elements_by_id: Dictionary,
@@ -63,7 +62,6 @@ static func compile(
 		"driven_specs": driven_specs,
 	}
 
-
 static func would_rigid_bridge_piston_groups(
 	element_a_id: int,
 	element_b_id: int,
@@ -88,7 +86,6 @@ static func would_rigid_bridge_piston_groups(
 		):
 			return true
 	return false
-
 
 static func _pick_root_group_id(
 	groups: Dictionary,
@@ -123,7 +120,6 @@ static func _pick_root_group_id(
 			return base_group
 	return anchored_ids[0]
 
-
 static func _group_for_element(element_id: int, groups: Dictionary) -> int:
 	for group_id_variant: Variant in groups.keys():
 		var group_id := int(group_id_variant)
@@ -132,14 +128,12 @@ static func _group_for_element(element_id: int, groups: Dictionary) -> int:
 			return group_id
 	return 0
 
-
 static func _component_group_id(component: Array) -> int:
 	var ids: Array[int] = []
 	for element_id_variant: Variant in component:
 		ids.append(int(element_id_variant))
 	ids.sort()
 	return ids[0] if not ids.is_empty() else 0
-
 
 static func _validate_acyclic_piston_graph(
 	driven_specs: Array[Dictionary]
@@ -164,7 +158,6 @@ static func _validate_acyclic_piston_graph(
 		if not _dfs_piston_graph_acyclic(start_id, -1, adjacency, visited):
 			return {"valid": false, "reason": &"driven_joint_cycle"}
 	return {"valid": true}
-
 
 ## Longest directed driven path (joint count) from root must be ≤ 4.
 static func _validate_driven_chain_length(
@@ -195,7 +188,6 @@ static func _validate_driven_chain_length(
 		return {"valid": false, "reason": &"driven_joint_chain_too_long"}
 	return {"valid": true}
 
-
 static func _longest_driven_path_from(
 	group_id: int,
 	children_of: Dictionary,
@@ -213,7 +205,6 @@ static func _longest_driven_path_from(
 		)
 	stack.erase(group_id)
 	return best
-
 
 static func _dfs_piston_graph_acyclic(
 	node_id: int,
@@ -238,7 +229,6 @@ static func _dfs_piston_graph_acyclic(
 		):
 			return false
 	return true
-
 
 static func _sorted_int_keys(values: Dictionary) -> Array[int]:
 	var keys: Array[int] = []
