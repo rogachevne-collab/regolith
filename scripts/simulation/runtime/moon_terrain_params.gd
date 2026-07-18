@@ -1,7 +1,10 @@
 class_name MoonTerrainParams
 extends RefCounted
 
-const GENERATOR_VERSION := 24
+## 25: play switched from panorama NODE_SDF_SPHERE_HEIGHTMAP to the analytic
+## native SDF (MoonNativeSdfGenerator) — same H(n), but exact at poles/seam,
+## so cached digs from the panorama crust don't line up anymore.
+const GENERATOR_VERSION := 25
 const SEED := 0x4D004E
 
 

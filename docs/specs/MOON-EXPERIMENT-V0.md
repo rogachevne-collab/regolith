@@ -116,9 +116,20 @@ Legacy flat yard: `scenes/flat_moon.tscn` + `scripts/flat_moon_bootstrap.gd`.
 у нас тот же контракт через bake.
 
 - Узел: **`VoxelLodTerrain`** (планеты / большие smooth volumes — путь доки).
-- **Play (канон Voxel Tools):** `VoxelGeneratorGraph` как в
-  [Generators → Planet](https://voxel-tools.readthedocs.io/en/latest/generators/) —
-  **`SdfSphere` + height noise** на `normalize(p)` (native C++). Без bake коры.
+- **Play (канон с фазы native-SDF):** `MoonNativeSdfGenerator`
+  (`VoxelGeneratorScript`) — аналитический `sdf = |p| − (R + H(n))`, где H(n)
+  считает нативный `MoonHeightmapBake.sample_block_sdf16` (C++, весь блок за
+  один вызов, запись через `set_channel_from_byte_array`). Стартовая
+  самокалибровка сверяет snorm16-кодировку/порядок памяти с `VoxelBuffer`
+  (эталон `set_voxel_f`); при несовпадении — тихий per-voxel fallback.
+  Никакой панорамной проекции → нет polar pinch / шва долготы; спавн на
+  полюсе легален (`_away_from_pole` только для legacy fallback).
+  **Известные дельты script-генератора** (нет series generation, в отличие от
+  graph): detail normalmaps дальних LOD выключены; у boulder-инстансера
+  выключен `snap_to_generator_sdf` (посадка по mesh-поверхности).
+- **Fallback play:** прежний `VoxelGeneratorGraph`
+  (`NODE_SDF_SPHERE_HEIGHTMAP` + EXR bake) — только если нативный класс
+  недоступен; несёт polar pinch по построению.
 - Digs: `VoxelStreamSQLite` modified-only (`save_generator_output=false`);
   DB path `gen_v{N}/moon.sqlite` via `MoonTerrainParams.stream_database_path()`.
   Durable persist: debounce carve → `save_modified_blocks` → wait
@@ -149,14 +160,12 @@ Legacy flat yard: `scenes/flat_moon.tscn` + `scripts/flat_moon_bootstrap.gd`.
   collider lag; pad retires when voxel floor appears. Spawn-focus
   `view_distance` (512) + `collision_lod_count=2` until world_ready.
 - Смена рельефа → bump `GENERATOR_VERSION` + повторный bake.
-- **Heightmap bake:** `MoonHeightmapUtil.bake_heightmap` (8192×4096 EXR) —
-  native `MoonHeightmapBake` (`addons/regolith_moon_bake/`): crater math +
-  local Auburn FastNoiseLite (ZN-equivalent: `period → freq = 1/period`,
-  same seeds/octaves as `MoonTerrainGenerator`), multithreaded workers.
-  Play loads EXR into `NODE_SDF_SPHERE_HEIGHTMAP` at final res (no runtime
-  cubic upsample). Fallback — GDScript `WorkerThreadPool` + live ZN. Bump
-  `GENERATOR_VERSION` on relief change. Повторный play грузит
-  `user://moon_experiment/gen_v{N}/crust_heightmap.exr`.
+- **Heightmap bake (display-only):** terrain панораму больше не читает.
+  `crust_heightmap.exr` нужен только карте (`moon_map_globe` hillshade) —
+  bootstrap печёт его фоном 2048×1024 после `world_ready`
+  (`MAP_HEIGHTMAP_SIZE`). Cinematic-сцены могут перепечь своё разрешение
+  через `MoonHeightmapUtil.ensure_heightmap`. Bump `GENERATOR_VERSION`
+  on relief change (соглашение прежнее).
 - Мир-сейв сборок: `gen_v{N}/world_save.json` (отдельно от flat_moon).
 
 Типизация в коде: **тонкий адаптер** `TerrainCompat`
@@ -310,3 +319,4 @@ Legacy flat yard: `scenes/flat_moon.tscn` + `scripts/flat_moon_bootstrap.gd`.
 | 7 Dig persistence | **done** (bake RegionFiles + play modified-only digs) |
 | Lunar relief H(n) | **done** (HQ `MoonTerrainGenerator` — bake only) |
 | Landscape bake | **done** (`moon_bake_stream.tscn`; MT heightmap via `WorkerThreadPool`) |
+| Native analytic SDF play | **done** (gen_v25: `MoonNativeSdfGenerator`, полюс без pinch, dig persistence подтверждён рестартом) |

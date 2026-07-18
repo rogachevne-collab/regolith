@@ -3,6 +3,12 @@ extends Node3D
 ## Moon experiment entry — spherical VoxelLodTerrain + radial Field.
 ## Parity wiring with main; spawn probes follow GravityField, not world −Y.
 
+## Preload (not class_name) so headless runs don't depend on the editor's
+## global class cache having rescanned the new script.
+const _NativeSdfGen := preload(
+	"res://scripts/simulation/runtime/moon_native_sdf_generator.gd"
+)
+
 const MIN_WARMUP_FRAMES := 30
 ## Lunar g=1.62: settle can take a few seconds once a floor exists.
 const MAX_SPAWN_SETTLE_FRAMES := 360
@@ -27,6 +33,10 @@ const DEMO_HOPPER_OFFSET_M := 14.0
 const SPAWN_FOCUS_VIEW_DISTANCE_VOXELS := 512
 ## LOD0+LOD1 colliders — coarser shell often ready before LOD0 (VT #676).
 const SPAWN_COLLISION_LOD_COUNT := 2
+## Map/HUD panorama for moon_map_globe hillshade. Display-only with the
+## native SDF generator (terrain no longer reads it) — baked in background
+## after world_ready. Cinematic tools may rebake at their own resolution.
+const MAP_HEIGHTMAP_SIZE := Vector2i(2048, 1024)
 
 @onready var _terrain: Node3D = $VoxelTerrain
 @onready var _boulder_instancer: VoxelInstancer = $VoxelTerrain/VoxelInstancer
@@ -50,11 +60,15 @@ const SPAWN_COLLISION_LOD_COUNT := 2
 @export var enable_boulder_instancer := true
 
 @export_group("Planet generator")
-## Preferred: res://resources/moon_planet_generator.tres — edit in Voxel graph UI, then F6.
-## Clear the slot to rebuild from knobs below instead.
+## Preferred play path: analytic native SDF (MoonNativeSdfGenerator — same
+## H(n) as the old bake, sampled per block in C++). No panorama projection →
+## no pole pinch / longitude seam; scales past Ø1 km without a bake.
+@export var use_native_sdf := true
+## Editor override: res://resources/moon_planet_generator.tres (Voxel graph UI).
+## Only consulted when the native path is off/unavailable.
 @export var planet_graph: VoxelGeneratorGraph
-## Preferred play path: bake H(n) crust to a panorama heightmap and feed the
-## native NODE_SDF_SPHERE_HEIGHTMAP (SE-like relief in game, not just noise).
+## Legacy fallback: bake H(n) crust to a panorama heightmap and feed the
+## native NODE_SDF_SPHERE_HEIGHTMAP (pole pinch at ±Y is inherent to it).
 @export var use_baked_heightmap := true
 ## Bake/play resolution for NODE_SDF_SPHERE_HEIGHTMAP. 8192×4096 ≈ 0.38 m/texel
 ## (sub-voxel at scale 0.65) so bilinear sampling stays smooth without a runtime
@@ -86,6 +100,8 @@ var _digs_dirty := false
 var _dig_persist_cooldown_s := 0.0
 var _dig_persist_in_flight := false
 var _quit_after_dig_persist := false
+var _generator_is_native := false
+var _map_heightmap_scheduled := false
 
 
 func is_world_ready() -> bool:
@@ -118,9 +134,11 @@ func _ready() -> void:
 	_player_spawn_hint = _player.global_position
 	if _player_spawn_hint.length_squared() <= 0.000001:
 		_player_spawn_hint = Vector3.UP
-	## Keep spawn off the equirectangular heightmap pole singularity (±Y),
-	## where all longitude texels converge into a visible pinch/star.
-	_player_spawn_hint = _away_from_pole(_player_spawn_hint)
+	if not _generator_is_native:
+		## Equirectangular heightmap fallback: keep spawn off the ±Y pole
+		## singularity where all longitude texels converge into a pinch/star.
+		## The analytic generator has no poles — spawn anywhere.
+		_player_spawn_hint = _away_from_pole(_player_spawn_hint)
 	## Point VoxelViewer at the saved spot from frame 0 so stream isn't at
 	## the default spawn while we still intend to load.
 	var early_saved := _peek_saved_player_position()
@@ -192,7 +210,10 @@ func _configure_terrain() -> void:
 		lod.lod_count = MoonGeometry.DEFAULT_LOD_COUNT
 		lod.lod_distance = MoonGeometry.DEFAULT_LOD_DISTANCE
 		lod.lod_fade_duration = TERRAIN_LOD_FADE_DURATION_S
-		lod.normalmap_enabled = true
+		## Detail normalmaps need generator series generation, which script
+		## generators don't support (VT asserts per tile). Graph fallback keeps
+		## them; native path relies on real far-LOD geometry for now.
+		lod.normalmap_enabled = not _generator_is_native
 		lod.normalmap_begin_lod_index = TERRAIN_NORMALMAP_BEGIN_LOD
 		lod.normalmap_tile_resolution_min = 4
 		lod.normalmap_tile_resolution_max = 16
@@ -210,6 +231,15 @@ func _configure_terrain() -> void:
 
 
 func _make_planet_generator() -> VoxelGenerator:
+	if use_native_sdf:
+		var native := _NativeSdfGen.new(MoonGeometry.radius_voxels())
+		if native.is_native_ready():
+			_generator_is_native = true
+			print("MoonExperiment: native SDF generator — %s" % native.describe())
+			return native
+		push_warning(
+			"MoonExperiment: native SDF generator unavailable; falling back"
+		)
 	if planet_graph != null:
 		var compile_result: Dictionary = planet_graph.compile()
 		if not bool(compile_result.get("success", true)):
@@ -236,6 +266,24 @@ func _make_planet_generator() -> VoxelGenerator:
 			"octaves": noise_octaves,
 			"carve_eroded": carve_eroded,
 		}
+	)
+
+
+func _schedule_map_heightmap_bake() -> void:
+	## Only when the native generator owns terrain: the heightmap fallback
+	## already baked a full-res EXR synchronously (don't race its file).
+	if not _generator_is_native or _map_heightmap_scheduled:
+		return
+	_map_heightmap_scheduled = true
+	if FileAccess.file_exists(MoonHeightmapUtil.heightmap_path()):
+		return
+	WorkerThreadPool.add_task(
+		func() -> void:
+			MoonHeightmapUtil.ensure_heightmap(
+				MAP_HEIGHTMAP_SIZE.x, MAP_HEIGHTMAP_SIZE.y
+			),
+		false,
+		"Moon map heightmap bake"
 	)
 
 
@@ -270,7 +318,7 @@ func _configure_dig_stream() -> void:
 	lod.full_load_mode_enabled = false
 	lod.cache_generated_blocks = true
 	print(
-		"MoonExperiment: VoxelGeneratorGraph planet gen_v%d dig-stream=%s"
+		"MoonExperiment: planet gen_v%d dig-stream=%s"
 		% [MoonTerrainParams.GENERATOR_VERSION, stream.database_path]
 	)
 
@@ -278,9 +326,19 @@ func _configure_dig_stream() -> void:
 func _configure_boulder_instancer() -> void:
 	if _boulder_instancer == null:
 		return
-	if enable_boulder_instancer:
+	if not enable_boulder_instancer:
+		_boulder_instancer.library = null
 		return
-	_boulder_instancer.library = null
+	if _generator_is_native and _boulder_instancer.library != null:
+		## snap_to_generator_sdf needs generator series generation — graph-only;
+		## with a script generator VT errors per chunk and skips the snap anyway.
+		## Mesh-surface placement (+offset_along_normal) carries boulder seating.
+		var library: VoxelInstanceLibrary = _boulder_instancer.library
+		for id in library.get_all_item_ids():
+			var item := library.get_item(id)
+			var item_generator: VoxelInstanceGenerator = item.get("generator")
+			if item_generator != null:
+				item_generator.snap_to_generator_sdf_enabled = false
 
 
 func _persist_world(force := false) -> void:
@@ -394,6 +452,7 @@ func _finish_world_entry(player_position: Vector3) -> void:
 			break
 	_loading.visible = false
 	_world_ready = true
+	_schedule_map_heightmap_bake()
 	## Keep spawn-focus VD until demos finish — restoring 2048 here hitch-stacked
 	## with vehicle compose.
 	print(
@@ -416,6 +475,7 @@ func _finish_loaded_world_entry(spawn_position: Vector3) -> void:
 	_resync_player_camera()
 	_loading.visible = false
 	_world_ready = true
+	_schedule_map_heightmap_bake()
 	_set_spawn_streaming_focus(false)
 	print(
 		(

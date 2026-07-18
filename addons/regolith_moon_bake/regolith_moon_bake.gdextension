@@ -2,6 +2,7 @@
 
 entry_symbol = "regolith_moon_bake_library_init"
 compatibility_minimum = "4.5"
+reloadable = true
 
 [libraries]
 
