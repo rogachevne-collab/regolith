@@ -27,13 +27,40 @@ func _run_tests() -> void:
 	failed += 0 if _test_ilmenite_yield_mix() else 1
 	failed += 0 if _test_hydrogen_cycle_net() else 1
 	failed += 0 if _test_electrolyzer_recipe_machine() else 1
-	failed += 0 if _test_material_field_deterministic() else 1
+	if not _test_material_field_deterministic():
+		failed += 1
+	failed += 0 if _test_map_deposit_overlay() else 1
 	if failed == 0:
 		print("TERRAIN-MATERIALS: PASS")
 		get_tree().quit(0)
 	else:
 		push_error("TERRAIN-MATERIALS: FAIL (%d)" % failed)
 		get_tree().quit(1)
+
+
+func _test_map_deposit_overlay() -> bool:
+	var spawn := Vector3(MoonGeometry.SURFACE_RADIUS_M, 0.0, 0.0)
+	var tex := MoonMapDepositOverlay.build_texture(spawn)
+	if tex == null or tex.get_width() < 8 or tex.get_height() < 8:
+		push_error("deposit overlay texture missing")
+		return false
+	var img := tex.get_image()
+	if img == null:
+		push_error("deposit overlay image missing")
+		return false
+	var lens_pixels := 0
+	for y in mini(img.get_height(), 32):
+		for x in mini(img.get_width(), 32):
+			if img.get_pixel(x, y).a > 0.05:
+				lens_pixels += 1
+	if lens_pixels <= 0:
+		push_error("deposit overlay has no lens pixels near sample window")
+		return false
+	var legend := MoonMapDepositOverlay.legend_rows()
+	if legend.size() < 5:
+		push_error("deposit legend incomplete")
+		return false
+	return true
 
 
 func _test_catalog_indices_unique() -> bool:

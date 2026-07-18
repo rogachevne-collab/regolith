@@ -28,6 +28,7 @@ ADR. Интеграция в Erebus — через Erebus Lite addon, когда
 | баланс / стоимость / масса / тюнинг буров и актуаторов | `specs/GAME-BALANCE-V0.md`; cheatsheet `game-balance` |
 | TerrainMaterial, рудные зоны, добыча по материалу вокселя | `specs/TERRAIN-MATERIALS-V1.md` |
 | Кислород / водород / электролизер (ISRU) | `specs/TERRAIN-MATERIALS-V1.md` § «Вода, кислород, водород», «Машина electrolyzer» |
+| Карта луны (M), метки, слой залежей | `specs/MAP-UI-01.md` |
 | Volume, Atmosphere (герметичность) | «Примитивы» → «Volume и Atmosphere» |
 | Blueprint (чертежи, baked) | «Примитивы» → «Blueprint» |
 | id элементов, топология, structural commands | «Identity и topology (Kernel v0)» |
