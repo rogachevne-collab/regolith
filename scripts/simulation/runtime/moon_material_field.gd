@@ -12,8 +12,14 @@ const _Params := preload(
 	"res://scripts/simulation/runtime/moon_terrain_params.gd"
 )
 
+## Search radius for guaranteed starter lenses (not a solid ore disk).
 const START_OVERLAY_RADIUS_M := 200.0
 const ICE_LATITUDE_ABS := 0.72
+## Direction-space cell scale. Arc ≈ SURFACE_RADIUS / scale ≈ 70 m.
+const LENS_CELL_SCALE := 7.0
+## Soft blob radius inside a hosting cell (cell units).
+const LENS_RADIUS_MIN := 0.28
+const LENS_RADIUS_MAX := 0.48
 
 
 func material_id_at_world(world_pos: Vector3, spawn_world: Vector3 = Vector3.ZERO) -> String:
@@ -70,14 +76,15 @@ func _deposit_at(dir: Vector3, depth_m: float, biome: String) -> String:
 		return _Catalog.MAT_ICE_LENS
 
 	if biome == "mare":
-		if _in_band(depth_m, _Catalog.MAT_PYROXENE) and _spot(dir, 101, 0.12):
+		## Shallow pyroxene over deeper ilmenite — sparse regional lenses.
+		if _in_band(depth_m, _Catalog.MAT_PYROXENE) and _lens_blob(dir, 101, 0.045):
 			return _Catalog.MAT_PYROXENE
-		if _in_band(depth_m, _Catalog.MAT_ILMENITE) and _spot(dir, 131, 0.10):
+		if _in_band(depth_m, _Catalog.MAT_ILMENITE) and _lens_blob(dir, 131, 0.032):
 			return _Catalog.MAT_ILMENITE
 	else:
-		if _in_band(depth_m, _Catalog.MAT_ANORTHITE) and _spot(dir, 151, 0.11):
+		if _in_band(depth_m, _Catalog.MAT_ANORTHITE) and _lens_blob(dir, 151, 0.040):
 			return _Catalog.MAT_ANORTHITE
-		if _in_band(depth_m, _Catalog.MAT_OLIVINE) and _spot(dir, 171, 0.09):
+		if _in_band(depth_m, _Catalog.MAT_OLIVINE) and _lens_blob(dir, 171, 0.028):
 			return _Catalog.MAT_OLIVINE
 	return ""
 
@@ -87,22 +94,59 @@ func _ice_at(dir: Vector3, depth_m: float) -> bool:
 		return false
 	if not _in_band(depth_m, _Catalog.MAT_ICE_LENS):
 		return false
-	return _spot(dir, 191, 0.08)
+	return _lens_blob(dir, 191, 0.055)
 
 
 func _starting_overlay(dir: Vector3, depth_m: float, spawn_dir: Vector3) -> String:
-	var ang := acos(clampf(dir.dot(spawn_dir), -1.0, 1.0))
-	var arc_m := ang * MoonGeometry.SURFACE_RADIUS_M
+	## Discrete guaranteed lenses near spawn — not a solid ore flood disk.
+	var arc_m := (
+		acos(clampf(dir.dot(spawn_dir), -1.0, 1.0)) * MoonGeometry.SURFACE_RADIUS_M
+	)
 	if arc_m > START_OVERLAY_RADIUS_M:
 		return ""
-	## Guaranteed shallow anorthite + deeper ilmenite near spawn for first loop.
-	if depth_m >= 3.0 and depth_m <= 11.0 and arc_m < 80.0:
+
+	## ~45 m NE — shallow anorthite pocket for early Al/Si loop.
+	if (
+		_near_surface_point(dir, spawn_dir, 32.0, 28.0, 26.0)
+		and _in_band(depth_m, _Catalog.MAT_ANORTHITE)
+	):
 		return _Catalog.MAT_ANORTHITE
-	if depth_m >= 8.0 and depth_m <= 18.0 and arc_m < 120.0:
+	## ~95 m NW — deeper ilmenite for Fe/Ti / O₂ path.
+	if (
+		_near_surface_point(dir, spawn_dir, -70.0, 55.0, 32.0)
+		and _in_band(depth_m, _Catalog.MAT_ILMENITE)
+	):
 		return _Catalog.MAT_ILMENITE
-	if depth_m >= 2.0 and depth_m <= 8.0 and arc_m < 60.0:
+	## ~55 m S — shallow pyroxene.
+	if (
+		_near_surface_point(dir, spawn_dir, 8.0, -52.0, 22.0)
+		and _in_band(depth_m, _Catalog.MAT_PYROXENE)
+	):
 		return _Catalog.MAT_PYROXENE
 	return ""
+
+
+func _near_surface_point(
+	dir: Vector3,
+	spawn_dir: Vector3,
+	east_m: float,
+	north_m: float,
+	radius_m: float
+) -> bool:
+	var center := _offset_dir(spawn_dir, east_m, north_m)
+	var ang := acos(clampf(dir.dot(center), -1.0, 1.0))
+	return ang * MoonGeometry.SURFACE_RADIUS_M <= radius_m
+
+
+func _offset_dir(spawn_dir: Vector3, east_m: float, north_m: float) -> Vector3:
+	var up := spawn_dir.normalized()
+	var east := up.cross(Vector3.UP)
+	if east.length_squared() < 0.0001:
+		east = up.cross(Vector3.RIGHT)
+	east = east.normalized()
+	var north := east.cross(up).normalized()
+	var tangent := east * east_m + north * north_m
+	return (up * MoonGeometry.SURFACE_RADIUS_M + tangent).normalized()
 
 
 func _in_band(depth_m: float, material_id: String) -> bool:
@@ -114,18 +158,32 @@ func _in_band(depth_m: float, material_id: String) -> bool:
 	return depth_m >= start_m and depth_m <= start_m + thickness_m
 
 
-func _spot(dir: Vector3, salt: int, threshold: float) -> bool:
-	## Cell-quantized spots so neighbouring voxels share a lens.
+func _lens_blob(dir: Vector3, salt: int, coverage: float) -> bool:
+	## Rare hosting cells + soft radial blob → readable ore patches, not grit.
+	var n := dir.normalized()
+	var scaled := n * LENS_CELL_SCALE
 	var cell := Vector3i(
-		int(floor(dir.x * 48.0)),
-		int(floor(dir.y * 48.0)),
-		int(floor(dir.z * 48.0))
+		int(floor(scaled.x)),
+		int(floor(scaled.y)),
+		int(floor(scaled.z))
 	)
-	var u := _hash01(
-		_Params.SEED + salt,
+	var cell_key := (
 		float(cell.x) * 0.17 + float(cell.y) * 0.31 + float(cell.z) * 0.47
 	)
-	return u < threshold
+	var host := _hash01(_Params.SEED + salt, cell_key)
+	if host >= coverage:
+		return false
+
+	var local := scaled - Vector3(cell)
+	var jx := 0.22 + 0.56 * _hash01(_Params.SEED + salt + 3, cell_key + 1.1)
+	var jy := 0.22 + 0.56 * _hash01(_Params.SEED + salt + 5, cell_key + 2.3)
+	var jz := 0.22 + 0.56 * _hash01(_Params.SEED + salt + 7, cell_key + 3.7)
+	var radius := lerpf(
+		LENS_RADIUS_MIN,
+		LENS_RADIUS_MAX,
+		_hash01(_Params.SEED + salt + 9, cell_key + 4.9)
+	)
+	return local.distance_to(Vector3(jx, jy, jz)) <= radius
 
 
 func _hash01(seed_v: int, x: float) -> float:

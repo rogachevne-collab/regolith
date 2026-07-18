@@ -49,12 +49,29 @@ func _test_map_deposit_overlay() -> bool:
 		push_error("deposit overlay image missing")
 		return false
 	var lens_pixels := 0
-	for y in mini(img.get_height(), 32):
-		for x in mini(img.get_width(), 32):
+	var total := img.get_width() * img.get_height()
+	for y in img.get_height():
+		for x in img.get_width():
 			if img.get_pixel(x, y).a > 0.05:
 				lens_pixels += 1
 	if lens_pixels <= 0:
-		push_error("deposit overlay has no lens pixels near sample window")
+		push_error("deposit overlay has no lens pixels")
+		return false
+	## Lenses must stay sparse — not a uniform worm carpet.
+	var coverage := float(lens_pixels) / float(maxi(total, 1))
+	if coverage > 0.22:
+		push_error("deposit overlay too dense (coverage=%.3f)" % coverage)
+		return false
+	## Starter anorthite pocket (~east 32 m, north 28 m from +X spawn).
+	var field: MoonMaterialField = _Field.new()
+	var pocket_dir := Vector3(
+		MoonGeometry.SURFACE_RADIUS_M,
+		28.0,
+		32.0
+	).normalized()
+	var pocket_id := field.material_id_at_dir_depth(pocket_dir, 6.0, spawn)
+	if pocket_id != _Catalog.MAT_ANORTHITE:
+		push_error("starter anorthite pocket missing (got %s)" % pocket_id)
 		return false
 	var legend := MoonMapDepositOverlay.legend_rows()
 	if legend.size() < 5:
