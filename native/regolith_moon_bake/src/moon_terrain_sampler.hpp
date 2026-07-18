@@ -41,16 +41,20 @@ struct Crater {
 /// Noise: local FastNoiseLite configured like ZN_FastNoiseLite (period → freq = 1/period).
 class MoonTerrainSampler {
 public:
+	/// Base counts for the reference Ø1 km moon; rebuild_crater_index scales
+	/// them by surface area (pow 0.7, capped) so Ø19 km stays SE-dense.
 	static constexpr int kHugeCraterCount = 5;
 	static constexpr int kLargeCraterCount = 95;
 	static constexpr int kMedCraterCount = 280;
 	static constexpr int kSmallCraterCount = 520;
-	static constexpr int kCraterGrid = 24;
+	static constexpr int kTinyCraterCount = 700;
+	static constexpr int kCraterGrid = 64;
 	static constexpr int kMareCount = 5;
 	static constexpr int kClassHuge = 0;
 	static constexpr int kClassLarge = 1;
 	static constexpr int kClassMed = 2;
 	static constexpr int kClassSmall = 3;
+	static constexpr int kClassTiny = 4;
 
 	static constexpr int kSeed = 0x4D004E;
 	static constexpr float kVoxelScale = 0.65f;
@@ -60,6 +64,7 @@ public:
 	static constexpr float kCraterLargeAmpM = 18.f;
 	static constexpr float kCraterMedAmpM = 9.f;
 	static constexpr float kCraterSmallAmpM = 3.5f;
+	static constexpr float kCraterTinyAmpM = 1.3f;
 	static constexpr float kCraterHugeAmpM = 30.f;
 	static constexpr float kSurfaceTextureM = 0.9f;
 	static constexpr float kPlainsTextureM = 0.3f;

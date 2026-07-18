@@ -6,7 +6,9 @@ extends RefCounted
 ## 25: play switched from panorama NODE_SDF_SPHERE_HEIGHTMAP to the analytic
 ## native SDF (MoonNativeSdfGenerator) — same H(n), but exact at poles/seam,
 ## so cached digs from the panorama crust don't line up anymore.
-const GENERATOR_VERSION := 26
+## 27: area-scaled crater density + tiny class (native sampler) — relief
+## changed everywhere, prior digs don't line up.
+const GENERATOR_VERSION := 27
 const SEED := 0x4D004E
 
 

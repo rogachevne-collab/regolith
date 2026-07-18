@@ -1,4 +1,4 @@
-#include "moon_terrain_sampler.hpp"
+﻿#include "moon_terrain_sampler.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -62,7 +62,11 @@ void MoonTerrainSampler::register_class(
 		const int idx = static_cast<int>(craters_.size());
 		craters_.push_back(Crater{center, rad, depth, rim_frac, class_id, seed_base + i * 17});
 
-		const int half = static_cast<int>(std::ceil(float(kCraterGrid) * rad * 1.35f)) + 1;
+		/// Exact influence box (query reads a SINGLE cell, so every cell the
+		/// crater touches must be registered): angular reach 1.35*rad over a
+		/// [-1,1] cube → rad*1.35*grid/2 cells, +1 for center quantization.
+		const int half =
+				static_cast<int>(std::ceil(float(kCraterGrid) * rad * 1.35f * 0.5f)) + 1;
 		const int c0 = dir_to_cell_index(center);
 		const int cx = c0 % kCraterGrid;
 		const int cy = (c0 / kCraterGrid) % kCraterGrid;
@@ -85,10 +89,18 @@ void MoonTerrainSampler::register_class(
 void MoonTerrainSampler::rebuild_crater_index() {
 	craters_.clear();
 	crater_cells_.assign(kCraterGrid * kCraterGrid * kCraterGrid, {});
-	register_class(kHugeCraterCount, kSeed + 50, kClassHuge, 0.11f, 0.20f, kCraterHugeAmpM, 0.18f);
-	register_class(kLargeCraterCount, kSeed + 100, kClassLarge, 0.040f, 0.095f, kCraterLargeAmpM, 0.16f);
-	register_class(kMedCraterCount, kSeed + 200, kClassMed, 0.015f, 0.044f, kCraterMedAmpM, 0.14f);
-	register_class(kSmallCraterCount, kSeed + 300, kClassSmall, 0.005f, 0.015f, kCraterSmallAmpM, 0.12f);
+	/// Area-based density scale vs the reference Ø1 km moon. pow 0.7 (not 1.0)
+	/// keeps counts sane on big worlds; cap bounds memory. Ø19 km → ~62x.
+	const float radius_m = radius_voxels_ * kVoxelScale;
+	const float area = (radius_m / 500.f) * (radius_m / 500.f);
+	const float s = std::min(std::pow(area, 0.7f), 100.f);
+	const int huge_n = std::min(12, std::max(kHugeCraterCount, int(5.f * std::pow(s, 0.35f))));
+	register_class(huge_n, kSeed + 50, kClassHuge, 0.11f, 0.20f, kCraterHugeAmpM, 0.18f);
+	register_class(int(kLargeCraterCount * s), kSeed + 100, kClassLarge, 0.040f, 0.095f, kCraterLargeAmpM, 0.16f);
+	register_class(int(kMedCraterCount * s), kSeed + 200, kClassMed, 0.015f, 0.044f, kCraterMedAmpM, 0.14f);
+	register_class(int(kSmallCraterCount * s), kSeed + 300, kClassSmall, 0.005f, 0.015f, kCraterSmallAmpM, 0.12f);
+	/// Meter-scale peppering near the player; amp-faded away by LOD 2-3.
+	register_class(int(kTinyCraterCount * s), kSeed + 400, kClassTiny, 0.0008f, 0.0025f, kCraterTinyAmpM, 0.10f);
 }
 
 float MoonTerrainSampler::height_voxels(const Vector3f &n, float stride_m) const {
@@ -159,53 +171,34 @@ float MoonTerrainSampler::crater_field(
 		const Vector3f &n, float mare, float highland, float stride_m) const {
 	float carve = 0.f;
 	float rim = 0.f;
+	/// Craters are registered into EVERY cell they influence (see
+	/// register_class) → one cell lookup, no dedup needed (min/max are
+	/// idempotent anyway), no crater-count ceiling.
 	const int cell = dir_to_cell_index(n);
-	const int cx = cell % kCraterGrid;
-	const int cy = (cell / kCraterGrid) % kCraterGrid;
-	const int cz = cell / (kCraterGrid * kCraterGrid);
-
-	std::array<bool, 900> seen{}; // max craters ~900
-	int seen_count = 0;
-
-	for (int dz = -1; dz <= 1; ++dz) {
-		for (int dy = -1; dy <= 1; ++dy) {
-			for (int dx = -1; dx <= 1; ++dx) {
-				const int ix = std::clamp(cx + dx, 0, kCraterGrid - 1);
-				const int iy = std::clamp(cy + dy, 0, kCraterGrid - 1);
-				const int iz = std::clamp(cz + dz, 0, kCraterGrid - 1);
-				const int key = ix + iy * kCraterGrid + iz * kCraterGrid * kCraterGrid;
-				for (int idx : crater_cells_[key]) {
-					if (idx < 0 || idx >= static_cast<int>(seen.size()) || seen[idx]) {
-						continue;
-					}
-					seen[idx] = true;
-					++seen_count;
-					const Crater &crater = craters_[idx];
-					/// LOD fade by crater DEPTH (see detail_fade: height-based
-					/// culling keeps LOD seams tight; diameter-based tears them).
-					const float lod_fade = detail_fade(crater.depth, stride_m);
-					if (lod_fade <= 0.f) {
-						continue;
-					}
-					const float cos_a = clampf(n.dot(crater.center), -1.f, 1.f);
-					if (cos_a < std::cos(crater.rad * 1.35f)) {
-						continue;
-					}
-					const float t = std::acos(cos_a) / crater.rad;
-					float visibility = lod_fade * crater_visibility(crater.cclass, highland);
-					visibility *= lerpf(1.f, 0.03f, mare);
-					if (visibility <= 0.001f) {
-						continue;
-					}
-					const float d = crater.depth * visibility;
-					float c = 0.f;
-					float r = 0.f;
-					crater_contribution(t, d, crater.rim_frac, crater.cclass, crater.seed, c, r);
-					carve = std::min(carve, c);
-					rim = std::max(rim, r);
-				}
-			}
+	for (int idx : crater_cells_[cell]) {
+		const Crater &crater = craters_[idx];
+		/// LOD fade by crater DEPTH (see detail_fade: height-based culling
+		/// keeps LOD seams tight; diameter-based tears them).
+		const float lod_fade = detail_fade(crater.depth, stride_m);
+		if (lod_fade <= 0.f) {
+			continue;
 		}
+		const float cos_a = clampf(n.dot(crater.center), -1.f, 1.f);
+		if (cos_a < std::cos(crater.rad * 1.35f)) {
+			continue;
+		}
+		const float t = std::acos(cos_a) / crater.rad;
+		float visibility = lod_fade * crater_visibility(crater.cclass, highland);
+		visibility *= lerpf(1.f, 0.03f, mare);
+		if (visibility <= 0.001f) {
+			continue;
+		}
+		const float d = crater.depth * visibility;
+		float c = 0.f;
+		float r = 0.f;
+		crater_contribution(t, d, crater.rim_frac, crater.cclass, crater.seed, c, r);
+		carve = std::min(carve, c);
+		rim = std::max(rim, r);
 	}
 	return carve + rim;
 }
@@ -215,7 +208,7 @@ float MoonTerrainSampler::crater_visibility(int cclass, float highland) const {
 	if (cclass >= kClassMed) {
 		base *= lerpf(0.03f, 1.f, highland);
 	}
-	if (cclass == kClassSmall) {
+	if (cclass >= kClassSmall) {
 		base *= lerpf(0.08f, 1.f, highland);
 	}
 	return base;
@@ -277,7 +270,7 @@ void MoonTerrainSampler::crater_contribution(
 			}
 		}
 	} else {
-		const float rim_w = lerpf(0.20f, 0.15f, float(cclass) / 3.f);
+		const float rim_w = lerpf(0.20f, 0.15f, std::min(float(cclass), 3.f) / 3.f);
 		const float rim_bump = std::exp(-std::pow((t - 1.f) / rim_w, 2.f));
 		rim = std::max(rim, d * rim_frac * rim_bump);
 	}
@@ -288,7 +281,7 @@ void MoonTerrainSampler::crater_contribution(
 		const float t_smooth = clampf((edge1 - t) / (edge1 - edge0), 0.f, 1.f);
 		float falloff = t_smooth * t_smooth * (3.f - 2.f * t_smooth);
 		falloff *= std::exp(-std::max(0.f, t - 1.f) * 1.6f);
-		const float ej_amp = d * rim_frac * lerpf(0.42f, 0.26f, float(cclass) / 3.f);
+		const float ej_amp = d * rim_frac * lerpf(0.42f, 0.26f, std::min(float(cclass), 3.f) / 3.f);
 		rim = std::max(rim, ej_amp * falloff);
 	}
 }
