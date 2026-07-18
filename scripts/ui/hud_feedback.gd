@@ -277,9 +277,9 @@ func _reason_text(reason: StringName, data: Dictionary = {}) -> String:
 			return "Провод упирается в препятствие"
 		&"storage_full":
 			var resource_id := str(data.get("resource_id", ""))
-			if resource_id == "raw_regolith":
+			if resource_id == "ore_mare_regolith":
 				return "Карман материалов полон"
-			if resource_id == "construction_component":
+			if resource_id == "plate_metal":
 				return "Карман компонентов полон"
 			return "Склад полон"
 		&"no_input":

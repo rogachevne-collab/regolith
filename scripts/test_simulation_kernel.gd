@@ -346,7 +346,7 @@ func _test_archetype_schema_diagnostics() -> bool:
 	bad.archetype_id = "bad_schema"
 	bad.colliders = []
 	var duplicate_requirement := BuildRequirement.new()
-	duplicate_requirement.resource_id = "construction_component"
+	duplicate_requirement.resource_id = "plate_metal"
 	duplicate_requirement.amount = 0.0
 	bad.build_requirements.append(duplicate_requirement)
 	if bad.ports.is_empty():

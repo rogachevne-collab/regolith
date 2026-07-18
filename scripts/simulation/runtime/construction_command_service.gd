@@ -1138,27 +1138,27 @@ static func weld_element(world,
 			command.max_material_amount,
 			deficit / integrity_per_component
 		)
-		if ResourceCatalog.is_discrete("construction_component"):
+		if ResourceCatalog.is_discrete("plate_metal"):
 			material_amount = ceilf(material_amount - 0.000001)
 		if material_amount <= 0.000001:
 			return StructuralCommandResult.failed(
 				StructuralCommandResult.REASON_INSUFFICIENT_MATERIAL,
 				{
-					"resource_id": "construction_component",
+					"resource_id": "plate_metal",
 					"required": material_amount,
-					"available": store.amount("construction_component"),
+					"available": store.amount("plate_metal"),
 				}
 			)
-		if not store.can_remove("construction_component", material_amount):
+		if not store.can_remove("plate_metal", material_amount):
 			return StructuralCommandResult.failed(
 				StructuralCommandResult.REASON_INSUFFICIENT_MATERIAL,
 				{
-					"resource_id": "construction_component",
+					"resource_id": "plate_metal",
 					"required": material_amount,
-					"available": store.amount("construction_component"),
+					"available": store.amount("plate_metal"),
 				}
 			)
-		store.remove("construction_component", material_amount)
+		store.remove("plate_metal", material_amount)
 		element.integrity = minf(
 			element.integrity + material_amount * integrity_per_component,
 			archetype.max_integrity
@@ -1173,7 +1173,7 @@ static func weld_element(world,
 		)
 		return world._element_state_result(element, {
 			"transfers": [{
-				"resource_id": "construction_component",
+				"resource_id": "plate_metal",
 				"amount": material_amount,
 			}],
 			"store_id": command.store_id,
@@ -1287,13 +1287,13 @@ static func repair_element(world,
 		command.max_material_amount,
 		deficit / integrity_per_component
 	)
-	if ResourceCatalog.is_discrete("construction_component"):
+	if ResourceCatalog.is_discrete("plate_metal"):
 		material_amount = ceilf(material_amount - 0.000001)
 	if material_amount <= 0.000001:
 		return StructuralCommandResult.failed(
 			StructuralCommandResult.REASON_INSUFFICIENT_MATERIAL,
 			{
-				"resource_id": "construction_component",
+				"resource_id": "plate_metal",
 				"required": material_amount,
 				"available": 0.0,
 			}
@@ -1301,20 +1301,20 @@ static func repair_element(world,
 	var store: SimulationResourceStore = world.get_resource_store(command.store_id)
 	if (
 		store == null
-		or not store.can_remove("construction_component", material_amount)
+		or not store.can_remove("plate_metal", material_amount)
 	):
 		return StructuralCommandResult.failed(
 			StructuralCommandResult.REASON_INSUFFICIENT_MATERIAL,
 			{
-				"resource_id": "construction_component",
+				"resource_id": "plate_metal",
 				"required": material_amount,
 				"available": (
-					store.amount("construction_component")
+					store.amount("plate_metal")
 					if store != null else 0.0
 				),
 			}
 		)
-	store.remove("construction_component", material_amount)
+	store.remove("plate_metal", material_amount)
 	element.integrity = minf(
 		element.integrity + material_amount * integrity_per_component,
 		archetype.max_integrity
@@ -1327,9 +1327,9 @@ static func repair_element(world,
 		was_operational != element.is_operational()
 	)
 	return world._element_state_result(element, {
-		"resource_id": "construction_component",
+		"resource_id": "plate_metal",
 		"material_used": material_amount,
-		"resource_remaining": store.amount("construction_component"),
+		"resource_remaining": store.amount("plate_metal"),
 	})
 
 static func dismantle_element(world, 

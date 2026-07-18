@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="ElementArchetype" format=3 uid="uid://clxuekpfxtbqf"]
+[gd_resource type="Resource" script_class="ElementArchetype" format=3 uid="uid://electrolyzer01slice"]
 
 [ext_resource type="Script" uid="uid://c2p36g85wqkru" path="res://scripts/simulation/resources/build_requirement.gd" id="1_etio4"]
 [ext_resource type="Script" uid="uid://b6d2jhfw581hb" path="res://scripts/simulation/resources/collider_definition.gd" id="2_pjlip"]
@@ -71,8 +71,8 @@ local_face = 5
 
 [resource]
 script = ExtResource("4_nghp0")
-archetype_id = "processor"
-display_name = "Процессор"
+archetype_id = "electrolyzer"
+display_name = "Электролизер"
 roles = PackedStringArray("Processor")
 mass_kg = 140.0
 footprint_cells = Array[Vector3i]([Vector3i(0, 0, 0), Vector3i(0, 0, 1), Vector3i(0, 0, 2), Vector3i(0, 1, 0), Vector3i(0, 1, 1), Vector3i(0, 1, 2), Vector3i(0, 2, 0), Vector3i(0, 2, 1), Vector3i(0, 2, 2), Vector3i(1, 0, 0), Vector3i(1, 0, 1), Vector3i(1, 0, 2), Vector3i(1, 1, 0), Vector3i(1, 1, 1), Vector3i(1, 1, 2), Vector3i(1, 2, 0), Vector3i(1, 2, 1), Vector3i(1, 2, 2), Vector3i(2, 0, 0), Vector3i(2, 0, 1), Vector3i(2, 0, 2), Vector3i(2, 1, 0), Vector3i(2, 1, 1), Vector3i(2, 1, 2), Vector3i(2, 2, 0), Vector3i(2, 2, 1), Vector3i(2, 2, 2), Vector3i(3, 0, 0), Vector3i(3, 0, 1), Vector3i(3, 0, 2), Vector3i(3, 1, 0), Vector3i(3, 1, 1), Vector3i(3, 1, 2), Vector3i(3, 2, 0), Vector3i(3, 2, 1), Vector3i(3, 2, 2)])

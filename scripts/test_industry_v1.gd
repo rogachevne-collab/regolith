@@ -12,7 +12,7 @@ const INDUSTRY_SIMULATION_SCRIPT := preload(
 )
 
 const ITEM_CATALOG: Dictionary = {
-	"raw_regolith": {
+	"ore_mare_regolith": {
 		"category": "ore",
 		"mass_per_unit_kg": 2.0,
 		"volume_per_unit_l": 2.5,
@@ -30,30 +30,48 @@ const ITEM_CATALOG: Dictionary = {
 		"volume_per_unit_l": 1.5,
 		"unit": "bulk",
 	},
-	"calcined_oxide": {
+	"ilmenite_concentrate": {
 		"category": "material",
-		"mass_per_unit_kg": 1.2,
-		"volume_per_unit_l": 1.0,
+		"mass_per_unit_kg": 2.2,
+		"volume_per_unit_l": 1.2,
 		"unit": "bulk",
 	},
-	"metal_ingot": {
+	"ingot_iron": {
 		"category": "ingot",
 		"mass_per_unit_kg": 4.0,
 		"volume_per_unit_l": 0.6,
 		"unit": "bulk",
 	},
-	"construction_component": {
+	"plate_metal": {
 		"category": "component",
 		"mass_per_unit_kg": 2.5,
 		"volume_per_unit_l": 3.0,
 		"unit": "discrete",
 	},
+	"hydrogen": {
+		"category": "consumable",
+		"mass_per_unit_kg": 0.05,
+		"volume_per_unit_l": 2.5,
+		"unit": "bulk",
+	},
+	"water": {
+		"category": "consumable",
+		"mass_per_unit_kg": 1.0,
+		"volume_per_unit_l": 1.0,
+		"unit": "bulk",
+	},
+	"oxygen": {
+		"category": "consumable",
+		"mass_per_unit_kg": 0.2,
+		"volume_per_unit_l": 2.0,
+		"unit": "bulk",
+	},
 }
 
 const RECIPE_FIXTURES: Dictionary = {
-	"crush_regolith": {
+	"crush_mare": {
 		"machine": "Processor",
-		"inputs": {"raw_regolith": 1.0},
+		"inputs": {"ore_mare_regolith": 1.0},
 		"outputs": {"regolith_fines": 1.0},
 		"duration_s": 6.0,
 		"power_w": 200.0,
@@ -65,24 +83,24 @@ const RECIPE_FIXTURES: Dictionary = {
 		"duration_s": 8.0,
 		"power_w": 250.0,
 	},
-	"calcine_fines": {
+	"beneficiate_ilmenite": {
 		"machine": "Processor",
 		"inputs": {"regolith_fines": 2.0},
-		"outputs": {"calcined_oxide": 1.0},
+		"outputs": {"ilmenite_concentrate": 1.0},
 		"duration_s": 10.0,
 		"power_w": 400.0,
 	},
-	"reduce_oxide": {
+	"smelt_iron": {
 		"machine": "Fabricator",
-		"inputs": {"calcined_oxide": 1.0},
-		"outputs": {"metal_ingot": 1.0},
+		"inputs": {"ilmenite_concentrate": 1.0},
+		"outputs": {"ingot_iron": 1.0},
 		"duration_s": 12.0,
 		"power_w": 600.0,
 	},
-	"sinter_component": {
+	"craft_plate_metal": {
 		"machine": "Fabricator",
-		"inputs": {"metal_ingot": 1.0},
-		"outputs": {"construction_component": 1.0},
+		"inputs": {"ingot_iron": 1.0},
+		"outputs": {"plate_metal": 1.0},
 		"duration_s": 10.0,
 		"power_w": 500.0,
 	},
@@ -157,11 +175,11 @@ func _test_resource_catalog_contract() -> bool:
 
 func _test_capacity_store_no_overflow() -> bool:
 	var store := _capacity_store(6.0)
-	if not store.try_add("raw_regolith", 2.0):
+	if not store.try_add("ore_mare_regolith", 2.0):
 		return _fail("expected first add to succeed")
-	if not store.try_add("raw_regolith", 0.4):
+	if not store.try_add("ore_mare_regolith", 0.4):
 		return _fail("expected second add within capacity to succeed")
-	if store.try_add("raw_regolith", 0.1):
+	if store.try_add("ore_mare_regolith", 0.1):
 		return _fail("overflow add must be rejected")
 	if not is_equal_approx(store.total_volume_l(), 6.0):
 		return _fail(
@@ -173,11 +191,11 @@ func _test_capacity_store_no_overflow() -> bool:
 
 func _test_capacity_store_no_loss_on_reject() -> bool:
 	var store := _capacity_store(1.0)
-	store.try_add("metal_ingot", 1.0)
-	var before: float = store.inner.amount("metal_ingot")
-	if store.try_add("metal_ingot", 1.0):
+	store.try_add("ingot_iron", 1.0)
+	var before: float = store.inner.amount("ingot_iron")
+	if store.try_add("ingot_iron", 1.0):
 		return _fail("expected capacity rejection")
-	if not is_equal_approx(store.inner.amount("metal_ingot"), before):
+	if not is_equal_approx(store.inner.amount("ingot_iron"), before):
 		return _fail("rejected add mutated store contents")
 	return true
 
@@ -189,10 +207,10 @@ func _test_discrete_fractional_rejection() -> bool:
 	if store == null:
 		world.free()
 		return _fail("player store missing")
-	if store.add("construction_component", 0.5):
+	if store.add("plate_metal", 0.5):
 		world.free()
 		return _fail("fractional discrete add must reject")
-	if not store.add("construction_component", 1.0):
+	if not store.add("plate_metal", 1.0):
 		world.free()
 		return _fail("whole discrete add must succeed")
 	world.free()
@@ -212,10 +230,10 @@ func _test_player_carry_capacity_fixture() -> bool:
 			"player store capacity expected %.1f L, got %.1f L"
 			% [PLAYER_CARRY_CAPACITY_L, store.capacity_l]
 		)
-	if not store.add("construction_component", 33.0):
+	if not store.add("plate_metal", 33.0):
 		world.free()
 		return _fail("33 components should fit the single 100 L pool (99 L used)")
-	if store.add("construction_component", 1.0):
+	if store.add("plate_metal", 1.0):
 		world.free()
 		return _fail("34 components must overflow the 100 L pool")
 	world.free()
@@ -223,10 +241,10 @@ func _test_player_carry_capacity_fixture() -> bool:
 	world = SimulationWorld.new()
 	IndustryStoreService.ensure_player_store(world)
 	store = world.get_resource_store("player")
-	if not store.add("raw_regolith", 40.0):
+	if not store.add("ore_mare_regolith", 40.0):
 		world.free()
-		return _fail("40 raw_regolith should fill 100 L exactly")
-	if store.add("raw_regolith", 0.1):
+		return _fail("40 ore_mare_regolith should fill 100 L exactly")
+	if store.add("ore_mare_regolith", 0.1):
 		world.free()
 		return _fail("player store must reject volume overflow")
 	world.free()
@@ -243,7 +261,7 @@ func _test_mass_coupling_reference() -> bool:
 		0,
 		{}
 	)
-	element.set_industry_buffer({"raw_regolith": 2.5})
+	element.set_industry_buffer({"ore_mare_regolith": 2.5})
 	var expected := archetype.mass_kg + 5.0
 	var actual := element.total_mass_kg()
 	if not is_equal_approx(actual, expected):
@@ -257,22 +275,22 @@ func _test_mass_coupling_reference() -> bool:
 
 
 func _test_recipe_fixture_chain() -> bool:
-	if not RECIPE_FIXTURES.has("crush_regolith"):
-		return _fail("missing crush_regolith fixture")
+	if not RECIPE_FIXTURES.has("crush_mare"):
+		return _fail("missing crush_mare fixture")
 	var basalt_inputs: Dictionary = RECIPE_FIXTURES["sinter_basalt"]["inputs"]
 	var basalt_outputs: Dictionary = RECIPE_FIXTURES["sinter_basalt"]["outputs"]
 	if float(basalt_inputs["regolith_fines"]) != 2.0:
 		return _fail("sinter_basalt fixture expects 2 fines input")
 	if float(basalt_outputs["sintered_basalt"]) != 1.0:
 		return _fail("sinter_basalt fixture expects 1 basalt output")
-	var component_recipe: Dictionary = RECIPE_FIXTURES["sinter_component"]
+	var component_recipe: Dictionary = RECIPE_FIXTURES["craft_plate_metal"]
 	if str(component_recipe["machine"]) != "Fabricator":
-		return _fail("sinter_component must run on Fabricator")
+		return _fail("craft_plate_metal must run on Fabricator")
 	var chain := [
-		"crush_regolith",
-		"calcine_fines",
-		"reduce_oxide",
-		"sinter_component",
+		"crush_mare",
+		"beneficiate_ilmenite",
+		"smelt_iron",
+		"craft_plate_metal",
 	]
 	for recipe_id: String in chain:
 		if not RECIPE_FIXTURES.has(recipe_id):
@@ -337,7 +355,13 @@ func _test_cargo_graph_spawned_topology() -> bool:
 
 func _test_cargo_graph_rebuild_on_weld() -> bool:
 	var world := SimulationWorld.new()
-	world.set_resource_amount("player", "construction_component", 100.0)
+	world.set_resource_amount("player", "plate_metal", 100.0)
+	world.set_resource_amount("player", "girder", 100.0)
+	world.set_resource_amount("player", "mechanism", 100.0)
+	world.set_resource_amount("player", "conduit", 100.0)
+	world.set_resource_amount("player", "plate_basalt", 100.0)
+	world.set_resource_amount("player", "sintered_basalt", 100.0)
+	world.set_resource_amount("player", "plate_alloy", 100.0)
 	var spawn := _spawn(world, _cargo_line_blueprint(), GridTransform.identity())
 	if not spawn.is_ok():
 		world.free()
@@ -419,8 +443,8 @@ func _test_drill_mining_storage_full_runtime() -> bool:
 
 func _test_hand_drill_loot_merge_runtime() -> bool:
 	var world := SimulationWorld.new()
-	world.add_world_loot_pile(Vector3(1.0, 0.0, 0.0), "raw_regolith", 4.0)
-	world.add_world_loot_pile(Vector3(1.2, 0.0, 0.15), "raw_regolith", 3.0)
+	world.add_world_loot_pile(Vector3(1.0, 0.0, 0.0), "ore_mare_regolith", 4.0)
+	world.add_world_loot_pile(Vector3(1.2, 0.0, 0.15), "ore_mare_regolith", 3.0)
 	var piles := world.list_world_loot_piles()
 	if piles.size() != 1:
 		world.free()
@@ -433,7 +457,7 @@ func _test_hand_drill_loot_merge_runtime() -> bool:
 			"merged loot mass expected 7.0 kg, got %.3f"
 			% float(piles[0]["amount_kg"])
 		)
-	world.add_world_loot_pile(Vector3(5.0, 0.0, 0.0), "raw_regolith", 2.0)
+	world.add_world_loot_pile(Vector3(5.0, 0.0, 0.0), "ore_mare_regolith", 2.0)
 	piles = world.list_world_loot_piles()
 	if piles.size() != 2:
 		world.free()
@@ -448,8 +472,8 @@ func _test_hand_drill_loot_merge_runtime() -> bool:
 			"different resource must not merge with regolith pile, got %d"
 			% piles.size()
 		)
-	world.add_world_loot_pile(Vector3(2.0, 0.0, 0.0), "raw_regolith", 20.0)
-	world.add_world_loot_pile(Vector3(2.1, 0.0, 0.0), "raw_regolith", 14.0)
+	world.add_world_loot_pile(Vector3(2.0, 0.0, 0.0), "ore_mare_regolith", 20.0)
+	world.add_world_loot_pile(Vector3(2.1, 0.0, 0.0), "ore_mare_regolith", 14.0)
 	piles = world.list_world_loot_piles()
 	if piles.size() != 5:
 		world.free()
@@ -514,8 +538,12 @@ func _test_terrain_excavation_contract() -> bool:
 	var mass_kg := float(yields[0].get("mass_kg", 0.0))
 	var expected_mass := (
 		0.01
-		* TerrainMaterialSource.REGOLITH_DENSITY_KG_PER_M3
-		* IndustryArchetypeProfile.terrain_collectible_fraction()
+		* TerrainMaterialCatalog.density_kg_m3(
+			TerrainMaterialCatalog.MAT_MARE_REGOLITH
+		)
+		* TerrainMaterialCatalog.collectible_fraction(
+			TerrainMaterialCatalog.MAT_MARE_REGOLITH
+		)
 	)
 	if not is_equal_approx(mass_kg, expected_mass):
 		return _fail(
@@ -546,7 +574,7 @@ func _test_processor_pulls_from_connected_store() -> bool:
 	if keyed_store == null:
 		world.free()
 		return _fail("cargo_store keyed store missing")
-	keyed_store.set_amount("raw_regolith", 4.0)
+	keyed_store.set_amount("ore_mare_regolith", 4.0)
 	var processor := world.get_element(processor_id)
 	processor.set_industry_buffer({})
 	var sim: IndustrySimulation = INDUSTRY_SIMULATION_SCRIPT.new()
@@ -556,11 +584,11 @@ func _test_processor_pulls_from_connected_store() -> bool:
 	var runtime := world.ensure_industry_element_runtime(processor_id)
 	runtime.machine_enabled = true
 	_run_industry_ticks(sim, 3.0)
-	if processor.industry_buffer_amount("raw_regolith") + EPSILON < 1.0:
+	if processor.industry_buffer_amount("ore_mare_regolith") + EPSILON < 1.0:
 		sim.queue_free()
 		world.free()
 		return _fail(
-			"processor expected to pull raw_regolith from connected store, buffer=%s"
+			"processor expected to pull ore_mare_regolith from connected store, buffer=%s"
 			% str(processor.industry_buffer.to_dict())
 		)
 	sim.queue_free()
@@ -601,7 +629,7 @@ func _test_processor_pulls_from_stocked_far_store() -> bool:
 	if far_store == null:
 		world.free()
 		return _fail("far cargo_store keyed store missing")
-	far_store.set_amount("raw_regolith", 4.0)
+	far_store.set_amount("ore_mare_regolith", 4.0)
 	var processor := world.get_element(processor_id)
 	processor.set_industry_buffer({})
 	var sim: IndustrySimulation = INDUSTRY_SIMULATION_SCRIPT.new()
@@ -611,7 +639,7 @@ func _test_processor_pulls_from_stocked_far_store() -> bool:
 	var runtime := world.ensure_industry_element_runtime(processor_id)
 	runtime.machine_enabled = true
 	_run_industry_ticks(sim, 3.0)
-	if processor.industry_buffer_amount("raw_regolith") + EPSILON < 1.0:
+	if processor.industry_buffer_amount("ore_mare_regolith") + EPSILON < 1.0:
 		sim.queue_free()
 		world.free()
 		return _fail(
@@ -876,7 +904,13 @@ func _run_electric_link_dormancy_scenario() -> bool:
 		world.free()
 		return _fail("consumer must lose power while supply link is dormant")
 
-	world.set_resource_amount("player", "construction_component", 10.0)
+	world.set_resource_amount("player", "plate_metal", 10.0)
+	world.set_resource_amount("player", "girder", 10.0)
+	world.set_resource_amount("player", "mechanism", 10.0)
+	world.set_resource_amount("player", "conduit", 10.0)
+	world.set_resource_amount("player", "plate_basalt", 10.0)
+	world.set_resource_amount("player", "sintered_basalt", 10.0)
+	world.set_resource_amount("player", "plate_alloy", 10.0)
 	var repair := RepairElementCommand.new()
 	repair.element_id = source_id
 	repair.expected_state_revision = source.state_revision
@@ -935,7 +969,7 @@ func _run_recipe_tick_scenario() -> bool:
 			% source_link.reason
 		)
 	var processor := world.get_element(processor_id)
-	processor.set_industry_buffer({"raw_regolith": 1.0})
+	processor.set_industry_buffer({"ore_mare_regolith": 1.0})
 	var sim: IndustrySimulation = INDUSTRY_SIMULATION_SCRIPT.new()
 	add_child(sim)
 	sim.bind_world(world)
@@ -945,7 +979,7 @@ func _run_recipe_tick_scenario() -> bool:
 		sim.queue_free()
 		world.free()
 		return _fail(
-			"crush_regolith tick expected >=1 fines, got %.3f" % fines_amount
+			"crush_mare tick expected >=1 fines, got %.3f" % fines_amount
 		)
 	sim.queue_free()
 	world.free()
@@ -983,19 +1017,19 @@ func _run_drill_storage_full_scenario() -> bool:
 	_run_industry_ticks(sim, 3.0)
 	var raw_before := _read_element_buffer_amount(
 		world.get_element(drill_id),
-		"raw_regolith"
+		"ore_mare_regolith"
 	)
 	if raw_before <= EPSILON and carve_calls["count"] == 0:
 		sim.queue_free()
 		world.free()
-		return _fail("drill did not credit raw_regolith with mocked carve")
+		return _fail("drill did not credit ore_mare_regolith with mocked carve")
 	_fill_store_to_capacity(world)
 	var drill_element := world.get_element(drill_id)
 	var buffer_capacity_l := IndustryArchetypeProfile.internal_buffer_capacity_l(
 		drill_element.archetype_id
 	)
 	drill_element.industry_buffer.add(
-		"raw_regolith",
+		"ore_mare_regolith",
 		79.5,
 		buffer_capacity_l
 	)
@@ -1101,7 +1135,7 @@ func _run_integration_isru_scenario() -> bool:
 		sim.queue_free()
 		world.free()
 		return _fail("integration cargo store missing keyed store")
-	if component_amount.amount("construction_component") + EPSILON < 1.0:
+	if component_amount.amount("plate_metal") + EPSILON < 1.0:
 		var fabricator_id := _find_element_id_by_archetype(world, "fabricator")
 		var fabricator := world.get_element(fabricator_id)
 		var fabricator_buffer := str(fabricator.industry_buffer.to_dict())
@@ -1110,7 +1144,7 @@ func _run_integration_isru_scenario() -> bool:
 		world.free()
 		return _fail(
 			(
-				"integration ISRU expected construction_component >=1 after %.0f s "
+				"integration ISRU expected plate_metal >=1 after %.0f s "
 				+ "(fabricator buffer=%s, reason=%s)"
 			)
 			% [
@@ -1744,7 +1778,7 @@ func _fill_store_to_capacity(world: SimulationWorld) -> void:
 	var store := world.ensure_resource_store(store_id)
 	if store == null:
 		return
-	store.set_amount("raw_regolith", 1000.0)
+	store.set_amount("ore_mare_regolith", 1000.0)
 
 
 func _wire_integration_power(world: SimulationWorld) -> void:
@@ -1768,16 +1802,16 @@ func _seed_integration_inputs(world: SimulationWorld) -> void:
 	if processor_id >= 0:
 		_seed_element_buffer(
 			world.get_element(processor_id),
-			{"raw_regolith": 4.0, "regolith_fines": 4.0}
+			{"ore_mare_regolith": 4.0, "regolith_fines": 4.0}
 		)
 	var fabricator_id := _find_element_id_by_archetype(world, "fabricator")
 	if fabricator_id >= 0:
 		_seed_element_buffer(
 			world.get_element(fabricator_id),
-			{"calcined_oxide": 2.0, "metal_ingot": 2.0}
+			{"ilmenite_concentrate": 2.0, "ingot_iron": 2.0}
 		)
 		var runtime := world.ensure_industry_element_runtime(fabricator_id)
-		runtime.ensure_machine_state().queue.append("sinter_component")
+		runtime.ensure_machine_state().queue.append("craft_plate_metal")
 
 
 func _find_element_id_by_archetype(

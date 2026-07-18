@@ -105,7 +105,7 @@ func _test_snapshot_roundtrip() -> bool:
 	var world := SimulationWorld.new()
 	IndustryStoreService.sync_all_elements(world)
 	world.get_resource_store(IndustryStoreService.PLAYER_STORE_ID).add(
-		"raw_regolith",
+		"ore_mare_regolith",
 		2.0
 	)
 	var snap := world.capture_snapshot()

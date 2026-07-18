@@ -611,12 +611,12 @@ func _format_cargo_network(meta: Dictionary) -> String:
 	if not bool(meta.get("cargo_network_connected", false)):
 		return "НЕТ СВЯЗИ"
 	var parts: PackedStringArray = []
-	var raw_amount := float(meta.get("cargo_network_raw_regolith", 0.0))
+	var raw_amount := float(meta.get("cargo_network_ore_mare_regolith", 0.0))
 	var fines_amount := float(meta.get("cargo_network_regolith_fines", 0.0))
 	if raw_amount > 0.000001:
 		parts.append(
 			"%s %s" % [
-				HudTokens.resource_label("raw_regolith"),
+				HudTokens.resource_label("ore_mare_regolith"),
 				HudTokens.format_amount(raw_amount),
 			]
 		)

@@ -124,7 +124,7 @@ static func _best_player_deposit_resource(
 	if prefer_materials:
 		for candidate: String in player_store.resource_ids():
 			if (
-				candidate != "construction_component"
+				candidate != "plate_metal"
 				and player_store.amount(candidate) > 0.000001
 			):
 				return candidate

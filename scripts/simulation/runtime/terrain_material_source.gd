@@ -40,9 +40,7 @@ func yield_for_excavation(
 			continue
 		var density := _Catalog.density_kg_m3(material_id)
 		var fraction := _Catalog.collectible_fraction(material_id)
-		if fallback_collectible_fraction >= 0.0 and not _Catalog.has_material(
-			material_id
-		):
+		if fallback_collectible_fraction >= 0.0:
 			fraction = clampf(fallback_collectible_fraction, 0.0, 1.0)
 		var mass_kg := removed_volume_m3 * density * fraction * weight
 		if mass_kg <= EPSILON:

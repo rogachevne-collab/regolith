@@ -398,7 +398,9 @@ func _test_kinetic_loot_threshold() -> bool:
 	var mass := float(piles[0].get("amount_kg", 0.0))
 	var expected := (
 		carved
-		* TerrainMaterialSource.REGOLITH_DENSITY_KG_PER_M3
+		* TerrainMaterialCatalog.density_kg_m3(
+			TerrainMaterialCatalog.MAT_MARE_REGOLITH
+		)
 		* ImpactResolver.KINETIC_COLLECTIBLE_FRACTION
 	)
 	if absf(mass - expected) > expected * 0.05 + 0.001:
@@ -553,26 +555,29 @@ func _test_sustained_grind_carves_trench() -> bool:
 	var start := head_body.global_position + Vector3.DOWN * 0.5
 	var finish := start + Vector3(1.2, 0.0, 0.0)
 	var midpoint := (start + finish) * 0.5 + Vector3.DOWN * 0.25
-	fixture.impact_service.emit_actuator_sustained_entry_for_test(
-		head_id,
-		head_body,
-		fixture.terrain,
-		240_000.0,
-		1.0 / 60.0,
-		0,
-		start
+	var tool: VoxelTool = fixture.terrain.get_voxel_tool()
+	tool.channel = VoxelBuffer.CHANNEL_SDF
+	var sdf_mid_before := _terrain_sdf_at(tool, midpoint)
+	var carved_a: float = (
+		fixture.impact_service.emit_actuator_sustained_entry_for_test(
+			head_id,
+			head_body,
+			fixture.terrain,
+			240_000.0,
+			1.0 / 60.0,
+			0,
+			start
+		)
 	)
 	fixture.impact_service.clear_pair_cooldowns_for_test()
 	head_body = (
 		fixture.projection.get_element_projection(head_id).get("body")
 	)
+	var carved_b := 0.0
 	if head_body == null or not is_instance_valid(head_body):
 		_free_fixture(fixture)
 		return _fail("grind head body freed before second bite")
-	var tool: VoxelTool = fixture.terrain.get_voxel_tool()
-	tool.channel = VoxelBuffer.CHANNEL_SDF
-	var sdf_mid_before := _terrain_sdf_at(tool, midpoint)
-	var carved: float = (
+	carved_b = float(
 		fixture.impact_service.emit_actuator_sustained_entry_for_test(
 			head_id,
 			head_body,
@@ -585,6 +590,7 @@ func _test_sustained_grind_carves_trench() -> bool:
 	)
 	var sdf_mid_after := _terrain_sdf_at(tool, midpoint)
 	_free_fixture(fixture)
+	var carved := carved_a + carved_b
 	if carved <= 0.0:
 		return _fail("grind segment carved zero volume")
 	if not (sdf_mid_after > sdf_mid_before + 0.05):
@@ -872,7 +878,13 @@ func _spawn(
 func _spawn_piston_on_ground(fixture: Dictionary) -> Dictionary:
 	var world: SimulationWorld = fixture.world
 	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "construction_component", 1000.0)
+	world.set_resource_amount("player", "plate_metal", 100.0)
+	world.set_resource_amount("player", "girder", 100.0)
+	world.set_resource_amount("player", "mechanism", 100.0)
+	world.set_resource_amount("player", "conduit", 100.0)
+	world.set_resource_amount("player", "plate_basalt", 100.0)
+	world.set_resource_amount("player", "sintered_basalt", 100.0)
+	world.set_resource_amount("player", "plate_alloy", 100.0)
 	world.get_archetype_registry().register(PISTON_HEAD)
 	var foundation := _spawn(
 		world,
@@ -1021,6 +1033,13 @@ func _seed_flat_terrain(
 					VoxelBuffer.CHANNEL_SDF
 				)
 	return terrain.try_set_block_data(block_pos, buffer)
+
+
+func _element_integrity(world: SimulationWorld, element_id: int) -> float:
+	var element := world.get_element(element_id)
+	if element == null:
+		return 0.0
+	return element.integrity
 
 
 func _fail(reason: String) -> bool:

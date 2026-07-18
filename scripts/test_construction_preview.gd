@@ -1589,7 +1589,13 @@ func _new_gateway_fixture() -> Dictionary:
 	var world := SimulationWorld.new()
 	world.name = "SimulationWorld"
 	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "construction_component", 1000.0)
+	world.set_resource_amount("player", "plate_metal", 1000.0)
+	world.set_resource_amount("player", "girder", 1000.0)
+	world.set_resource_amount("player", "mechanism", 1000.0)
+	world.set_resource_amount("player", "conduit", 1000.0)
+	world.set_resource_amount("player", "plate_basalt", 1000.0)
+	world.set_resource_amount("player", "sintered_basalt", 1000.0)
+	world.set_resource_amount("player", "plate_alloy", 1000.0)
 	var session := SimulationSession.new()
 	session.name = "SimulationSession"
 	session.add_child(world)
@@ -1639,7 +1645,13 @@ func _new_fixture() -> Dictionary:
 	var world := SimulationWorld.new()
 	root.add_child(world)
 	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "construction_component", 1000.0)
+	world.set_resource_amount("player", "plate_metal", 1000.0)
+	world.set_resource_amount("player", "girder", 1000.0)
+	world.set_resource_amount("player", "mechanism", 1000.0)
+	world.set_resource_amount("player", "conduit", 1000.0)
+	world.set_resource_amount("player", "plate_basalt", 1000.0)
+	world.set_resource_amount("player", "sintered_basalt", 1000.0)
+	world.set_resource_amount("player", "plate_alloy", 1000.0)
 	return {
 		"root": root,
 		"world": world,

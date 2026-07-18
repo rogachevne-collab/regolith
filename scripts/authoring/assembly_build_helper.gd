@@ -21,7 +21,16 @@ func ensure_materials(amount: float = 500.0) -> void:
 	if world == null:
 		return
 	world.ensure_resource_store(store_id)
-	world.set_resource_amount(store_id, "construction_component", amount)
+	for item_id: String in [
+		"plate_metal",
+		"girder",
+		"mechanism",
+		"conduit",
+		"plate_basalt",
+		"sintered_basalt",
+		"plate_alloy",
+	]:
+		world.set_resource_amount(store_id, item_id, amount)
 
 
 func spawn_anchor(

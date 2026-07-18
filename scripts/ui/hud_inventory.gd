@@ -124,6 +124,6 @@ func _refresh_store() -> void:
 
 func _on_command_completed(_command_id: int, _result: Dictionary) -> void:
 	# Keep the open panel in sync when commands change the store (e.g. placing a
-	# block consumes construction_component). Closed → nothing to redraw.
+	# block consumes plate_metal). Closed → nothing to redraw.
 	if _open:
 		_refresh_store()

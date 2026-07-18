@@ -410,9 +410,9 @@ func _feedback_text(reason: StringName, data: Dictionary) -> String:
 			return "Нечего переносить"
 		&"storage_full":
 			var resource_id := str(data.get("resource_id", ""))
-			if resource_id == "construction_component":
+			if resource_id == "plate_metal":
 				return "Карман компонентов полон"
-			if resource_id == "raw_regolith":
+			if resource_id == "ore_mare_regolith":
 				return "Карман материалов полон"
 			return "Склад полон"
 		&"invalid_target", &"invalid_reference":

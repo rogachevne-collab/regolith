@@ -11,7 +11,7 @@ func _run() -> void:
 	var phrase := _phrase_from_args()
 	var world := SimulationWorld.new()
 	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "construction_component", 2000.0)
+	world.set_resource_amount("player", "plate_metal", 2000.0)
 	for archetype: ElementArchetype in Slice01Archetypes.load_all_required():
 		world.get_archetype_registry().register(archetype)
 	for archetype: ElementArchetype in Slice01Archetypes.load_actuator_archetypes():

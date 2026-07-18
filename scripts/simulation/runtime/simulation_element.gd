@@ -16,7 +16,7 @@ var state_revision: int = 0
 var installed_materials: Dictionary = {}
 ## Structural integrity at placement (1% of max_integrity).
 const PLACEMENT_STRUCTURAL_FRACTION := 0.01
-## Integrity restored per construction_component when BOM is already complete.
+## Integrity restored per plate_metal when BOM is already complete.
 ## Authoritative value: Game Balance `construction.weld_repair_integrity_fraction`.
 static func weld_repair_integrity_fraction() -> float:
 	return GameBalance.construction_float("weld_repair_integrity_fraction", 0.25)

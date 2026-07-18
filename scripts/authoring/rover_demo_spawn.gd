@@ -95,7 +95,7 @@ static func spawn_on_terrain(
 		return {"ok": false, "error": "no_session"}
 	var world := session.world
 	world.ensure_resource_store(store_id)
-	world.set_resource_amount(store_id, "construction_component", 500.0)
+	world.set_resource_amount(store_id, "plate_metal", 500.0)
 	var assembly_transform := _assembly_transform_on_surface(
 		world_position,
 		Basis.IDENTITY,

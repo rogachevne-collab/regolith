@@ -9,7 +9,7 @@
 
 [sub_resource type="Resource" id="Requirement"]
 script = ExtResource("1")
-resource_id = "construction_component"
+resource_id = "mechanism"
 amount = 4.0
 
 [sub_resource type="Resource" id="Collider"]
