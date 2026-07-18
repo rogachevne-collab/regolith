@@ -61,6 +61,162 @@
       "mass_per_unit_kg": 1.5,
       "volume_per_unit_l": 4.0,
       "unit": "discrete"
+    },
+    "ore_mare_regolith": {
+      "category": "ore",
+      "mass_per_unit_kg": 2.0,
+      "volume_per_unit_l": 2.5,
+      "unit": "bulk"
+    },
+    "ore_highland_regolith": {
+      "category": "ore",
+      "mass_per_unit_kg": 2.0,
+      "volume_per_unit_l": 2.5,
+      "unit": "bulk"
+    },
+    "ore_ilmenite": {
+      "category": "ore",
+      "mass_per_unit_kg": 2.4,
+      "volume_per_unit_l": 1.8,
+      "unit": "bulk"
+    },
+    "ore_anorthite": {
+      "category": "ore",
+      "mass_per_unit_kg": 2.4,
+      "volume_per_unit_l": 1.8,
+      "unit": "bulk"
+    },
+    "ore_olivine": {
+      "category": "ore",
+      "mass_per_unit_kg": 2.4,
+      "volume_per_unit_l": 1.8,
+      "unit": "bulk"
+    },
+    "ore_pyroxene": {
+      "category": "ore",
+      "mass_per_unit_kg": 2.4,
+      "volume_per_unit_l": 1.8,
+      "unit": "bulk"
+    },
+    "ore_ice": {
+      "category": "ore",
+      "mass_per_unit_kg": 1.0,
+      "volume_per_unit_l": 2.2,
+      "unit": "bulk"
+    },
+    "ilmenite_concentrate": {
+      "category": "material",
+      "mass_per_unit_kg": 2.2,
+      "volume_per_unit_l": 1.2,
+      "unit": "bulk"
+    },
+    "anorthite_concentrate": {
+      "category": "material",
+      "mass_per_unit_kg": 2.2,
+      "volume_per_unit_l": 1.2,
+      "unit": "bulk"
+    },
+    "silicate_slag": {
+      "category": "material",
+      "mass_per_unit_kg": 1.8,
+      "volume_per_unit_l": 2.0,
+      "unit": "bulk"
+    },
+    "reduced_ilmenite_residue": {
+      "category": "material",
+      "mass_per_unit_kg": 3.0,
+      "volume_per_unit_l": 1.0,
+      "unit": "bulk"
+    },
+    "water": {
+      "category": "consumable",
+      "mass_per_unit_kg": 1.0,
+      "volume_per_unit_l": 1.0,
+      "unit": "bulk"
+    },
+    "oxygen": {
+      "category": "consumable",
+      "mass_per_unit_kg": 0.2,
+      "volume_per_unit_l": 2.0,
+      "unit": "bulk"
+    },
+    "hydrogen": {
+      "category": "consumable",
+      "mass_per_unit_kg": 0.05,
+      "volume_per_unit_l": 2.5,
+      "unit": "bulk"
+    },
+    "sintered_anorthosite": {
+      "category": "material",
+      "mass_per_unit_kg": 3.0,
+      "volume_per_unit_l": 1.5,
+      "unit": "bulk"
+    },
+    "ingot_iron": {
+      "category": "ingot",
+      "mass_per_unit_kg": 4.0,
+      "volume_per_unit_l": 0.6,
+      "unit": "bulk"
+    },
+    "ingot_titanium": {
+      "category": "ingot",
+      "mass_per_unit_kg": 4.0,
+      "volume_per_unit_l": 0.6,
+      "unit": "bulk"
+    },
+    "ingot_aluminum": {
+      "category": "ingot",
+      "mass_per_unit_kg": 4.0,
+      "volume_per_unit_l": 0.6,
+      "unit": "bulk"
+    },
+    "ingot_silicon": {
+      "category": "ingot",
+      "mass_per_unit_kg": 4.0,
+      "volume_per_unit_l": 0.6,
+      "unit": "bulk"
+    },
+    "ingot_magnesium": {
+      "category": "ingot",
+      "mass_per_unit_kg": 4.0,
+      "volume_per_unit_l": 0.6,
+      "unit": "bulk"
+    },
+    "plate_basalt": {
+      "category": "component",
+      "mass_per_unit_kg": 2.5,
+      "volume_per_unit_l": 3.0,
+      "unit": "discrete"
+    },
+    "plate_metal": {
+      "category": "component",
+      "mass_per_unit_kg": 2.5,
+      "volume_per_unit_l": 3.0,
+      "unit": "discrete"
+    },
+    "plate_alloy": {
+      "category": "component",
+      "mass_per_unit_kg": 2.2,
+      "volume_per_unit_l": 2.8,
+      "unit": "discrete"
+    },
+    "girder": {
+      "category": "component",
+      "mass_per_unit_kg": 3.5,
+      "volume_per_unit_l": 4.0,
+      "unit": "discrete"
+    },
+    "conduit": {
+      "category": "component",
+      "mass_per_unit_kg": 2.0,
+      "volume_per_unit_l": 2.5,
+      "unit": "discrete"
+    },
+    "mechanism": {
+      "category": "component",
+      "mass_per_unit_kg": 3.0,
+      "volume_per_unit_l": 3.5,
+      "unit": "discrete"
     }
   },
   "recipes": {
@@ -118,6 +274,218 @@
       },
       "duration_s": 10.0,
       "power_w": 500.0
+    },
+    "crush_mare": {
+      "machine": "processor",
+      "inputs": {
+        "ore_mare_regolith": 1.0
+      },
+      "outputs": {
+        "regolith_fines": 1.0
+      },
+      "duration_s": 6.0,
+      "power_w": 200.0
+    },
+    "crush_highland": {
+      "machine": "processor",
+      "inputs": {
+        "ore_highland_regolith": 1.0
+      },
+      "outputs": {
+        "regolith_fines": 1.0
+      },
+      "duration_s": 6.0,
+      "power_w": 200.0
+    },
+    "sinter_anorthosite": {
+      "machine": "processor",
+      "inputs": {
+        "regolith_fines": 2.0
+      },
+      "outputs": {
+        "sintered_anorthosite": 1.0
+      },
+      "duration_s": 8.0,
+      "power_w": 250.0
+    },
+    "beneficiate_ilmenite": {
+      "machine": "processor",
+      "inputs": {
+        "ore_ilmenite": 2.0
+      },
+      "outputs": {
+        "ilmenite_concentrate": 1.0,
+        "silicate_slag": 0.5
+      },
+      "duration_s": 10.0,
+      "power_w": 300.0
+    },
+    "beneficiate_anorthite": {
+      "machine": "processor",
+      "inputs": {
+        "ore_anorthite": 2.0
+      },
+      "outputs": {
+        "anorthite_concentrate": 1.0,
+        "silicate_slag": 0.5
+      },
+      "duration_s": 10.0,
+      "power_w": 300.0
+    },
+    "melt_ice": {
+      "machine": "processor",
+      "inputs": {
+        "ore_ice": 1.0
+      },
+      "outputs": {
+        "water": 1.0
+      },
+      "duration_s": 5.0,
+      "power_w": 150.0
+    },
+    "reduce_ilmenite_h2": {
+      "machine": "processor",
+      "inputs": {
+        "ilmenite_concentrate": 1.0,
+        "hydrogen": 1.0
+      },
+      "outputs": {
+        "water": 1.0,
+        "reduced_ilmenite_residue": 1.0
+      },
+      "duration_s": 14.0,
+      "power_w": 500.0
+    },
+    "electrolyze_water": {
+      "machine": "electrolyzer",
+      "inputs": {
+        "water": 1.0
+      },
+      "outputs": {
+        "oxygen": 0.5,
+        "hydrogen": 1.0
+      },
+      "duration_s": 8.0,
+      "power_w": 400.0
+    },
+    "smelt_iron": {
+      "machine": "fabricator",
+      "inputs": {
+        "reduced_ilmenite_residue": 1.0
+      },
+      "outputs": {
+        "ingot_iron": 0.7,
+        "ingot_titanium": 0.2
+      },
+      "duration_s": 12.0,
+      "power_w": 600.0
+    },
+    "smelt_aluminum": {
+      "machine": "fabricator",
+      "inputs": {
+        "anorthite_concentrate": 1.0
+      },
+      "outputs": {
+        "ingot_aluminum": 0.5,
+        "ingot_silicon": 0.3
+      },
+      "duration_s": 14.0,
+      "power_w": 650.0
+    },
+    "smelt_magnesium": {
+      "machine": "fabricator",
+      "inputs": {
+        "ore_olivine": 2.0
+      },
+      "outputs": {
+        "ingot_magnesium": 0.4,
+        "silicate_slag": 1.0
+      },
+      "duration_s": 12.0,
+      "power_w": 550.0
+    },
+    "refine_silicon": {
+      "machine": "fabricator",
+      "inputs": {
+        "ore_pyroxene": 2.0
+      },
+      "outputs": {
+        "ingot_silicon": 0.6,
+        "silicate_slag": 0.8
+      },
+      "duration_s": 10.0,
+      "power_w": 500.0
+    },
+    "craft_plate_basalt": {
+      "machine": "fabricator",
+      "inputs": {
+        "sintered_basalt": 2.0
+      },
+      "outputs": {
+        "plate_basalt": 1.0
+      },
+      "duration_s": 8.0,
+      "power_w": 300.0
+    },
+    "craft_plate_metal": {
+      "machine": "fabricator",
+      "inputs": {
+        "ingot_iron": 2.0
+      },
+      "outputs": {
+        "plate_metal": 1.0
+      },
+      "duration_s": 10.0,
+      "power_w": 400.0
+    },
+    "craft_plate_alloy": {
+      "machine": "fabricator",
+      "inputs": {
+        "ingot_aluminum": 1.0,
+        "ingot_titanium": 1.0
+      },
+      "outputs": {
+        "plate_alloy": 1.0
+      },
+      "duration_s": 12.0,
+      "power_w": 450.0
+    },
+    "craft_girder": {
+      "machine": "fabricator",
+      "inputs": {
+        "ingot_iron": 1.0,
+        "sintered_basalt": 1.0
+      },
+      "outputs": {
+        "girder": 1.0
+      },
+      "duration_s": 10.0,
+      "power_w": 400.0
+    },
+    "craft_conduit": {
+      "machine": "fabricator",
+      "inputs": {
+        "ingot_aluminum": 1.0,
+        "ingot_silicon": 1.0
+      },
+      "outputs": {
+        "conduit": 1.0
+      },
+      "duration_s": 9.0,
+      "power_w": 350.0
+    },
+    "craft_mechanism": {
+      "machine": "fabricator",
+      "inputs": {
+        "ingot_iron": 1.0,
+        "ingot_titanium": 0.5,
+        "ingot_silicon": 0.5
+      },
+      "outputs": {
+        "mechanism": 1.0
+      },
+      "duration_s": 12.0,
+      "power_w": 500.0
     }
   },
   "industry": {
@@ -129,11 +497,13 @@
     "internal_buffer_capacity_l": {
       "stationary_drill": 200.0,
       "processor": 100.0,
-      "fabricator": 100.0
+      "fabricator": 100.0,
+      "electrolyzer": 80.0
     },
     "default_recipes": {
-      "processor": "crush_regolith",
-      "fabricator": "reduce_oxide"
+      "processor": "crush_mare",
+      "fabricator": "craft_plate_metal",
+      "electrolyzer": "electrolyze_water"
     },
     "stationary_drill": {
       "body_size_m": 1.0,
@@ -234,6 +604,10 @@
       "power_distributor_small": {
         "is_distributor": true,
         "supply_radius_m": 6.0
+      },
+      "electrolyzer": {
+        "is_consumer": true,
+        "idle_w": 40.0
       }
     }
   },
