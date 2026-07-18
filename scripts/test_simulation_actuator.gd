@@ -1,5 +1,6 @@
 extends Node
 
+const _HeadlessTestHarness := preload("res://scripts/testing/headless_test_harness.gd")
 const FIXTURE := preload(
 	"res://resources/blueprints/baked/kernel_fixture_valid.tres"
 )
@@ -34,6 +35,7 @@ func _ready() -> void:
 
 
 func _run_tests() -> void:
+	_HeadlessTestHarness.arm_watchdog(self, "KERNEL-ACTUATOR-V1")
 	var tests: Array[Callable] = [
 		_test_piston_atomic_placement,
 		_test_body_group_compiler,

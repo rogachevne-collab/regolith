@@ -1,5 +1,6 @@
 extends Node
 
+const _HeadlessTestHarness := preload("res://scripts/testing/headless_test_harness.gd")
 ## Kernel tests for POC-THRUSTERS-V0 (no gameplay flight feel).
 
 
@@ -8,6 +9,7 @@ func _ready() -> void:
 
 
 func _run_tests() -> void:
+	_HeadlessTestHarness.arm_watchdog(self, "POC-THRUSTERS-V0")
 	var tests: Array[Callable] = [
 		_test_archetypes_validate,
 		_test_flight_assembly_detection,

@@ -1,4 +1,6 @@
 extends Node
+
+const _HeadlessTestHarness := preload("res://scripts/testing/headless_test_harness.gd")
 ## Headless pure-logic gate for player tool instances, hotbar refs, transfer
 ## invalidation, and snapshot roundtrip (INDUSTRY-V1 § Player tool instances).
 
@@ -8,6 +10,7 @@ func _ready() -> void:
 
 
 func _run() -> void:
+	_HeadlessTestHarness.arm_watchdog(self, "PLAYER-INVENTORY-HOTBAR")
 	if not _test_starter_seed_and_hotbar_refs():
 		_abort()
 		return

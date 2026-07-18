@@ -1,5 +1,6 @@
 extends Node
 
+const _HeadlessTestHarness := preload("res://scripts/testing/headless_test_harness.gd")
 ## Headless gate for RoverComposer / RoverIntent / RoverValidator.
 
 
@@ -8,6 +9,7 @@ func _ready() -> void:
 
 
 func _run_tests() -> void:
+	_HeadlessTestHarness.arm_watchdog(self, "ROVER-COMPOSE")
 	var tests: Array[Callable] = [
 		_test_phrase_defaults,
 		_test_phrase_six_long_low,

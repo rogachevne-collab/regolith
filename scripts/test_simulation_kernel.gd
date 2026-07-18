@@ -1,5 +1,6 @@
 extends Node
 
+const _HeadlessTestHarness := preload("res://scripts/testing/headless_test_harness.gd")
 const BAKED_FIXTURE_PATH := (
 	"res://resources/blueprints/baked/kernel_fixture_valid.tres"
 )
@@ -13,6 +14,7 @@ func _ready() -> void:
 
 
 func _run_tests() -> void:
+	_HeadlessTestHarness.arm_watchdog(self, "KERNEL-V0")
 	var tests: Array[Callable] = [
 		_test_required_archetype_assets,
 		_test_orientation_contract,

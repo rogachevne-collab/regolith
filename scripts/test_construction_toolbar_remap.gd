@@ -1,4 +1,6 @@
 extends Node
+
+const _HeadlessTestHarness := preload("res://scripts/testing/headless_test_harness.gd")
 ## Headless PoC gate for the ToolController runtime slot-remap API
 ## (docs/specs/HUD-UI-01.md Phase 4 — BlockPalette drag-drop backend). Exercises
 ## the remap logic directly (no input gesture, which MCP Lite cannot drive):
@@ -15,6 +17,7 @@ func _ready() -> void:
 
 
 func _run() -> void:
+	_HeadlessTestHarness.arm_watchdog(self, "CONSTRUCTION-REMAP")
 	if not _test_assign_changes_slot():
 		return
 	if not _test_const_layout_untouched():

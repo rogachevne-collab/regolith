@@ -1,4 +1,6 @@
 extends Node
+
+const _HeadlessTestHarness := preload("res://scripts/testing/headless_test_harness.gd")
 ## Headless pure-logic gate for terminal inventory snapshots and item icons
 ## (INDUSTRY-V1 § Terminal inventory, Phase 2a).
 
@@ -10,6 +12,7 @@ func _ready() -> void:
 
 
 func _run() -> void:
+	_HeadlessTestHarness.arm_watchdog(self, "STORE-SNAPSHOT")
 	if not _test_unknown_store_failure():
 		_abort()
 		return

@@ -1,5 +1,6 @@
 extends Node
 
+const _HeadlessTestHarness := preload("res://scripts/testing/headless_test_harness.gd")
 ## Headless gate for MachineComposer / MachineIntent / MachineValidator.
 
 
@@ -8,6 +9,7 @@ func _ready() -> void:
 
 
 func _run_tests() -> void:
+	_HeadlessTestHarness.arm_watchdog(self, "MACHINE-COMPOSE")
 	var tests: Array[Callable] = [
 		_test_phrase_defaults,
 		_test_phrase_long_wrist,

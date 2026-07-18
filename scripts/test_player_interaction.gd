@@ -1,5 +1,6 @@
 extends CharacterBody3D
 
+const _HeadlessTestHarness := preload("res://scripts/testing/headless_test_harness.gd")
 class SeatProbe:
 	extends Node3D
 
@@ -34,6 +35,7 @@ func aim_transform() -> Transform3D:
 
 
 func _run_test() -> void:
+	_HeadlessTestHarness.arm_watchdog(self, "PLAYER1")
 	await get_tree().process_frame
 	if _tools.active_tool != &"drill":
 		_fail("default toolbar slot must be drill")

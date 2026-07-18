@@ -1,5 +1,6 @@
 extends Node3D
 
+const _HeadlessTestHarness := preload("res://scripts/testing/headless_test_harness.gd")
 const PHYSICS_HZ := 60.0
 const FLOOR_ORIGIN_Y := 0.9
 
@@ -14,6 +15,7 @@ func _ready() -> void:
 
 
 func _run_test() -> void:
+	_HeadlessTestHarness.arm_watchdog(self, "PLAYER1")
 	await _test_acceleration_and_stop()
 	await _test_speed_caps()
 	await _test_jump()

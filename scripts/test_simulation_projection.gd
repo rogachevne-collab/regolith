@@ -1,5 +1,6 @@
 extends Node
 
+const _HeadlessTestHarness := preload("res://scripts/testing/headless_test_harness.gd")
 
 const PISTON_BASE := preload(
 	"res://resources/archetypes/slice01/piston_base.tres"
@@ -23,6 +24,7 @@ func _ready() -> void:
 
 
 func _run() -> void:
+	_HeadlessTestHarness.arm_watchdog(self, "KERNEL-PROJECTION-V0")
 	if not _test_collider_mapping_and_anchor():
 		return
 	if not _test_projection_global_transform():

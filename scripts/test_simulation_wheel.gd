@@ -1,5 +1,6 @@
 extends Node
 
+const _HeadlessTestHarness := preload("res://scripts/testing/headless_test_harness.gd")
 const ROVER_FRAME := preload(
 	"res://resources/archetypes/slice01/rover_frame.tres"
 )
@@ -17,6 +18,7 @@ func _ready() -> void:
 
 
 func _run_tests() -> void:
+	_HeadlessTestHarness.arm_watchdog(self, "SIMULATION-WHEEL-V1")
 	var tests: Array[Callable] = [
 		_test_socket_tag_blocks_frame_to_wheel_socket,
 		_test_wheel_placement_requires_suspension,

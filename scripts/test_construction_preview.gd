@@ -1,11 +1,13 @@
 extends Node
 
+const _HeadlessTestHarness := preload("res://scripts/testing/headless_test_harness.gd")
 
 func _ready() -> void:
 	call_deferred("_run")
 
 
 func _run() -> void:
+	_HeadlessTestHarness.arm_watchdog(self, "CONSTRUCTION-V1")
 	if not _test_preview_projection_parity_ground():
 		return
 	if not _test_preview_projection_parity_attach():
