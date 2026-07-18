@@ -557,27 +557,27 @@ class _MapCanvas:
 		queue_redraw()
 
 	func _heightmap_preview_texture(src: Image) -> ImageTexture:
-		var work := src.duplicate()
+		var work: Image = src.duplicate()
 		## Small preview — full EXR is huge; UI only needs a soft relief cue.
 		const PREVIEW_W := 512
 		const PREVIEW_H := 256
 		if work.get_width() != PREVIEW_W or work.get_height() != PREVIEW_H:
 			work.resize(PREVIEW_W, PREVIEW_H, Image.INTERPOLATE_TRILINEAR)
-		var w := work.get_width()
-		var h := work.get_height()
+		var w: int = work.get_width()
+		var h: int = work.get_height()
 		var min_h := INF
 		var max_h := -INF
 		## Strided range pass keeps first open snappy on soft render.
 		for y in range(0, h, 2):
 			for x in range(0, w, 2):
-				var v := work.get_pixel(x, y).r
+				var v: float = work.get_pixel(x, y).r
 				min_h = minf(min_h, v)
 				max_h = maxf(max_h, v)
 		var span := maxf(max_h - min_h, 0.0001)
 		var out := Image.create(w, h, false, Image.FORMAT_RGB8)
 		for y in h:
 			for x in w:
-				var t := (work.get_pixel(x, y).r - min_h) / span
+				var t: float = (work.get_pixel(x, y).r - min_h) / span
 				out.set_pixel(
 					x,
 					y,
