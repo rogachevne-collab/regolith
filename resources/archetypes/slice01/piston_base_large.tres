@@ -50,28 +50,163 @@ kind = 1
 local_cell = Vector3i(1, 0, 1)
 compatibility_tags = PackedStringArray("electric", "input")
 
-[sub_resource type="Resource" id="MountNy"]
+[sub_resource type="Resource" id="MountNy00"]
+script = ExtResource("5")
+local_cell = Vector3i(0, 0, 0)
+local_face = 3
+
+[sub_resource type="Resource" id="MountNy01"]
+script = ExtResource("5")
+local_cell = Vector3i(0, 0, 1)
+local_face = 3
+
+[sub_resource type="Resource" id="MountNy02"]
+script = ExtResource("5")
+local_cell = Vector3i(0, 0, 2)
+local_face = 3
+
+[sub_resource type="Resource" id="MountNy10"]
+script = ExtResource("5")
+local_cell = Vector3i(1, 0, 0)
+local_face = 3
+
+[sub_resource type="Resource" id="MountNy11"]
 script = ExtResource("5")
 local_cell = Vector3i(1, 0, 1)
 local_face = 3
 
-[sub_resource type="Resource" id="MountPx"]
+[sub_resource type="Resource" id="MountNy12"]
+script = ExtResource("5")
+local_cell = Vector3i(1, 0, 2)
+local_face = 3
+
+[sub_resource type="Resource" id="MountNy20"]
+script = ExtResource("5")
+local_cell = Vector3i(2, 0, 0)
+local_face = 3
+
+[sub_resource type="Resource" id="MountNy21"]
+script = ExtResource("5")
+local_cell = Vector3i(2, 0, 1)
+local_face = 3
+
+[sub_resource type="Resource" id="MountNy22"]
+script = ExtResource("5")
+local_cell = Vector3i(2, 0, 2)
+local_face = 3
+
+[sub_resource type="Resource" id="MountPx00"]
+script = ExtResource("5")
+local_cell = Vector3i(2, 0, 0)
+
+[sub_resource type="Resource" id="MountPx01"]
 script = ExtResource("5")
 local_cell = Vector3i(2, 0, 1)
 
-[sub_resource type="Resource" id="MountNx"]
+[sub_resource type="Resource" id="MountPx02"]
+script = ExtResource("5")
+local_cell = Vector3i(2, 0, 2)
+
+[sub_resource type="Resource" id="MountPx10"]
+script = ExtResource("5")
+local_cell = Vector3i(2, 1, 0)
+
+[sub_resource type="Resource" id="MountPx11"]
+script = ExtResource("5")
+local_cell = Vector3i(2, 1, 1)
+
+[sub_resource type="Resource" id="MountPx12"]
+script = ExtResource("5")
+local_cell = Vector3i(2, 1, 2)
+
+[sub_resource type="Resource" id="MountNx00"]
+script = ExtResource("5")
+local_cell = Vector3i(0, 0, 0)
+local_face = 1
+
+[sub_resource type="Resource" id="MountNx01"]
 script = ExtResource("5")
 local_cell = Vector3i(0, 0, 1)
 local_face = 1
 
-[sub_resource type="Resource" id="MountPz"]
+[sub_resource type="Resource" id="MountNx02"]
+script = ExtResource("5")
+local_cell = Vector3i(0, 0, 2)
+local_face = 1
+
+[sub_resource type="Resource" id="MountNx10"]
+script = ExtResource("5")
+local_cell = Vector3i(0, 1, 0)
+local_face = 1
+
+[sub_resource type="Resource" id="MountNx11"]
+script = ExtResource("5")
+local_cell = Vector3i(0, 1, 1)
+local_face = 1
+
+[sub_resource type="Resource" id="MountNx12"]
+script = ExtResource("5")
+local_cell = Vector3i(0, 1, 2)
+local_face = 1
+
+[sub_resource type="Resource" id="MountPz00"]
+script = ExtResource("5")
+local_cell = Vector3i(0, 0, 2)
+local_face = 4
+
+[sub_resource type="Resource" id="MountPz01"]
 script = ExtResource("5")
 local_cell = Vector3i(1, 0, 2)
 local_face = 4
 
-[sub_resource type="Resource" id="MountNz"]
+[sub_resource type="Resource" id="MountPz02"]
+script = ExtResource("5")
+local_cell = Vector3i(2, 0, 2)
+local_face = 4
+
+[sub_resource type="Resource" id="MountPz10"]
+script = ExtResource("5")
+local_cell = Vector3i(0, 1, 2)
+local_face = 4
+
+[sub_resource type="Resource" id="MountPz11"]
+script = ExtResource("5")
+local_cell = Vector3i(1, 1, 2)
+local_face = 4
+
+[sub_resource type="Resource" id="MountPz12"]
+script = ExtResource("5")
+local_cell = Vector3i(2, 1, 2)
+local_face = 4
+
+[sub_resource type="Resource" id="MountNz00"]
+script = ExtResource("5")
+local_cell = Vector3i(0, 0, 0)
+local_face = 5
+
+[sub_resource type="Resource" id="MountNz01"]
 script = ExtResource("5")
 local_cell = Vector3i(1, 0, 0)
+local_face = 5
+
+[sub_resource type="Resource" id="MountNz02"]
+script = ExtResource("5")
+local_cell = Vector3i(2, 0, 0)
+local_face = 5
+
+[sub_resource type="Resource" id="MountNz10"]
+script = ExtResource("5")
+local_cell = Vector3i(0, 1, 0)
+local_face = 5
+
+[sub_resource type="Resource" id="MountNz11"]
+script = ExtResource("5")
+local_cell = Vector3i(1, 1, 0)
+local_face = 5
+
+[sub_resource type="Resource" id="MountNz12"]
+script = ExtResource("5")
+local_cell = Vector3i(2, 1, 0)
 local_face = 5
 
 [resource]
@@ -84,6 +219,6 @@ footprint_cells = Array[Vector3i]([Vector3i(0, 0, 0), Vector3i(0, 0, 1), Vector3
 colliders = Array[ExtResource("2")]([SubResource("Collider")])
 ports = Array[ExtResource("3")]([SubResource("DrivePort"), SubResource("PowerPort")])
 structural_surface_policy = 2
-structural_mount_pads = Array[ExtResource("5")]([SubResource("MountNy"), SubResource("MountPx"), SubResource("MountNx"), SubResource("MountPz"), SubResource("MountNz")])
+structural_mount_pads = Array[ExtResource("5")]([SubResource("MountNy00"), SubResource("MountNy01"), SubResource("MountNy02"), SubResource("MountNy10"), SubResource("MountNy11"), SubResource("MountNy12"), SubResource("MountNy20"), SubResource("MountNy21"), SubResource("MountNy22"), SubResource("MountPx00"), SubResource("MountPx01"), SubResource("MountPx02"), SubResource("MountPx10"), SubResource("MountPx11"), SubResource("MountPx12"), SubResource("MountNx00"), SubResource("MountNx01"), SubResource("MountNx02"), SubResource("MountNx10"), SubResource("MountNx11"), SubResource("MountNx12"), SubResource("MountPz00"), SubResource("MountPz01"), SubResource("MountPz02"), SubResource("MountPz10"), SubResource("MountPz11"), SubResource("MountPz12"), SubResource("MountNz00"), SubResource("MountNz01"), SubResource("MountNz02"), SubResource("MountNz10"), SubResource("MountNz11"), SubResource("MountNz12")])
 build_requirements = Array[ExtResource("1")]([SubResource("Requirement")])
 piston_definition = SubResource("PistonDefinition")

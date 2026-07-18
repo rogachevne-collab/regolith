@@ -634,7 +634,7 @@
       "girder": 2.0,
       "plate_basalt": 2.0
     },
-    "playtest_carry_capacity_l": 2000.0,
+    "playtest_carry_capacity_l": 3200.0,
     "playtest_resources": {
       "ore_mare_regolith": 250.0,
       "ore_ilmenite": 80.0,
@@ -845,6 +845,8 @@
         "default_speed_limit_mps": 0.2,
         "extend_velocity_mps": 0.2,
         "retract_velocity_mps": 0.2,
+        "lower_limit_m": 0.0,
+        "upper_limit_m": 5.0,
         "force_limit_n": 80000.0,
         "max_force_limit_n": 200000.0,
         "stiffness_n_per_m": 0.0,

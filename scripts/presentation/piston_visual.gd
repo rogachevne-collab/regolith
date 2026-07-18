@@ -161,13 +161,19 @@ static func build_placement_preview_nodes(
 	var travel_material := _preview_material(
 		Color(0.95, 0.82, 0.2, 0.16) if valid else Color(0.7, 0.2, 0.12, 0.14)
 	)
+	var large := is_large_piston_element(base_archetype.archetype_id)
+	var visual_scale := LARGE_VISUAL_SCALE if large else 1.0
+	var travel_radius := (
+		TRAVEL_GHOST_RADIUS_M * LARGE_VISUAL_SCALE if large else TRAVEL_GHOST_RADIUS_M
+	)
 	var base_root := _instantiate_preview_part(
 		BASE_SCENE,
 		base_element,
 		axis_local,
 		SimulationMotorState.PISTON_DRIVE_PORT,
 		base_material,
-		"PreviewPistonBase"
+		"PreviewPistonBase",
+		visual_scale
 	)
 	var head_root := _instantiate_preview_part(
 		HEAD_SCENE,
@@ -175,7 +181,8 @@ static func build_placement_preview_nodes(
 		axis_local,
 		SimulationMotorState.PISTON_CARRIAGE_PORT,
 		head_material,
-		"PreviewPistonHead"
+		"PreviewPistonHead",
+		visual_scale
 	)
 	if base_root != null:
 		nodes.append(base_root)
@@ -190,7 +197,8 @@ static func build_placement_preview_nodes(
 			carriage_local,
 			axis_local,
 			definition.upper_limit_m,
-			travel_material
+			travel_material,
+			travel_radius
 		)
 	)
 	nodes.append(
@@ -198,7 +206,8 @@ static func build_placement_preview_nodes(
 			carriage_local,
 			axis_local,
 			definition.upper_limit_m,
-			valid
+			valid,
+			visual_scale
 		)
 	)
 	return nodes
@@ -225,7 +234,8 @@ static func _instantiate_preview_part(
 	axis_local: Vector3,
 	port_id: String,
 	material: Material,
-	node_name: String
+	node_name: String,
+	visual_scale: float = 1.0
 ) -> Node3D:
 	if scene == null or element == null:
 		return null
@@ -239,13 +249,22 @@ static func _instantiate_preview_part(
 		PistonProjectionUtil.basis_from_axis(axis_local),
 		anchor_local
 	)
+	root.scale = Vector3.ONE * visual_scale
 	_apply_material_recursive(root, material)
 	var shaft := root.get_node_or_null("Shaft") as MeshInstance3D
 	if shaft != null:
 		shaft.visible = port_id == SimulationMotorState.PISTON_DRIVE_PORT
 		if shaft.visible:
 			update_runtime(
-				{"shaft_mesh": shaft},
+				{
+					"shaft_mesh": shaft,
+					"visual_scale": visual_scale,
+					"shaft_radius_m": (
+						SHAFT_RADIUS_LARGE_M
+						if visual_scale > 1.0
+						else SHAFT_RADIUS_M
+					),
+				},
 				MIN_SHAFT_HEIGHT_M,
 				false,
 				&"standby"
@@ -257,15 +276,16 @@ static func _build_travel_ghost(
 	origin_local: Vector3,
 	axis_local: Vector3,
 	travel_m: float,
-	material: Material
+	material: Material,
+	radius_m: float = TRAVEL_GHOST_RADIUS_M
 ) -> MeshInstance3D:
 	var axis := axis_local.normalized()
 	var height := maxf(travel_m, GridMetric.CELL_SIZE_M)
 	var ghost := MeshInstance3D.new()
 	ghost.name = "PreviewPistonTravel"
 	var mesh := CylinderMesh.new()
-	mesh.top_radius = TRAVEL_GHOST_RADIUS_M
-	mesh.bottom_radius = TRAVEL_GHOST_RADIUS_M
+	mesh.top_radius = radius_m
+	mesh.bottom_radius = radius_m
 	mesh.height = height
 	mesh.radial_segments = 10
 	ghost.mesh = mesh
@@ -282,17 +302,19 @@ static func _build_axis_arrow(
 	origin_local: Vector3,
 	axis_local: Vector3,
 	travel_m: float,
-	valid: bool
+	valid: bool,
+	visual_scale: float = 1.0
 ) -> Node3D:
 	var axis := axis_local.normalized()
 	var root := Node3D.new()
 	root.name = "PreviewPistonAxisArrow"
 	var color := Color(1.0, 0.72, 0.12, 0.9) if valid else Color(1.0, 0.25, 0.12, 0.85)
 	var material := _preview_material(color)
+	var scale := maxf(visual_scale, 1.0)
 	var shaft := MeshInstance3D.new()
 	var shaft_mesh := CylinderMesh.new()
-	shaft_mesh.top_radius = 0.025
-	shaft_mesh.bottom_radius = 0.025
+	shaft_mesh.top_radius = 0.025 * scale
+	shaft_mesh.bottom_radius = 0.025 * scale
 	shaft_mesh.height = maxf(travel_m, GridMetric.HALF_CELL_SIZE_M)
 	shaft.mesh = shaft_mesh
 	shaft.material_override = material
@@ -306,11 +328,11 @@ static func _build_axis_arrow(
 	var tip := MeshInstance3D.new()
 	var tip_mesh := CylinderMesh.new()
 	tip_mesh.top_radius = 0.0
-	tip_mesh.bottom_radius = 0.09
-	tip_mesh.height = 0.14
+	tip_mesh.bottom_radius = 0.09 * scale
+	tip_mesh.height = 0.14 * scale
 	tip.mesh = tip_mesh
 	tip.material_override = material
-	tip.position = axis * (shaft_mesh.height + 0.07)
+	tip.position = axis * (shaft_mesh.height + tip_mesh.height * 0.5)
 	tip.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	root.add_child(tip)
 	return root

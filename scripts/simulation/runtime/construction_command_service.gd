@@ -968,6 +968,20 @@ static func validate_driven_head_construction_target(world,
 	return null
 
 
+## True when every driven joint on the path from element → root is at home.
+## Used by magnetic snap to allow carriage faces only while construction is legal.
+static func is_driven_path_at_home(
+	world,
+	element_id: int
+) -> bool:
+	if world == null or element_id <= 0:
+		return true
+	var element: SimulationElement = world.get_element(element_id)
+	if element == null:
+		return true
+	return _validate_driven_path_home_for_element(world, element) == null
+
+
 ## Every driven joint on the path from the target element group to root must
 ## be at home / idle — not only when the snap face is a hub endpoint.
 static func _validate_driven_path_home_for_element(
@@ -1034,10 +1048,9 @@ static func _driven_joint_not_home_result(
 			<= SimulationMotorState.OVERLOAD_ERROR_M
 		)
 	else:
-		at_home = is_equal_approx(
-			motor.observed_position_m,
-			motor.lower_limit_m
-		)
+		# Use motor epsilon — is_equal_approx is far too tight for a parked
+		# horizontal piston with tiny solver drift, and hides all attach ghosts.
+		at_home = motor.is_at_lower_limit()
 	if not at_home:
 		return StructuralCommandResult.failed(
 			StructuralCommandResult.REASON_MOVING_TARGET_NOT_SUPPORTED

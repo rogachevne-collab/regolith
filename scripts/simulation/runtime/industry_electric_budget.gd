@@ -72,7 +72,28 @@ static func element_world_position(
 ) -> Vector3:
 	if world == null or element == null:
 		return Vector3.ZERO
+	# Prefer power_in / power port face so large footprints (3×3 piston) are
+	# measured near the authored socket, not the origin-cell corner.
+	var port_id := _preferred_power_port_id(element)
+	if not port_id.is_empty():
+		return IndustryElectricPortUtil.port_anchor_world_position(
+			world,
+			element,
+			port_id
+		)
 	return world.element_world_transform(element.element_id).origin
+
+
+static func _preferred_power_port_id(element: SimulationElement) -> String:
+	var archetype := element.get_archetype()
+	if archetype == null:
+		return ""
+	for port: PortDefinition in archetype.ports:
+		if port == null:
+			continue
+		if port.port_id == "power_in" or port.port_id == "power_out":
+			return port.port_id
+	return ""
 
 
 ## First-time charge for a placed/spawned battery. Never refills after drain:

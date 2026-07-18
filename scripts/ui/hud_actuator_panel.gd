@@ -303,8 +303,8 @@ func _refresh_from_hit(hit: InteractionHit) -> void:
 		]
 	else:
 		var observed := float(meta.get("piston_observed_position_m", 0.0))
-		var target := float(meta.get("piston_target_position_m", observed))
-		_travel_val.text = "%.2f / %.2f М" % [observed, target]
+		var upper := float(meta.get("piston_upper_limit_m", observed))
+		_travel_val.text = "%.2f / %.2f М" % [observed, upper]
 	for row: Dictionary in HudActuatorTuneUtil.rows_for(meta):
 		var field := str(row["field"])
 		var label: Label = _tune_values.get(field)

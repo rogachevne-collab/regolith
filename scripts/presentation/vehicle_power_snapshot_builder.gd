@@ -95,7 +95,9 @@ static func format_eta_s(eta_s: float) -> String:
 	if eta_s < 0.5:
 		return "0с"
 	var total := int(round(eta_s))
+	@warning_ignore("integer_division")
 	var hours := total / 3600
+	@warning_ignore("integer_division")
 	var minutes := (total % 3600) / 60
 	var seconds := total % 60
 	if hours > 0:

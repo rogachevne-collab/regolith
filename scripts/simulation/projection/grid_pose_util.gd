@@ -313,41 +313,61 @@ static func snap_origin_without_pivot(
 
 
 ## Single deterministic origin for the ray-selected target surface cell.
-## One O(F) pass over placing-block faces; no candidate enumeration.
+## Prefers the origin that centers the placing contact face on the target pad
+## (lexicographic pick made drills sit on a corner of large piston heads).
 static func snap_origin_for_target_cell(
 	archetype: ElementArchetype,
 	target_port_cell: Vector3i,
 	snap_dir: Vector3i,
 	orientation_index: int
 ) -> Vector3i:
-	if archetype == null:
+	var candidates := snap_origin_candidates(
+		archetype,
+		target_port_cell,
+		snap_dir,
+		orientation_index
+	)
+	if candidates.is_empty():
 		return target_port_cell + snap_dir
-	var contact_cell := target_port_cell + snap_dir
-	var required_dir: Vector3i = -snap_dir
-	var best_origin := contact_cell
-	var has_origin := false
-	for descriptor: GridSurfaceUtil.SurfaceFaceDescriptor in (
-		GridSurfaceUtil.get_surface_descriptors(archetype, orientation_index)
-	):
-		var world_dir: Vector3i = OrientationUtil.rotate_direction(
-			OrientationUtil.face_to_vector(descriptor.local_face),
+	return best_centered_snap_origin(
+		archetype,
+		target_port_cell,
+		snap_dir,
+		orientation_index,
+		candidates
+	)
+
+
+static func best_centered_snap_origin(
+	archetype: ElementArchetype,
+	target_port_cell: Vector3i,
+	snap_dir: Vector3i,
+	orientation_index: int,
+	origins: Array[Vector3i]
+) -> Vector3i:
+	if origins.is_empty():
+		return target_port_cell + snap_dir
+	var target_center := target_face_center_local(target_port_cell, snap_dir)
+	var best_origin := origins[0]
+	var best_score := INF
+	for origin: Vector3i in origins:
+		var contact_center := contact_face_centroid_for_origin(
+			origin,
+			archetype,
+			snap_dir,
 			orientation_index
 		)
-		if world_dir != required_dir:
-			continue
-		var origin := (
-			contact_cell
-			- OrientationUtil.rotate_cell(
-				descriptor.local_cell,
-				orientation_index
+		var score := contact_center.distance_squared_to(target_center)
+		if (
+			score < best_score - 0.000001
+			or (
+				is_equal_approx(score, best_score)
+				and origin < best_origin
 			)
-		)
-		if not has_origin or origin < best_origin:
+		):
+			best_score = score
 			best_origin = origin
-			has_origin = true
-	if has_origin:
-		return best_origin
-	return contact_cell
+	return best_origin
 
 
 ## Origin that keeps the orientation-0 footprint pivot fixed while rotating.
@@ -454,11 +474,23 @@ static func contact_face_center_for_origin(
 	snap_dir: Vector3i,
 	orientation_index: int
 ) -> Vector3:
+	return contact_face_centroid_for_origin(
+		origin_cell,
+		archetype,
+		snap_dir,
+		orientation_index
+	)
+
+
+static func contact_face_centroid_for_origin(
+	origin_cell: Vector3i,
+	archetype: ElementArchetype,
+	snap_dir: Vector3i,
+	orientation_index: int
+) -> Vector3:
 	var required_dir: Vector3i = -snap_dir
-	var best_center := Vector3.ZERO
-	var best_cell_length := 999999
-	var best_descriptor_id := ""
-	var found := false
+	var sum := Vector3.ZERO
+	var count := 0
 	for descriptor: GridSurfaceUtil.SurfaceFaceDescriptor in (
 		GridSurfaceUtil.get_surface_descriptors(archetype, orientation_index)
 	):
@@ -475,28 +507,13 @@ static func contact_face_center_for_origin(
 				orientation_index
 			)
 		)
-		var center := (
+		sum += (
 			GridMetric.cell_center_meters(world_cell)
 			+ Vector3(required_dir) * GridMetric.HALF_CELL_SIZE_M
 		)
-		var cell_length: int = descriptor.local_cell.length_squared()
-		if (
-			not found
-			or cell_length < best_cell_length
-			or (
-				cell_length == best_cell_length
-				and (
-					best_descriptor_id.is_empty()
-					or descriptor.structural_id < best_descriptor_id
-				)
-			)
-		):
-			found = true
-			best_cell_length = cell_length
-			best_descriptor_id = descriptor.structural_id
-			best_center = center
-	if found:
-		return best_center
-	return GridMetric.cell_center_meters(origin_cell)
+		count += 1
+	if count <= 0:
+		return GridMetric.cell_center_meters(origin_cell)
+	return sum / float(count)
 
 

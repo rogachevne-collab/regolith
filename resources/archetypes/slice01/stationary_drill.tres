@@ -51,9 +51,24 @@ script = ExtResource("5_pad")
 local_cell = Vector3i(0, 1, 1)
 local_face = 2
 
-[sub_resource type="Resource" id="Mount_ny"]
+[sub_resource type="Resource" id="Mount_ny00"]
+script = ExtResource("5_pad")
+local_cell = Vector3i(0, 0, 0)
+local_face = 3
+
+[sub_resource type="Resource" id="Mount_ny01"]
 script = ExtResource("5_pad")
 local_cell = Vector3i(0, 0, 1)
+local_face = 3
+
+[sub_resource type="Resource" id="Mount_ny10"]
+script = ExtResource("5_pad")
+local_cell = Vector3i(1, 0, 0)
+local_face = 3
+
+[sub_resource type="Resource" id="Mount_ny11"]
+script = ExtResource("5_pad")
+local_cell = Vector3i(1, 0, 1)
 local_face = 3
 
 [sub_resource type="Resource" id="Mount_pz"]
@@ -75,5 +90,5 @@ footprint_cells = Array[Vector3i]([Vector3i(0, 0, 0), Vector3i(0, 0, 1), Vector3
 colliders = Array[ExtResource("2_hlghb")]([SubResource("Resource_31e42"), SubResource("Resource_tip")])
 ports = Array[ExtResource("3_in4ho")]([SubResource("Resource_xvmdi"), SubResource("Resource_cargo_out")])
 structural_surface_policy = 2
-structural_mount_pads = Array[ExtResource("5_pad")]([SubResource("Mount_px"), SubResource("Mount_nx"), SubResource("Mount_py"), SubResource("Mount_ny"), SubResource("Mount_pz"), SubResource("Mount_nz")])
+structural_mount_pads = Array[ExtResource("5_pad")]([SubResource("Mount_px"), SubResource("Mount_nx"), SubResource("Mount_py"), SubResource("Mount_ny00"), SubResource("Mount_ny01"), SubResource("Mount_ny10"), SubResource("Mount_ny11"), SubResource("Mount_pz"), SubResource("Mount_nz")])
 build_requirements = Array[ExtResource("1_20tgf")]([SubResource("Resource_ukuph")])

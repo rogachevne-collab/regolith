@@ -45,6 +45,9 @@ func _run_tests() -> void:
 	var tests: Array[Callable] = [
 		_test_piston_atomic_placement,
 		_test_piston_large_atomic_placement,
+		_test_piston_large_head_attachment,
+		_test_piston_large_horizontal_head_drill,
+		_test_piston_large_head_nearest_face_snap,
 		_test_piston_stack_chain,
 		_test_piston_fifth_rejected_at_placement,
 		_test_piston_angular_compliance_config,
@@ -236,6 +239,308 @@ func _test_piston_large_atomic_placement() -> bool:
 	return true
 
 
+func _test_piston_large_head_attachment() -> bool:
+	GridSurfaceUtil.clear_descriptor_cache()
+	var world := SimulationWorld.new()
+	world.ensure_resource_store("player")
+	world.set_resource_amount("player", "plate_metal", 200.0)
+	world.set_resource_amount("player", "girder", 200.0)
+	world.set_resource_amount("player", "mechanism", 200.0)
+	world.get_archetype_registry().register(PISTON_HEAD_LARGE)
+	var foundation := _spawn(
+		world,
+		_single_blueprint(Slice01Archetypes.foundation()),
+		GridTransform.identity()
+	)
+	if not foundation.is_ok():
+		world.free()
+		return _fail("large head attach foundation failed")
+	var assembly_id := int(foundation.data["assembly_id"])
+	var platform := PlaceElementCommand.new()
+	platform.assembly_id = assembly_id
+	platform.expected_assembly_revision = int(foundation.data["topology_revision"])
+	platform.archetype = Slice01Archetypes.large_frame()
+	platform.origin_cell = Vector3i(0, 1, 0)
+	platform.orientation_index = 0
+	platform.store_id = "player"
+	var platform_result := world.apply_structural_command_now(platform)
+	if not platform_result.is_ok():
+		world.free()
+		return _fail(
+			"large head attach platform failed: %s" % platform_result.reason
+		)
+	var piston := PlaceElementCommand.new()
+	piston.assembly_id = assembly_id
+	piston.expected_assembly_revision = int(
+		platform_result.data["topology_revision"]
+	)
+	piston.archetype = PISTON_BASE_LARGE
+	piston.origin_cell = Vector3i(0, 6, 0)
+	piston.orientation_index = 0
+	piston.store_id = "player"
+	var piston_result := world.apply_structural_command_now(piston)
+	if not piston_result.is_ok():
+		world.free()
+		return _fail(
+			"large head attach piston failed: %s" % piston_result.reason
+		)
+	# Deck pad on corner + stationary drill centered on head top (+Y).
+	var deck := PlaceElementCommand.new()
+	deck.assembly_id = assembly_id
+	deck.expected_assembly_revision = int(
+		piston_result.data["topology_revision"]
+	)
+	deck.archetype = Slice01Archetypes.frame()
+	deck.origin_cell = Vector3i(0, 9, 0)
+	deck.orientation_index = 0
+	deck.store_id = "player"
+	var deck_result := world.apply_structural_command_now(deck)
+	if not deck_result.is_ok():
+		world.free()
+		return _fail(
+			"attach to large piston head corner failed: %s %s"
+			% [deck_result.reason, deck_result.data]
+		)
+	var drill := PlaceElementCommand.new()
+	drill.assembly_id = assembly_id
+	drill.expected_assembly_revision = int(
+		deck_result.data["topology_revision"]
+	)
+	drill.archetype = Slice01Archetypes.stationary_drill()
+	drill.origin_cell = Vector3i(1, 9, 1)
+	drill.orientation_index = 0
+	drill.store_id = "player"
+	var drill_result := world.apply_structural_command_now(drill)
+	if not drill_result.is_ok():
+		world.free()
+		return _fail(
+			"attach drill on large piston head top failed: %s %s"
+			% [drill_result.reason, drill_result.data]
+		)
+	# Side attach must fail — head only exposes +Y deck pads.
+	var side := PlaceElementCommand.new()
+	side.assembly_id = assembly_id
+	side.expected_assembly_revision = int(
+		drill_result.data["topology_revision"]
+	)
+	side.archetype = Slice01Archetypes.frame()
+	side.origin_cell = Vector3i(3, 8, 1)
+	side.orientation_index = 0
+	side.store_id = "player"
+	var side_result := world.apply_structural_command_now(side)
+	if side_result.is_ok():
+		world.free()
+		return _fail("large piston head side attach should be rejected")
+	var head_id := int(piston_result.data["head_element_id"])
+	var deck_id := int(deck_result.data["element_id"])
+	var drill_id := int(drill_result.data["element_id"])
+	var assembly := world.get_assembly_raw(assembly_id)
+	var elements_by_id: Dictionary = {}
+	for element: SimulationElement in world.list_elements():
+		elements_by_id[element.element_id] = element
+	var compiled := BodyGroupCompiler.compile(
+		assembly.element_ids,
+		elements_by_id,
+		world.list_joints()
+	)
+	if not bool(compiled.get("valid", false)):
+		world.free()
+		return _fail("large head attach compile failed")
+	var head_group := int(
+		(compiled["element_to_group"] as Dictionary).get(head_id, 0)
+	)
+	var deck_group := int(
+		(compiled["element_to_group"] as Dictionary).get(deck_id, 0)
+	)
+	var drill_group := int(
+		(compiled["element_to_group"] as Dictionary).get(drill_id, 0)
+	)
+	if head_group <= 0 or head_group != deck_group:
+		world.free()
+		return _fail("deck did not join large piston carriage group")
+	if head_group != drill_group:
+		world.free()
+		return _fail("drill did not join large piston carriage group")
+	world.free()
+	return true
+
+
+func _test_piston_large_horizontal_head_drill() -> bool:
+	GridSurfaceUtil.clear_descriptor_cache()
+	# Axis +Y → world +X, rear mount −Y → world −X (wall-mounted horizontal).
+	var horizontal_ori := -1
+	for ori: int in range(OrientationUtil.ORIENTATION_COUNT):
+		if (
+			OrientationUtil.rotate_direction(Vector3i.UP, ori)
+			== Vector3i.RIGHT
+			and OrientationUtil.rotate_direction(Vector3i.DOWN, ori)
+			== Vector3i.LEFT
+		):
+			horizontal_ori = ori
+			break
+	if horizontal_ori < 0:
+		return _fail("no wall-mount horizontal piston orientation")
+	var world := SimulationWorld.new()
+	world.ensure_resource_store("player")
+	world.set_resource_amount("player", "plate_metal", 200.0)
+	world.set_resource_amount("player", "girder", 200.0)
+	world.set_resource_amount("player", "mechanism", 200.0)
+	world.get_archetype_registry().register(PISTON_HEAD_LARGE)
+	var foundation := _spawn(
+		world,
+		_single_blueprint(Slice01Archetypes.foundation()),
+		GridTransform.identity()
+	)
+	if not foundation.is_ok():
+		world.free()
+		return _fail("horizontal large piston foundation failed")
+	var assembly_id := int(foundation.data["assembly_id"])
+	var platform := PlaceElementCommand.new()
+	platform.assembly_id = assembly_id
+	platform.expected_assembly_revision = int(foundation.data["topology_revision"])
+	platform.archetype = Slice01Archetypes.large_frame()
+	platform.origin_cell = Vector3i(0, 1, 0)
+	platform.orientation_index = 0
+	platform.store_id = "player"
+	var platform_result := world.apply_structural_command_now(platform)
+	if not platform_result.is_ok():
+		world.free()
+		return _fail(
+			"horizontal large piston platform failed: %s"
+			% platform_result.reason
+		)
+	# Frame occupies x=0..4; mount piston on +X face sticking out to +X.
+	var piston := PlaceElementCommand.new()
+	piston.assembly_id = assembly_id
+	piston.expected_assembly_revision = int(
+		platform_result.data["topology_revision"]
+	)
+	piston.archetype = PISTON_BASE_LARGE
+	piston.origin_cell = Vector3i(5, 2, 1)
+	piston.orientation_index = horizontal_ori
+	piston.store_id = "player"
+	var piston_result := world.apply_structural_command_now(piston)
+	if not piston_result.is_ok():
+		world.free()
+		return _fail(
+			"horizontal large piston place failed: %s %s"
+			% [piston_result.reason, piston_result.data]
+		)
+	var head := world.get_element(int(piston_result.data["head_element_id"]))
+	if head == null:
+		world.free()
+		return _fail("horizontal large piston head missing")
+	var deck_cell := (
+		head.origin_cell
+		+ OrientationUtil.rotate_cell(Vector3i(1, 0, 1), horizontal_ori)
+	)
+	var drill_origin := (
+		deck_cell
+		+ Vector3i.RIGHT
+		- Vector3i(0, 0, 1)
+	)
+	var drill := PlaceElementCommand.new()
+	drill.assembly_id = assembly_id
+	drill.expected_assembly_revision = int(
+		piston_result.data["topology_revision"]
+	)
+	drill.archetype = Slice01Archetypes.stationary_drill()
+	drill.origin_cell = drill_origin
+	drill.orientation_index = 0
+	drill.store_id = "player"
+	var drill_result := world.apply_structural_command_now(drill)
+	if not drill_result.is_ok():
+		world.free()
+		return _fail(
+			"drill on horizontal large piston head failed: %s %s (ori=%d deck=%s origin=%s head=%s)"
+			% [
+				drill_result.reason,
+				drill_result.data,
+				horizontal_ori,
+				str(deck_cell),
+				str(drill_origin),
+				str(head.origin_cell),
+			]
+		)
+	world.free()
+	return true
+
+
+func _test_piston_large_head_nearest_face_snap() -> bool:
+	GridSurfaceUtil.clear_descriptor_cache()
+	var head := SimulationElement.frame(
+		1,
+		1,
+		PISTON_HEAD_LARGE,
+		Vector3i(0, 8, 0),
+		0,
+		{}
+	)
+	# Glancing hit near the deck center but with a slightly tilted normal —
+	# must still resolve to a +Y deck pad, not a side.
+	var hit_point := GridMetric.cell_center_meters(Vector3i(1, 8, 1)) + Vector3(
+		0.05,
+		GridMetric.HALF_CELL_SIZE_M,
+		0.05
+	)
+	var nearest := GridSurfaceUtil.nearest_assembly_face_to_hit(
+		head,
+		hit_point,
+		Vector3(0.2, 1.0, 0.1).normalized(),
+		Transform3D.IDENTITY
+	)
+	if nearest.is_empty():
+		return _fail("nearest face missing on large piston head")
+	if nearest.get("direction", Vector3i.ZERO) != Vector3i.UP:
+		return _fail(
+			"expected deck +Y snap, got %s" % str(nearest.get("direction"))
+		)
+	if nearest.get("cell", Vector3i.ZERO) != Vector3i(1, 8, 1):
+		return _fail(
+			"expected center deck cell, got %s" % str(nearest.get("cell"))
+		)
+	# Drill must center its contact face on the aimed pad, not sit on a corner.
+	var drill := Slice01Archetypes.stationary_drill()
+	var target_cell: Vector3i = nearest["cell"]
+	var snap_dir: Vector3i = nearest["direction"]
+	var centered := GridPoseUtil.snap_origin_for_target_cell(
+		drill,
+		target_cell,
+		snap_dir,
+		0
+	)
+	var target_center := GridPoseUtil.target_face_center_local(
+		target_cell,
+		snap_dir
+	)
+	var contact_center := GridPoseUtil.contact_face_centroid_for_origin(
+		centered,
+		drill,
+		snap_dir,
+		0
+	)
+	var centered_err := contact_center.distance_squared_to(target_center)
+	for origin: Vector3i in GridPoseUtil.snap_origin_candidates(
+		drill,
+		target_cell,
+		snap_dir,
+		0
+	):
+		var other_center := GridPoseUtil.contact_face_centroid_for_origin(
+			origin,
+			drill,
+			snap_dir,
+			0
+		)
+		var other_err := other_center.distance_squared_to(target_center)
+		if other_err + 0.000001 < centered_err:
+			return _fail(
+				"snap origin not centered: chose %s (err=%.4f) but %s is closer (err=%.4f)"
+				% [str(centered), centered_err, str(origin), other_err]
+			)
+	return true
+
+
 func _test_piston_stack_chain() -> bool:
 	var world := SimulationWorld.new()
 	world.ensure_resource_store("player")
@@ -379,6 +684,50 @@ func _test_piston_angular_compliance_config() -> bool:
 	):
 		joint.free()
 		return _fail("large piston should be stiffer than small")
+	var locked := PistonProjectionUtil.runtime_angular_compliance(
+		PISTON_BASE_LARGE.piston_definition,
+		false
+	)
+	if not is_zero_approx(float(locked.get("soft_limit_rad", 1.0))):
+		joint.free()
+		return _fail("unpowered/incomplete piston must hard-lock angular")
+	PistonProjectionUtil.configure_slider_joint(
+		joint,
+		motor,
+		locked,
+		0.0
+	)
+	if not is_equal_approx(
+		float(joint.get("linear_limit_y/lower_distance")),
+		float(joint.get("linear_limit_y/upper_distance"))
+	):
+		joint.free()
+		return _fail("construction lock must pin linear travel")
+	# Reproject-while-extended must offset limits by bind extension so the
+	# carriage cannot travel another full upper_limit_m beyond home.
+	var large_motor := SimulationMotorState.from_piston_definition(
+		PISTON_BASE_LARGE.piston_definition
+	)
+	var bind_extension := large_motor.upper_limit_m
+	PistonProjectionUtil.configure_slider_joint(
+		joint,
+		large_motor,
+		{},
+		NAN,
+		bind_extension
+	)
+	if not is_equal_approx(
+		float(joint.get("linear_limit_y/lower_distance")),
+		large_motor.lower_limit_m - bind_extension
+	):
+		joint.free()
+		return _fail("bind-offset lower limit wrong after extended reproject")
+	if not is_equal_approx(
+		float(joint.get("linear_limit_y/upper_distance")),
+		0.0
+	):
+		joint.free()
+		return _fail("bind-offset upper limit must be 0 at full extension")
 	joint.free()
 	return true
 

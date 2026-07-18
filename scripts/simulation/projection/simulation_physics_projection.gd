@@ -1021,13 +1021,28 @@ func _project_assembly_multibody(
 		var base_archetype: ElementArchetype = (
 			base_element.get_archetype() if base_element != null else null
 		)
-		var compliance := PistonProjectionUtil.compliance_from_definition(
-			base_archetype.piston_definition if base_archetype != null else null
+		var spawn_operational := (
+			base_element != null and base_element.is_operational()
 		)
+		var compliance := PistonProjectionUtil.runtime_angular_compliance(
+			(
+				base_archetype.piston_definition
+				if base_archetype != null
+				else null
+			),
+			spawn_operational
+		)
+		# Absolute travel at bind (= reconstruct pose). Limits are offset so a
+		# reproject while extended cannot stack another full upper_limit_m.
+		var bind_extension := sim_joint.motor.clamp_observed_position()
+		# Incomplete pistons park at current extension (usually home).
+		var spawn_lock := bind_extension if not spawn_operational else NAN
 		PistonProjectionUtil.configure_slider_joint(
 			joint_node,
 			sim_joint.motor,
-			compliance
+			compliance,
+			spawn_lock,
+			bind_extension
 		)
 		piston_records.append({
 			"joint_id": sim_joint.joint_id,
@@ -1038,6 +1053,7 @@ func _project_assembly_multibody(
 			"base_anchor_local": base_anchor,
 			"head_anchor_local": head_anchor,
 			"axis_local": axis_local,
+			"bind_extension_m": bind_extension,
 			"angular_compliance": compliance,
 			"carriage_element_ids": groups.get(
 				int(spec.get("head_group_id", 0)),
@@ -1493,11 +1509,15 @@ func _tick_piston_actuators(delta: float) -> void:
 					else Vector3.ZERO
 				)
 			)
+			var base_element := _world.get_element(sim_joint.element_a_id)
+			var operational := (
+				base_element != null and base_element.is_operational()
+			)
 			var force_result: Dictionary = (
 				PistonProjectionUtil.compute_motor_force_scalar(
 					sim_joint.motor,
 					float(measured.get("relative_velocity_mps", 0.0)),
-					powered,
+					powered and operational,
 					head_mass,
 					axis_world,
 					gravity
@@ -1507,10 +1527,32 @@ func _tick_piston_actuators(delta: float) -> void:
 			var saturated := bool(force_result.get("saturated", false))
 			var constraint: Generic6DOFJoint3D = record.get("constraint")
 			if constraint != null:
+				var base_archetype: ElementArchetype = (
+					base_element.get_archetype()
+					if base_element != null
+					else null
+				)
+				var compliance := (
+					PistonProjectionUtil.runtime_angular_compliance(
+						(
+							base_archetype.piston_definition
+							if base_archetype != null
+							else null
+						),
+						powered and operational
+					)
+				)
+				var lock_extension := (
+					float(measured.get("extension_m", 0.0))
+					if not operational
+					else NAN
+				)
 				PistonProjectionUtil.configure_slider_joint(
 					constraint,
 					sim_joint.motor,
-					record.get("angular_compliance", {})
+					compliance,
+					lock_extension,
+					float(record.get("bind_extension_m", 0.0))
 				)
 			sim_joint.motor.applied_force_n = absf(force_n)
 			sim_joint.motor.force_saturated = saturated
@@ -1530,14 +1572,15 @@ func _tick_piston_actuators(delta: float) -> void:
 				absf(force_n),
 				saturated
 			)
-			_emit_piston_sustained_kinetic(
-				record,
-				head_body,
-				absf(force_n),
-				saturated,
-				float(measured.get("relative_velocity_mps", 0.0)),
-				delta
-			)
+			if operational:
+				_emit_piston_sustained_kinetic(
+					record,
+					head_body,
+					absf(force_n),
+					saturated,
+					float(measured.get("relative_velocity_mps", 0.0)),
+					delta
+				)
 	_world.tick_actuators(delta)
 
 func _emit_piston_sustained_kinetic(

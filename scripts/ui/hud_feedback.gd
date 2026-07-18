@@ -258,11 +258,15 @@ func _reason_text(reason: StringName, data: Dictionary = {}) -> String:
 			return "Элемент сломан"
 		&"duplicate_connection":
 			return "Провод уже подключён"
+		&"moving_target_not_supported":
+			return "Втяни поршень / ротор до упора"
 		&"incompatible_connection":
 			var detail := StringName(data.get("detail", &""))
 			var wheel_text := _wheel_placement_prompt(detail)
 			if not wheel_text.is_empty():
 				return wheel_text
+			if _tools != null and _tools.active_tool == &"build":
+				return "Нет стыка с поверхностью блока"
 			return "Нет совместимых электропортов"
 		&"no_electric_ports":
 			return "У блока нет электропортов"

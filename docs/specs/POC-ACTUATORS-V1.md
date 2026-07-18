@@ -148,6 +148,11 @@ extend/retract velocity 0.20 m/s
 force limit             80000 N
 power draw              4000 W while commanded
 overload policy         stop
+head structural         MOUNT_PADS только +Y на всех 9 клетках deck
+                        (площадка каретки); бока/−Y без pads, чтобы aim
+                        не ставил блок на «ободок». Collider — box 3×3×1.
+base structural         MOUNT_PADS на всём днище (−Y) и всех боковых гранях
+                        обоих ярусов (y=0 и y=1); без +Y к голове
 ```
 
 Числа являются initial tuning fixture, а не универсальными константами kernel.
@@ -363,6 +368,18 @@ Dynamic head position не меняет topology electric graph. Electric wire
 `PistonDefinition` задаёт compliance (`angular_soft_limit_rad`,
 `angular_stiffness_nm_per_rad`, `angular_damping_nm_s_per_rad`). Большой
 поршень жёстче малого; оба остаются заметно «живыми» на длинной цепочке.
+
+**Construction / no-power lock:** пока base `element_incomplete` — linear travel
+заперт на текущем (home) extension и angular soft cone = 0 (жёсткий lock),
+чтобы тяжёлая каретка large piston не сложилась и не разнесла 1%-integrity
+placement. Soft angular flex включается только когда base operational **и**
+powered. `no_power` на уже сваренном поршне тоже держит hard angular (без
+motor hold вдоль оси — по правилу force = 0).
+
+**Joint bind offset:** `Generic6DOFJoint3D` linear limits относительны позе тел
+в момент создания joint. При reproject (weld/attach) на уже выдвинутой каретке
+limits смещаются на `bind_extension_m = observed_position`, иначе motor
+`[0, upper]` даёт ещё один полный ход поверх текущего.
 
 Никакой presentation mesh не участвует в constraint anchors или limits.
 

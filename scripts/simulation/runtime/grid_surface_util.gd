@@ -114,6 +114,55 @@ static func get_surface_descriptors(
 	return descriptors
 
 
+## Pick the authored structural face on `element` closest to a world hit.
+## Prefers faces whose outward normal aligns with `world_normal`.
+## Returns { "cell": Vector3i, "direction": Vector3i } in assembly grid space.
+static func nearest_assembly_face_to_hit(
+	element: SimulationElement,
+	world_point: Vector3,
+	world_normal: Vector3,
+	assembly_world_transform: Transform3D
+) -> Dictionary:
+	if element == null:
+		return {}
+	var archetype := element.get_archetype()
+	if archetype == null:
+		return {}
+	var local_point := assembly_world_transform.affine_inverse() * world_point
+	var local_normal := (
+		assembly_world_transform.basis.inverse() * world_normal
+	).normalized()
+	var best: Dictionary = {}
+	var best_score := -INF
+	for descriptor: SurfaceFaceDescriptor in get_surface_descriptors(
+		archetype,
+		element.orientation_index
+	):
+		var world_face := _world_face(
+			element.origin_cell,
+			element.orientation_index,
+			descriptor
+		)
+		var cell: Vector3i = world_face["cell"]
+		var direction: Vector3i = world_face["direction"]
+		var face_center := (
+			GridMetric.cell_center_meters(cell)
+			+ Vector3(direction) * GridMetric.HALF_CELL_SIZE_M
+		)
+		var alignment := local_normal.dot(Vector3(direction))
+		var distance := local_point.distance_to(face_center)
+		# Alignment dominates so a glancing hit on the deck still prefers
+		# the pad facing the camera, not a nearer edge face.
+		var score := alignment * 10.0 - distance
+		if score > best_score:
+			best_score = score
+			best = {
+				"cell": cell,
+				"direction": direction,
+			}
+	return best
+
+
 static func element_has_structural_surface(
 	element: SimulationElement,
 	structural_id: String

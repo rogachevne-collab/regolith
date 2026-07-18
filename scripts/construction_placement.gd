@@ -216,13 +216,13 @@ static func _dominant_grid_direction(direction: Vector3) -> Vector3i:
 
 
 static func _attach_frame_for_target(
-	world: SimulationWorld,
+	_world: SimulationWorld,
 	assembly: SimulationAssembly,
-	metadata: Dictionary
+	_metadata: Dictionary
 ) -> Transform3D:
-	var element_id := int(metadata.get("element_id", 0))
-	if element_id > 0 and world.get_element(element_id) != null:
-		return world.element_group_transform(element_id)
+	# Occupancy / origin_cell live in root assembly grid space. Using a driven
+	# carriage group transform here maps the hit into the wrong cell basis and
+	# kills attach preview (drill on large piston head, etc.).
 	if assembly != null and assembly.motion != null:
 		return assembly.motion.transform
 	return Transform3D.IDENTITY
@@ -250,6 +250,23 @@ static func _attach_snap_context(
 		}
 	var point := Vector3(target.get("point", Vector3.ZERO))
 	var normal := Vector3(target.get("normal", Vector3.UP)).normalized()
+	# Prefer the nearest authored structural pad on the aimed element so a
+	# glancing hit on a large piston head deck does not snap to a side cell.
+	var element_id := int(metadata.get("element_id", 0))
+	if element_id > 0 and point.is_finite():
+		var target_element := world.get_element(element_id)
+		var nearest := GridSurfaceUtil.nearest_assembly_face_to_hit(
+			target_element,
+			point,
+			normal,
+			assembly_world_transform
+		)
+		if not nearest.is_empty():
+			return {
+				"target_port_cell": nearest["cell"],
+				"snap_dir": nearest["direction"],
+				"assembly_world_transform": assembly_world_transform,
+			}
 	var local_normal := assembly_world_transform.basis.inverse() * normal
 	var snap_dir := _dominant_grid_direction(local_normal)
 	var target_port_cell: Vector3i
@@ -259,7 +276,7 @@ static func _attach_snap_context(
 		)
 		target_port_cell = GridMetric.meters_to_cell_floor(local_point) - snap_dir
 	elif metadata.has("element_id"):
-		var target_element := world.get_element(int(metadata.get("element_id", 0)))
+		var target_element := world.get_element(element_id)
 		if (
 			target_element != null
 			and metadata.has("collider_local_cell")
@@ -320,6 +337,7 @@ static func ranked_attach_plans(
 		held_attach_pivot
 	)
 	var plans: Array[Dictionary] = []
+	var best_invalid: Dictionary = {}
 	var seen_origins: Dictionary = {}
 	for origin_cell: Vector3i in ranked_origins:
 		if seen_origins.has(origin_cell):
@@ -337,6 +355,12 @@ static func ranked_attach_plans(
 		)
 		if bool(candidate.get("valid", false)):
 			plans.append(candidate)
+		elif best_invalid.is_empty():
+			best_invalid = candidate
+	# Keep one invalid plan so the preview can show a red ghost + reason
+	# instead of hiding completely when every candidate fails.
+	if plans.is_empty() and not best_invalid.is_empty():
+		plans.append(best_invalid)
 	return plans
 
 
@@ -478,11 +502,19 @@ static func _ranked_attach_origins(
 		candidates.append(origin_cell)
 	if candidates.is_empty():
 		return []
-	candidates.sort_custom(
-		func(left: Vector3i, right: Vector3i) -> bool:
-			return left < right
+	# Center the placing contact face on the aimed pad (not lex-min origin).
+	var best := GridPoseUtil.best_centered_snap_origin(
+		archetype,
+		target_port_cell,
+		snap_dir,
+		orientation_index,
+		candidates
 	)
-	return candidates
+	var ordered: Array[Vector3i] = [best]
+	for origin_cell: Vector3i in candidates:
+		if origin_cell != best:
+			ordered.append(origin_cell)
+	return ordered
 
 
 static func _validate_attach_origin(

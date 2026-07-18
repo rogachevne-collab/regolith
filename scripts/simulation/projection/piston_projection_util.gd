@@ -52,9 +52,9 @@ static func center_of_mass_local_for_records(
 	var weighted := Vector3.ZERO
 	var total_volume := 0.0
 	for record: Dictionary in records:
-		var shape: BoxShape3D = record["shape"]
+		var shape: Shape3D = record["shape"]
 		var local_transform: Transform3D = record["local_transform"]
-		var volume: float = shape.size.x * shape.size.y * shape.size.z
+		var volume := _shape_volume_m3(shape)
 		if volume <= 0.0:
 			continue
 		weighted += local_transform.origin * volume
@@ -62,6 +62,16 @@ static func center_of_mass_local_for_records(
 	if total_volume <= 0.0:
 		return Vector3.ZERO
 	return weighted / total_volume
+
+
+static func _shape_volume_m3(shape: Shape3D) -> float:
+	if shape is BoxShape3D:
+		var box := shape as BoxShape3D
+		return box.size.x * box.size.y * box.size.z
+	if shape is CylinderShape3D:
+		var cylinder := shape as CylinderShape3D
+		return PI * cylinder.radius * cylinder.radius * cylinder.height
+	return 0.0
 
 
 static func port_anchor_assembly_local(
@@ -294,18 +304,35 @@ const DEFAULT_ANGULAR_STIFFNESS_NM_PER_RAD := 18000.0
 const DEFAULT_ANGULAR_DAMPING_NM_S_PER_RAD := 600.0
 
 
+## Godot Generic6DOFJoint3D linear limits are relative to the body poses at
+## joint creation. `bind_extension_m` is the absolute travel-from-home at that
+## moment so motor [lower, upper] stay absolute across reprojection.
 static func configure_slider_joint(
 	joint: Generic6DOFJoint3D,
 	motor: SimulationMotorState,
-	compliance: Dictionary = {}
+	compliance: Dictionary = {},
+	lock_extension_m: float = NAN,
+	bind_extension_m: float = 0.0
 ) -> void:
 	for axis: String in ["x", "z"]:
 		joint.set("linear_limit_%s/enabled" % axis, true)
 		joint.set("linear_limit_%s/lower_distance" % axis, 0.0)
 		joint.set("linear_limit_%s/upper_distance" % axis, 0.0)
 	joint.set("linear_limit_y/enabled", true)
-	joint.set("linear_limit_y/lower_distance", motor.lower_limit_m)
-	joint.set("linear_limit_y/upper_distance", motor.upper_limit_m)
+	var lower_abs := motor.lower_limit_m
+	var upper_abs := motor.upper_limit_m
+	if is_finite(lock_extension_m):
+		var locked := clampf(lock_extension_m, lower_abs, upper_abs)
+		lower_abs = locked
+		upper_abs = locked
+	joint.set(
+		"linear_limit_y/lower_distance",
+		lower_abs - bind_extension_m
+	)
+	joint.set(
+		"linear_limit_y/upper_distance",
+		upper_abs - bind_extension_m
+	)
 	# Soft angular cone + springs (Jolt supports springs; *_limit_*/softness
 	# is unsupported in the built-in module — do not set those).
 	var soft_limit := float(
@@ -338,6 +365,20 @@ static func compliance_from_definition(definition: PistonDefinition) -> Dictiona
 	if definition == null:
 		return {}
 	return definition.angular_compliance()
+
+
+## Soft SE-like flex only while the piston can hold load (powered + complete).
+## Incomplete / unpowered → hard angular lock so heavy carriages do not flop.
+static func runtime_angular_compliance(
+	definition: PistonDefinition,
+	allow_flex: bool
+) -> Dictionary:
+	var compliance := compliance_from_definition(definition)
+	if allow_flex:
+		return compliance
+	var locked := compliance.duplicate()
+	locked["soft_limit_rad"] = 0.0
+	return locked
 
 
 static func is_piston_powered(

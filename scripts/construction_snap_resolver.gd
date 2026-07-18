@@ -557,24 +557,35 @@ func _append_face(
 	var element := world.get_element(element_id)
 	if element == null:
 		return
-	# Occupancy cells live in assembly grid space; elements on driven body
-	# groups (extended piston carriage etc.) are physically elsewhere, so a
-	# root-space face would ghost at the retracted pose. Direct aim still
-	# covers those; skip them here.
-	if not single_group and not world.element_group_transform(
-		element_id
-	).is_equal_approx(root_transform):
+	# Occupancy cells live in assembly grid space. Extended carriages sit
+	# elsewhere physically — skip magnet faces unless the driven path is at
+	# home (same rule as construction validation). Slight pose drift at home
+	# uses the group transform for the world aim point.
+	var group_transform := world.element_group_transform(element_id)
+	if (
+		not single_group
+		and not group_transform.is_equal_approx(root_transform)
+		and not ConstructionCommandService.is_driven_path_at_home(
+			world,
+			element_id
+		)
+	):
 		return
+	var pose_transform := (
+		group_transform
+		if not group_transform.is_equal_approx(root_transform)
+		else root_transform
+	)
 	var local_normal := Vector3(face_dir)
 	var local_point := (
 		GridMetric.cell_center_meters(face_cell)
 		+ local_normal * GridMetric.HALF_CELL_SIZE_M
 	)
-	var world_point := root_transform * local_point
+	var world_point := pose_transform * local_point
 	if not _is_in_corridor(ray_origin, ray_direction, world_point, MAX_RAY_DISTANCE):
 		return
 	last_stats["faces_scanned"] = int(last_stats["faces_scanned"]) + 1
-	var world_normal := (root_transform.basis * local_normal).normalized()
+	var world_normal := (pose_transform.basis * local_normal).normalized()
 	var target := InteractionHit.create(
 		world_point,
 		world_normal,

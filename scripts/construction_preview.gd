@@ -280,13 +280,17 @@ func _should_resolve(target: Dictionary) -> bool:
 		return true
 	if kind != InteractionHit.KIND_SIMULATION_ELEMENT:
 		return false
+	# HUD status_reason is often actuator/power state (idle, no_power, …)
+	# when aiming at a piston head/base. That must NOT kill construction
+	# resolve — otherwise horizontal pistons show no ghost at all.
 	var status := StringName(
-		target.get("metadata", {}).get("status_reason", &"element_incomplete")
+		target.get("metadata", {}).get("status_reason", &"ok")
 	)
-	return (
-		status == &"ok"
-		or status == &"element_incomplete"
-	)
+	return status not in [
+		&"element_broken",
+		&"invalid_target",
+		&"missing_archetype",
+	]
 
 
 func _aim_ray() -> Dictionary:
@@ -409,7 +413,9 @@ func _build_mesh_nodes(
 	var mat := _valid_material if valid else _invalid_material
 	var nodes: Array[Node] = []
 	if archetype.piston_definition != null:
-		var head_archetype := Slice01Archetypes.piston_head()
+		var head_archetype := Slice01Archetypes.load_required(
+			archetype.piston_definition.head_archetype_id
+		)
 		if head_archetype != null:
 			nodes.append_array(
 				PISTON_VISUAL_SCRIPT.build_placement_preview_nodes(
