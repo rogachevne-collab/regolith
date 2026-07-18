@@ -50,6 +50,10 @@ func _run() -> void:
 		return
 	if not _test_snap_face_cache_motion_invalidation():
 		return
+	if not _test_snap_face_cache_vehicle_anchor_refresh():
+		return
+	if not _test_snap_resolver_invalid_direct_red_ghost():
+		return
 	if not _test_snap_resolver_performance():
 		return
 	if not _test_gateway_voxel_place_spawns_visual():
@@ -368,10 +372,23 @@ func _test_snap_resolver_voxel_below_magnetic() -> bool:
 	var candidates: Array = result["candidates"]
 	if candidates.is_empty():
 		return _fail("voxel priority found no candidates")
-	if str(candidates[0]["source"]) == "voxel_fallback":
-		return _fail("magnetic face should beat voxel fallback")
+	# Direct voxel hit must NOT short-circuit the face scan: aiming at the
+	# ground next to a structure still offers magnetic faces above the
+	# voxel fallback (magnetic snap policy §2-3).
+	if str(candidates[0]["source"]) != "face_scan":
+		return _fail(
+			"magnetic face should beat voxel fallback, got %s"
+			% str(candidates[0]["source"])
+		)
 	if float(candidates[0]["score"]) <= ConstructionSnapResolver.VOXEL_FALLBACK_SCORE:
 		return _fail("selected magnetic candidate score too low")
+	var has_voxel_candidate := false
+	for candidate: Dictionary in candidates:
+		if str(candidate["source"]) == "voxel_fallback":
+			has_voxel_candidate = true
+			break
+	if not has_voxel_candidate:
+		return _fail("voxel fallback candidate missing from merged pool")
 	_free_fixture(fixture)
 	return true
 
@@ -1190,6 +1207,95 @@ func _test_snap_face_cache_motion_invalidation() -> bool:
 		return _fail(
 			"anchored snap cache unexpectedly rewrote face point on motion"
 		)
+	_free_fixture(fixture)
+	return true
+
+
+func _count_cache_faces(
+	cache: ConstructionSnapFaceCache,
+	assembly_id: int
+) -> int:
+	var count := 0
+	for face: Dictionary in cache.faces():
+		if int(face.get("assembly_id", 0)) == assembly_id:
+			count += 1
+	return count
+
+
+func _test_snap_face_cache_vehicle_anchor_refresh() -> bool:
+	var fixture := _new_fixture()
+	var world: SimulationWorld = fixture["world"]
+	world.set_resource_amount("player", "construction_component", 2000.0)
+	var composed := RoverComposer.compose(world, RoverIntent.defaults())
+	if not bool(composed.get("ok", false)):
+		return _fail(
+			"vehicle anchor fixture compose failed: %s"
+			% str(composed.get("error", ""))
+		)
+	var assembly_id := int(composed["assembly_id"])
+	# Compose spawns terrain-anchored; emulate the runtime release-from-anchor
+	# (floating locomotive) so attach permission follows the velocity rule.
+	var anchor_joint_ids: Array[int] = []
+	for joint: SimulationJoint in world._joints_for_assembly(assembly_id):
+		if joint.kind == SimulationJoint.Kind.ANCHOR:
+			anchor_joint_ids.append(joint.joint_id)
+	for joint_id: int in anchor_joint_ids:
+		world._joints.erase(joint_id)
+	var assembly := world.get_assembly_raw(assembly_id)
+	assembly.bump_revision()
+	if world.assembly_has_anchor(assembly_id):
+		return _fail("vehicle anchor fixture still terrain-anchored")
+	var cache := ConstructionSnapFaceCache.new()
+	cache.bind_world(world)
+	# Moving rover: attach not allowed, no magnetic faces.
+	assembly.motion.linear_velocity = Vector3(3.0, 0.0, 0.0)
+	cache.ensure_current()
+	if _count_cache_faces(cache, assembly_id) != 0:
+		return _fail("moving rover leaked magnetic faces into snap cache")
+	# Parked (coast-to-stop): faces must appear without any structural event.
+	assembly.motion.linear_velocity = Vector3.ZERO
+	var generation_before := cache.generation
+	cache.ensure_current()
+	if _count_cache_faces(cache, assembly_id) == 0:
+		return _fail("parked rover did not become magnetic")
+	if cache.generation == generation_before:
+		return _fail("parked rover faces appeared without generation bump")
+	# Driving away again: stale faces must drop out of the cache.
+	assembly.motion.linear_velocity = Vector3(3.0, 0.0, 0.0)
+	cache.ensure_current()
+	if _count_cache_faces(cache, assembly_id) != 0:
+		return _fail("departed rover kept stale magnetic faces")
+	_free_fixture(fixture)
+	return true
+
+
+func _test_snap_resolver_invalid_direct_red_ghost() -> bool:
+	var fixture := _new_fixture()
+	var world: SimulationWorld = fixture["world"]
+	# Drain the store: ground plan is structurally fine but not payable.
+	world.set_resource_amount("player", "construction_component", 0.0)
+	var resolver := ConstructionSnapResolver.new()
+	var frame: ElementArchetype = Slice01Archetypes.frame()
+	var voxel_hit := _voxel_target(
+		Vector3(4.0, 0.0, 0.0),
+		Vector3.UP,
+		Vector3.FORWARD
+	)
+	var result := resolver.resolve({
+		"world": world,
+		"archetype": frame,
+		"orientation_index": 0,
+		"ray_origin": Vector3(4.0, 1.5, 2.0),
+		"ray_direction": Vector3(0.0, -0.5, -1.0).normalized(),
+		"direct_hit": voxel_hit,
+	})
+	var plan: Dictionary = result["selected_plan"]
+	if plan.is_empty():
+		return _fail("invalid direct hit lost its plan (no red ghost)")
+	if bool(plan.get("valid", false)):
+		return _fail("unpayable ground plan reported valid")
+	if not (result["selected_target"] as Dictionary).get("valid", false):
+		return _fail("red ghost target missing")
 	_free_fixture(fixture)
 	return true
 

@@ -33,6 +33,11 @@ var _valid_material: StandardMaterial3D
 var _invalid_material: StandardMaterial3D
 var _signature := ""
 var _mesh_cache: Dictionary = {}
+## Preview nodes are built once per (archetype, orientation, valid) at grid
+## origin ZERO; this container translates them to the plan's origin_cell, so
+## sweeping the aim over attach targets moves a transform instead of
+## rebuilding/duplicating mesh nodes every cell change.
+var _mesh_root: Node3D
 var _manual_candidate_index := -1
 var _manual_lock := false
 var _cached_resolve_context_key := ""
@@ -52,6 +57,8 @@ const _LARGE_AIM_DIRECTION_STEP := 0.06
 func _ready() -> void:
 	top_level = true
 	process_physics_priority = 10
+	_mesh_root = Node3D.new()
+	add_child(_mesh_root)
 	_query = get_node(query_path)
 	_tools = get_node(tool_controller_path)
 	_gateway = get_node(gateway_path)
@@ -360,27 +367,25 @@ func _ground_pivot_key_for(target: Dictionary) -> String:
 func _apply_cached_mesh(
 	archetype: ElementArchetype,
 	orientation_index: int,
-	origin_cell: Vector3i,
 	valid: bool
 ) -> void:
-	for child_node: Node in get_children():
-		remove_child(child_node)
+	for child_node: Node in _mesh_root.get_children():
+		_mesh_root.remove_child(child_node)
 		child_node.queue_free()
 	var cache_key := _cache_key(
 		archetype.archetype_id,
 		orientation_index,
-		origin_cell,
 		valid
 	)
 	if not _mesh_cache.has(cache_key):
 		_mesh_cache[cache_key] = _build_mesh_nodes(
 			archetype,
 			orientation_index,
-			origin_cell,
+			Vector3i.ZERO,
 			valid
 		)
 	for node: Node in _mesh_cache[cache_key]:
-		add_child(node.duplicate())
+		_mesh_root.add_child(node.duplicate())
 
 
 func _build_mesh_nodes(
@@ -557,20 +562,6 @@ func _connected_rim_preview_material(base: Material) -> Material:
 	return rim
 
 
-func _build_collider_box_nodes(
-	archetype: ElementArchetype,
-	origin_cell: Vector3i,
-	orientation_index: int,
-	preview_material: Material
-) -> Array[Node]:
-	return _build_collider_preview_nodes(
-		archetype,
-		origin_cell,
-		orientation_index,
-		preview_material
-	)
-
-
 func _build_preview_port_markers(
 	archetype: ElementArchetype,
 	origin_cell: Vector3i,
@@ -627,10 +618,9 @@ func _build_preview_port_markers(
 func _cache_key(
 	archetype_id: String,
 	orientation_index: int,
-	origin_cell: Vector3i,
 	valid: bool
 ) -> String:
-	return "%s|%d|%s|%s" % [archetype_id, orientation_index, origin_cell, valid]
+	return "%s|%d|%s" % [archetype_id, orientation_index, valid]
 
 
 func _warm_current_selection() -> void:
@@ -643,7 +633,6 @@ func _warm_current_selection() -> void:
 		var cache_key := _cache_key(
 			archetype.archetype_id,
 			_tools.selected_orientation_index,
-			Vector3i.ZERO,
 			valid
 		)
 		if not _mesh_cache.has(cache_key):
@@ -664,20 +653,19 @@ func _sync_preview_visuals() -> void:
 		_hide_preview()
 		return
 	var origin_cell: Vector3i = resolved_plan.get("origin_cell", Vector3i.ZERO)
-	var next_signature := "%s|%d|%s|%s" % [
+	var orientation_index := int(
+		resolved_plan.get("orientation_index", _tools.selected_orientation_index)
+	)
+	var valid := bool(resolved_plan.get("valid", false))
+	var next_signature := _cache_key(
 		archetype.archetype_id,
-		int(resolved_plan.get("orientation_index", _tools.selected_orientation_index)),
-		origin_cell,
-		str(bool(resolved_plan.get("valid", false))),
-	]
+		orientation_index,
+		valid
+	)
 	if next_signature != _signature:
-		_apply_cached_mesh(
-			archetype,
-			int(resolved_plan.get("orientation_index", _tools.selected_orientation_index)),
-			origin_cell,
-			bool(resolved_plan.get("valid", false))
-		)
+		_apply_cached_mesh(archetype, orientation_index, valid)
 		_signature = next_signature
+	_mesh_root.position = GridMetric.cell_to_meters(origin_cell)
 	global_transform = resolved_plan.get(
 		"preview_root_transform",
 		resolved_plan.get("assembly_world_transform", Transform3D.IDENTITY)
@@ -728,7 +716,6 @@ func _warm_archetype(archetype_id: String, orientation_index: int) -> void:
 		var cache_key := _cache_key(
 			archetype_id,
 			orientation_index,
-			Vector3i.ZERO,
 			valid
 		)
 		if not _mesh_cache.has(cache_key):
