@@ -76,6 +76,7 @@ const CONSTRUCTION_ARCHETYPES: PackedStringArray = [
 	"processor",
 	"fabricator",
 	"piston_base",
+	"piston_base_large",
 	"rotor_base",
 	"rotor_base_large",
 	"hinge_base",
@@ -134,6 +135,7 @@ const TOOLBAR_PAGES: Array = [
 		{"type": &"block", "archetype_id": "rotor_base"},
 		{"type": &"block", "archetype_id": "rotor_base_large"},
 		{"type": &"block", "archetype_id": "hinge_base"},
+		{"type": &"block", "archetype_id": "piston_base_large"},
 	],
 	[
 		{"type": &"block", "archetype_id": "thruster"},
@@ -182,6 +184,8 @@ var _connect_waypoints: PackedVector3Array = PackedVector3Array()
 var _recipe_cursor_by_element: Dictionary = {}
 var _inventory_revision := -1
 var _last_drill_excavation_msec := -1
+## When true, +/- / Y apply the same command to every piston in the assembly.
+var actuator_chain_sync := false
 
 const CONNECT_RANGE := 4.0
 const CONNECT_MAX_WAYPOINTS := 16
@@ -1276,62 +1280,101 @@ func _actuator_hit_reverse_velocity(hit: InteractionHit) -> float:
 
 
 func _try_actuator_extend(hit: InteractionHit) -> bool:
-	if not _is_actuator_target_hit(hit):
-		return false
-	var joint_id := _actuator_hit_joint_id(hit)
-	if joint_id <= 0:
-		return false
-	command_requested.emit({
-		"kind": &"set_actuator_target",
-		"source": get_parent(),
-		"target": hit.snapshot(),
-		"parameters": {
-			"joint_id": joint_id,
-			"mode": SimulationMotorState.ControlMode.VELOCITY,
-			"target_velocity_mps": _actuator_hit_forward_velocity(hit),
-			"enabled": true,
-		},
-	})
-	return true
+	return _emit_actuator_target(
+		hit,
+		SimulationMotorState.ControlMode.VELOCITY,
+		_actuator_hit_forward_velocity(hit),
+		true
+	)
 
 
 func _try_actuator_retract(hit: InteractionHit) -> bool:
-	if not _is_actuator_target_hit(hit):
-		return false
-	var joint_id := _actuator_hit_joint_id(hit)
-	if joint_id <= 0:
-		return false
-	command_requested.emit({
-		"kind": &"set_actuator_target",
-		"source": get_parent(),
-		"target": hit.snapshot(),
-		"parameters": {
-			"joint_id": joint_id,
-			"mode": SimulationMotorState.ControlMode.VELOCITY,
-			"target_velocity_mps": -_actuator_hit_reverse_velocity(hit),
-			"enabled": true,
-		},
-	})
-	return true
+	return _emit_actuator_target(
+		hit,
+		SimulationMotorState.ControlMode.VELOCITY,
+		-_actuator_hit_reverse_velocity(hit),
+		true
+	)
 
 
 func _try_actuator_stop(hit: InteractionHit) -> bool:
+	return _emit_actuator_target(
+		hit,
+		SimulationMotorState.ControlMode.STOP,
+		0.0,
+		true
+	)
+
+
+func set_actuator_chain_sync(enabled: bool) -> void:
+	actuator_chain_sync = enabled
+
+
+func is_actuator_chain_sync() -> bool:
+	return actuator_chain_sync
+
+
+func _emit_actuator_target(
+	hit: InteractionHit,
+	mode: int,
+	target_velocity_mps: float,
+	enabled: bool
+) -> bool:
 	if not _is_actuator_target_hit(hit):
 		return false
 	var joint_id := _actuator_hit_joint_id(hit)
 	if joint_id <= 0:
 		return false
-	command_requested.emit({
-		"kind": &"set_actuator_target",
-		"source": get_parent(),
-		"target": hit.snapshot(),
-		"parameters": {
-			"joint_id": joint_id,
-			"mode": SimulationMotorState.ControlMode.STOP,
-			"enabled": true,
-		},
-	})
+	var joint_ids: Array[int] = [joint_id]
+	if (
+		actuator_chain_sync
+		and hit.metadata.has("piston_joint_id")
+		and not hit.metadata.has("rotor_joint_id")
+		and not hit.metadata.has("hinge_joint_id")
+	):
+		var assembly_id := int(hit.metadata.get("assembly_id", 0))
+		var world := _simulation_world()
+		if world != null and assembly_id > 0:
+			joint_ids = PistonPlacementUtil.piston_joint_ids_in_assembly(
+				world,
+				assembly_id
+			)
+			if joint_ids.is_empty():
+				joint_ids = [joint_id]
+	for target_joint_id: int in joint_ids:
+		command_requested.emit({
+			"kind": &"set_actuator_target",
+			"source": get_parent(),
+			"target": hit.snapshot(),
+			"parameters": {
+				"joint_id": target_joint_id,
+				"mode": mode,
+				"target_velocity_mps": target_velocity_mps,
+				"enabled": enabled,
+			},
+		})
 	return true
+
+
+func toggle_actuator_motor(hit: InteractionHit) -> bool:
+	if not _is_actuator_target_hit(hit):
+		return false
+	var joint_id := _actuator_hit_joint_id(hit)
+	if joint_id <= 0:
+		return false
+	var enabled_now := true
+	if hit.metadata.has("piston_joint_id"):
+		enabled_now = bool(hit.metadata.get("piston_motor_enabled", true))
+	elif hit.metadata.has("rotor_joint_id"):
+		enabled_now = bool(hit.metadata.get("rotor_motor_enabled", true))
+	elif hit.metadata.has("hinge_joint_id"):
+		enabled_now = bool(hit.metadata.get("hinge_motor_enabled", true))
+	return _emit_actuator_target(
+		hit,
+		SimulationMotorState.ControlMode.STOP,
+		0.0,
+		not enabled_now
+	)
 
 
 func _target_for_action(action: StringName) -> InteractionHit:

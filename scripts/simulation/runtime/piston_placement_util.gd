@@ -187,3 +187,20 @@ static func piston_joint_for_elements(
 		):
 			return joint
 	return null
+
+
+static func piston_joint_ids_in_assembly(
+	world: SimulationWorld,
+	assembly_id: int
+) -> Array[int]:
+	var ids: Array[int] = []
+	if world == null or assembly_id <= 0:
+		return ids
+	for joint: SimulationJoint in world.list_joints():
+		if (
+			joint.assembly_id == assembly_id
+			and joint.kind == SimulationJoint.Kind.PISTON
+		):
+			ids.append(joint.joint_id)
+	ids.sort()
+	return ids

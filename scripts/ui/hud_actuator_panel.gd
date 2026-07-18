@@ -18,6 +18,8 @@ var _status_val: Label
 var _travel_key: Label
 var _travel_val: Label
 var _tune_box: VBoxContainer
+var _motor_btn: Button
+var _chain_btn: Button
 var _hints: Label
 var _tune_values: Dictionary = {}
 var _tune_mode := ""
@@ -25,12 +27,16 @@ var _open := false
 var _target_hit: InteractionHit
 var _pending_command_ids: Dictionary = {}
 var _interact_release_latch := false
+var _tool_controller: Node
 
 
 func setup(ctx: Dictionary) -> void:
 	_gateway = ctx.get("gateway")
 	_query = ctx.get("query")
 	_player = ctx.get("player")
+	_tool_controller = ctx.get("tools")
+	if _tool_controller == null and _player != null:
+		_tool_controller = _player.get_node_or_null("ToolController")
 	if (
 		_gateway != null
 		and not _gateway.command_completed.is_connected(_on_command_completed)
@@ -107,12 +113,12 @@ func _build() -> void:
 	_panel.anchor_bottom = 0.5
 	_panel.offset_left = -PANEL_WIDTH * 0.5
 	_panel.offset_right = PANEL_WIDTH * 0.5
-	_panel.offset_top = -148.0
-	_panel.offset_bottom = 148.0
+	_panel.offset_top = -168.0
+	_panel.offset_bottom = 168.0
 	_panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(_panel)
 
-	_panel_overlay = HudTokens.make_panel_overlay(Vector2(PANEL_WIDTH, 296.0))
+	_panel_overlay = HudTokens.make_panel_overlay(Vector2(PANEL_WIDTH, 336.0))
 	_panel_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_panel_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_panel.add_child(_panel_overlay)
@@ -160,6 +166,21 @@ func _build() -> void:
 	vb.add_child(_tune_box)
 	_ensure_tune_rows(HudActuatorTuneUtil.TUNE_ROWS, "piston")
 
+	var control_row := HBoxContainer.new()
+	control_row.add_theme_constant_override("separation", 8)
+	control_row.mouse_filter = Control.MOUSE_FILTER_STOP
+	vb.add_child(control_row)
+	_motor_btn = Button.new()
+	_motor_btn.theme_type_variation = &"HudSmall"
+	_motor_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_motor_btn.pressed.connect(_on_motor_toggle_pressed)
+	control_row.add_child(_motor_btn)
+	_chain_btn = Button.new()
+	_chain_btn.theme_type_variation = &"HudSmall"
+	_chain_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_chain_btn.pressed.connect(_on_chain_toggle_pressed)
+	control_row.add_child(_chain_btn)
+
 	_hints = Label.new()
 	_hints.theme_type_variation = &"HudSmall"
 	_hints.add_theme_color_override("font_color", HudTokens.COL_DIM)
@@ -194,8 +215,13 @@ func _configure_for_meta(meta: Dictionary) -> void:
 	else:
 		_title.text = "ПОРШЕНЬ"
 		_travel_key.text = "ХОД"
-		_hints.text = "[+] выдв · [-] втяг · Y стоп"
+		_hints.text = "[+] выдв · [-] втяг · Y стоп · цепь = все поршни"
 		_ensure_tune_rows(HudActuatorTuneUtil.TUNE_ROWS, "piston")
+	if _chain_btn != null:
+		_chain_btn.visible = not (
+			HudActuatorTuneUtil.is_rotor_meta(meta)
+			or HudActuatorTuneUtil.is_hinge_meta(meta)
+		)
 
 
 func _add_info_row(parent_node: Node, key: String, value_color: Color) -> Label:
@@ -286,6 +312,46 @@ func _refresh_from_hit(hit: InteractionHit) -> void:
 		var label: Label = _tune_values.get(field)
 		if label != null:
 			label.text = HudActuatorTuneUtil.format_value(field, meta)
+	_refresh_control_buttons(meta)
+
+
+func _refresh_control_buttons(meta: Dictionary) -> void:
+	var enabled := true
+	if HudActuatorTuneUtil.is_rotor_meta(meta):
+		enabled = bool(meta.get("rotor_motor_enabled", true))
+	elif HudActuatorTuneUtil.is_hinge_meta(meta):
+		enabled = bool(meta.get("hinge_motor_enabled", true))
+	else:
+		enabled = bool(meta.get("piston_motor_enabled", true))
+	if _motor_btn != null:
+		_motor_btn.text = "МОТОР: ВКЛ" if enabled else "МОТОР: ВЫКЛ"
+	if _chain_btn != null:
+		var sync := false
+		if (
+			_tool_controller != null
+			and _tool_controller.has_method("is_actuator_chain_sync")
+		):
+			sync = bool(_tool_controller.call("is_actuator_chain_sync"))
+		_chain_btn.text = "ЦЕПЬ: ВКЛ" if sync else "ЦЕПЬ: ВЫКЛ"
+
+
+func _on_motor_toggle_pressed() -> void:
+	if _tool_controller == null or not _target_hit.valid:
+		return
+	if _tool_controller.has_method("toggle_actuator_motor"):
+		_tool_controller.call("toggle_actuator_motor", _current_hit())
+
+
+func _on_chain_toggle_pressed() -> void:
+	if _tool_controller == null:
+		return
+	if not _tool_controller.has_method("set_actuator_chain_sync"):
+		return
+	var sync := false
+	if _tool_controller.has_method("is_actuator_chain_sync"):
+		sync = bool(_tool_controller.call("is_actuator_chain_sync"))
+	_tool_controller.call("set_actuator_chain_sync", not sync)
+	_refresh_control_buttons(_current_hit().metadata)
 
 
 func _on_tune_pressed(field: String, direction: int) -> void:
