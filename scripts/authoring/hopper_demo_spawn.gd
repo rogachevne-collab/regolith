@@ -72,9 +72,7 @@ static func spawn_at_transform(
 		return {"ok": false, "error": helper.last_error}
 	var battery_id := int(helper.element_ids.get("battery", 0))
 	if battery_id > 0:
-		var battery := session.world.get_element(battery_id)
-		var runtime := session.world.ensure_industry_element_runtime(battery_id)
-		runtime.battery_kwh = IndustryElectricProfile.battery_max_kwh(battery)
+		IndustryElectricBudget.mark_battery_charged(session.world, battery_id)
 	session.world.get_locomotion_controller(
 		helper.assembly_id
 	).mark_released_from_anchor()

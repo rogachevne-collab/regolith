@@ -7,6 +7,8 @@ const _SCRIPT := preload(
 
 var machine_enabled: bool = true
 var battery_kwh: float = 0.0
+## True after first seed/charge. Empty+initialized stays empty (no seat refill).
+var battery_initialized: bool = false
 var active_recipe_power_w: float = 0.0
 ## Transient actuator/tool demand. Recomputed from current control state.
 var dynamic_power_w: float = 0.0
@@ -19,6 +21,7 @@ static func create_default() -> IndustryElementRuntime:
 	var runtime: IndustryElementRuntime = _SCRIPT.new()
 	runtime.machine_enabled = true
 	runtime.battery_kwh = 0.0
+	runtime.battery_initialized = false
 	runtime.active_recipe_power_w = 0.0
 	runtime.dynamic_power_w = 0.0
 	runtime.power_reason = &"ok"
@@ -47,6 +50,7 @@ func to_dict() -> Dictionary:
 	var row := {
 		"machine_enabled": machine_enabled,
 		"battery_kwh": battery_kwh,
+		"battery_initialized": battery_initialized,
 		"active_recipe_power_w": active_recipe_power_w,
 	}
 	if machine_state != null:
@@ -58,6 +62,11 @@ static func from_dict(data: Dictionary) -> IndustryElementRuntime:
 	var runtime: IndustryElementRuntime = _SCRIPT.new()
 	runtime.machine_enabled = bool(data.get("machine_enabled", true))
 	runtime.battery_kwh = maxf(float(data.get("battery_kwh", 0.0)), 0.0)
+	# Legacy snapshots without the flag: any known charge counts as initialized.
+	if data.has("battery_initialized"):
+		runtime.battery_initialized = bool(data.get("battery_initialized", false))
+	else:
+		runtime.battery_initialized = runtime.battery_kwh > 0.000001
 	runtime.active_recipe_power_w = maxf(
 		float(data.get("active_recipe_power_w", 0.0)),
 		0.0

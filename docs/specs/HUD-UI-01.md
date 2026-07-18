@@ -46,6 +46,7 @@ HUD является presentation-слоем в том же смысле, что
 | `Reticle` + `TargetInfo` | `InteractionQuery.current_hit` | — |
 | `Toolbar` | `ToolController` | slot/rotate через существующий input |
 | `Vitals` | `SuitState` | — |
+| `VehiclePower` | `WorldCommandGateway.vehicle_power_snapshot()` | — |
 | `Compass` | camera yaw | — |
 | `Inventory` + `StoreView` | resource stores | — |
 | `BlockPalette` | `ToolController` archetypes | assign в toolbar-слот |
@@ -95,6 +96,20 @@ overlay-панели (inventory, palette). Логики симуляции не 
 - каждый бар рисуется по нормализованной доле (`value / max`); цвет по палитре:
   steel-blue при норме, amber при предупреждении, red при критическом уровне;
 - Vitals **только читает** `SuitState` и никогда его не меняет.
+
+### VehiclePower (кабина транспорта)
+
+- виден **только** пока `player.is_in_vehicle()`;
+- источник: read-only
+  `WorldCommandGateway.vehicle_power_snapshot(assembly_id?)` →
+  `VehiclePowerSnapshotBuilder` поверх Industry electric budget;
+- панель справа-снизу («ТРАНСПОРТ»): бар заряда АКБ (`battery_fraction`),
+  текущая нагрузка `demand_w`, предикт запаса хода `eta_s` при текущем
+  net drain (`max(0, demand_w − source_w)`);
+- `eta_s < 0` → «∞» (нет разряда / есть избыток source); `0` → батарея пуста
+  при ненулевой нагрузке;
+- цвет бара — та же палитра, что у Vitals (steel / amber / red по доле);
+- виджет **не** мутирует `battery_kwh` и не инициирует команды.
 
 ### Compass
 

@@ -519,7 +519,12 @@ distribution внутри `supply_radius_m`. См. § Network links.
    `no_power`);
 5. **без** partial slowdown; **без** priority queue в v1;
 6. battery: charge surplus, discharge deficit до `max_kwh`; `charge_w`/`discharge_w`
-   caps per fixture.
+   caps per fixture;
+7. first-time seed (`battery_initialized`): пустая неинициализированная батарея
+   может быть заряжена до `max_kwh` один раз (spawn / первая посадка);
+   **повторный refill при seat enter запрещён** — иначе транспорт едет
+   бесконечно. Заряд от `power_source` по-прежнему пишет `battery_kwh` и
+   ставит `battery_initialized`.
 
 ### Distributor radius
 
@@ -775,6 +780,8 @@ Voxel carve от stationary drill — `WorldCommandGateway` internal op (как
 
 - **Target info:** functional + construction reasons;
 - **StoreView:** terminal-инвентарь на targeted store/buffer (§ Terminal inventory);
+- **VehiclePower HUD:** cabin charge bar + trip ETA while seated
+  (`vehicle_power_snapshot`, см. `HUD-UI-01.md` / `ROVER-MODULES-V1.md`);
 - **Connect tool:** electric wires only;
 - **Port markers:** electric (gold) and cargo (cyan) face decals in build/connect
   modes and on targeted industry blocks; compatible in-range electric endpoints
