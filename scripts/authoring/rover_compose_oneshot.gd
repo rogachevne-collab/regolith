@@ -12,7 +12,16 @@ func _run() -> void:
 	var phrase := _phrase_from_args()
 	var world := SimulationWorld.new()
 	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "construction_component", 800.0)
+	for item_id: String in [
+		"plate_metal",
+		"girder",
+		"mechanism",
+		"conduit",
+		"plate_basalt",
+		"sintered_basalt",
+		"plate_alloy",
+	]:
+		world.set_resource_amount("player", item_id, 800.0)
 	for archetype: ElementArchetype in Slice01Archetypes.load_rover_archetypes():
 		world.get_archetype_registry().register(archetype)
 	var intent := RoverIntent.from_phrase(phrase)

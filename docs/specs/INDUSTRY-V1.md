@@ -9,17 +9,19 @@
 - `docs/specs/SIMULATION-KERNEL-V0.md`;
 - `docs/specs/CONSTRUCTION-V1.md`;
 - `docs/specs/PLAYER-INTERACTION-V1.md`;
-- `docs/specs/HUD-UI-01.md`.
+- `docs/specs/HUD-UI-01.md`;
+- `docs/specs/TERRAIN-MATERIALS-V1.md` — **канон** рудных зон, typed ores,
+  стройкомпонентов, O₂/H₂ и машины `electrolyzer` (замещает dual-path каталог ниже).
 
 ## Индекс (для агентов: не читай файл целиком — найди термин и читай его раздел)
 
 | Термин / вопрос | Раздел |
 |---|---|
 | scope, что входит / не входит в v1 | «Границы» |
-| ItemType, ItemCatalog, категории предметов | «Система предметов» → «ItemType catalog» |
+| ItemType, ItemCatalog, категории предметов | «Система предметов» → «ItemType catalog»; **актуальный каталог руд/газов/компонентов** — `TERRAIN-MATERIALS-V1.md` |
 | инструменты игрока, hotbar, instances | «Система предметов» → «Player tool instances и hotbar» |
-| raw_regolith, construction_component, ресурсы slice | «Ресурсы slice» |
-| ISRU цепочка, crush vs sinter, рецепты | «Dual-path ISRU» |
+| рудные зоны, typed ores, O₂/H₂, electrolyzer | `TERRAIN-MATERIALS-V1.md` |
+| ~~raw_regolith, dual-path slice~~ (устарело) | замещено `TERRAIN-MATERIALS-V1.md` |
 | SimulationResourceStore, capacity, buffers | «Store model» |
 | cargo_pipe, auto-link, cargo graph, transfer | «Cargo Flow» |
 | connect_network, wires, 3D mesh | «Network links (electric wires)» |
@@ -39,9 +41,11 @@
 
 ## Цель
 
-Замкнуть industrial core loop vertical slice: добыча реголита, переработка по
-**ветвящейся лунной ISRU-цепочке**, распределение **электричества** и **груза**,
-получение `construction_component` для расширения базы.
+Замкнуть industrial core loop: добыча **typed** руд из зон террейна,
+переработка по лунной ISRU-цепочке (стройка + O₂/H₂), распределение
+**электричества** и **груза**. Номенклатура предметов и рецептов — канон
+`TERRAIN-MATERIALS-V1.md`; ниже оставлены исторические таблицы dual-path до
+миграции кода (не использовать как источник истины для новых фич).
 
 Industry v1 вводит authoritative simulation tick для Flow, Store, Recipe и
 functional status. Presentation (HUD, wire mesh, VFX) только отображает state и
@@ -68,9 +72,10 @@ Input / tick
 - electric: **ручные** `connect_network` wires + **3D wire mesh**;
 - `power_source`, **power_distributor**, **power_battery** archetypes;
 - power budget (SE on/off): supply vs draw, без замедления;
-- `stationary_drill` contact-gated mining + voxel carve + `raw_regolith` credit;
+- `stationary_drill` contact-gated mining + voxel carve + credit по
+  `TerrainMaterial` (канон yield — `TERRAIN-MATERIALS-V1.md`);
 - hand drill **world loot pile** (как Space Engineers), сбор в store;
-- data-driven `Recipe` (5 рецептов, dual-path ISRU);
+- data-driven `Recipe` (канон — `TERRAIN-MATERIALS-V1.md`, включая `electrolyzer`);
 - Processor/Fabricator: одна активная job + **очередь**;
 - machine **enabled/disabled** toggle;
 - functional `status` / `reason` для HUD;
@@ -80,14 +85,13 @@ Input / tick
 ### Не входит
 
 - ветряки, солнечные панели, Satisfactory-столбы (после slice);
-- split после crush (концентрат/хвосты), кислород, volatiles;
+- fluid/gas/thermal Flow и Atmosphere (баллонный bulk O₂/H₂/water — в
+  `TERRAIN-MATERIALS-V1.md`, не как трубы; SuitState refill — later);
 - tier машин (Mk2) и duplicate «efficiency recipes»;
 - крафт кабеля/трубы как inventory item (link = edge + mesh; без расходуемого предмета);
 - conveyors с физическими предметами;
 - автоматическая доставка в player store с fabricator;
-- consumables и bottle use (аптечки, пополнение SuitState из баллонов);
 - строительство/Industry на движущейся Assembly;
-- fluid/gas/thermal/data Flow;
 - scripted tutorial для `no_power` / `storage_full`;
 - финальный art pass и полный баланс экономики.
 
@@ -113,22 +117,20 @@ ItemType {
 в единственном ограничении вместимости. `amount` остаётся единицей recipe I/O,
 а не килограммами и не литрами.
 
+Актуальная таблица руд / материалов / слитков / газов / стройкомпонентов —
+[`TERRAIN-MATERIALS-V1.md`](TERRAIN-MATERIALS-V1.md) § «Каталог предметов».
+
+Инструменты (без смены смысла):
+
 | `item_id` | category | unit | `mass_per_unit_kg` | `volume_per_unit_l` |
 |---|---|---|---:|---:|
-| `raw_regolith` | `ore` | `bulk` | 2.0 | 2.5 |
-| `regolith_fines` | `ore` | `bulk` | 1.5 | 1.8 |
-| `sintered_basalt` | `material` | `bulk` | 3.0 | 1.5 |
-| `calcined_oxide` | `material` | `bulk` | 1.2 | 1.0 |
-| `metal_ingot` | `ingot` | `bulk` | 4.0 | 0.6 |
-| `construction_component` | `component` | `discrete` | 2.5 | 3.0 |
 | `tool_hand_drill` | `tool` | `discrete` | 3.0 | 8.0 |
 | `tool_welder` | `tool` | `discrete` | 2.5 | 6.0 |
 | `tool_grinder` | `tool` | `discrete` | 2.8 | 7.0 |
 | `tool_connector` | `tool` | `discrete` | 1.5 | 4.0 |
 
-Значения — v1 fixtures, калибруемые playtest; менять их можно только вместе с
-балансом ёмкостей. Категории `consumable` и `bottle` зарезервированы, но их
-предметы и использование не входят в этот slice.
+Категории `consumable` / `bottle` используются для bulk `water` / `oxygen` /
+`hydrogen` (см. TERRAIN-MATERIALS-V1); refill SuitState — later.
 
 ### Player tool instances и hotbar
 
@@ -209,17 +211,12 @@ max_addable  = (capacity_l - used_l) / volume_per_unit_l
 | `stationary_drill` internal buffer | 200 |
 | `processor` internal buffer | 100 |
 | `fabricator` internal buffer | 100 |
+| `electrolyzer` internal buffer | 80 |
 
-## Ресурсы slice
+## Ресурсы и ISRU (канон перенесён)
 
-| `resource_id` | Роль |
-|---|---|
-| `raw_regolith` | Добытый реголит |
-| `regolith_fines` | Дроблёный реголит (общий промежуточный) |
-| `sintered_basalt` | Короткая ветка — дешёвый строй-материал |
-| `calcined_oxide` | Обожжённый концентрат (металл-ветка) |
-| `metal_ingot` | Восстановленный металл |
-| `construction_component` | Precision-деталь (стройка, сварка, industry BOM) |
+**Канон каталога предметов, рудных зон, рецептов, O₂/H₂ и `electrolyzer`:**
+[`TERRAIN-MATERIALS-V1.md`](TERRAIN-MATERIALS-V1.md).
 
 Каждый `resource_id` в recipes — `item_id` из § Система предметов. Recipe I/O
 остаётся в amount; volume и mass derived через ItemCatalog. Authoritative
@@ -227,44 +224,19 @@ fixture-значения ItemCatalog / Recipe / capacities / drill tuning вын
 `resources/balance/game_balance.json` (`docs/specs/GAME-BALANCE-V0.md`) без
 смены команд.
 
-## Dual-path ISRU
+Ниже — **устаревший** dual-path Industry v1 (для чтения старых тестов/сейвов до
+миграции кода). Новые фичи и fixtures **не** расширяют эту таблицу.
 
-Одна добыча — **две ветки** с разным игровым смыслом. Разная эффективность одного
-и того же преобразования — **tier машины** (Mk2+), не отдельные рецепты.
+### Legacy dual-path (deprecated)
 
 ```text
-raw_regolith
-     │  crush_regolith (Processor)
-regolith_fines
-     ├─ sinter_basalt (Processor) ──→ sintered_basalt  ★ ~2 min win
-     │
-     └─ calcine_fines (Processor) ──→ calcined_oxide
-              │ reduce_oxide (Fabricator)
-         metal_ingot
-              │ sinter_component (Fabricator)
-    construction_component  ★ slice goal
+raw_regolith → crush → fines → sinter_basalt
+                            → calcine → metal_ingot → construction_component
 ```
 
-### Рецепты (fixtures v1)
-
-| `recipe_id` | Machine | Inputs | Outputs | `duration_s` (placeholder) | `power_w` (placeholder) |
-|---|---|---|---|---:|---:|
-| `crush_regolith` | Processor | 1 raw | 1 fines | 6 | 200 |
-| `sinter_basalt` | Processor | 2 fines | 1 basalt | 8 | 250 |
-| `calcine_fines` | Processor | 2 fines | 1 oxide | 10 | 400 |
-| `reduce_oxide` | Fabricator | 1 oxide | 1 ingot | 12 | 600 |
-| `sinter_component` | Fabricator | 1 ingot | 1 component | 10 | 500 |
-
-Числа калибруются под **~3 min** до первого `construction_component` и **~2 min**
-до первого `sintered_basalt` при минимальной базе; headless fixture допускает
-stub durations до playtest.
-
-### `sintered_basalt` как строй-материал
-
-- хранится в Store как resource;
-- placement archetype `frame_basalt` (PoC fixture) расходует `sintered_basalt` из
-  store вместо/вместе с `construction_component` по BOM archetype;
-- weld/BOM для basalt-frame — отдельный lighter BOM в archetype fixture.
+Удаляются при миграции: `raw_regolith`, `calcined_oxide`, `metal_ingot`,
+`construction_component`, рецепты `crush_regolith` / `calcine_fines` /
+`reduce_oxide` / `sinter_component`.
 
 ## Store model
 
@@ -276,7 +248,7 @@ stub durations до playtest.
   конкурируют за общий объём |
 | `store_id = "element:{id}"` | `cargo_store` — основной склад базы; **без лимита
   на число типов items**, только `capacity_l` (2,000 L) |
-| Internal buffer | `stationary_drill`, `processor`, `fabricator` — малые in/out буферы на `SimulationElement` |
+| Internal buffer | `stationary_drill`, `processor`, `fabricator`, `electrolyzer` — малые in/out буферы на `SimulationElement` |
 
 Internal buffer сериализуется в snapshot element state; keyed store — в
 `resource_stores[]`; world loot — в `world_loot_piles[]` (см. § Snapshot).
@@ -563,9 +535,9 @@ Role `Tool`, archetype `stationary_drill`.
 4. voxel carve at the working tip (reuse `VoxelTool.MODE_REMOVE` sphere/stamp;
    radius `drill_carve_radius_m` = 1.25 m; center offset factor 0.2 along +X
    from contact so the bite stays at the tip face);
-5. measure removed SDF voxel volume from the actual edit and credit
-   `raw_regolith` mass ∝ measured volume (`kg_per_m3`); production never substitutes
-   a default production volume; credit only what fits in the buffer;
+5. measure removed SDF voxel volume from the actual edit and credit **typed ores**
+   from material weights × volume (`TERRAIN-MATERIALS-V1`); production never
+   substitutes a default production volume; credit only what fits in the buffer;
 6. deposit into the internal buffer and auto-push into the cargo graph;
 7. a fixed-grid drill excavates only terrain within head reach. Once that reachable
    local volume is empty it reports `no_terrain_contact`; continuous advance needs a
@@ -621,21 +593,18 @@ those hooks do not define production yield semantics.
 ### Collectible fraction
 
 Явный параметр `IndustryArchetypeProfile.terrain_collectible_fraction`
-(дефолт **0.01**): доля **измеренной** вырезанной массы, которая становится
-`raw_regolith`; остальное — «пыль». Это игровой контракт темпа добычи, не
-post-factum cap. При edge-bite ~0.01–0.1 м³/тик, плотности 1500 кг/м³ и
-интервале 0.08 с ручной бур даёт целевой темп **~1–2 кг/с**. Стационарный бур
-использует тот же коэффициент.
+(дефолт **0.01**) — **fallback**, если у `TerrainMaterialDef` не задан свой
+`collectible_fraction`. Канон yield по материалам вокселя —
+[`TERRAIN-MATERIALS-V1.md`](TERRAIN-MATERIALS-V1.md) § «Добыча и yield».
 
 - Пустота, цель вне рабочей дальности и недоступный terrain возвращают пустой
   результат: edit, yield и feedback отсутствуют.
 - Результат не зависит от числа кадров или повторного попадания в уже пустую
   область. Инструменты не начисляют объём по геометрической формуле и не
   ограничивают post-factum yield после более крупного edit.
-- В v1 `TerrainMaterialSource` преобразует подтверждённый объём ×
-  `terrain_collectible_fraction` в `raw_regolith`. Это отдельный интерфейс, а не
-  вывод из terrain shader; semantic material layers с voxel data, генерацией,
-  rendering и persistence — следующая работа.
+- `TerrainMaterialSource` принимает измеренный объём и веса материалов из
+  `CHANNEL_INDICES` (не из terrain shader). Запись индексов генератором,
+  визуал зон и persistence — часть реализации `TERRAIN-MATERIALS-V1`.
 - `InteractionQuery` получает terrain contact из SDF, поэтому удерживаемый бур
   продолжает работать без движения курсора, даже пока physics collider
   перестраивается.
@@ -835,14 +804,15 @@ StoreSnapshot {
 
 Industry v1 закрыт, когда:
 
-1. Dual-path: `crush` → `sinter_basalt` и полная ветка до `construction_component`
-   работают через stores/cargo без dup/loss on stop/restart.
+1. ISRU по `TERRAIN-MATERIALS-V1`: crush/sinter и ветка до typed component, плюс
+   вода → `electrolyzer` → O₂/H₂, через stores/cargo без dup/loss on stop/restart.
 2. Generator cluster → one wire → distributor; unwired consumers внутри 12 m
    powered spatially; **cargo_pipe** chain drill → store → processor; electric
    **wire mesh** visible только для supply links.
 3. Stationary drill requires voxel contact at its oriented visible head, carves only
-   reachable terrain, credits raw from measured removed volume, stops before carve
-   on `storage_full`, auto-pushes **по pipe graph** when connected; manual pickup works.
+   reachable terrain, credits **typed ores** from measured removed volume × material
+   weights, stops before carve on `storage_full`, auto-pushes **по pipe graph** when
+   connected; manual pickup works.
 4. Hand drill spawns loot pile; collect → player or store.
 5. Player store and every industry buffer/store are volume-limited; bulk amount
    remains fractional, discrete amount remains integral, and deposit/pickup is

@@ -8,6 +8,7 @@ const EPSILON := 0.000001
 
 const MACHINE_PROCESSOR := "processor"
 const MACHINE_FABRICATOR := "fabricator"
+const MACHINE_ELECTROLYZER := "electrolyzer"
 
 ## Compatibility alias for callers that still iterate `RecipeCatalog.RECIPES`.
 static var RECIPES: Dictionary:

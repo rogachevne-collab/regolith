@@ -26,6 +26,9 @@ ADR. Интеграция в Erebus — через Erebus Lite addon, когда
 | Network, Flow, Store (сети и потоки) | «Примитивы» → «Network, Flow и Store» |
 | Resource, Recipe, производство | «Примитивы» → «Resource, Recipe и производство» |
 | баланс / стоимость / масса / тюнинг буров и актуаторов | `specs/GAME-BALANCE-V0.md`; cheatsheet `game-balance` |
+| TerrainMaterial, рудные зоны, добыча по материалу вокселя | `specs/TERRAIN-MATERIALS-V1.md` |
+| Кислород / водород / электролизер (ISRU) | `specs/TERRAIN-MATERIALS-V1.md` § «Вода, кислород, водород», «Машина electrolyzer» |
+| Карта луны (M), метки, слой залежей | `specs/MAP-UI-01.md` |
 | Volume, Atmosphere (герметичность) | «Примитивы» → «Volume и Atmosphere» |
 | Blueprint (чертежи, baked) | «Примитивы» → «Blueprint» |
 | id элементов, топология, structural commands | «Identity и topology (Kernel v0)» |
@@ -612,8 +615,10 @@ Recipe {
 `storage_full` producer **останавливается** (drill, cargo push) — без silent discard;
 см. `docs/specs/INDUSTRY-V1.md`.
 
-Минимальная production-цепочка, dual-path ISRU, electric/cargo Flow и границы первой
-реализации — `docs/specs/INDUSTRY-V1.md`. Vertical slice summary —
+Каталог руд/зон террейна, стройкомпонентов и цепочки O₂/H₂ (включая отдельный
+`electrolyzer`) — `docs/specs/TERRAIN-MATERIALS-V1.md`. Electric/cargo Flow,
+stores и tick машин — `docs/specs/INDUSTRY-V1.md` (каталог предметов Industry
+dual-path **замещён** TERRAIN-MATERIALS-V1). Vertical slice summary —
 `docs/specs/VERTICAL-SLICE-01-INDUSTRIAL-BASE.md`.
 
 ### Volume и Atmosphere

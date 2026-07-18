@@ -334,7 +334,13 @@ func _test_placement_anchors_every_touching_block() -> bool:
 	# (and physically ejects) everything else.
 	var world := SimulationWorld.new()
 	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "construction_component", 100.0)
+	world.set_resource_amount("player", "plate_metal", 100.0)
+	world.set_resource_amount("player", "girder", 100.0)
+	world.set_resource_amount("player", "mechanism", 100.0)
+	world.set_resource_amount("player", "conduit", 100.0)
+	world.set_resource_amount("player", "plate_basalt", 100.0)
+	world.set_resource_amount("player", "sintered_basalt", 100.0)
+	world.set_resource_amount("player", "plate_alloy", 100.0)
 	world.set_terrain_contact_probe(
 		func(_a: SimulationAssembly, elements: Array[SimulationElement]) -> Array[int]:
 			var touching: Array[int] = []
@@ -534,7 +540,13 @@ func _test_custom_archetype_snapshot_restore() -> bool:
 func _test_unified_grid_edge_surface_joint() -> bool:
 	var world := SimulationWorld.new()
 	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "construction_component", 100.0)
+	world.set_resource_amount("player", "plate_metal", 100.0)
+	world.set_resource_amount("player", "girder", 100.0)
+	world.set_resource_amount("player", "mechanism", 100.0)
+	world.set_resource_amount("player", "conduit", 100.0)
+	world.set_resource_amount("player", "plate_basalt", 100.0)
+	world.set_resource_amount("player", "sintered_basalt", 100.0)
+	world.set_resource_amount("player", "plate_alloy", 100.0)
 	var large := _place_large_frame(world, Vector3i.ZERO, 0, -1)
 	if not large.is_ok():
 		world.free()
@@ -594,7 +606,13 @@ func _test_unified_grid_edge_surface_joint() -> bool:
 func _test_unified_grid_middle_surface_joint() -> bool:
 	var world := SimulationWorld.new()
 	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "construction_component", 100.0)
+	world.set_resource_amount("player", "plate_metal", 100.0)
+	world.set_resource_amount("player", "girder", 100.0)
+	world.set_resource_amount("player", "mechanism", 100.0)
+	world.set_resource_amount("player", "conduit", 100.0)
+	world.set_resource_amount("player", "plate_basalt", 100.0)
+	world.set_resource_amount("player", "sintered_basalt", 100.0)
+	world.set_resource_amount("player", "plate_alloy", 100.0)
 	var large := _place_large_frame(world, Vector3i.ZERO, 0, -1)
 	if not large.is_ok():
 		world.free()
@@ -641,7 +659,13 @@ func _test_unified_grid_middle_surface_joint() -> bool:
 func _test_unified_grid_mount_pad_policy() -> bool:
 	var world := SimulationWorld.new()
 	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "construction_component", 100.0)
+	world.set_resource_amount("player", "plate_metal", 100.0)
+	world.set_resource_amount("player", "girder", 100.0)
+	world.set_resource_amount("player", "mechanism", 100.0)
+	world.set_resource_amount("player", "conduit", 100.0)
+	world.set_resource_amount("player", "plate_basalt", 100.0)
+	world.set_resource_amount("player", "sintered_basalt", 100.0)
+	world.set_resource_amount("player", "plate_alloy", 100.0)
 	var store := PlaceElementCommand.new()
 	store.assembly_id = 0
 	store.expected_assembly_revision = -1
@@ -736,7 +760,13 @@ func _test_unified_grid_full_surface_contact_count() -> bool:
 func _test_snapshot_canonical_joint_roundtrip() -> bool:
 	var world := SimulationWorld.new()
 	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "construction_component", 100.0)
+	world.set_resource_amount("player", "plate_metal", 100.0)
+	world.set_resource_amount("player", "girder", 100.0)
+	world.set_resource_amount("player", "mechanism", 100.0)
+	world.set_resource_amount("player", "conduit", 100.0)
+	world.set_resource_amount("player", "plate_basalt", 100.0)
+	world.set_resource_amount("player", "sintered_basalt", 100.0)
+	world.set_resource_amount("player", "plate_alloy", 100.0)
 	var large := _place_large_frame(world, Vector3i.ZERO, 0, -1)
 	if not large.is_ok():
 		world.free()

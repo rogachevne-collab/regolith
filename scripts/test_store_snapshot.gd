@@ -56,8 +56,8 @@ func _test_unknown_store_failure() -> bool:
 func _test_player_store_snapshot() -> bool:
 	var world := SimulationWorld.new()
 	var store := IndustryStoreService.ensure_player_store(world)
-	store.set_amount("raw_regolith", 2.5)
-	store.set_amount("construction_component", 1.0)
+	store.set_amount("ore_mare_regolith", 2.5)
+	store.set_amount("plate_metal", 1.0)
 	var snap := StoreSnapshotBuilder.build(world, IndustryStoreService.PLAYER_STORE_ID)
 	world.free()
 	if not bool(snap.get("valid", false)):
@@ -67,20 +67,29 @@ func _test_player_store_snapshot() -> bool:
 	if snap.get("title", "") != HudTokens.store_label(IndustryStoreService.PLAYER_STORE_ID):
 		return _fail("player snapshot title mismatch")
 	var entries: Array = snap.get("entries", [])
-	if entries.size() != 2:
-		return _fail("player snapshot expected 2 entries, got %d" % entries.size())
-	var regolith := _find_entry(entries, "raw_regolith")
+	var cargo_entries: Array = []
+	for entry: Variant in entries:
+		if not (entry is Dictionary):
+			continue
+		if str(entry.get("instance_id", "")).is_empty():
+			cargo_entries.append(entry)
+	if cargo_entries.size() != 2:
+		return _fail(
+			"player snapshot expected 2 cargo entries, got %d (total %d)"
+			% [cargo_entries.size(), entries.size()]
+		)
+	var regolith := _find_entry(cargo_entries, "ore_mare_regolith")
 	if regolith.is_empty():
-		return _fail("player snapshot missing raw_regolith entry")
+		return _fail("player snapshot missing ore_mare_regolith entry")
 	if not is_equal_approx(float(regolith.get("amount", 0.0)), 2.5):
-		return _fail("player raw_regolith amount mismatch")
+		return _fail("player ore_mare_regolith amount mismatch")
 	if regolith.get("category", "") != "ore":
-		return _fail("player raw_regolith category must be ore")
+		return _fail("player ore_mare_regolith category must be ore")
 	if bool(regolith.get("discrete", true)):
-		return _fail("raw_regolith must not be discrete")
-	var component := _find_entry(entries, "construction_component")
+		return _fail("ore_mare_regolith must not be discrete")
+	var component := _find_entry(cargo_entries, "plate_metal")
 	if component.is_empty() or bool(component.get("discrete", false)) != true:
-		return _fail("construction_component entry must be discrete")
+		return _fail("plate_metal entry must be discrete")
 	if float(snap.get("used_l", 0.0)) <= 0.0:
 		return _fail("player used_l must be positive with cargo")
 	if not is_equal_approx(
@@ -109,7 +118,7 @@ func _test_keyed_store_snapshot() -> bool:
 		return _fail("cargo_store placement failed")
 	var store_id := IndustryStoreService.element_store_id(element.element_id)
 	var store := IndustryStoreService.ensure_element_keyed_store(world, element)
-	store.set_amount("metal_ingot", 3.0)
+	store.set_amount("ingot_iron", 3.0)
 	var snap := StoreSnapshotBuilder.build(world, store_id)
 	world.free()
 	if not bool(snap.get("valid", false)):
@@ -119,7 +128,7 @@ func _test_keyed_store_snapshot() -> bool:
 	if bool(snap.get("is_machine", true)):
 		return _fail("cargo_store snapshot must not be machine")
 	var entries: Array = snap.get("entries", [])
-	if entries.size() != 1 or str(entries[0].get("item_id", "")) != "metal_ingot":
+	if entries.size() != 1 or str(entries[0].get("item_id", "")) != "ingot_iron":
 		return _fail("keyed store entries mismatch")
 	return true
 
@@ -135,7 +144,7 @@ func _test_buffer_store_snapshot() -> bool:
 		world.free()
 		return _fail("processor placement failed")
 	element.industry_buffer = ElementIndustryBuffer.new()
-	element.industry_buffer.add("raw_regolith", 1.0, 100.0)
+	element.industry_buffer.add("ore_mare_regolith", 1.0, 100.0)
 	var store_id := IndustryStoreService.buffer_store_id(element.element_id)
 	var snap := StoreSnapshotBuilder.build(world, store_id)
 	if not bool(snap.get("valid", false)):
@@ -145,7 +154,7 @@ func _test_buffer_store_snapshot() -> bool:
 		world.free()
 		return _fail("buffer store_id mismatch")
 	var entries: Array = snap.get("entries", [])
-	if entries.size() != 1 or str(entries[0].get("item_id", "")) != "raw_regolith":
+	if entries.size() != 1 or str(entries[0].get("item_id", "")) != "ore_mare_regolith":
 		world.free()
 		return _fail("buffer entries mismatch")
 	var missing := StoreSnapshotBuilder.build(
@@ -172,7 +181,7 @@ func _test_processor_machine_metadata() -> bool:
 	var runtime := world.ensure_industry_element_runtime(element.element_id)
 	runtime.machine_enabled = false
 	var machine := runtime.ensure_machine_state()
-	machine.active_recipe_id = "crush_regolith"
+	machine.active_recipe_id = "crush_mare"
 	machine.progress_s = 3.0
 	machine.queue = ["sinter_basalt"]
 	var store_id := IndustryStoreService.buffer_store_id(element.element_id)
@@ -185,7 +194,7 @@ func _test_processor_machine_metadata() -> bool:
 		return _fail("processor machine metadata missing")
 	if bool(meta.get("enabled", true)):
 		return _fail("processor enabled flag mismatch")
-	if meta.get("recipe_id", "") != "crush_regolith":
+	if meta.get("recipe_id", "") != "crush_mare":
 		return _fail("processor recipe_id mismatch")
 	var recipes: Array = meta.get("recipes", [])
 	if recipes.is_empty():
@@ -211,9 +220,9 @@ func _test_item_icon_mapping() -> bool:
 			return _fail("ITEM_COLORS missing %s" % item_id)
 		if HudTokens.item_color(item_id) != HudTokens.ITEM_COLORS[item_id]:
 			return _fail("item_color must match ITEM_COLORS for %s" % item_id)
-	var icon := HudTokens.make_item_icon("raw_regolith", 48.0)
+	var icon := HudTokens.make_item_icon("ore_mare_regolith", 48.0)
 	var label := _find_code_label(icon)
-	if label == null or label.text != HudTokens.item_code("raw_regolith"):
+	if label == null or label.text != HudTokens.item_code("ore_mare_regolith"):
 		return _fail("make_item_icon must render item code label")
 	if icon.custom_minimum_size != Vector2(48.0, 48.0):
 		return _fail("make_item_icon must honor size parameter")

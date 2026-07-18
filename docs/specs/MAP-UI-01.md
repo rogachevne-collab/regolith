@@ -7,20 +7,23 @@
 - `docs/PHYSICAL-LANGUAGE.md` — presentation не владеет simulation state;
 - `docs/specs/HUD-UI-01.md` — HUD framework / theme / presentation-only;
 - `docs/specs/MOON-EXPERIMENT-V0.md` — геометрия Ø1 km;
-- `docs/specs/INDUSTRY-V1.md` — world loot piles, resource ids.
+- `docs/specs/INDUSTRY-V1.md` — world loot piles, resource ids;
+- `docs/specs/TERRAIN-MATERIALS-V1.md` — залежи / TerrainMaterial / MoonMaterialField.
 
 ## Цель
 
 Дать игроку **карту луны**: текущие координаты, курс, свои метки,
-известные кучи ресурсов на грунте и заметные построенные объекты — без
-debug overlay и без новых доменных типов машин.
+**зоны залежей** (ильменит, анортозит, …), известные кучи ресурсов на грунте
+и заметные построенные объекты — без debug overlay и без новых доменных типов
+машин.
 
 ## Core principle
 
 Карта — presentation-слой (как остальной HUD):
 
 - **читает** позицию игрока, heading камеры, `list_world_loot_piles()`,
-  позиции элементов через `WorldCommandGateway`;
+  позиции элементов через `WorldCommandGateway`, и **детерминированное поле
+  материалов** `MoonMaterialField` (тот же источник, что и yield бура);
 - **не мутирует** simulation / voxel / stores;
 - единственное собственное состояние — эфемерное «открыта/закрыта» и
   **пользовательские метки** (аннотации игрока, не kernel snapshot).
@@ -45,11 +48,14 @@ debug overlay и без новых доменных типов машин.
   `direction_from_node_uv`).
 - Фон — downsample heightmap → grayscale texture (если файл есть);
   иначе тёмная сетка.
+- Поверх фона — полупрозрачный слой **залежей** (`MoonMapDepositOverlay`,
+  ~192×96), если включён чекбокс «Залежи».
 - Компасная конвенция как у HUD Compass: `N`/`С` = `-Z`, `В` = `+X`.
 
 ### Проекция (legacy `flat_moon`)
 
 - Локальная XZ-карта вокруг игрока (не сфера), тот же chrome.
+- Слой залежей на flat v1 не рисуется (поле материалов — сферическое).
 
 ### Координаты (readout)
 
@@ -60,25 +66,33 @@ debug overlay и без новых доменных типов машин.
 - высота над номинальной поверхностью `\|p\| − R` (planetoid);
 - курс (градусы), как у Compass.
 
+Курсор над картой дополнительно показывает **имя залежи** под точкой
+(если слой «Залежи» включён и в ближней коре есть линза).
+
 ### Слои маркеров
 
 | Слой | Источник | Цвет (язык HUD) |
 |---|---|---|
 | Игрок | `player.global_position` + camera yaw | cyan (`valid`) |
+| Залежи | `MoonMaterialField` через `MoonMapDepositOverlay` | tint по материалу (легенда в сайдбаре) |
 | Ресурсы | world loot piles через gateway | amber (`warning`) |
 | Объекты | выбранные archetypes (бур, склад, питание, …) | steel (`ok`) |
 | Метки | пользовательские, `WorldPersistence.map_markers` | cyan outline |
 
-В v1 **нет** процедурных «жил» в коре: «залежи» на карте = известные
-кучи `WorldLootPile` (добытый/сброшенный ресурс на поверхности). Когда
-появится доменная модель месторождений — отдельная спека + слой.
+**Залежи:** на развёртке отмечаются линзы (ильменит, анортозит, оливин,
+пироксен, лёд), сэмплированные на нескольких глубинах у поверхности
+(2…14 м). Фон mare/highland не заливает карту — только «цветные пятна»
+руд. Starting-area overlay от seed игрока учитывается (как у добычи).
+
+Кучи `WorldLootPile` остаются отдельным слоем (добытое/сброшенное на
+поверхности), не путать с нетронутыми залежами в коре.
 
 ### Взаимодействие с метками
 
 - ЛКМ по пустому месту карты → добавить метку на поверхности в этой
   точке (автоимя `МЕТКА N`);
 - ЛКМ по своей метке → выбрать; `Delete` / ПКМ → удалить;
-- курсор над картой → readout координат точки под курсором.
+- курсор над картой → readout координат + залежь под курсором.
 
 Пока карта открыта: курсор видим, gameplay input паузится
 (`set_gameplay_input_enabled(false)`), как у BlockPalette.
@@ -89,10 +103,13 @@ debug overlay и без новых доменных типов машин.
 read-only список `{ kind, id, label_key, position, … }` для loot и
 structures. HUD только читает.
 
+Слой залежей **не** идёт через gateway: это чистая функция поля материалов
+(`MoonMapDepositOverlay`), без simulation mutation.
+
 ## Не входит
 
-- procedural ore veins / deposit generation;
+- fog of war / разведка (залежи видны сразу — sandbox);
 - GPS-навигация / автопилот к метке;
-- fog of war / разведка;
+- запись `CHANNEL_INDICES` в voxel (визуал в мире — отдельный follow-up);
 - 3D globe spinner (только 2D развёртка v1);
 - меню вне игрового HUD.

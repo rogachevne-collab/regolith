@@ -59,7 +59,7 @@ func _test_half_transfer_amounts() -> bool:
 func _test_drag_payload_contract() -> bool:
 	var whole: Dictionary = HudInventoryTransferUtil.drag_payload(
 		IndustryStoreService.PLAYER_STORE_ID,
-		"raw_regolith",
+		"ore_mare_regolith",
 		4.0,
 		false,
 		false
@@ -68,18 +68,18 @@ func _test_drag_payload_contract() -> bool:
 		return _fail("payload kind must be hud_item")
 	if whole.get("source_store_id", "") != IndustryStoreService.PLAYER_STORE_ID:
 		return _fail("payload source_store_id mismatch")
-	if whole.get("item_id", "") != "raw_regolith":
+	if whole.get("item_id", "") != "ore_mare_regolith":
 		return _fail("payload item_id mismatch")
 	if not is_equal_approx(float(whole.get("amount", 0.0)), 4.0):
 		return _fail("whole drag amount must equal stack amount")
 	if bool(whole.get("discrete", true)):
-		return _fail("raw_regolith payload must not be discrete")
+		return _fail("ore_mare_regolith payload must not be discrete")
 	if bool(whole.get("half", true)):
 		return _fail("whole drag must not set half flag")
 
 	var half: Dictionary = HudInventoryTransferUtil.drag_payload(
 		"buffer:12",
-		"construction_component",
+		"plate_metal",
 		5.0,
 		true,
 		true
@@ -96,7 +96,7 @@ func _test_drag_payload_contract() -> bool:
 func _test_drop_compatibility() -> bool:
 	var payload: Dictionary = HudInventoryTransferUtil.drag_payload(
 		IndustryStoreService.PLAYER_STORE_ID,
-		"metal_ingot",
+		"ingot_iron",
 		1.0,
 		false,
 		false
@@ -117,7 +117,7 @@ func _test_drop_compatibility() -> bool:
 		return _fail("transfer from_store_id mismatch")
 	if params.get("to_store_id", "") != "element:7":
 		return _fail("transfer to_store_id mismatch")
-	if params.get("resource_id", "") != "metal_ingot":
+	if params.get("resource_id", "") != "ingot_iron":
 		return _fail("transfer resource_id mismatch")
 	if float(params.get("amount", 0.0)) != 1.0:
 		return _fail("transfer amount mismatch")

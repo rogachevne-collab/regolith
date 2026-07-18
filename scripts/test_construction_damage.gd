@@ -56,7 +56,13 @@ func _test_partial_damage_remains() -> bool:
 func _test_lethal_damage_removes_element_without_refund() -> bool:
 	var world := SimulationWorld.new()
 	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "construction_component", 10.0)
+	world.set_resource_amount("player", "plate_metal", 10.0)
+	world.set_resource_amount("player", "girder", 10.0)
+	world.set_resource_amount("player", "mechanism", 10.0)
+	world.set_resource_amount("player", "conduit", 10.0)
+	world.set_resource_amount("player", "plate_basalt", 10.0)
+	world.set_resource_amount("player", "sintered_basalt", 10.0)
+	world.set_resource_amount("player", "plate_alloy", 10.0)
 	var spawn := _spawn_single(world)
 	if not spawn.is_ok():
 		world.free()
@@ -64,7 +70,7 @@ func _test_lethal_damage_removes_element_without_refund() -> bool:
 	var element_id := int(spawn.data["element_ids"][0])
 	var element := world.get_element(element_id)
 	var store_before := world.get_resource_store("player").amount(
-		"construction_component"
+		"plate_metal"
 	)
 	var result := _damage(world, element_id, element.integrity + 1.0)
 	if not result.is_ok():
@@ -74,7 +80,7 @@ func _test_lethal_damage_removes_element_without_refund() -> bool:
 		world.free()
 		return _fail("lethal damage left element in topology")
 	var store_after := world.get_resource_store("player").amount(
-		"construction_component"
+		"plate_metal"
 	)
 	if not is_equal_approx(store_before, store_after):
 		world.free()
@@ -89,14 +95,20 @@ func _test_lethal_damage_removes_element_without_refund() -> bool:
 func _test_lethal_damage_refunds_with_fraction() -> bool:
 	var world := SimulationWorld.new()
 	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "construction_component", 0.0)
+	world.set_resource_amount("player", "plate_metal", 0.0)
+	world.set_resource_amount("player", "girder", 0.0)
+	world.set_resource_amount("player", "mechanism", 0.0)
+	world.set_resource_amount("player", "conduit", 0.0)
+	world.set_resource_amount("player", "plate_basalt", 0.0)
+	world.set_resource_amount("player", "sintered_basalt", 0.0)
+	world.set_resource_amount("player", "plate_alloy", 0.0)
 	var spawn := _spawn_single(world)
 	if not spawn.is_ok():
 		world.free()
 		return _fail("single spawn failed")
 	var element_id := int(spawn.data["element_ids"][0])
 	var element := world.get_element(element_id)
-	var installed := float(element.installed_materials.get("construction_component", 0.0))
+	var installed := float(element.installed_materials.get("plate_metal", 0.0))
 	var result := _damage(
 		world,
 		element_id,
@@ -110,7 +122,7 @@ func _test_lethal_damage_refunds_with_fraction() -> bool:
 	if world.get_element(element_id) != null:
 		world.free()
 		return _fail("refunding lethal damage left element in topology")
-	var refunded := world.get_resource_store("player").amount("construction_component")
+	var refunded := world.get_resource_store("player").amount("plate_metal")
 	var expected := installed * 0.5
 	if not is_equal_approx(refunded, expected):
 		world.free()

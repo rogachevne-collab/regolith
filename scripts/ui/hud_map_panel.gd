@@ -24,6 +24,8 @@ var _map_view: _MapCanvas
 var _chk_loot: CheckBox
 var _chk_structures: CheckBox
 var _chk_markers: CheckBox
+var _chk_deposits: CheckBox
+var _deposit_legend: VBoxContainer
 
 var _open := false
 var _planetoid := true
@@ -32,6 +34,9 @@ var _selected_marker_id := ""
 var _user_markers: Array[Dictionary] = []
 var _overlay_entries: Array[Dictionary] = []
 var _refresh_accum := 0.0
+var _deposit_texture: ImageTexture
+var _deposit_texture_built := false
+var _spawn_world_hint := Vector3.ZERO
 
 
 func setup(ctx: Dictionary) -> void:
@@ -95,9 +100,11 @@ func _open_map() -> void:
 	_load_user_markers()
 	_refresh_overlay_entries()
 	_rebuild_marker_list()
+	_ensure_deposit_texture()
 	if _map_view != null:
 		_map_view.planetoid = _planetoid
 		_map_view.ensure_backdrop()
+		_map_view.deposit_texture = _deposit_texture
 	_apply_open_state()
 
 
@@ -209,11 +216,19 @@ func _build() -> void:
 	sidebar.add_child(layers_title)
 
 	_chk_loot = _make_layer_check("Ресурсы (кучи)", true)
+	_chk_deposits = _make_layer_check("Залежи", true)
 	_chk_structures = _make_layer_check("Объекты", true)
 	_chk_markers = _make_layer_check("Метки", true)
 	sidebar.add_child(_chk_loot)
+	sidebar.add_child(_chk_deposits)
 	sidebar.add_child(_chk_structures)
 	sidebar.add_child(_chk_markers)
+
+	_deposit_legend = VBoxContainer.new()
+	_deposit_legend.add_theme_constant_override("separation", 2)
+	_deposit_legend.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	sidebar.add_child(_deposit_legend)
+	_rebuild_deposit_legend()
 
 	sidebar.add_child(HudTokens.make_divider())
 
@@ -235,7 +250,7 @@ func _build() -> void:
 	_hint_label.theme_type_variation = &"HudSmall"
 	_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_hint_label.text = (
-		"ЛКМ — метка · ПКМ/Del — удалить · M/Esc — закрыть"
+		"ЛКМ — метка · ПКМ/Del — удалить · слой «Залежи» — рудные зоны · M/Esc — закрыть"
 	)
 	_hint_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root_vb.add_child(_hint_label)
@@ -402,16 +417,25 @@ func on_map_cursor(uv: Vector2, inside: bool) -> void:
 		_cursor_label.text = "Курсор: —"
 		return
 	var world := map_uv_to_world(uv)
+	var deposit_id := ""
+	if _planetoid and show_deposit_layer():
+		deposit_id = MoonMapDepositOverlay.sample_at_world(
+			world,
+			_spawn_world_hint
+		)
+	var deposit_txt := ""
+	if not deposit_id.is_empty():
+		deposit_txt = "   ·   %s" % MoonMapDepositOverlay.display_name(deposit_id)
 	if _planetoid:
 		var geo := lat_lon_altitude(world)
 		_cursor_label.text = (
-			"Курсор  %.1f  %.1f  %.1f   ·   φ %+0.2f°  λ %+0.2f°"
-			% [world.x, world.y, world.z, geo.x, geo.y]
+			"Курсор  %.1f  %.1f  %.1f   ·   φ %+0.2f°  λ %+0.2f°%s"
+			% [world.x, world.y, world.z, geo.x, geo.y, deposit_txt]
 		)
 	else:
 		_cursor_label.text = (
-			"Курсор  %.1f  %.1f  %.1f"
-			% [world.x, world.y, world.z]
+			"Курсор  %.1f  %.1f  %.1f%s"
+			% [world.x, world.y, world.z, deposit_txt]
 		)
 
 
@@ -480,8 +504,44 @@ func _delete_selected_marker() -> void:
 		_map_view.queue_redraw()
 
 
+func _rebuild_deposit_legend() -> void:
+	if _deposit_legend == null:
+		return
+	for child: Node in _deposit_legend.get_children():
+		child.queue_free()
+	for row: Dictionary in MoonMapDepositOverlay.legend_rows():
+		var line := HBoxContainer.new()
+		line.add_theme_constant_override("separation", 6)
+		line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var swatch := ColorRect.new()
+		swatch.custom_minimum_size = Vector2(12, 12)
+		swatch.color = row["color"]
+		swatch.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		line.add_child(swatch)
+		var lab := Label.new()
+		lab.text = str(row["label"])
+		lab.theme_type_variation = &"HudSmall"
+		lab.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		line.add_child(lab)
+		_deposit_legend.add_child(line)
+
+
+func _ensure_deposit_texture() -> void:
+	if _deposit_texture_built and _deposit_texture != null:
+		return
+	_spawn_world_hint = player_world_position()
+	if _spawn_world_hint.length() <= 0.001:
+		_spawn_world_hint = Vector3(MoonGeometry.SURFACE_RADIUS_M, 0.0, 0.0)
+	_deposit_texture = MoonMapDepositOverlay.build_texture(_spawn_world_hint)
+	_deposit_texture_built = true
+
+
 func show_loot_layer() -> bool:
 	return _chk_loot != null and _chk_loot.button_pressed
+
+
+func show_deposit_layer() -> bool:
+	return _chk_deposits != null and _chk_deposits.button_pressed
 
 
 func show_structure_layer() -> bool:
@@ -490,6 +550,10 @@ func show_structure_layer() -> bool:
 
 func show_marker_layer() -> bool:
 	return _chk_markers != null and _chk_markers.button_pressed
+
+
+func deposit_texture() -> Texture2D:
+	return _deposit_texture
 
 
 func player_world_position() -> Vector3:
@@ -534,6 +598,7 @@ class _MapCanvas:
 
 	var owner_panel: Node
 	var planetoid := true
+	var deposit_texture: Texture2D
 	var _backdrop: Texture2D
 	var _backdrop_tried := false
 
@@ -621,6 +686,12 @@ class _MapCanvas:
 			draw_texture_rect(_backdrop, rect, false)
 		else:
 			_draw_fallback_grid()
+		if (
+			deposit_texture != null
+			and owner_panel != null
+			and bool(owner_panel.call("show_deposit_layer"))
+		):
+			draw_texture_rect(deposit_texture, rect, false)
 		_draw_lon_lat_grid()
 		if owner_panel == null:
 			return

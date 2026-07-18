@@ -30,7 +30,13 @@ func _run_tests() -> void:
 func _boot_world() -> SimulationWorld:
 	var world := SimulationWorld.new()
 	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "construction_component", 2000.0)
+	world.set_resource_amount("player", "plate_metal", 2000.0)
+	world.set_resource_amount("player", "girder", 2000.0)
+	world.set_resource_amount("player", "mechanism", 2000.0)
+	world.set_resource_amount("player", "conduit", 2000.0)
+	world.set_resource_amount("player", "plate_basalt", 2000.0)
+	world.set_resource_amount("player", "sintered_basalt", 2000.0)
+	world.set_resource_amount("player", "plate_alloy", 2000.0)
 	for archetype: ElementArchetype in Slice01Archetypes.load_all_required():
 		world.get_archetype_registry().register(archetype)
 	for archetype: ElementArchetype in Slice01Archetypes.load_actuator_archetypes():

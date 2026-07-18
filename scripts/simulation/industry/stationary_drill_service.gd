@@ -2,10 +2,20 @@ class_name StationaryDrillService
 extends RefCounted
 
 const EPSILON := 0.000001
+const _Field := preload(
+	"res://scripts/simulation/runtime/moon_material_field.gd"
+)
 
 var _drill_contact_probe: Callable = Callable()
 var _drill_carve: Callable = Callable()
+var _drill_carve_point: Callable = Callable()
 var _material_source := TerrainMaterialSource.new()
+var _material_field: MoonMaterialField = _Field.new()
+var _spawn_world: Vector3 = Vector3.ZERO
+
+
+func set_spawn_world(spawn_world: Vector3) -> void:
+	_spawn_world = spawn_world
 
 
 func set_drill_carve_stub(stub: Callable) -> void:
@@ -13,14 +23,17 @@ func set_drill_carve_stub(stub: Callable) -> void:
 	# implies contact unless the test installs an explicit probe.
 	_drill_carve = stub
 	_drill_contact_probe = func(_element_id: int) -> bool: return true
+	_drill_carve_point = Callable()
 
 
 func set_drill_terrain_hooks(
 	contact_probe: Callable,
-	carve: Callable
+	carve: Callable,
+	carve_point: Callable = Callable()
 ) -> void:
 	_drill_contact_probe = contact_probe
 	_drill_carve = carve
+	_drill_carve_point = carve_point
 
 
 func apply_set_machine_enabled(
@@ -89,11 +102,13 @@ func _tick_drill(
 		element.industry_functional_reason = &"no_terrain_contact"
 		return
 
-	var credited := _credit_raw_regolith(world, element, carved_volume)
+	var carve_point := _carve_world_point(element.element_id)
+	var credited := _credit_ores(world, element, carved_volume, carve_point)
 	_push_drill_buffer(world, cargo_graph, transfer_service, element)
 	if credited <= EPSILON and _buffer_has_no_room_for_carve(
 		element,
-		carved_volume
+		carved_volume,
+		carve_point
 	):
 		element.industry_functional_reason = &"storage_full"
 	else:
@@ -113,60 +128,86 @@ func _carve_volume(element_id: int) -> float:
 	return maxf(float(_drill_carve.call(element_id)), 0.0)
 
 
-func _raw_amount_from_volume(volume_m3: float) -> float:
+func _carve_world_point(element_id: int) -> Vector3:
+	if _drill_carve_point.is_valid():
+		return Vector3(_drill_carve_point.call(element_id))
+	return Vector3.ZERO
+
+
+func _material_weights_at(world_point: Vector3) -> Dictionary:
+	var material_id: String
+	if world_point.length() <= EPSILON:
+		material_id = TerrainMaterialCatalog.MAT_MARE_REGOLITH
+	else:
+		material_id = _material_field.material_id_at_world(
+			world_point,
+			_spawn_world
+		)
+	return {material_id: 1.0}
+
+
+func _amounts_from_volume(volume_m3: float, world_point: Vector3) -> Dictionary:
 	if volume_m3 <= EPSILON:
-		return 0.0
-	var yields := _material_source.yield_for_removed_volume(
+		return {}
+	var yields := _material_source.yield_for_excavation(
 		volume_m3,
-		IndustryArchetypeProfile.terrain_collectible_fraction()
+		_material_weights_at(world_point)
 	)
-	if yields.is_empty():
-		return 0.0
-	var yield_entry: Dictionary = yields[0]
-	var resource_id := String(yield_entry.get("resource_id", ""))
-	var mass_kg := float(yield_entry.get("mass_kg", 0.0))
-	var unit_mass := ResourceCatalog.mass_per_unit_kg(resource_id)
-	if unit_mass <= EPSILON:
-		return 0.0
-	return mass_kg / unit_mass
+	return _material_source.amounts_from_yields(yields)
 
 
-func _credit_raw_regolith(
+func _credit_ores(
 	_world: SimulationWorld,
 	element: SimulationElement,
-	volume_m3: float
+	volume_m3: float,
+	world_point: Vector3
 ) -> float:
-	var amount := _raw_amount_from_volume(volume_m3)
-	if amount <= EPSILON:
+	var amounts := _amounts_from_volume(volume_m3, world_point)
+	if amounts.is_empty():
 		return 0.0
 	var capacity := IndustryArchetypeProfile.internal_buffer_capacity_l(
 		element.archetype_id
 	)
-	var max_addable := element.industry_buffer.max_addable_amount(
-		"raw_regolith",
-		capacity
-	)
-	var credited := minf(amount, max_addable)
-	if credited <= EPSILON:
-		return 0.0
-	element.industry_buffer.add("raw_regolith", credited, capacity)
-	return credited
+	var credited_total := 0.0
+	var resource_ids: Array = amounts.keys()
+	resource_ids.sort()
+	for resource_id: Variant in resource_ids:
+		var amount := float(amounts[resource_id])
+		if amount <= EPSILON:
+			continue
+		var max_addable := element.industry_buffer.max_addable_amount(
+			str(resource_id),
+			capacity
+		)
+		var credited := minf(amount, max_addable)
+		if credited <= EPSILON:
+			continue
+		element.industry_buffer.add(str(resource_id), credited, capacity)
+		credited_total += credited
+	return credited_total
 
 
 func _buffer_has_no_room_for_carve(
 	element: SimulationElement,
-	volume_m3: float
+	volume_m3: float,
+	world_point: Vector3
 ) -> bool:
-	var amount := _raw_amount_from_volume(volume_m3)
-	if amount <= EPSILON:
+	var amounts := _amounts_from_volume(volume_m3, world_point)
+	if amounts.is_empty():
 		return false
 	var capacity := IndustryArchetypeProfile.internal_buffer_capacity_l(
 		element.archetype_id
 	)
-	return (
-		element.industry_buffer.max_addable_amount("raw_regolith", capacity)
-		<= EPSILON
-	)
+	for resource_id: Variant in amounts.keys():
+		if (
+			element.industry_buffer.max_addable_amount(
+				str(resource_id),
+				capacity
+			)
+			> EPSILON
+		):
+			return false
+	return true
 
 
 func _push_drill_buffer(
@@ -176,12 +217,16 @@ func _push_drill_buffer(
 	element: SimulationElement
 ) -> void:
 	var machine_cargo := MachineCargoService.new()
+	var ids := PackedStringArray()
+	if element.industry_buffer != null:
+		for resource_id: String in element.industry_buffer.resource_ids():
+			ids.append(resource_id)
 	machine_cargo.push_outputs_from_buffer(
 		world,
 		cargo_graph,
 		transfer_service,
 		element,
-		PackedStringArray(["raw_regolith"])
+		ids
 	)
 
 

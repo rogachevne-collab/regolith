@@ -27,7 +27,13 @@ func _ready() -> void:
 	for archetype: ElementArchetype in Slice01Archetypes.load_all_required():
 		_session.world.get_archetype_registry().register(archetype)
 	_session.world.ensure_resource_store("player")
-	_session.world.set_resource_amount("player", "construction_component", 200.0)
+	_session.world.set_resource_amount("player", "plate_metal", 200.0)
+	_session.world.set_resource_amount("player", "girder", 200.0)
+	_session.world.set_resource_amount("player", "mechanism", 200.0)
+	_session.world.set_resource_amount("player", "conduit", 200.0)
+	_session.world.set_resource_amount("player", "plate_basalt", 200.0)
+	_session.world.set_resource_amount("player", "sintered_basalt", 200.0)
+	_session.world.set_resource_amount("player", "plate_alloy", 200.0)
 	_loading.visible = true
 	_overlay.visible = false
 	_status.visible = false

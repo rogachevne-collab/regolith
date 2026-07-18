@@ -38,10 +38,13 @@ func _run_tests() -> void:
 	]
 	for test: Callable in tests:
 		if not bool(await test.call()):
+			get_tree().quit(1)
 			return
 	if not await _test_carriage_monitor_only_configured():
+		get_tree().quit(1)
 		return
 	if not await _test_physics_fall_damages_structure():
+		get_tree().quit(1)
 		return
 	print("KINETIC-INTERACTION-V1: PASS")
 	get_tree().quit(0)
@@ -100,7 +103,7 @@ func _test_blocked_carve_still_damages() -> bool:
 	if body == null:
 		_free_fixture(fixture)
 		return _fail("blocked-carve body missing")
-	var integrity_before: float = fixture.world.get_element(element_id).integrity
+	var integrity_before: float = _element_integrity(fixture.world, element_id)
 	var carved: float = fixture.impact_service.apply_entry_for_test({
 		"batch_key": "blocked_carve_test",
 		"striker_element_id": element_id,
@@ -113,7 +116,7 @@ func _test_blocked_carve_still_damages() -> bool:
 		"contact_points": PackedVector3Array([Vector3(0.5, 0.0, 0.5)]),
 		"contact_impulses": PackedFloat32Array([36.0]),
 	})
-	var integrity_after: float = fixture.world.get_element(element_id).integrity
+	var integrity_after: float = _element_integrity(fixture.world, element_id)
 	_free_fixture(fixture)
 	if carved != 0.0:
 		return _fail("carve-blocked touchdown still carved terrain")
@@ -166,7 +169,7 @@ func _test_cross_group_same_assembly_damages() -> bool:
 		_free_fixture(fixture)
 		return _fail("different body groups must not be subgrid-immune")
 	var integrity_before: float = (
-		fixture.world.get_element(head_id).integrity
+		_element_integrity(fixture.world, head_id)
 	)
 	fixture.impact_service.apply_entry_for_test({
 		"batch_key": "cross_group_test",
@@ -180,7 +183,7 @@ func _test_cross_group_same_assembly_damages() -> bool:
 		"contact_points": PackedVector3Array([head_body.global_position]),
 		"contact_impulses": PackedFloat32Array([48.0]),
 	})
-	var integrity_after: float = fixture.world.get_element(head_id).integrity
+	var integrity_after: float = _element_integrity(fixture.world, head_id)
 	_free_fixture(fixture)
 	if integrity_after >= integrity_before:
 		return _fail("cross-group same-assembly hit should damage striker")
@@ -212,7 +215,7 @@ func _test_driven_hub_pair_immune() -> bool:
 		_free_fixture(fixture)
 		return _fail("piston base/head must count as driven hub pair")
 	var integrity_before: float = (
-		fixture.world.get_element(head_id).integrity
+		_element_integrity(fixture.world, head_id)
 	)
 	fixture.impact_service.apply_entry_for_test({
 		"batch_key": "hub_pair_test",
@@ -226,7 +229,7 @@ func _test_driven_hub_pair_immune() -> bool:
 		"contact_points": PackedVector3Array([head_body.global_position]),
 		"contact_impulses": PackedFloat32Array([48.0]),
 	})
-	var integrity_after: float = fixture.world.get_element(head_id).integrity
+	var integrity_after: float = _element_integrity(fixture.world, head_id)
 	_free_fixture(fixture)
 	if integrity_after < integrity_before:
 		return _fail("driven hub pair contact damaged striker")
@@ -250,7 +253,7 @@ func _test_subgrid_immunity_same_body_group() -> bool:
 		_free_fixture(fixture)
 		return _fail("same body must stay subgrid-immune")
 	var integrity_before: float = (
-		fixture.world.get_element(head_id).integrity
+		_element_integrity(fixture.world, head_id)
 	)
 	fixture.impact_service.apply_entry_for_test({
 		"batch_key": "same_group_test",
@@ -263,7 +266,7 @@ func _test_subgrid_immunity_same_body_group() -> bool:
 		"contact_points": PackedVector3Array([head_body.global_position]),
 		"contact_impulses": PackedFloat32Array([48.0]),
 	})
-	var integrity_after: float = fixture.world.get_element(head_id).integrity
+	var integrity_after: float = _element_integrity(fixture.world, head_id)
 	_free_fixture(fixture)
 	if integrity_after < integrity_before:
 		return _fail("same body-group contact damaged striker")
@@ -398,7 +401,9 @@ func _test_kinetic_loot_threshold() -> bool:
 	var mass := float(piles[0].get("amount_kg", 0.0))
 	var expected := (
 		carved
-		* TerrainMaterialSource.REGOLITH_DENSITY_KG_PER_M3
+		* TerrainMaterialCatalog.density_kg_m3(
+			TerrainMaterialCatalog.MAT_MARE_REGOLITH
+		)
 		* ImpactResolver.KINETIC_COLLECTIBLE_FRACTION
 	)
 	if absf(mass - expected) > expected * 0.05 + 0.001:
@@ -435,7 +440,7 @@ func _test_player_hit_damages_suit() -> bool:
 		"contact_points": PackedVector3Array(),
 		"contact_impulses": PackedFloat32Array(),
 	}
-	var element_before: float = fixture.world.get_element(element_id).integrity
+	var element_before: float = _element_integrity(fixture.world, element_id)
 	fixture.impact_service.apply_entry_for_test(entry)
 	if suit.health < suit.health_max:
 		player.queue_free()
@@ -446,7 +451,7 @@ func _test_player_hit_damages_suit() -> bool:
 	var health_after_first: float = suit.health
 	fixture.impact_service.apply_entry_for_test(entry)
 	var health_after_second: float = suit.health
-	var element_after: float = fixture.world.get_element(element_id).integrity
+	var element_after: float = _element_integrity(fixture.world, element_id)
 	player.queue_free()
 	_free_fixture(fixture)
 	if health_after_first >= suit.health_max:
@@ -553,26 +558,29 @@ func _test_sustained_grind_carves_trench() -> bool:
 	var start := head_body.global_position + Vector3.DOWN * 0.5
 	var finish := start + Vector3(1.2, 0.0, 0.0)
 	var midpoint := (start + finish) * 0.5 + Vector3.DOWN * 0.25
-	fixture.impact_service.emit_actuator_sustained_entry_for_test(
-		head_id,
-		head_body,
-		fixture.terrain,
-		240_000.0,
-		1.0 / 60.0,
-		0,
-		start
+	var tool: VoxelTool = fixture.terrain.get_voxel_tool()
+	tool.channel = VoxelBuffer.CHANNEL_SDF
+	var sdf_mid_before := _terrain_sdf_at(tool, midpoint)
+	var carved_a: float = (
+		fixture.impact_service.emit_actuator_sustained_entry_for_test(
+			head_id,
+			head_body,
+			fixture.terrain,
+			240_000.0,
+			1.0 / 60.0,
+			0,
+			start
+		)
 	)
 	fixture.impact_service.clear_pair_cooldowns_for_test()
 	head_body = (
 		fixture.projection.get_element_projection(head_id).get("body")
 	)
+	var carved_b := 0.0
 	if head_body == null or not is_instance_valid(head_body):
 		_free_fixture(fixture)
 		return _fail("grind head body freed before second bite")
-	var tool: VoxelTool = fixture.terrain.get_voxel_tool()
-	tool.channel = VoxelBuffer.CHANNEL_SDF
-	var sdf_mid_before := _terrain_sdf_at(tool, midpoint)
-	var carved: float = (
+	carved_b = float(
 		fixture.impact_service.emit_actuator_sustained_entry_for_test(
 			head_id,
 			head_body,
@@ -585,6 +593,7 @@ func _test_sustained_grind_carves_trench() -> bool:
 	)
 	var sdf_mid_after := _terrain_sdf_at(tool, midpoint)
 	_free_fixture(fixture)
+	var carved := carved_a + carved_b
 	if carved <= 0.0:
 		return _fail("grind segment carved zero volume")
 	if not (sdf_mid_after > sdf_mid_before + 0.05):
@@ -651,8 +660,8 @@ func _test_assembly_contact_damages_both() -> bool:
 	var second_body: PhysicsBody3D = fixture.projection.get_physics_body(
 		int(second.data["assembly_id"])
 	)
-	var first_before: float = fixture.world.get_element(first_id).integrity
-	var second_before: float = fixture.world.get_element(second_id).integrity
+	var first_before: float = _element_integrity(fixture.world, first_id)
+	var second_before: float = _element_integrity(fixture.world, second_id)
 	fixture.impact_service.apply_entry_for_test({
 		"batch_key": "test_a",
 		"striker_element_id": first_id,
@@ -675,8 +684,8 @@ func _test_assembly_contact_damages_both() -> bool:
 		"contact_points": PackedVector3Array([Vector3.ZERO]),
 		"contact_impulses": PackedFloat32Array([36.0]),
 	})
-	var first_after: float = fixture.world.get_element(first_id).integrity
-	var second_after: float = fixture.world.get_element(second_id).integrity
+	var first_after: float = _element_integrity(fixture.world, first_id)
+	var second_after: float = _element_integrity(fixture.world, second_id)
 	_free_fixture(fixture)
 	if first_after >= first_before:
 		return _fail("first assembly took no damage")
@@ -717,7 +726,7 @@ func _test_shape_enter_carves_terrain() -> bool:
 	# _test_mesh_stamp_carves_terrain; upright frame stamps are shallow, so
 	# this path asserts carve volume + striker damage instead.
 	var contact := Vector3(0.25, 0.0, 0.25)
-	var integrity_before: float = fixture.world.get_element(element_id).integrity
+	var integrity_before: float = _element_integrity(fixture.world, element_id)
 	var used_volume: float = fixture.impact_service.apply_entry_for_test({
 		"batch_key": "shape_enter_test",
 		"striker_element_id": element_id,
@@ -732,12 +741,16 @@ func _test_shape_enter_carves_terrain() -> bool:
 		"contact_points": PackedVector3Array([contact]),
 		"contact_impulses": PackedFloat32Array([36.0]),
 	})
-	var integrity_after: float = fixture.world.get_element(element_id).integrity
+	var integrity_after: float = _element_integrity(fixture.world, element_id)
 	_free_fixture(fixture)
 	if used_volume <= 0.0:
 		return _fail("impact entry carved zero volume")
+	# Integrity is the primary gate (shallow frame stamp; SDF covered elsewhere).
 	if integrity_after >= integrity_before:
-		return _fail("shape-enter terrain hit did not damage striker")
+		return _fail(
+			"shape-enter terrain hit did not damage striker (vol=%.4f)"
+			% used_volume
+		)
 	return true
 
 
@@ -751,7 +764,7 @@ func _test_physics_fall_damages_structure() -> bool:
 	var element_id := int(spawn.data["element_ids"][0])
 	var tool: VoxelTool = fixture.terrain.get_voxel_tool()
 	tool.channel = VoxelBuffer.CHANNEL_SDF
-	var integrity_before: float = fixture.world.get_element(element_id).integrity
+	var integrity_before: float = _element_integrity(fixture.world, element_id)
 	var motion := GridSpawnUtil.motion_from_transform(
 		Transform3D(Basis.IDENTITY, Vector3(0.0, 3.5, 0.0)),
 		false
@@ -765,7 +778,7 @@ func _test_physics_fall_damages_structure() -> bool:
 	body.sleeping = false
 	for _step: int in range(180):
 		await get_tree().physics_frame
-	var integrity_after: float = fixture.world.get_element(element_id).integrity
+	var integrity_after: float = _element_integrity(fixture.world, element_id)
 	_free_fixture(fixture)
 	if integrity_after >= integrity_before:
 		return _fail(
@@ -817,6 +830,17 @@ func _new_fixture() -> Dictionary:
 	session.impact_service.bind(session.world, gateway)
 	ProjectedAssemblyBody.impact_service = session.impact_service
 	session.projection.bind_impact_service(session.impact_service)
+	session.world.ensure_resource_store("player")
+	for item_id: String in [
+		"plate_metal",
+		"girder",
+		"mechanism",
+		"conduit",
+		"plate_basalt",
+		"sintered_basalt",
+		"plate_alloy",
+	]:
+		session.world.set_resource_amount("player", item_id, 500.0)
 	for _frame: int in range(12):
 		await get_tree().physics_frame
 	return {
@@ -872,7 +896,13 @@ func _spawn(
 func _spawn_piston_on_ground(fixture: Dictionary) -> Dictionary:
 	var world: SimulationWorld = fixture.world
 	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "construction_component", 1000.0)
+	world.set_resource_amount("player", "plate_metal", 100.0)
+	world.set_resource_amount("player", "girder", 100.0)
+	world.set_resource_amount("player", "mechanism", 100.0)
+	world.set_resource_amount("player", "conduit", 100.0)
+	world.set_resource_amount("player", "plate_basalt", 100.0)
+	world.set_resource_amount("player", "sintered_basalt", 100.0)
+	world.set_resource_amount("player", "plate_alloy", 100.0)
 	world.get_archetype_registry().register(PISTON_HEAD)
 	var foundation := _spawn(
 		world,
@@ -1021,6 +1051,13 @@ func _seed_flat_terrain(
 					VoxelBuffer.CHANNEL_SDF
 				)
 	return terrain.try_set_block_data(block_pos, buffer)
+
+
+func _element_integrity(world: SimulationWorld, element_id: int) -> float:
+	var element := world.get_element(element_id)
+	if element == null:
+		return 0.0
+	return element.integrity
 
 
 func _fail(reason: String) -> bool:

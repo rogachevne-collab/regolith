@@ -7,7 +7,13 @@ extends RefCounted
 const RECIPE_MACHINE_ARCHETYPES: PackedStringArray = [
 	"processor",
 	"fabricator",
+	"electrolyzer",
 ]
+
+## Compatibility alias for callers that still read `DEFAULT_RECIPES`.
+static var DEFAULT_RECIPES: Dictionary:
+	get:
+		return default_recipes()
 
 
 static func has_internal_buffer(archetype_id: String) -> bool:

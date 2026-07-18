@@ -1,12 +1,14 @@
 class_name MoonTerrainParams
 extends RefCounted
 
-const GENERATOR_VERSION := 23
+const GENERATOR_VERSION := 24
 const SEED := 0x4D004E
 
 
 static func bake_is_present() -> bool:
 	## Play uses live VoxelGeneratorGraph planet (no crust bake required).
+	## Terrain material yield uses MoonMaterialField (TERRAIN-MATERIALS-V1);
+	## CHANNEL_INDICES visual zones are a follow-up on top of this seed bump.
 	return true
 
 

@@ -280,11 +280,11 @@ func _target_metadata(
 						element.element_id
 					)
 				)
-				metadata["cargo_network_raw_regolith"] = (
+				metadata["cargo_network_ore_mare_regolith"] = (
 					RecipeRunnerService.connected_supply_amount(
 						_session.world,
 						element.element_id,
-						"raw_regolith"
+						"ore_mare_regolith"
 					)
 				)
 				metadata["cargo_network_regolith_fines"] = (

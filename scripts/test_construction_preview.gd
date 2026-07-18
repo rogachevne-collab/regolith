@@ -1263,7 +1263,10 @@ func _test_snap_scan_tracks_assembly_motion() -> bool:
 func _test_snap_vehicle_attach_follows_velocity() -> bool:
 	var fixture := _new_fixture()
 	var world: SimulationWorld = fixture["world"]
-	world.set_resource_amount("player", "construction_component", 2000.0)
+	world.set_resource_amount("player", "plate_metal", 2000.0)
+	world.set_resource_amount("player", "girder", 2000.0)
+	world.set_resource_amount("player", "mechanism", 2000.0)
+	world.set_resource_amount("player", "conduit", 2000.0)
 	var composed := RoverComposer.compose(world, RoverIntent.defaults())
 	if not bool(composed.get("ok", false)):
 		return _fail(
@@ -1317,7 +1320,13 @@ func _test_snap_resolver_invalid_direct_red_ghost() -> bool:
 	var fixture := _new_fixture()
 	var world: SimulationWorld = fixture["world"]
 	# Drain the store: ground plan is structurally fine but not payable.
-	world.set_resource_amount("player", "construction_component", 0.0)
+	world.set_resource_amount("player", "plate_metal", 0.0)
+	world.set_resource_amount("player", "girder", 0.0)
+	world.set_resource_amount("player", "mechanism", 0.0)
+	world.set_resource_amount("player", "conduit", 0.0)
+	world.set_resource_amount("player", "plate_basalt", 0.0)
+	world.set_resource_amount("player", "sintered_basalt", 0.0)
+	world.set_resource_amount("player", "plate_alloy", 0.0)
 	var resolver := ConstructionSnapResolver.new()
 	var frame: ElementArchetype = Slice01Archetypes.frame()
 	var voxel_hit := _voxel_target(
@@ -1589,7 +1598,13 @@ func _new_gateway_fixture() -> Dictionary:
 	var world := SimulationWorld.new()
 	world.name = "SimulationWorld"
 	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "construction_component", 1000.0)
+	world.set_resource_amount("player", "plate_metal", 1000.0)
+	world.set_resource_amount("player", "girder", 1000.0)
+	world.set_resource_amount("player", "mechanism", 1000.0)
+	world.set_resource_amount("player", "conduit", 1000.0)
+	world.set_resource_amount("player", "plate_basalt", 1000.0)
+	world.set_resource_amount("player", "sintered_basalt", 1000.0)
+	world.set_resource_amount("player", "plate_alloy", 1000.0)
 	var session := SimulationSession.new()
 	session.name = "SimulationSession"
 	session.add_child(world)
@@ -1639,7 +1654,13 @@ func _new_fixture() -> Dictionary:
 	var world := SimulationWorld.new()
 	root.add_child(world)
 	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "construction_component", 1000.0)
+	world.set_resource_amount("player", "plate_metal", 1000.0)
+	world.set_resource_amount("player", "girder", 1000.0)
+	world.set_resource_amount("player", "mechanism", 1000.0)
+	world.set_resource_amount("player", "conduit", 1000.0)
+	world.set_resource_amount("player", "plate_basalt", 1000.0)
+	world.set_resource_amount("player", "sintered_basalt", 1000.0)
+	world.set_resource_amount("player", "plate_alloy", 1000.0)
 	return {
 		"root": root,
 		"world": world,

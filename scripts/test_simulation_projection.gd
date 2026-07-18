@@ -594,7 +594,13 @@ func _test_piston_multibody_projection() -> bool:
 	var world: SimulationWorld = fixture["world"]
 	var projection: SimulationPhysicsProjection = fixture["projection"]
 	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "construction_component", 100.0)
+	world.set_resource_amount("player", "plate_metal", 100.0)
+	world.set_resource_amount("player", "girder", 100.0)
+	world.set_resource_amount("player", "mechanism", 100.0)
+	world.set_resource_amount("player", "conduit", 100.0)
+	world.set_resource_amount("player", "plate_basalt", 100.0)
+	world.set_resource_amount("player", "sintered_basalt", 100.0)
+	world.set_resource_amount("player", "plate_alloy", 100.0)
 	world.get_archetype_registry().register(PISTON_HEAD)
 	world.get_archetype_registry().register(STATIONARY_DRILL)
 	var foundation := _spawn(

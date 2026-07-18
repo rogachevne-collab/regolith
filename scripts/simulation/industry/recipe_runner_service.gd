@@ -648,7 +648,7 @@ static func missing_input_resource_id(
 ) -> String:
 	if world == null or element == null:
 		return ""
-	if element.archetype_id not in ["processor", "fabricator"]:
+	if element.archetype_id not in ["processor", "fabricator", "electrolyzer"]:
 		return ""
 	var runtime := world.ensure_industry_element_runtime(element.element_id)
 	var machine := runtime.ensure_machine_state()

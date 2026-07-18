@@ -47,7 +47,13 @@ func _run_tests() -> void:
 func _boot_world() -> SimulationWorld:
 	var world := SimulationWorld.new()
 	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "construction_component", 500.0)
+	world.set_resource_amount("player", "plate_metal", 500.0)
+	world.set_resource_amount("player", "girder", 500.0)
+	world.set_resource_amount("player", "mechanism", 500.0)
+	world.set_resource_amount("player", "conduit", 500.0)
+	world.set_resource_amount("player", "plate_basalt", 500.0)
+	world.set_resource_amount("player", "sintered_basalt", 500.0)
+	world.set_resource_amount("player", "plate_alloy", 500.0)
 	for archetype: ElementArchetype in Slice01Archetypes.load_rover_archetypes():
 		world.get_archetype_registry().register(archetype)
 	world.get_archetype_registry().register(Slice01Archetypes.foundation())
@@ -240,7 +246,7 @@ func _test_wheel_placement_rejects_occupied_socket() -> bool:
 		DRIVE_WHEEL,
 		command.origin_cell,
 		command.orientation_index,
-		{"construction_component": 1.0}
+		{"plate_metal": 1.0}
 	)
 	var result: Variant = WheelPlacementUtil.validate_wheel_placement(
 		world,

@@ -61,6 +61,162 @@
       "mass_per_unit_kg": 1.5,
       "volume_per_unit_l": 4.0,
       "unit": "discrete"
+    },
+    "ore_mare_regolith": {
+      "category": "ore",
+      "mass_per_unit_kg": 2.0,
+      "volume_per_unit_l": 2.5,
+      "unit": "bulk"
+    },
+    "ore_highland_regolith": {
+      "category": "ore",
+      "mass_per_unit_kg": 2.0,
+      "volume_per_unit_l": 2.5,
+      "unit": "bulk"
+    },
+    "ore_ilmenite": {
+      "category": "ore",
+      "mass_per_unit_kg": 2.4,
+      "volume_per_unit_l": 1.8,
+      "unit": "bulk"
+    },
+    "ore_anorthite": {
+      "category": "ore",
+      "mass_per_unit_kg": 2.4,
+      "volume_per_unit_l": 1.8,
+      "unit": "bulk"
+    },
+    "ore_olivine": {
+      "category": "ore",
+      "mass_per_unit_kg": 2.4,
+      "volume_per_unit_l": 1.8,
+      "unit": "bulk"
+    },
+    "ore_pyroxene": {
+      "category": "ore",
+      "mass_per_unit_kg": 2.4,
+      "volume_per_unit_l": 1.8,
+      "unit": "bulk"
+    },
+    "ore_ice": {
+      "category": "ore",
+      "mass_per_unit_kg": 1.0,
+      "volume_per_unit_l": 2.2,
+      "unit": "bulk"
+    },
+    "ilmenite_concentrate": {
+      "category": "material",
+      "mass_per_unit_kg": 2.2,
+      "volume_per_unit_l": 1.2,
+      "unit": "bulk"
+    },
+    "anorthite_concentrate": {
+      "category": "material",
+      "mass_per_unit_kg": 2.2,
+      "volume_per_unit_l": 1.2,
+      "unit": "bulk"
+    },
+    "silicate_slag": {
+      "category": "material",
+      "mass_per_unit_kg": 1.8,
+      "volume_per_unit_l": 2.0,
+      "unit": "bulk"
+    },
+    "reduced_ilmenite_residue": {
+      "category": "material",
+      "mass_per_unit_kg": 3.0,
+      "volume_per_unit_l": 1.0,
+      "unit": "bulk"
+    },
+    "water": {
+      "category": "consumable",
+      "mass_per_unit_kg": 1.0,
+      "volume_per_unit_l": 1.0,
+      "unit": "bulk"
+    },
+    "oxygen": {
+      "category": "consumable",
+      "mass_per_unit_kg": 0.2,
+      "volume_per_unit_l": 2.0,
+      "unit": "bulk"
+    },
+    "hydrogen": {
+      "category": "consumable",
+      "mass_per_unit_kg": 0.05,
+      "volume_per_unit_l": 2.5,
+      "unit": "bulk"
+    },
+    "sintered_anorthosite": {
+      "category": "material",
+      "mass_per_unit_kg": 3.0,
+      "volume_per_unit_l": 1.5,
+      "unit": "bulk"
+    },
+    "ingot_iron": {
+      "category": "ingot",
+      "mass_per_unit_kg": 4.0,
+      "volume_per_unit_l": 0.6,
+      "unit": "bulk"
+    },
+    "ingot_titanium": {
+      "category": "ingot",
+      "mass_per_unit_kg": 4.0,
+      "volume_per_unit_l": 0.6,
+      "unit": "bulk"
+    },
+    "ingot_aluminum": {
+      "category": "ingot",
+      "mass_per_unit_kg": 4.0,
+      "volume_per_unit_l": 0.6,
+      "unit": "bulk"
+    },
+    "ingot_silicon": {
+      "category": "ingot",
+      "mass_per_unit_kg": 4.0,
+      "volume_per_unit_l": 0.6,
+      "unit": "bulk"
+    },
+    "ingot_magnesium": {
+      "category": "ingot",
+      "mass_per_unit_kg": 4.0,
+      "volume_per_unit_l": 0.6,
+      "unit": "bulk"
+    },
+    "plate_basalt": {
+      "category": "component",
+      "mass_per_unit_kg": 2.5,
+      "volume_per_unit_l": 3.0,
+      "unit": "discrete"
+    },
+    "plate_metal": {
+      "category": "component",
+      "mass_per_unit_kg": 2.5,
+      "volume_per_unit_l": 3.0,
+      "unit": "discrete"
+    },
+    "plate_alloy": {
+      "category": "component",
+      "mass_per_unit_kg": 2.2,
+      "volume_per_unit_l": 2.8,
+      "unit": "discrete"
+    },
+    "girder": {
+      "category": "component",
+      "mass_per_unit_kg": 3.5,
+      "volume_per_unit_l": 4.0,
+      "unit": "discrete"
+    },
+    "conduit": {
+      "category": "component",
+      "mass_per_unit_kg": 2.0,
+      "volume_per_unit_l": 2.5,
+      "unit": "discrete"
+    },
+    "mechanism": {
+      "category": "component",
+      "mass_per_unit_kg": 3.0,
+      "volume_per_unit_l": 3.5,
+      "unit": "discrete"
     }
   },
   "recipes": {
@@ -118,6 +274,218 @@
       },
       "duration_s": 10.0,
       "power_w": 500.0
+    },
+    "crush_mare": {
+      "machine": "processor",
+      "inputs": {
+        "ore_mare_regolith": 1.0
+      },
+      "outputs": {
+        "regolith_fines": 1.0
+      },
+      "duration_s": 6.0,
+      "power_w": 200.0
+    },
+    "crush_highland": {
+      "machine": "processor",
+      "inputs": {
+        "ore_highland_regolith": 1.0
+      },
+      "outputs": {
+        "regolith_fines": 1.0
+      },
+      "duration_s": 6.0,
+      "power_w": 200.0
+    },
+    "sinter_anorthosite": {
+      "machine": "processor",
+      "inputs": {
+        "regolith_fines": 2.0
+      },
+      "outputs": {
+        "sintered_anorthosite": 1.0
+      },
+      "duration_s": 8.0,
+      "power_w": 250.0
+    },
+    "beneficiate_ilmenite": {
+      "machine": "processor",
+      "inputs": {
+        "ore_ilmenite": 2.0
+      },
+      "outputs": {
+        "ilmenite_concentrate": 1.0,
+        "silicate_slag": 0.5
+      },
+      "duration_s": 10.0,
+      "power_w": 300.0
+    },
+    "beneficiate_anorthite": {
+      "machine": "processor",
+      "inputs": {
+        "ore_anorthite": 2.0
+      },
+      "outputs": {
+        "anorthite_concentrate": 1.0,
+        "silicate_slag": 0.5
+      },
+      "duration_s": 10.0,
+      "power_w": 300.0
+    },
+    "melt_ice": {
+      "machine": "processor",
+      "inputs": {
+        "ore_ice": 1.0
+      },
+      "outputs": {
+        "water": 1.0
+      },
+      "duration_s": 5.0,
+      "power_w": 150.0
+    },
+    "reduce_ilmenite_h2": {
+      "machine": "processor",
+      "inputs": {
+        "ilmenite_concentrate": 1.0,
+        "hydrogen": 1.0
+      },
+      "outputs": {
+        "water": 1.0,
+        "reduced_ilmenite_residue": 1.0
+      },
+      "duration_s": 14.0,
+      "power_w": 500.0
+    },
+    "electrolyze_water": {
+      "machine": "electrolyzer",
+      "inputs": {
+        "water": 1.0
+      },
+      "outputs": {
+        "oxygen": 0.5,
+        "hydrogen": 1.0
+      },
+      "duration_s": 8.0,
+      "power_w": 400.0
+    },
+    "smelt_iron": {
+      "machine": "fabricator",
+      "inputs": {
+        "reduced_ilmenite_residue": 1.0
+      },
+      "outputs": {
+        "ingot_iron": 0.7,
+        "ingot_titanium": 0.2
+      },
+      "duration_s": 12.0,
+      "power_w": 600.0
+    },
+    "smelt_aluminum": {
+      "machine": "fabricator",
+      "inputs": {
+        "anorthite_concentrate": 1.0
+      },
+      "outputs": {
+        "ingot_aluminum": 0.5,
+        "ingot_silicon": 0.3
+      },
+      "duration_s": 14.0,
+      "power_w": 650.0
+    },
+    "smelt_magnesium": {
+      "machine": "fabricator",
+      "inputs": {
+        "ore_olivine": 2.0
+      },
+      "outputs": {
+        "ingot_magnesium": 0.4,
+        "silicate_slag": 1.0
+      },
+      "duration_s": 12.0,
+      "power_w": 550.0
+    },
+    "refine_silicon": {
+      "machine": "fabricator",
+      "inputs": {
+        "ore_pyroxene": 2.0
+      },
+      "outputs": {
+        "ingot_silicon": 0.6,
+        "silicate_slag": 0.8
+      },
+      "duration_s": 10.0,
+      "power_w": 500.0
+    },
+    "craft_plate_basalt": {
+      "machine": "fabricator",
+      "inputs": {
+        "sintered_basalt": 2.0
+      },
+      "outputs": {
+        "plate_basalt": 1.0
+      },
+      "duration_s": 8.0,
+      "power_w": 300.0
+    },
+    "craft_plate_metal": {
+      "machine": "fabricator",
+      "inputs": {
+        "ingot_iron": 2.0
+      },
+      "outputs": {
+        "plate_metal": 1.0
+      },
+      "duration_s": 10.0,
+      "power_w": 400.0
+    },
+    "craft_plate_alloy": {
+      "machine": "fabricator",
+      "inputs": {
+        "ingot_aluminum": 1.0,
+        "ingot_titanium": 1.0
+      },
+      "outputs": {
+        "plate_alloy": 1.0
+      },
+      "duration_s": 12.0,
+      "power_w": 450.0
+    },
+    "craft_girder": {
+      "machine": "fabricator",
+      "inputs": {
+        "ingot_iron": 1.0,
+        "sintered_basalt": 1.0
+      },
+      "outputs": {
+        "girder": 1.0
+      },
+      "duration_s": 10.0,
+      "power_w": 400.0
+    },
+    "craft_conduit": {
+      "machine": "fabricator",
+      "inputs": {
+        "ingot_aluminum": 1.0,
+        "ingot_silicon": 1.0
+      },
+      "outputs": {
+        "conduit": 1.0
+      },
+      "duration_s": 9.0,
+      "power_w": 350.0
+    },
+    "craft_mechanism": {
+      "machine": "fabricator",
+      "inputs": {
+        "ingot_iron": 1.0,
+        "ingot_titanium": 0.5,
+        "ingot_silicon": 0.5
+      },
+      "outputs": {
+        "mechanism": 1.0
+      },
+      "duration_s": 12.0,
+      "power_w": 500.0
     }
   },
   "industry": {
@@ -129,11 +497,13 @@
     "internal_buffer_capacity_l": {
       "stationary_drill": 200.0,
       "processor": 100.0,
-      "fabricator": 100.0
+      "fabricator": 100.0,
+      "electrolyzer": 80.0
     },
     "default_recipes": {
-      "processor": "crush_regolith",
-      "fabricator": "reduce_oxide"
+      "processor": "crush_mare",
+      "fabricator": "craft_plate_metal",
+      "electrolyzer": "electrolyze_water"
     },
     "stationary_drill": {
       "body_size_m": 1.0,
@@ -234,6 +604,14 @@
       "power_distributor_small": {
         "is_distributor": true,
         "supply_radius_m": 6.0
+      },
+      "electrolyzer": {
+        "is_consumer": true,
+        "idle_w": 40.0
+      },
+      "piston_base_large": {
+        "is_consumer": true,
+        "idle_w": 0.0
       }
     }
   },
@@ -248,21 +626,27 @@
   },
   "starter": {
     "player_resources": {
-      "raw_regolith": 6.0,
-      "regolith_fines": 6.0,
-      "sintered_basalt": 4.0,
-      "calcined_oxide": 3.0,
-      "metal_ingot": 3.0,
-      "construction_component": 12.0
+      "ore_mare_regolith": 4.0,
+      "regolith_fines": 4.0,
+      "sintered_basalt": 2.0,
+      "hydrogen": 2.0,
+      "plate_metal": 8.0,
+      "girder": 2.0,
+      "plate_basalt": 2.0
     },
     "playtest_carry_capacity_l": 2000.0,
     "playtest_resources": {
-      "raw_regolith": 250.0,
+      "ore_mare_regolith": 250.0,
+      "ore_ilmenite": 80.0,
       "regolith_fines": 150.0,
       "sintered_basalt": 60.0,
-      "calcined_oxide": 40.0,
-      "metal_ingot": 50.0,
-      "construction_component": 300.0
+      "hydrogen": 20.0,
+      "water": 20.0,
+      "ingot_iron": 50.0,
+      "plate_metal": 300.0,
+      "mechanism": 40.0,
+      "conduit": 40.0,
+      "girder": 40.0
     }
   },
   "elements": {
@@ -270,7 +654,7 @@
       "mass_kg": 30.0,
       "build_requirements": [
         {
-          "resource_id": "construction_component",
+          "resource_id": "conduit",
           "amount": 1.0
         }
       ]
@@ -279,7 +663,7 @@
       "mass_kg": 90.0,
       "build_requirements": [
         {
-          "resource_id": "construction_component",
+          "resource_id": "plate_metal",
           "amount": 6.0
         }
       ]
@@ -288,7 +672,7 @@
       "mass_kg": 60.0,
       "build_requirements": [
         {
-          "resource_id": "construction_component",
+          "resource_id": "plate_metal",
           "amount": 8.0
         }
       ]
@@ -297,7 +681,7 @@
       "mass_kg": 15.0,
       "build_requirements": [
         {
-          "resource_id": "construction_component",
+          "resource_id": "mechanism",
           "amount": 2.0
         }
       ],
@@ -319,11 +703,20 @@
         "idle_w": 20.0
       }
     },
+    "electrolyzer": {
+      "mass_kg": 140.0,
+      "build_requirements": [
+        {
+          "resource_id": "plate_metal",
+          "amount": 10.0
+        }
+      ]
+    },
     "fabricator": {
       "mass_kg": 160.0,
       "build_requirements": [
         {
-          "resource_id": "construction_component",
+          "resource_id": "plate_metal",
           "amount": 10.0
         }
       ]
@@ -332,7 +725,7 @@
       "mass_kg": 500.0,
       "build_requirements": [
         {
-          "resource_id": "construction_component",
+          "resource_id": "plate_metal",
           "amount": 8.0
         }
       ]
@@ -341,7 +734,7 @@
       "mass_kg": 50.0,
       "build_requirements": [
         {
-          "resource_id": "construction_component",
+          "resource_id": "plate_metal",
           "amount": 4.0
         }
       ]
@@ -359,7 +752,7 @@
       "mass_kg": 100.0,
       "build_requirements": [
         {
-          "resource_id": "construction_component",
+          "resource_id": "girder",
           "amount": 6.0
         }
       ]
@@ -368,7 +761,7 @@
       "mass_kg": 20.0,
       "build_requirements": [
         {
-          "resource_id": "construction_component",
+          "resource_id": "mechanism",
           "amount": 3.0
         }
       ],
@@ -383,7 +776,7 @@
       "mass_kg": 50.0,
       "build_requirements": [
         {
-          "resource_id": "construction_component",
+          "resource_id": "mechanism",
           "amount": 4.0
         }
       ],
@@ -409,7 +802,7 @@
       "mass_kg": 18.0,
       "build_requirements": [
         {
-          "resource_id": "construction_component",
+          "resource_id": "mechanism",
           "amount": 3.0
         }
       ],
@@ -419,7 +812,7 @@
       "mass_kg": 625.0,
       "build_requirements": [
         {
-          "resource_id": "construction_component",
+          "resource_id": "girder",
           "amount": 25.0
         }
       ]
@@ -428,7 +821,7 @@
       "mass_kg": 40.0,
       "build_requirements": [
         {
-          "resource_id": "construction_component",
+          "resource_id": "mechanism",
           "amount": 4.0
         }
       ],
@@ -440,6 +833,32 @@
         "damping_n_s_per_m": 4000.0
       }
     },
+    "piston_base_large": {
+      "mass_kg": 180.0,
+      "build_requirements": [
+        {
+          "resource_id": "mechanism",
+          "amount": 20.0
+        }
+      ],
+      "piston": {
+        "default_speed_limit_mps": 0.2,
+        "extend_velocity_mps": 0.2,
+        "retract_velocity_mps": 0.2,
+        "force_limit_n": 80000.0,
+        "max_force_limit_n": 200000.0,
+        "stiffness_n_per_m": 0.0,
+        "damping_n_s_per_m": 8000.0,
+        "angular_soft_limit_rad": 0.08,
+        "angular_stiffness_nm_per_rad": 45000.0,
+        "angular_damping_nm_s_per_rad": 1200.0,
+        "power_draw_w": 4000.0
+      }
+    },
+    "piston_head_large": {
+      "mass_kg": 80.0,
+      "build_requirements": []
+    },
     "piston_head": {
       "mass_kg": 20.0,
       "build_requirements": []
@@ -448,7 +867,7 @@
       "mass_kg": 150.0,
       "build_requirements": [
         {
-          "resource_id": "construction_component",
+          "resource_id": "conduit",
           "amount": 6.0
         }
       ]
@@ -457,7 +876,7 @@
       "mass_kg": 80.0,
       "build_requirements": [
         {
-          "resource_id": "construction_component",
+          "resource_id": "conduit",
           "amount": 4.0
         }
       ]
@@ -466,7 +885,7 @@
       "mass_kg": 100.0,
       "build_requirements": [
         {
-          "resource_id": "construction_component",
+          "resource_id": "conduit",
           "amount": 8.0
         }
       ]
@@ -475,7 +894,7 @@
       "mass_kg": 40.0,
       "build_requirements": [
         {
-          "resource_id": "construction_component",
+          "resource_id": "conduit",
           "amount": 4.0
         }
       ]
@@ -484,7 +903,7 @@
       "mass_kg": 120.0,
       "build_requirements": [
         {
-          "resource_id": "construction_component",
+          "resource_id": "plate_metal",
           "amount": 8.0
         }
       ]
@@ -493,7 +912,7 @@
       "mass_kg": 140.0,
       "build_requirements": [
         {
-          "resource_id": "construction_component",
+          "resource_id": "plate_metal",
           "amount": 10.0
         }
       ]
@@ -502,7 +921,7 @@
       "mass_kg": 60.0,
       "build_requirements": [
         {
-          "resource_id": "construction_component",
+          "resource_id": "mechanism",
           "amount": 4.0
         }
       ]
@@ -511,7 +930,7 @@
       "mass_kg": 4700.0,
       "build_requirements": [
         {
-          "resource_id": "construction_component",
+          "resource_id": "mechanism",
           "amount": 40.0
         }
       ],
@@ -539,7 +958,7 @@
       "mass_kg": 30.90909090909091,
       "build_requirements": [
         {
-          "resource_id": "construction_component",
+          "resource_id": "plate_metal",
           "amount": 2.0
         }
       ]
@@ -548,7 +967,7 @@
       "mass_kg": 180.0,
       "build_requirements": [
         {
-          "resource_id": "construction_component",
+          "resource_id": "mechanism",
           "amount": 10.0
         }
       ]
@@ -557,7 +976,7 @@
       "mass_kg": 25.0,
       "build_requirements": [
         {
-          "resource_id": "construction_component",
+          "resource_id": "mechanism",
           "amount": 4.0
         }
       ],
@@ -571,7 +990,7 @@
       "mass_kg": 18.0,
       "build_requirements": [
         {
-          "resource_id": "construction_component",
+          "resource_id": "mechanism",
           "amount": 3.0
         }
       ],

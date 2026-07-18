@@ -20,9 +20,13 @@
 |-----|-----|
 | Документация | https://voxel-tools.readthedocs.io/en/latest/ |
 | Smooth terrain | https://voxel-tools.readthedocs.io/en/latest/smooth_terrain/ |
+| Texturing (INDICES / SINGLE_S4) | https://voxel-tools.readthedocs.io/en/latest/smooth_terrain/#voxel-texture-formats |
 | `VoxelTool` API | https://voxel-tools.readthedocs.io/en/latest/api/VoxelTool/ |
 | `VoxelTool.raycast` | https://voxel-tools.readthedocs.io/en/latest/api/VoxelTool/#raycast |
 | Репозиторий / issues | https://github.com/Zylann/godot_voxel |
+
+Рудные зоны / `CHANNEL_INDICES` / yield — контракт
+`docs/specs/TERRAIN-MATERIALS-V1.md` (не выводить материал из shader).
 
 ## Проектные инварианты (кратко)
 
@@ -61,6 +65,7 @@
 | Spawn / settle | `bootstrap.gd` |
 | Прицел / drill hit | `interaction_query.gd` |
 | Вырезка SDF | `terrain_excavation_service.gd`, `terrain_impact_carver.gd` |
+| Yield по материалу | `terrain_material_source.gd` → канон `TERRAIN-MATERIALS-V1.md` |
 | Ground seat строительства | `world_command_gateway.gd` |
 | Bench scale | `bench_voxel_scale.gd`, `scenes/bench_voxel_scale.tscn` |
 

@@ -47,11 +47,17 @@ var _archetype_cache: Dictionary = {}
 var _snap_resolver := ConstructionSnapResolver.new()
 var _excavation := TerrainExcavationService.new()
 var _material_source := TerrainMaterialSource.new()
+var _material_field := MoonMaterialField.new()
+var _hand_drill_spawn_world := Vector3.ZERO
 var _hand_drill_last_bite_center: Variant = null
 var _hand_drill_last_bite_msec := 0
 var _rover_seat_player: Node3D
 var _rover_seat_assembly_id := 0
 var _rover_seat_element_id := 0
+
+
+func set_hand_drill_spawn_world(spawn_world: Vector3) -> void:
+	_hand_drill_spawn_world = spawn_world
 
 
 func _ready() -> void:
@@ -236,11 +242,15 @@ func _remove_voxel(
 		_hand_drill_last_bite_center = null
 	var removed_m3 := total_removed_m3
 	if removed_m3 > 0.000001:
+		var material_id := _material_field.material_id_at_world(
+			contact_point,
+			_hand_drill_spawn_world
+		)
 		_route_hand_drill_yield(
 			contact_point,
-			_material_source.yield_for_removed_volume(
+			_material_source.yield_for_excavation(
 				removed_m3,
-				IndustryArchetypeProfile.terrain_collectible_fraction()
+				{material_id: 1.0}
 			)
 		)
 	return _result(
@@ -1013,7 +1023,7 @@ func construction_resource_amount() -> float:
 		return 0.0
 	var store := _session.world.get_resource_store("player")
 	return (
-		store.amount("construction_component")
+		store.amount("plate_metal")
 		if store != null else 0.0
 	)
 
