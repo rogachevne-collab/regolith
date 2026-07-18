@@ -208,7 +208,8 @@ compatibility handlers за `CommandGateway`. Это не закрывает Con
 - `toolbar_page_prev`, `toolbar_page_next` — переключение страниц (`[` / `]` на macOS);
 - `construction_rotate_yaw`, `construction_rotate_pitch`, `construction_rotate_roll`
   — ортогональный поворот preview (`C` / `V` / `B`);
-- `release_mouse`.
+- `release_mouse`;
+- `toggle_map` — карта луны (`M`, см. `docs/specs/MAP-UI-01.md`).
 
 Gameplay-код не читает физические keycode или mouse button напрямую.
 
