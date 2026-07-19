@@ -1,6 +1,8 @@
 extends "res://scripts/character_motor.gd"
 
 @export var head_path: NodePath = NodePath("Camera")
+@export var fly_speed := 18.0
+@export var fly_sprint_multiplier := 3.0
 
 var _head: Camera3D
 var _voxel_viewer: VoxelViewer
@@ -12,6 +14,8 @@ var _gameplay_input_enabled := true
 var _current_vehicle: Node3D
 ## When true, mouse steers the assembly (SE cockpit) instead of freelook.
 var _vehicle_flight_controls := false
+## Debug freefly / noclip (toggle_fly — X). No gravity, camera-relative move.
+var _fly_mode := false
 
 const SETTLED_FRAMES_NEEDED := 12
 
@@ -22,6 +26,7 @@ func set_spawn_locked(locked: bool) -> void:
 	_settled_frames = 0
 	set_physics_process(not locked)
 	if locked:
+		set_fly_mode(false)
 		velocity = Vector3.ZERO
 		clear_support_frame()
 
@@ -82,6 +87,25 @@ func is_vehicle_flight_controls() -> bool:
 	return _vehicle_flight_controls and _current_vehicle != null
 
 
+func is_fly_mode() -> bool:
+	return _fly_mode
+
+
+func set_fly_mode(enabled: bool) -> void:
+	if _fly_mode == enabled:
+		return
+	_fly_mode = enabled
+	velocity = Vector3.ZERO
+	clear_support_frame()
+	var col := get_node_or_null("CollisionShape3D") as CollisionShape3D
+	if col != null:
+		col.set_deferred("disabled", enabled)
+	if enabled:
+		print("Player: fly mode ON (X to exit; WASD + Space/C, Shift boost)")
+	else:
+		print("Player: fly mode OFF")
+
+
 func _ready() -> void:
 	super._ready()
 	_head = get_node(head_path)
@@ -98,6 +122,7 @@ func _process(_delta: float) -> void:
 func enter_vehicle(vehicle: Node3D, seat_position: Vector3) -> void:
 	if vehicle == null or not is_instance_valid(vehicle):
 		return
+	set_fly_mode(false)
 	_current_vehicle = vehicle
 	set_physics_process(false)
 	velocity = Vector3.ZERO
@@ -163,6 +188,17 @@ func _physics_process(delta: float) -> void:
 	if _spawn_locked:
 		return
 
+	if (
+		_gameplay_input_enabled
+		and not is_in_vehicle()
+		and Input.is_action_just_pressed(&"toggle_fly")
+	):
+		set_fly_mode(not _fly_mode)
+
+	if _fly_mode:
+		_fly_move(delta)
+		return
+
 	var movement_basis: Basis = _head.call("movement_basis")
 	var up := up_direction
 	var forward := GravityField.project_on_tangent(-movement_basis.z, up)
@@ -192,3 +228,33 @@ func _physics_process(delta: float) -> void:
 		_gameplay_input_enabled and Input.is_action_just_pressed("jump"),
 		delta
 	)
+
+
+func _fly_move(delta: float) -> void:
+	if _head == null:
+		return
+	var basis: Basis = _head.global_transform.basis
+	var wish := Vector3.ZERO
+	if _gameplay_input_enabled:
+		if Input.is_action_pressed(&"move_forward"):
+			wish -= basis.z
+		if Input.is_action_pressed(&"move_back"):
+			wish += basis.z
+		if Input.is_action_pressed(&"move_left"):
+			wish -= basis.x
+		if Input.is_action_pressed(&"move_right"):
+			wish += basis.x
+		if Input.is_action_pressed(&"move_up") or Input.is_action_pressed(&"jump"):
+			wish += basis.y
+		if Input.is_action_pressed(&"move_down"):
+			wish -= basis.y
+	if wish.length_squared() > 0.0001:
+		wish = wish.normalized()
+	var speed := fly_speed
+	if _gameplay_input_enabled and Input.is_action_pressed(&"sprint"):
+		speed *= fly_sprint_multiplier
+	global_position += wish * speed * delta
+	velocity = wish * speed
+	# Keep character upright for camera parent; look stays on Camera node.
+	var up := _resolve_up()
+	_align_body_to_up(up)

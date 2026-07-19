@@ -96,6 +96,7 @@ Windows: нужен VS 2022 Build Tools (MSVC x64) + Python + SCons.
 | WASD | ходьба |
 | Shift | бег |
 | Space | прыжок |
+| X | debug fly / noclip (повтор — выкл; Space/C вверх/вниз) |
 | ЛКМ (зажать) | бурить |
 | ПКМ | поставить блок |
 | E у корабля | кокпит |
