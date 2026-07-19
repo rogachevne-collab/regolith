@@ -8,10 +8,10 @@ signal hit_updated(hit: InteractionHit)
 @export var tool_controller_path: NodePath = NodePath("../ToolController")
 @export var terrain_path: NodePath = NodePath("../../VoxelTerrain")
 @export var simulation_session_path: NodePath = NodePath("../../SimulationSession")
-@export var max_distance := 4.0
+@export var max_distance := 6.5
 @export var build_max_distance := 10.0
-## Layers 1 (terrain), 4 (interaction wire colliders), 8 (loot pickup only).
-@export_flags_3d_physics var collision_mask := 13
+## Layers 1 (terrain), 2 (floating debris), 4 (interaction), 8 (loot).
+@export_flags_3d_physics var collision_mask := 15
 
 var current_hit := InteractionHit.empty()
 
@@ -169,6 +169,11 @@ func _target_kind(
 		return InteractionHit.KIND_WORLD_LOOT
 	if metadata.has("electric_link_id"):
 		return InteractionHit.KIND_ELECTRIC_CABLE
+	if (
+		collider is Node
+		and (collider as Node).is_in_group(&"terrain_floating_debris")
+	):
+		return InteractionHit.KIND_TERRAIN_DEBRIS
 	if TerrainCompat.is_terrain_collider(collider, _terrain):
 		return InteractionHit.KIND_VOXEL
 	if collider is Node and collider.is_in_group("placed_blocks"):
@@ -348,7 +353,10 @@ func _should_skip_body_for_build(kind: StringName) -> bool:
 	return (
 		_tools != null
 		and _tools.active_tool == &"build"
-		and kind == InteractionHit.KIND_BODY
+		and (
+			kind == InteractionHit.KIND_BODY
+			or kind == InteractionHit.KIND_TERRAIN_DEBRIS
+		)
 	)
 
 

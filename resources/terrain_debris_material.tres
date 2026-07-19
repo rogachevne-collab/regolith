@@ -1,0 +1,14 @@
+[gd_resource type="ShaderMaterial" load_steps=4 format=3]
+
+[ext_resource type="Shader" path="res://resources/terrain_debris.gdshader" id="1"]
+[ext_resource type="Texture2D" path="res://resources/textures/lunar_rock/albedo.png" id="2"]
+[ext_resource type="Texture2D" path="res://resources/textures/lunar_rock/normal.png" id="3"]
+
+[resource]
+render_priority = 0
+shader = ExtResource("1")
+shader_parameter/u_albedo = ExtResource("2")
+shader_parameter/u_normal = ExtResource("3")
+shader_parameter/u_scale = 0.28
+shader_parameter/u_normal_strength = 0.85
+shader_parameter/u_roughness = 0.9

@@ -457,6 +457,9 @@ func _emit_command_for_action(
 		elif hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT:
 			command_kind = &"damage_element"
 			parameters = {"damage": _drill_damage_per_tick()}
+		elif hit.target_kind == InteractionHit.KIND_TERRAIN_DEBRIS:
+			command_kind = &"dig_terrain_debris"
+			parameters = {}
 		else:
 			command_kind = &"voxel_remove"
 			parameters = {}
@@ -802,6 +805,7 @@ func _hit_accepts_action(
 	if action == &"tool_primary" and active_tool == &"drill":
 		return (
 			hit.target_kind == InteractionHit.KIND_VOXEL
+			or hit.target_kind == InteractionHit.KIND_TERRAIN_DEBRIS
 			or hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
 		)
 	return true

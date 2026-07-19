@@ -1,6 +1,10 @@
 class_name WorldCommandGateway
 extends Node
 
+const _TerrainFloatingDebrisService := preload(
+	"res://scripts/simulation/runtime/terrain_floating_debris_service.gd"
+)
+
 signal command_completed(command_id: int, result: Dictionary)
 
 # A flat, gravity-upright block bottom cannot follow bumpy/sloped terrain, so the
@@ -46,6 +50,7 @@ var _next_command_id := 1
 var _archetype_cache: Dictionary = {}
 var _snap_resolver := ConstructionSnapResolver.new()
 var _excavation := TerrainExcavationService.new()
+var _floating_debris = _TerrainFloatingDebrisService.new()
 var _material_source := TerrainMaterialSource.new()
 var _material_field := MoonMaterialField.new()
 var _hand_drill_spawn_world := Vector3.ZERO
@@ -54,6 +59,7 @@ var _hand_drill_last_bite_msec := 0
 var _rover_seat_player: Node3D
 var _rover_seat_assembly_id := 0
 var _rover_seat_element_id := 0
+var _floating_debris_parent: Node3D
 
 
 func set_hand_drill_spawn_world(spawn_world: Vector3) -> void:
@@ -133,6 +139,8 @@ func _execute(command: Dictionary) -> Dictionary:
 	match StringName(command["kind"]):
 		&"voxel_remove":
 			return _remove_voxel(command, target)
+		&"dig_terrain_debris":
+			return _dig_terrain_debris(command, target)
 		&"damage_element":
 			return _damage_element(command, target)
 		&"place_block":
@@ -186,7 +194,7 @@ func _remove_voxel(
 			)
 		),
 		0.05,
-		2.0
+		4.0
 	)
 	var metadata: Dictionary = target.get("metadata", {})
 	var direction := Vector3(
@@ -238,6 +246,7 @@ func _remove_voxel(
 		_hand_drill_last_bite_center = bite_center
 		_hand_drill_last_bite_msec = now_msec
 		_notify_terrain_modified(total_removed_m3, bite_center, radius)
+		_maybe_separate_floating_chunks(bite_center, total_removed_m3, radius)
 	else:
 		_hand_drill_last_bite_center = null
 	var removed_m3 := total_removed_m3
@@ -260,6 +269,56 @@ func _remove_voxel(
 			"removed_volume_m3": removed_m3,
 		}
 	)
+
+
+func _dig_terrain_debris(
+	_command: Dictionary,
+	target: Dictionary
+) -> Dictionary:
+	if StringName(target.get("target_kind", &"")) != InteractionHit.KIND_TERRAIN_DEBRIS:
+		return _result(&"invalid_target")
+	var body := target.get("collider") as RigidBody3D
+	if body == null or not is_instance_valid(body):
+		return _result(&"no_target")
+	if not body.is_in_group(&"terrain_floating_debris"):
+		return _result(&"invalid_target")
+	var dig_hp := float(body.get_meta(&"dig_hp", body.mass))
+	var dig_hp_max := float(body.get_meta(&"dig_hp_max", maxf(body.mass, 1.0)))
+	var dig_mass_kg := float(body.get_meta(&"dig_mass_kg", body.mass))
+	if dig_hp_max <= 0.0001:
+		dig_hp_max = 1.0
+	# One turbo bite ≈ 25–40% of a typical chunk; small rocks die in 1–2 ticks.
+	var damage := maxf(dig_hp_max * 0.35, dig_hp_max * 0.08)
+	var removed_frac := minf(damage, dig_hp) / dig_hp_max
+	dig_hp = maxf(dig_hp - damage, 0.0)
+	body.set_meta(&"dig_hp", dig_hp)
+	var contact := Vector3(target.get("point", body.global_position))
+	var removed_mass := dig_mass_kg * removed_frac
+	if removed_mass > 0.000001:
+		# Map mass→volume with regolith density proxy so yield path stays shared.
+		var removed_m3 := removed_mass / 1600.0
+		var material_id := _material_field.material_id_at_world(
+			contact,
+			_hand_drill_spawn_world
+		)
+		_route_hand_drill_yield(
+			contact,
+			_material_source.yield_for_excavation(
+				removed_m3,
+				{material_id: 1.0}
+			)
+		)
+	if dig_hp > 0.0001:
+		var scale_t := clampf(dig_hp / dig_hp_max, 0.35, 1.0)
+		body.scale = Vector3.ONE * scale_t
+		body.mass = maxf(dig_mass_kg * scale_t, 4.0)
+		body.sleeping = false
+		body.apply_central_impulse(
+			-Vector3(target.get("normal", Vector3.UP)).normalized() * (8.0 + damage)
+		)
+		return _result(&"ok", {"point": contact, "dig_hp": dig_hp})
+	body.queue_free()
+	return _result(&"ok", {"point": contact, "destroyed": true})
 
 
 func _route_hand_drill_yield(
@@ -316,11 +375,10 @@ func apply_terrain_carve(
 		_excavation.excavate(_voxel_tool, request).get("removed_volume_m3", 0.0)
 	)
 	if removed > 0.000001:
-		_notify_terrain_modified(
-			removed,
-			_dig_center_from_request(request),
-			_dig_radius_from_request(request)
-		)
+		var dig_center := _dig_center_from_request(request)
+		var dig_radius := _dig_radius_from_request(request)
+		_notify_terrain_modified(removed, dig_center, dig_radius)
+		_maybe_separate_floating_chunks(dig_center, removed, dig_radius)
 	return removed
 
 
@@ -387,7 +445,38 @@ func carve_stationary_drill(element_id: int) -> float:
 	)
 	if removed > 0.000001:
 		_notify_terrain_modified(removed, center, radius)
+		_maybe_separate_floating_chunks(center, removed, radius)
 	return removed
+
+
+func _maybe_separate_floating_chunks(
+	world_center: Vector3,
+	removed_m3: float,
+	dig_radius_m: float
+) -> void:
+	var spawned := _floating_debris.try_separate_after_dig(
+		_terrain,
+		_voxel_tool,
+		world_center,
+		removed_m3,
+		_ensure_floating_debris_parent()
+	)
+	if spawned <= 0:
+		return
+	# Separation edits SDF again — mark dig stream dirty for persistence.
+	_notify_terrain_modified(0.0, world_center, dig_radius_m)
+
+
+func _ensure_floating_debris_parent() -> Node3D:
+	if _floating_debris_parent != null and is_instance_valid(_floating_debris_parent):
+		return _floating_debris_parent
+	_floating_debris_parent = Node3D.new()
+	_floating_debris_parent.name = "TerrainFloatingDebris"
+	var host: Node = get_parent()
+	if host == null:
+		host = self
+	host.add_child(_floating_debris_parent)
+	return _floating_debris_parent
 
 
 func _stationary_drill_contact(element_id: int) -> Dictionary:

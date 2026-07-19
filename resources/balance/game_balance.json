@@ -514,10 +514,10 @@
       "requires_power": true
     },
     "hand_drill": {
-      "carve_radius_m": 0.65,
-      "bite_depth_m": 0.18,
-      "sdf_scale": 0.8,
-      "reach_m": 3.2,
+      "carve_radius_m": 3.0,
+      "bite_depth_m": 0.85,
+      "sdf_scale": 1.15,
+      "reach_m": 6.0,
       "terrain_collectible_fraction": 0.01,
       "loot_pile_max_mass_kg": 32.0,
       "loot_base_radius_m": 0.16,
@@ -525,10 +525,19 @@
       "loot_scale_min": 0.75,
       "loot_scale_max": 1.35,
       "loot_merge_contact_epsilon_m": 0.02,
-      "interval_s": 0.08,
-      "path_max_span_m": 1.4,
-      "path_max_gap_ms": 250,
+      "interval_s": 0.035,
+      "path_max_span_m": 4.5,
+      "path_max_gap_ms": 400,
       "loot_despawn_s": 600.0
+    },
+    "floating_chunks": {
+      "enabled": true,
+      "box_size_voxels": 30,
+      "min_removed_m3": 0.08,
+      "cooldown_ms": 250,
+      "max_bodies": 24,
+      "despawn_s": 25.0,
+      "collision_layer": 2
     }
   },
   "electric": {
