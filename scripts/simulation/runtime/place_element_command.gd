@@ -10,7 +10,9 @@ var new_assembly_grid_frame: GridTransform = GridTransform.identity()
 ## Exact root pose for a new assembly. Topology remains in grid_frame; this is
 ## the continuous pose shared by preview, physics and presentation.
 var initial_motion: AssemblyMotionState
-var store_id: String = "player"
+## Which store pays for / receives materials. No default: an
+## unset owner used to silently mean the one global "player" store.
+var store_id: String = ""
 
 
 func kind() -> StringName:

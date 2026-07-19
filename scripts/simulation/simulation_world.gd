@@ -525,7 +525,7 @@ func remove_world_loot_pile(pile_id: int) -> bool:
 
 func collect_world_loot_pile(
 	pile_id: int,
-	to_store_id: String = IndustryStoreService.PLAYER_STORE_ID
+	to_store_id: String
 ) -> Dictionary:
 	return WorldLootServiceScript.collect_world_loot_pile(self, pile_id, to_store_id)
 
@@ -568,7 +568,7 @@ func ensure_resource_store(store_id: String) -> SimulationResourceStore:
 		return existing
 	var store := SimulationResourceStore.new()
 	store.store_id = store_id
-	if store_id == IndustryStoreService.PLAYER_STORE_ID:
+	if PlayerIdentity.is_player_store(store_id):
 		store.capacity_l = IndustryArchetypeProfile.player_carry_capacity_l()
 	_resource_stores[store_id] = store
 	return store

@@ -1,7 +1,9 @@
 class_name RoverDemoSpawn
 extends RefCounted
 
-const STORE_ID := "player"
+static var STORE_ID: String:
+	get:
+		return PlayerIdentity.local_store_id()
 const SKY_PROBE_Y := 120.0
 const GROUND_PROBE_MAX_DISTANCE := 200.0
 const FLAT_SEARCH_RADIUS_M := 24.0

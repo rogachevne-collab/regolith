@@ -58,7 +58,7 @@ func _test_half_transfer_amounts() -> bool:
 
 func _test_drag_payload_contract() -> bool:
 	var whole: Dictionary = HudInventoryTransferUtil.drag_payload(
-		IndustryStoreService.PLAYER_STORE_ID,
+		PlayerIdentity.store_id("player"),
 		"ore_mare_regolith",
 		4.0,
 		false,
@@ -66,7 +66,7 @@ func _test_drag_payload_contract() -> bool:
 	)
 	if String(whole.get("kind", "")) != HudInventoryTransferUtil.PAYLOAD_KIND:
 		return _fail("payload kind must be hud_item")
-	if whole.get("source_store_id", "") != IndustryStoreService.PLAYER_STORE_ID:
+	if whole.get("source_store_id", "") != PlayerIdentity.store_id("player"):
 		return _fail("payload source_store_id mismatch")
 	if whole.get("item_id", "") != "ore_mare_regolith":
 		return _fail("payload item_id mismatch")
@@ -95,13 +95,13 @@ func _test_drag_payload_contract() -> bool:
 
 func _test_drop_compatibility() -> bool:
 	var payload: Dictionary = HudInventoryTransferUtil.drag_payload(
-		IndustryStoreService.PLAYER_STORE_ID,
+		PlayerIdentity.store_id("player"),
 		"ingot_iron",
 		1.0,
 		false,
 		false
 	)
-	if HudInventoryTransferUtil.is_compatible_drop(payload, IndustryStoreService.PLAYER_STORE_ID):
+	if HudInventoryTransferUtil.is_compatible_drop(payload, PlayerIdentity.store_id("player")):
 		return _fail("drop on same store must be rejected")
 	if not HudInventoryTransferUtil.is_compatible_drop(payload, "element:7"):
 		return _fail("drop on different store must be accepted")
@@ -113,7 +113,7 @@ func _test_drop_compatibility() -> bool:
 		return _fail("zero amount payload must be rejected")
 
 	var params: Dictionary = HudInventoryTransferUtil.transfer_parameters(payload, "element:7")
-	if params.get("from_store_id", "") != IndustryStoreService.PLAYER_STORE_ID:
+	if params.get("from_store_id", "") != PlayerIdentity.store_id("player"):
 		return _fail("transfer from_store_id mismatch")
 	if params.get("to_store_id", "") != "element:7":
 		return _fail("transfer to_store_id mismatch")
@@ -150,7 +150,7 @@ func _test_command_target_for_store() -> bool:
 		return _fail("element store id parse failed")
 	if HudInventoryTransferUtil.element_id_for_store("buffer:22") != 22:
 		return _fail("buffer store id parse failed")
-	if HudInventoryTransferUtil.element_id_for_store(IndustryStoreService.PLAYER_STORE_ID) != 0:
+	if HudInventoryTransferUtil.element_id_for_store(PlayerIdentity.store_id("player")) != 0:
 		return _fail("player store must not map to element id")
 
 	var machine_target: Dictionary = HudInventoryTransferUtil.command_target_for_store("buffer:22")
@@ -160,7 +160,7 @@ func _test_command_target_for_store() -> bool:
 		return _fail("machine command target element_id mismatch")
 
 	var player_target: Dictionary = HudInventoryTransferUtil.command_target_for_store(
-		IndustryStoreService.PLAYER_STORE_ID
+		PlayerIdentity.store_id("player")
 	)
 	if not bool(player_target.get("valid", false)):
 		return _fail("player transfer target must be valid")

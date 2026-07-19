@@ -26,14 +26,14 @@ var _status_hint_until_msec := 0
 func _ready() -> void:
 	for archetype: ElementArchetype in Slice01Archetypes.load_all_required():
 		_session.world.get_archetype_registry().register(archetype)
-	_session.world.ensure_resource_store("player")
-	_session.world.set_resource_amount("player", "plate_metal", 200.0)
-	_session.world.set_resource_amount("player", "girder", 200.0)
-	_session.world.set_resource_amount("player", "mechanism", 200.0)
-	_session.world.set_resource_amount("player", "conduit", 200.0)
-	_session.world.set_resource_amount("player", "plate_basalt", 200.0)
-	_session.world.set_resource_amount("player", "sintered_basalt", 200.0)
-	_session.world.set_resource_amount("player", "plate_alloy", 200.0)
+	_session.world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	_session.world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 200.0)
+	_session.world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 200.0)
+	_session.world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 200.0)
+	_session.world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 200.0)
+	_session.world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 200.0)
+	_session.world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 200.0)
+	_session.world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 200.0)
 	_loading.visible = true
 	_overlay.visible = false
 	_status.visible = false
@@ -213,7 +213,7 @@ func _weld_assembly(assembly_id: int) -> void:
 		weld.element_id = element_id
 		weld.expected_state_revision = element.state_revision
 		weld.max_material_amount = 100.0
-		weld.store_id = "player"
+		weld.store_id = PlayerIdentity.store_id("player")
 		_session.world.apply_structural_command_now(weld)
 
 
@@ -325,7 +325,7 @@ func _clear_assemblies() -> void:
 			var command := DismantleElementCommand.new()
 			command.element_id = int(assembly.element_ids[0])
 			command.expected_assembly_revision = assembly.topology_revision
-			command.store_id = "player"
+			command.store_id = PlayerIdentity.store_id("player")
 			_session.world.apply_structural_command_now(command)
 			break
 		if not pending:

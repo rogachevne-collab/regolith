@@ -6,7 +6,6 @@ extends Control
 ## store is fetched lazily on open because bootstrap seeds it after the HUD is
 ## ready; the panel only owns ephemeral open/close presentation state.
 
-const PLAYER_STORE_ID := "player"
 const PANEL_SIZE := Vector2(300, 236)
 
 var _gateway: Node
@@ -81,7 +80,7 @@ func _build() -> void:
 	title_row.add_child(right_box)
 	right_box.add_child(HudTokens.make_national_tick())
 	var store_id_label := Label.new()
-	store_id_label.text = "СКЛАД · %s" % HudTokens.store_label(PLAYER_STORE_ID)
+	store_id_label.text = "СКЛАД · %s" % HudTokens.store_label(PlayerIdentity.local_store_id())
 	store_id_label.theme_type_variation = &"HudSmall"
 	store_id_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	store_id_label.size_flags_horizontal = Control.SIZE_SHRINK_END
@@ -118,7 +117,7 @@ func _refresh_store() -> void:
 		return
 	var store: SimulationResourceStore = null
 	if _gateway != null and _gateway.has_method("resource_store"):
-		store = _gateway.resource_store(PLAYER_STORE_ID)
+		store = _gateway.resource_store(PlayerIdentity.local_store_id())
 	_store_view.bind(store, "ГРУЗ")
 
 

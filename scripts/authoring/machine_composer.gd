@@ -8,7 +8,7 @@ static func compose(
 	world: SimulationWorld,
 	intent: MachineIntent,
 	grid_frame: GridTransform = GridTransform.identity(),
-	store_id: String = "player"
+	store_id: String = PlayerIdentity.local_store_id()
 ) -> Dictionary:
 	if world == null:
 		return {"ok": false, "error": "no_world"}
@@ -69,7 +69,7 @@ static func compose_from_phrase(
 	world: SimulationWorld,
 	phrase: String,
 	grid_frame: GridTransform = GridTransform.identity(),
-	store_id: String = "player"
+	store_id: String = PlayerIdentity.local_store_id()
 ) -> Dictionary:
 	return compose(world, MachineIntent.from_phrase(phrase), grid_frame, store_id)
 
@@ -79,7 +79,7 @@ static func spawn_on_terrain(
 	session: SimulationSession,
 	world_position: Vector3,
 	intent: MachineIntent = null,
-	store_id: String = "player",
+	store_id: String = PlayerIdentity.local_store_id(),
 	terrain: Node3D = null,
 	tool: VoxelTool = null,
 	space_state: PhysicsDirectSpaceState3D = null
@@ -122,7 +122,7 @@ static func spawn_on_terrain_from_phrase(
 	session: SimulationSession,
 	world_position: Vector3,
 	phrase: String,
-	store_id: String = "player",
+	store_id: String = PlayerIdentity.local_store_id(),
 	terrain: Node3D = null,
 	tool: VoxelTool = null,
 	space_state: PhysicsDirectSpaceState3D = null

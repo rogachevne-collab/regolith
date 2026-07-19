@@ -14,9 +14,9 @@ extends Node
 ## Emitted whenever any current value of THIS player's suit actually changes.
 signal changed
 
-## Which suit in the world this view mirrors. Per-peer ids land in stage 1 of
-## COOP-HOST-V0, alongside per-peer store ids.
-@export var player_id := "player"
+## Which suit in the world this view mirrors. Empty resolves to the owning
+## player body's uid, so the scene file carries no identity of its own.
+@export var player_id := ""
 
 var _world: SimulationWorld
 
@@ -38,8 +38,21 @@ func bind_world(world: SimulationWorld) -> void:
 	if _world == null:
 		return
 	_world.suit_changed.connect(_on_suit_changed)
+	_resolve_player_id()
 	_world.ensure_suit_state(player_id)
 	changed.emit()
+
+
+## Resolved at bind time, not in _ready: children are ready before their
+## parent, so the player body has not stamped its uid yet when this node runs.
+func _resolve_player_id() -> void:
+	if not player_id.is_empty():
+		return
+	var owner_body := get_parent()
+	if owner_body != null and owner_body.has_meta("player_id"):
+		player_id = str(owner_body.get_meta("player_id"))
+	else:
+		player_id = PlayerIdentity.local_uid()
 
 
 func world() -> SimulationWorld:

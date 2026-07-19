@@ -83,7 +83,7 @@ func _test_transfer_removal_invalidates_hotbar() -> bool:
 		return _fail("cargo store placement failed")
 	var store_id := IndustryStoreService.element_store_id(element.element_id)
 	var command := TransferResourceCommand.new()
-	command.from_store_id = IndustryStoreService.PLAYER_STORE_ID
+	command.from_store_id = PlayerIdentity.store_id("player")
 	command.to_store_id = store_id
 	command.resource_id = "tool_hand_drill"
 	command.instance_id = "starter_tool_drill"
@@ -104,7 +104,8 @@ func _test_transfer_removal_invalidates_hotbar() -> bool:
 func _test_snapshot_roundtrip() -> bool:
 	var world := SimulationWorld.new()
 	IndustryStoreService.sync_all_elements(world)
-	world.get_resource_store(IndustryStoreService.PLAYER_STORE_ID).add(
+	IndustryStoreService.ensure_player_store(world, "player")
+	world.get_resource_store(PlayerIdentity.store_id("player")).add(
 		"ore_mare_regolith",
 		2.0
 	)
@@ -119,7 +120,7 @@ func _test_snapshot_roundtrip() -> bool:
 		return _fail("restored snapshot must keep hotbar ref")
 	var player_snap := StoreSnapshotBuilder.build(
 		restored,
-		IndustryStoreService.PLAYER_STORE_ID
+		PlayerIdentity.store_id("player")
 	)
 	if not bool(player_snap.get("valid", false)):
 		return _fail("player snapshot must stay valid after roundtrip")

@@ -557,7 +557,10 @@ func _on_terrain_modified(
 
 
 func _begin_fresh_world(player_position: Vector3) -> void:
-	if not IndustryStoreService.seed_player_starter_resources(_session.world):
+	if not IndustryStoreService.seed_player_starter_resources(
+		_session.world,
+		PlayerIdentity.local_uid()
+	):
 		push_error("Fresh world player starter resources seed failed")
 	await _finish_world_entry(player_position)
 	_spawn_base_when_terrain_ready()
@@ -622,7 +625,10 @@ func _finish_loaded_world_entry(spawn_position: Vector3) -> void:
 func _apply_playtest_cargo_if_enabled() -> void:
 	if not playtest_cargo or _session == null or _session.world == null:
 		return
-	if not IndustryStoreService.apply_playtest_cargo(_session.world):
+	if not IndustryStoreService.apply_playtest_cargo(
+		_session.world,
+		PlayerIdentity.local_uid()
+	):
 		push_error("Playtest cargo seed failed")
 
 

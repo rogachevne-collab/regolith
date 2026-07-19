@@ -3,7 +3,9 @@ extends StructuralCommand
 
 var element_id: int = 0
 var expected_assembly_revision: int = -1
-var store_id: String = "player"
+## Which store pays for / receives materials. No default: an
+## unset owner used to silently mean the one global "player" store.
+var store_id: String = ""
 
 
 func kind() -> StringName:

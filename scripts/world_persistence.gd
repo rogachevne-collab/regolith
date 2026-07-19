@@ -2,7 +2,10 @@ class_name WorldPersistence
 extends RefCounted
 
 const SAVE_PATH := "user://regolith_world_save.json"
-const SAVE_VERSION := 1
+## v2: player stores became `player:<uid>` and suit state moved into the world
+## snapshot (COOP-HOST-V0 stage 1). No converter — the game is unreleased and
+## saves are local dev files, so read_payload just discards v1.
+const SAVE_VERSION := 2
 
 ## Optional override for alternate scenes (moon experiment). Empty → SAVE_PATH.
 static var save_path_override := ""

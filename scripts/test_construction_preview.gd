@@ -8,6 +8,9 @@ func _ready() -> void:
 
 func _run() -> void:
 	_HeadlessTestHarness.arm_watchdog(self, "CONSTRUCTION-V1")
+	# Pin the local player so gateway-stamped store ids match the fixture and
+	# no test touches user:// for a generated uid.
+	PlayerIdentity.override_local_uid("player")
 	if not _test_preview_projection_parity_ground():
 		return
 	if not _test_preview_projection_parity_attach():
@@ -85,7 +88,8 @@ func _test_preview_projection_parity_ground() -> bool:
 			world,
 			target,
 			beam,
-			orientation_index
+			orientation_index,
+		PlayerIdentity.store_id("player")
 		)
 		if not bool(plan.get("valid", false)):
 			return _fail(
@@ -141,7 +145,7 @@ func _spawn_anchored_frame(world: SimulationWorld) -> StructuralCommandResult:
 		Vector3.FORWARD
 	)
 	var frame: ElementArchetype = Slice01Archetypes.frame()
-	var plan := ConstructionPlacement.plan(world, target, frame, 0)
+	var plan := ConstructionPlacement.plan(world, target, frame, 0, PlayerIdentity.store_id("player"))
 	if not bool(plan.get("valid", false)):
 		return StructuralCommandResult.failed(
 			StructuralCommandResult.REASON_INVALID_TARGET
@@ -181,7 +185,8 @@ func _test_preview_projection_parity_attach() -> bool:
 		world,
 		target,
 		beam,
-		orientation_index
+		orientation_index,
+	PlayerIdentity.store_id("player")
 	)
 	if not bool(plan.get("valid", false)):
 		return _fail("attach plan invalid for frame_beam")
@@ -233,7 +238,7 @@ func _test_large_frame_attach() -> bool:
 		}
 	).snapshot()
 	var large_frame := Slice01Archetypes.large_frame()
-	var plan := ConstructionPlacement.plan(world, target, large_frame, 0)
+	var plan := ConstructionPlacement.plan(world, target, large_frame, 0, PlayerIdentity.store_id("player"))
 	if not bool(plan.get("valid", false)):
 		return _fail("large frame attach plan invalid")
 	var result := world.apply_structural_command_now(plan["command"])
@@ -277,6 +282,7 @@ func _test_snap_resolver_direct_priority() -> bool:
 	var frame: ElementArchetype = Slice01Archetypes.frame()
 	var result := resolver.resolve({
 		"world": world,
+		"store_id": PlayerIdentity.store_id("player"),
 		"archetype": frame,
 		"orientation_index": 0,
 		"ray_origin": Vector3(0.0, 2.0, 4.0),
@@ -307,6 +313,7 @@ func _test_snap_resolver_scoring_and_hysteresis() -> bool:
 	var assembly_transform := assembly.motion.transform
 	var first := resolver.resolve({
 		"world": world,
+		"store_id": PlayerIdentity.store_id("player"),
 		"archetype": frame,
 		"orientation_index": 0,
 		"ray_origin": assembly_transform * Vector3(1.25, 0.25, 0.25),
@@ -321,6 +328,7 @@ func _test_snap_resolver_scoring_and_hysteresis() -> bool:
 		return _fail("sticky key missing after first resolve")
 	var second := resolver.resolve({
 		"world": world,
+		"store_id": PlayerIdentity.store_id("player"),
 		"archetype": frame,
 		"orientation_index": 0,
 		"ray_origin": assembly_transform * Vector3(1.1, 0.9, 0.25),
@@ -365,6 +373,7 @@ func _test_snap_resolver_voxel_below_magnetic() -> bool:
 	)
 	var result := resolver.resolve({
 		"world": world,
+		"store_id": PlayerIdentity.store_id("player"),
 		"archetype": frame,
 		"orientation_index": 0,
 		"ray_origin": assembly_transform * Vector3(0.5, 1.5, 2.0),
@@ -388,6 +397,7 @@ func _test_snap_resolver_voxel_below_magnetic() -> bool:
 	# still offer the voxel fallback in the pool.
 	var cycled := resolver.resolve({
 		"world": world,
+		"store_id": PlayerIdentity.store_id("player"),
 		"archetype": frame,
 		"orientation_index": 0,
 		"ray_origin": assembly_transform * Vector3(0.5, 1.5, 2.0),
@@ -418,6 +428,7 @@ func _test_snap_resolver_corridor_filter() -> bool:
 	var frame: ElementArchetype = Slice01Archetypes.frame()
 	var behind := resolver.resolve({
 		"world": world,
+		"store_id": PlayerIdentity.store_id("player"),
 		"archetype": frame,
 		"orientation_index": 0,
 		"ray_origin": assembly_transform * Vector3(0.5, 0.5, 3.0),
@@ -480,7 +491,7 @@ func _test_ground_placement_keeps_continuous_pose() -> bool:
 		Vector3.UP,
 		Vector3.FORWARD
 	)
-	var plan := ConstructionPlacement.plan(world, target, frame, 0)
+	var plan := ConstructionPlacement.plan(world, target, frame, 0, PlayerIdentity.store_id("player"))
 	if not bool(plan.get("valid", false)):
 		return _fail("fractional ground plan invalid")
 	var command: PlaceElementCommand = plan["command"]
@@ -514,7 +525,7 @@ func _test_upright_basis_field_aligned() -> bool:
 	var point := Vector3(12.0, 12.0, 0.0)
 	var target := _voxel_target(point, surface_up, Vector3.FORWARD)
 	target["surface_up"] = surface_up
-	var plan := ConstructionPlacement.plan(world, target, frame, 0)
+	var plan := ConstructionPlacement.plan(world, target, frame, 0, PlayerIdentity.store_id("player"))
 	if not bool(plan.get("valid", false)):
 		return _fail("voxel plan with surface_up invalid on tilted field")
 	_free_fixture(fixture)
@@ -530,7 +541,7 @@ func _test_radial_ground_placement_keeps_field_pose() -> bool:
 	var aim := Vector3(0.8, 0.0, -0.6).normalized()
 	var target := _voxel_target(point, surface_up, aim)
 	target["surface_up"] = surface_up
-	var plan := ConstructionPlacement.plan(world, target, frame, 0)
+	var plan := ConstructionPlacement.plan(world, target, frame, 0, PlayerIdentity.store_id("player"))
 	if not bool(plan.get("valid", false)):
 		return _fail("radial ground plan invalid")
 	var root: Transform3D = plan["assembly_world_transform"]
@@ -580,7 +591,8 @@ func _test_rotation_snap_pivot_parity() -> bool:
 		world,
 		target,
 		frame,
-		orientation_index
+		orientation_index,
+	PlayerIdentity.store_id("player")
 	)
 	if not bool(baseline_plan.get("valid", false)):
 		return _fail("rotation pivot baseline plan invalid")
@@ -595,7 +607,8 @@ func _test_rotation_snap_pivot_parity() -> bool:
 				world,
 				target,
 				frame,
-				orientation_index
+				orientation_index,
+			PlayerIdentity.store_id("player")
 			)
 			if not bool(plan.get("valid", false)):
 				return _fail(
@@ -655,7 +668,8 @@ func _test_rotation_full_cycle_no_drift() -> bool:
 		world,
 		target,
 		frame,
-		orientation_index
+		orientation_index,
+	PlayerIdentity.store_id("player")
 	)
 	if not bool(baseline_plan.get("valid", false)):
 		return _fail("rotation cycle baseline plan invalid")
@@ -674,7 +688,8 @@ func _test_rotation_full_cycle_no_drift() -> bool:
 		world,
 		target,
 		frame,
-		orientation_index
+		orientation_index,
+	PlayerIdentity.store_id("player")
 	)
 	if not bool(cycle_plan.get("valid", false)):
 		return _fail("rotation cycle did not return to valid plan")
@@ -724,7 +739,8 @@ func _test_rotation_snap_to_existing_face() -> bool:
 				world,
 				target,
 				beam,
-				orientation_index
+				orientation_index,
+			PlayerIdentity.store_id("player")
 			)
 			if not bool(plan.get("valid", false)):
 				return _fail(
@@ -768,7 +784,8 @@ func _test_ground_rotation_pivot_hold() -> bool:
 	var held_pivot := ConstructionPlacement.baseline_ground_pivot(
 		world,
 		target,
-		beam
+		beam,
+		PlayerIdentity.store_id("player")
 	)
 	if not held_pivot.is_finite():
 		return _fail("ground pivot baseline invalid")
@@ -779,7 +796,7 @@ func _test_ground_rotation_pivot_hold() -> bool:
 			target,
 			beam,
 			orientation_index,
-			"player",
+			PlayerIdentity.store_id("player"),
 			held_pivot
 		)
 		if not bool(plan.get("valid", false)):
@@ -842,8 +859,8 @@ func _test_beam_multicell_face_snap_consistency() -> bool:
 			"aim_direction": Vector3.FORWARD,
 		}
 	).snapshot()
-	var plan0 := ConstructionPlacement.plan(world, target_cell0, beam, 0)
-	var plan1 := ConstructionPlacement.plan(world, target_cell1, beam, 0)
+	var plan0 := ConstructionPlacement.plan(world, target_cell0, beam, 0, PlayerIdentity.store_id("player"))
+	var plan1 := ConstructionPlacement.plan(world, target_cell1, beam, 0, PlayerIdentity.store_id("player"))
 	if not bool(plan0.get("valid", false)) or not bool(plan1.get("valid", false)):
 		return _fail("multicell snap plans invalid")
 	if plan0["origin_cell"] != plan1["origin_cell"]:
@@ -869,7 +886,8 @@ func _test_preview_port_collider_parity_rotation() -> bool:
 			world,
 			target,
 			source,
-			orientation_index
+			orientation_index,
+		PlayerIdentity.store_id("player")
 		)
 		if not bool(plan.get("valid", false)):
 			return _fail(
@@ -942,7 +960,8 @@ func _test_preview_port_collider_attach_orient23() -> bool:
 		world,
 		target,
 		source,
-		orientation_index
+		orientation_index,
+	PlayerIdentity.store_id("player")
 	)
 	if not bool(plan.get("valid", false)):
 		return _fail("orient23 top attach plan invalid")
@@ -1059,7 +1078,7 @@ func _test_attach_face_snap_table() -> bool:
 				"aim_direction": Vector3.FORWARD,
 			}
 		).snapshot()
-		var plan := ConstructionPlacement.plan(world, target, frame, 0)
+		var plan := ConstructionPlacement.plan(world, target, frame, 0, PlayerIdentity.store_id("player"))
 		if not bool(plan.get("valid", false)):
 			return _fail("attach face %s plan invalid" % face["label"])
 		var snap_context: Dictionary = plan["attach_snap_context"]
@@ -1229,6 +1248,7 @@ func _test_snap_scan_tracks_assembly_motion() -> bool:
 		var origin: Vector3 = assembly.motion.transform * Vector3(0.5, 0.5, 2.5)
 		return resolver.resolve({
 			"world": world,
+			"store_id": PlayerIdentity.store_id("player"),
 			"archetype": frame,
 			"orientation_index": 0,
 			"ray_origin": origin,
@@ -1248,6 +1268,7 @@ func _test_snap_scan_tracks_assembly_motion() -> bool:
 		return _fail("snap scan lost faces after assembly moved")
 	var stale := resolver.resolve({
 		"world": world,
+		"store_id": PlayerIdentity.store_id("player"),
 		"archetype": frame,
 		"orientation_index": 0,
 		"ray_origin": Vector3(0.5, 0.5, 2.5),
@@ -1263,10 +1284,10 @@ func _test_snap_scan_tracks_assembly_motion() -> bool:
 func _test_snap_vehicle_attach_follows_velocity() -> bool:
 	var fixture := _new_fixture()
 	var world: SimulationWorld = fixture["world"]
-	world.set_resource_amount("player", "plate_metal", 2000.0)
-	world.set_resource_amount("player", "girder", 2000.0)
-	world.set_resource_amount("player", "mechanism", 2000.0)
-	world.set_resource_amount("player", "conduit", 2000.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 2000.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 2000.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 2000.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 2000.0)
 	var composed := RoverComposer.compose(world, RoverIntent.defaults())
 	if not bool(composed.get("ok", false)):
 		return _fail(
@@ -1294,6 +1315,7 @@ func _test_snap_vehicle_attach_follows_velocity() -> bool:
 	var aim := func() -> Dictionary:
 		return resolver.resolve({
 			"world": world,
+			"store_id": PlayerIdentity.store_id("player"),
 			"archetype": frame,
 			"orientation_index": 0,
 			"ray_origin": aim_ray["origin"],
@@ -1320,13 +1342,13 @@ func _test_snap_resolver_invalid_direct_red_ghost() -> bool:
 	var fixture := _new_fixture()
 	var world: SimulationWorld = fixture["world"]
 	# Drain the store: ground plan is structurally fine but not payable.
-	world.set_resource_amount("player", "plate_metal", 0.0)
-	world.set_resource_amount("player", "girder", 0.0)
-	world.set_resource_amount("player", "mechanism", 0.0)
-	world.set_resource_amount("player", "conduit", 0.0)
-	world.set_resource_amount("player", "plate_basalt", 0.0)
-	world.set_resource_amount("player", "sintered_basalt", 0.0)
-	world.set_resource_amount("player", "plate_alloy", 0.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 0.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 0.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 0.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 0.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 0.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 0.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 0.0)
 	var resolver := ConstructionSnapResolver.new()
 	var frame: ElementArchetype = Slice01Archetypes.frame()
 	var voxel_hit := _voxel_target(
@@ -1336,6 +1358,7 @@ func _test_snap_resolver_invalid_direct_red_ghost() -> bool:
 	)
 	var result := resolver.resolve({
 		"world": world,
+		"store_id": PlayerIdentity.store_id("player"),
 		"archetype": frame,
 		"orientation_index": 0,
 		"ray_origin": Vector3(4.0, 1.5, 2.0),
@@ -1378,7 +1401,7 @@ func _test_power_source_attach_rotation_cycle() -> bool:
 		}
 	).snapshot()
 	var source: ElementArchetype = Slice01Archetypes.power_source()
-	var baseline_plan := ConstructionPlacement.plan(world, target, source, 0)
+	var baseline_plan := ConstructionPlacement.plan(world, target, source, 0, PlayerIdentity.store_id("player"))
 	if not bool(baseline_plan.get("valid", false)):
 		return _fail("power_source attach baseline plan invalid")
 	var held_pivot := _world_footprint_pivot(baseline_plan)
@@ -1402,7 +1425,7 @@ func _test_power_source_attach_rotation_cycle() -> bool:
 				target,
 				source,
 				next_orientation,
-				"player",
+				PlayerIdentity.store_id("player"),
 				Vector3(INF, INF, INF),
 				step_held
 			)
@@ -1564,7 +1587,7 @@ func _spawn_frame_row(
 				"aim_direction": Vector3.FORWARD,
 			}
 		).snapshot()
-		var plan := ConstructionPlacement.plan(world, target, frame, 0)
+		var plan := ConstructionPlacement.plan(world, target, frame, 0, PlayerIdentity.store_id("player"))
 		if not bool(plan.get("valid", false)):
 			return null
 		var result := world.apply_structural_command_now(plan["command"])
@@ -1597,14 +1620,14 @@ func _new_gateway_fixture() -> Dictionary:
 	root.add_child(placed)
 	var world := SimulationWorld.new()
 	world.name = "SimulationWorld"
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 1000.0)
-	world.set_resource_amount("player", "girder", 1000.0)
-	world.set_resource_amount("player", "mechanism", 1000.0)
-	world.set_resource_amount("player", "conduit", 1000.0)
-	world.set_resource_amount("player", "plate_basalt", 1000.0)
-	world.set_resource_amount("player", "sintered_basalt", 1000.0)
-	world.set_resource_amount("player", "plate_alloy", 1000.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 1000.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 1000.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 1000.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 1000.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 1000.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 1000.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 1000.0)
 	var session := SimulationSession.new()
 	session.name = "SimulationSession"
 	session.add_child(world)
@@ -1653,14 +1676,14 @@ func _new_fixture() -> Dictionary:
 	add_child(root)
 	var world := SimulationWorld.new()
 	root.add_child(world)
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 1000.0)
-	world.set_resource_amount("player", "girder", 1000.0)
-	world.set_resource_amount("player", "mechanism", 1000.0)
-	world.set_resource_amount("player", "conduit", 1000.0)
-	world.set_resource_amount("player", "plate_basalt", 1000.0)
-	world.set_resource_amount("player", "sintered_basalt", 1000.0)
-	world.set_resource_amount("player", "plate_alloy", 1000.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 1000.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 1000.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 1000.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 1000.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 1000.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 1000.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 1000.0)
 	return {
 		"root": root,
 		"world": world,

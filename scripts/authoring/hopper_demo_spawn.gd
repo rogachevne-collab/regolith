@@ -3,7 +3,9 @@ extends RefCounted
 
 ## Flight craft for POC-THRUSTERS-V0: deck + thruster + gyro + seat + power + legs.
 
-const STORE_ID := "player"
+static var STORE_ID: String:
+	get:
+		return PlayerIdentity.local_store_id()
 
 
 static func spawn_at_transform(

@@ -68,7 +68,7 @@ func resolve(params: Dictionary) -> Dictionary:
 	if world == null or archetype == null:
 		return _empty_result()
 	var orientation_index := int(params.get("orientation_index", 0))
-	var store_id := str(params.get("store_id", "player"))
+	var store_id := str(params.get("store_id", ""))
 	var ray_origin: Vector3 = params.get("ray_origin", Vector3.ZERO)
 	var ray_direction: Vector3 = Vector3(
 		params.get("ray_direction", Vector3.FORWARD)

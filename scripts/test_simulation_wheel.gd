@@ -46,14 +46,14 @@ func _run_tests() -> void:
 
 func _boot_world() -> SimulationWorld:
 	var world := SimulationWorld.new()
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 500.0)
-	world.set_resource_amount("player", "girder", 500.0)
-	world.set_resource_amount("player", "mechanism", 500.0)
-	world.set_resource_amount("player", "conduit", 500.0)
-	world.set_resource_amount("player", "plate_basalt", 500.0)
-	world.set_resource_amount("player", "sintered_basalt", 500.0)
-	world.set_resource_amount("player", "plate_alloy", 500.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 500.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 500.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 500.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 500.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 500.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 500.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 500.0)
 	for archetype: ElementArchetype in Slice01Archetypes.load_rover_archetypes():
 		world.get_archetype_registry().register(archetype)
 	world.get_archetype_registry().register(Slice01Archetypes.foundation())
@@ -96,7 +96,7 @@ func _place(
 	place.archetype = archetype
 	place.origin_cell = origin_cell
 	place.orientation_index = orientation_index
-	place.store_id = "player"
+	place.store_id = PlayerIdentity.store_id("player")
 	return world.apply_structural_command_now(place)
 
 
@@ -446,7 +446,7 @@ func _test_dismantle_wheel_breaks_locomotive() -> bool:
 	var dismantle := DismantleElementCommand.new()
 	dismantle.element_id = int(built["wheel_id"])
 	dismantle.expected_assembly_revision = int(built["revision"])
-	dismantle.store_id = "player"
+	dismantle.store_id = PlayerIdentity.store_id("player")
 	var result := world.apply_structural_command_now(dismantle)
 	if not result.is_ok():
 		world.free()
@@ -870,7 +870,7 @@ func _build_multi_axle_rover(
 	anchor.initial_motion = AssemblyMotionState.from_grid_frame(
 		GridTransform.identity()
 	)
-	anchor.store_id = "player"
+	anchor.store_id = PlayerIdentity.store_id("player")
 	var anchor_result := world.apply_structural_command_now(anchor)
 	if not anchor_result.is_ok():
 		return {"ok": false, "error": "anchor"}
@@ -938,7 +938,7 @@ func _weld(world: SimulationWorld, element_id: int) -> void:
 	weld.element_id = element_id
 	weld.expected_state_revision = element.state_revision
 	weld.max_material_amount = 100.0
-	weld.store_id = "player"
+	weld.store_id = PlayerIdentity.store_id("player")
 	world.apply_structural_command_now(weld)
 
 

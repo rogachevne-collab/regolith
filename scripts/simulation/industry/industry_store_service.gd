@@ -1,7 +1,8 @@
 class_name IndustryStoreService
 extends RefCounted
 
-const PLAYER_STORE_ID := "player"
+## Player stores are `player:<uid>` — see PlayerIdentity. There is no single
+## "the player" store: one per player, so peers never share a rucksack.
 const ELEMENT_STORE_PREFIX := "element:"
 const BUFFER_STORE_PREFIX := "buffer:"
 
@@ -44,7 +45,7 @@ static func parse_buffer_element_id(store_id: String) -> int:
 
 
 static func capacity_l_for_store(world: SimulationWorld, store_id: String) -> float:
-	if store_id == PLAYER_STORE_ID:
+	if PlayerIdentity.is_player_store(store_id):
 		return IndustryArchetypeProfile.player_carry_capacity_l()
 	var element_id := parse_element_id_from_store(store_id)
 	if element_id > 0:
@@ -65,17 +66,23 @@ static func capacity_l_for_store(world: SimulationWorld, store_id: String) -> fl
 	return INF
 
 
-static func ensure_player_store(world: SimulationWorld) -> SimulationResourceStore:
-	var store := world.ensure_resource_store(PLAYER_STORE_ID)
+static func ensure_player_store(
+	world: SimulationWorld,
+	player_uid: String
+) -> SimulationResourceStore:
+	var store := world.ensure_resource_store(PlayerIdentity.store_id(player_uid))
 	if store != null:
 		store.capacity_l = IndustryArchetypeProfile.player_carry_capacity_l()
 	return store
 
 
-static func seed_player_starter_resources(world: SimulationWorld) -> bool:
+static func seed_player_starter_resources(
+	world: SimulationWorld,
+	player_uid: String
+) -> bool:
 	if world == null:
 		return false
-	ensure_player_store(world)
+	ensure_player_store(world, player_uid)
 	ensure_player_inventory(world)
 	var projected := player_instance_volume_l(world)
 	for resource_id: String in PLAYER_STARTER_RESOURCES.keys():
@@ -89,17 +96,20 @@ static func seed_player_starter_resources(world: SimulationWorld) -> bool:
 		return false
 	for resource_id: String in PLAYER_STARTER_RESOURCES.keys():
 		world.set_resource_amount(
-			PLAYER_STORE_ID,
+			PlayerIdentity.store_id(player_uid),
 			resource_id,
 			float(PLAYER_STARTER_RESOURCES[resource_id])
 		)
 	return true
 
 
-static func apply_playtest_cargo(world: SimulationWorld) -> bool:
+static func apply_playtest_cargo(
+	world: SimulationWorld,
+	player_uid: String
+) -> bool:
 	if world == null:
 		return false
-	var store := ensure_player_store(world)
+	var store := ensure_player_store(world, player_uid)
 	if store == null:
 		return false
 	store.capacity_l = PLAYTEST_PLAYER_CARRY_CAPACITY_L
@@ -118,7 +128,7 @@ static func apply_playtest_cargo(world: SimulationWorld) -> bool:
 		return false
 	for resource_id: String in PLAYTEST_PLAYER_RESOURCES.keys():
 		world.set_resource_amount(
-			PLAYER_STORE_ID,
+			PlayerIdentity.store_id(player_uid),
 			resource_id,
 			float(PLAYTEST_PLAYER_RESOURCES[resource_id])
 		)
@@ -136,8 +146,11 @@ static func player_instance_volume_l(world: SimulationWorld) -> float:
 	return registry.volume_l() if registry != null else 0.0
 
 
-static func player_total_volume_l(world: SimulationWorld) -> float:
-	var store := world.get_resource_store(PLAYER_STORE_ID)
+static func player_total_volume_l(
+	world: SimulationWorld,
+	player_uid: String
+) -> float:
+	var store := world.get_resource_store(PlayerIdentity.store_id(player_uid))
 	var total := player_instance_volume_l(world)
 	if store != null:
 		total += store.volume_l()
@@ -180,7 +193,9 @@ static func sync_element_storage(world: SimulationWorld, element: SimulationElem
 
 
 static func sync_all_elements(world: SimulationWorld) -> void:
-	ensure_player_store(world)
+	# No player store is created here any more: a world-wide element sync has
+	# no business inventing a store for one particular player. Player stores
+	# come from spawn (seed_player_starter_resources) or from the snapshot.
 	ensure_player_inventory(world)
 	for element: SimulationElement in world.list_elements():
 		sync_element_storage(world, element)

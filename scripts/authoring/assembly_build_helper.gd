@@ -5,14 +5,17 @@ extends RefCounted
 ## Tracks topology_revision; callers never invent revision by hand.
 
 var world: SimulationWorld
-var store_id: String = "player"
+var store_id: String = PlayerIdentity.local_store_id()
 var assembly_id: int = 0
 var revision: int = 0
 var last_error: String = ""
 var element_ids: Dictionary = {}
 
 
-func _init(p_world: SimulationWorld, p_store_id: String = "player") -> void:
+func _init(
+	p_world: SimulationWorld,
+	p_store_id: String = PlayerIdentity.local_store_id()
+) -> void:
 	world = p_world
 	store_id = p_store_id
 

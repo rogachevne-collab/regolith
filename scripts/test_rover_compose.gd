@@ -29,14 +29,14 @@ func _run_tests() -> void:
 
 func _boot_world() -> SimulationWorld:
 	var world := SimulationWorld.new()
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 800.0)
-	world.set_resource_amount("player", "girder", 800.0)
-	world.set_resource_amount("player", "mechanism", 800.0)
-	world.set_resource_amount("player", "conduit", 800.0)
-	world.set_resource_amount("player", "plate_basalt", 800.0)
-	world.set_resource_amount("player", "sintered_basalt", 800.0)
-	world.set_resource_amount("player", "plate_alloy", 800.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 800.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 800.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 800.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 800.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 800.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 800.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 800.0)
 	for archetype: ElementArchetype in Slice01Archetypes.load_rover_archetypes():
 		world.get_archetype_registry().register(archetype)
 	return world
@@ -212,7 +212,7 @@ func _test_unsupported_wheel_count() -> bool:
 func _test_bad_com_fixture() -> bool:
 	# Narrow track + batteries on long +X spur → CoM outside support bbox.
 	var world := _boot_world()
-	var helper := AssemblyBuildHelper.new(world, "player")
+	var helper := AssemblyBuildHelper.new(world, PlayerIdentity.store_id("player"))
 	helper.ensure_materials(800.0)
 	if not helper.spawn_anchor(Slice01Archetypes.rover_frame()):
 		world.free()

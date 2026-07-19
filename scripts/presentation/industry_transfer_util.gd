@@ -81,7 +81,7 @@ static func pickup_parameters(
 		return {}
 	return {
 		"from_store_id": from_store_id,
-		"to_store_id": IndustryStoreService.PLAYER_STORE_ID,
+		"to_store_id": PlayerIdentity.local_store_id(),
 		"resource_id": resource_id,
 		"amount": 0.0,
 	}
@@ -95,7 +95,7 @@ static func deposit_parameters(
 	var to_store_id := element_store_id(element)
 	if to_store_id.is_empty():
 		return {}
-	var player_store := world.get_resource_store(IndustryStoreService.PLAYER_STORE_ID)
+	var player_store := world.get_resource_store(PlayerIdentity.local_store_id())
 	if player_store == null:
 		return {}
 	var chosen := resource_id
@@ -104,7 +104,7 @@ static func deposit_parameters(
 	if chosen.is_empty():
 		return {}
 	return {
-		"from_store_id": IndustryStoreService.PLAYER_STORE_ID,
+		"from_store_id": PlayerIdentity.local_store_id(),
 		"to_store_id": to_store_id,
 		"resource_id": chosen,
 		"amount": 0.0,

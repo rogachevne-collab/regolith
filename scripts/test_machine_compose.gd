@@ -29,14 +29,14 @@ func _run_tests() -> void:
 
 func _boot_world() -> SimulationWorld:
 	var world := SimulationWorld.new()
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 2000.0)
-	world.set_resource_amount("player", "girder", 2000.0)
-	world.set_resource_amount("player", "mechanism", 2000.0)
-	world.set_resource_amount("player", "conduit", 2000.0)
-	world.set_resource_amount("player", "plate_basalt", 2000.0)
-	world.set_resource_amount("player", "sintered_basalt", 2000.0)
-	world.set_resource_amount("player", "plate_alloy", 2000.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 2000.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 2000.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 2000.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 2000.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 2000.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 2000.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 2000.0)
 	for archetype: ElementArchetype in Slice01Archetypes.load_all_required():
 		world.get_archetype_registry().register(archetype)
 	for archetype: ElementArchetype in Slice01Archetypes.load_actuator_archetypes():
@@ -178,7 +178,7 @@ func _test_unsupported_recipe() -> bool:
 
 func _test_validator_missing_drill() -> bool:
 	var world := _boot_world()
-	var helper := AssemblyBuildHelper.new(world, "player")
+	var helper := AssemblyBuildHelper.new(world, PlayerIdentity.store_id("player"))
 	helper.ensure_materials(500.0)
 	if not helper.spawn_anchor(Slice01Archetypes.foundation()):
 		world.free()

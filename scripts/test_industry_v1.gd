@@ -202,8 +202,8 @@ func _test_capacity_store_no_loss_on_reject() -> bool:
 
 func _test_discrete_fractional_rejection() -> bool:
 	var world := SimulationWorld.new()
-	IndustryStoreService.ensure_player_store(world)
-	var store := world.get_resource_store("player")
+	IndustryStoreService.ensure_player_store(world, "player")
+	var store := world.get_resource_store(PlayerIdentity.store_id("player"))
 	if store == null:
 		world.free()
 		return _fail("player store missing")
@@ -219,8 +219,8 @@ func _test_discrete_fractional_rejection() -> bool:
 
 func _test_player_carry_capacity_fixture() -> bool:
 	var world := SimulationWorld.new()
-	IndustryStoreService.ensure_player_store(world)
-	var store := world.get_resource_store("player")
+	IndustryStoreService.ensure_player_store(world, "player")
+	var store := world.get_resource_store(PlayerIdentity.store_id("player"))
 	if store == null:
 		world.free()
 		return _fail("player store missing")
@@ -239,8 +239,8 @@ func _test_player_carry_capacity_fixture() -> bool:
 	world.free()
 
 	world = SimulationWorld.new()
-	IndustryStoreService.ensure_player_store(world)
-	store = world.get_resource_store("player")
+	IndustryStoreService.ensure_player_store(world, "player")
+	store = world.get_resource_store(PlayerIdentity.store_id("player"))
 	if not store.add("ore_mare_regolith", 40.0):
 		world.free()
 		return _fail("40 ore_mare_regolith should fill 100 L exactly")
@@ -355,13 +355,13 @@ func _test_cargo_graph_spawned_topology() -> bool:
 
 func _test_cargo_graph_rebuild_on_weld() -> bool:
 	var world := SimulationWorld.new()
-	world.set_resource_amount("player", "plate_metal", 100.0)
-	world.set_resource_amount("player", "girder", 100.0)
-	world.set_resource_amount("player", "mechanism", 100.0)
-	world.set_resource_amount("player", "conduit", 100.0)
-	world.set_resource_amount("player", "plate_basalt", 100.0)
-	world.set_resource_amount("player", "sintered_basalt", 100.0)
-	world.set_resource_amount("player", "plate_alloy", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 100.0)
 	var spawn := _spawn(world, _cargo_line_blueprint(), GridTransform.identity())
 	if not spawn.is_ok():
 		world.free()
@@ -386,7 +386,7 @@ func _test_cargo_graph_rebuild_on_weld() -> bool:
 	var weld := WeldElementCommand.new()
 	weld.element_id = corner_pipe_id
 	weld.expected_state_revision = corner_pipe.state_revision
-	weld.store_id = "player"
+	weld.store_id = PlayerIdentity.store_id("player")
 	weld.max_material_amount = 100.0
 	var weld_result := world.apply_structural_command_now(weld)
 	if not weld_result.is_ok():
@@ -905,17 +905,17 @@ func _run_electric_link_dormancy_scenario() -> bool:
 		world.free()
 		return _fail("consumer must lose power while supply link is dormant")
 
-	world.set_resource_amount("player", "plate_metal", 10.0)
-	world.set_resource_amount("player", "girder", 10.0)
-	world.set_resource_amount("player", "mechanism", 10.0)
-	world.set_resource_amount("player", "conduit", 10.0)
-	world.set_resource_amount("player", "plate_basalt", 10.0)
-	world.set_resource_amount("player", "sintered_basalt", 10.0)
-	world.set_resource_amount("player", "plate_alloy", 10.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 10.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 10.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 10.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 10.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 10.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 10.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 10.0)
 	var repair := RepairElementCommand.new()
 	repair.element_id = source_id
 	repair.expected_state_revision = source.state_revision
-	repair.store_id = "player"
+	repair.store_id = PlayerIdentity.store_id("player")
 	repair.max_material_amount = 10.0
 	var repair_result := world.apply_structural_command_now(repair)
 	if not repair_result.is_ok():

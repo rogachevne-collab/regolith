@@ -3,7 +3,6 @@ extends Control
 ## § Terminal inventory). Reads StoreSnapshot via WorldCommandGateway; drag/drop
 ## and machine controls live in HudInventoryContainerPanel. Presentation only.
 
-const PLAYER_STORE_ID := IndustryStoreService.PLAYER_STORE_ID
 
 const SOLO_COLUMN_WIDTH := 264.0
 const SOLO_COLUMN_MIN := 232.0
@@ -272,13 +271,13 @@ func _wire_peer_panels() -> void:
 		_target_panel.visible = true
 		_panel_divider.visible = true
 		_player_panel.set_peer_store_id(_target_store_id)
-		_target_panel.set_peer_store_id(PLAYER_STORE_ID)
+		_target_panel.set_peer_store_id(PlayerIdentity.local_store_id())
 
 
 func _refresh_panels() -> void:
 	if _gateway == null or _player_panel == null:
 		return
-	var player_snap := _gateway.store_snapshot(PLAYER_STORE_ID)
+	var player_snap := _gateway.store_snapshot(PlayerIdentity.local_store_id())
 	if bool(player_snap.get("valid", true)):
 		_player_panel.apply_snapshot(player_snap)
 	if _solo or _target_panel == null or _target_store_id.is_empty():

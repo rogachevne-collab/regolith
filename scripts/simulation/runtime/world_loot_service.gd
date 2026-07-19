@@ -134,7 +134,7 @@ static func remove_world_loot_pile(world, pile_id: int) -> bool:
 
 static func collect_world_loot_pile(world, 
 	pile_id: int,
-	to_store_id: String = IndustryStoreService.PLAYER_STORE_ID
+	to_store_id: String
 ) -> Dictionary:
 	var pile: WorldLootPile = world._world_loot_piles.get(pile_id) as WorldLootPile
 	var store: SimulationResourceStore = world.get_resource_store(to_store_id)

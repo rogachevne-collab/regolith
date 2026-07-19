@@ -10,8 +10,8 @@ static func build(world: SimulationWorld, store_id: String) -> Dictionary:
 	if store_id.is_empty():
 		return failure(&"invalid_reference")
 
-	if store_id == IndustryStoreService.PLAYER_STORE_ID:
-		return _build_player_snapshot(world)
+	if PlayerIdentity.is_player_store(store_id):
+		return _build_player_snapshot(world, store_id)
 
 	if store_id.begins_with(IndustryStoreService.BUFFER_STORE_PREFIX):
 		return _build_buffer_snapshot(
@@ -40,8 +40,15 @@ static func failure(reason: StringName = &"invalid_reference") -> Dictionary:
 	}
 
 
-static func _build_player_snapshot(world: SimulationWorld) -> Dictionary:
-	var store := IndustryStoreService.ensure_player_store(world)
+static func _build_player_snapshot(
+	world: SimulationWorld,
+	store_id: String
+) -> Dictionary:
+	# Read-only: building a snapshot must not create the store. It used to
+	# ensure() one, which was harmless with a single hardcoded player but now
+	# means any `player:<anything>` query conjures a store that then rides the
+	# snapshot into the save.
+	var store := world.get_resource_store(store_id)
 	if store == null:
 		return failure(&"invalid_reference")
 	var registry := IndustryStoreService.ensure_player_inventory(world)
@@ -63,8 +70,8 @@ static func _build_player_snapshot(world: SimulationWorld) -> Dictionary:
 		used_l += registry.volume_l()
 		mass_kg += registry.mass_kg()
 	return _snapshot_from_amounts(
-		IndustryStoreService.PLAYER_STORE_ID,
-		HudTokens.store_label(IndustryStoreService.PLAYER_STORE_ID),
+		store_id,
+		HudTokens.store_label(store_id),
 		entries,
 		used_l,
 		IndustryStoreService.player_carry_capacity_l(),

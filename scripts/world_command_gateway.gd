@@ -56,6 +56,9 @@ var _material_field := MoonMaterialField.new()
 var _hand_drill_spawn_world := Vector3.ZERO
 var _hand_drill_last_bite_center: Variant = null
 var _hand_drill_last_bite_msec := 0
+## Whose commands this gateway executes. One local player today; under coop
+## the host stamps the sending peer's uid instead.
+var actor_uid := PlayerIdentity.local_uid()
 var _rover_seat_player: Node3D
 var _rover_seat_assembly_id := 0
 var _rover_seat_element_id := 0
@@ -109,6 +112,12 @@ func submit(command: Dictionary) -> int:
 	var command_id := _next_command_id
 	_next_command_id += 1
 	queued["id"] = command_id
+	# The gateway decides whose resources a command spends — not the caller.
+	# Today that is always the local player; under coop this is the one line
+	# that becomes "the peer that sent it" (COOP-HOST-V0 "Транспорт команд"),
+	# which is why no caller is allowed to name a store itself.
+	queued["actor_uid"] = actor_uid
+	queued["store_id"] = PlayerIdentity.store_id(actor_uid)
 	_queue.append(queued)
 	if not _flush_scheduled:
 		_flush_scheduled = true
@@ -335,7 +344,7 @@ func _route_hand_drill_yield(
 	if _session == null or _session.world == null:
 		return
 	var store := _session.world.get_resource_store(
-		IndustryStoreService.PLAYER_STORE_ID
+		PlayerIdentity.store_id(actor_uid)
 	)
 	for yield_entry: Dictionary in yields:
 		var resource_id := String(yield_entry.get("resource_id", ""))
@@ -1044,7 +1053,7 @@ func preview_construction(
 			target,
 			archetype,
 			orientation_index,
-			"player",
+			PlayerIdentity.store_id(actor_uid),
 			held_ground_pivot,
 			held_attach_pivot
 		)
@@ -1060,7 +1069,8 @@ func baseline_ground_pivot(
 	return ConstructionPlacement.baseline_ground_pivot(
 		_session.world,
 		target,
-		_get_archetype(archetype_id)
+		_get_archetype(archetype_id),
+		PlayerIdentity.store_id(actor_uid)
 	)
 
 
@@ -1104,7 +1114,7 @@ func resolve_construction_placement(params: Dictionary) -> Dictionary:
 		"world": _session.world,
 		"archetype": archetype,
 		"orientation_index": orientation_index,
-		"store_id": str(params.get("store_id", "player")),
+		"store_id": PlayerIdentity.store_id(actor_uid),
 		"ray_origin": params.get("ray_origin", Vector3.ZERO),
 		"ray_direction": params.get("ray_direction", Vector3.FORWARD),
 		"camera": params.get("camera"),
@@ -1139,7 +1149,9 @@ func reset_construction_snap() -> void:
 func construction_resource_amount() -> float:
 	if _session == null:
 		return 0.0
-	var store := _session.world.get_resource_store("player")
+	var store := _session.world.get_resource_store(
+		PlayerIdentity.store_id(actor_uid)
+	)
 	return (
 		store.amount("plate_metal")
 		if store != null else 0.0
@@ -1261,7 +1273,11 @@ func _damage_element(
 	var parameters: Dictionary = command.get("parameters", {})
 	var amount := float(parameters.get("damage", 0.0))
 	var refund_fraction := float(parameters.get("refund_fraction_on_destroy", 0.0))
-	var store_id := str(parameters.get("store_id", ""))
+	# Empty store = no refund at all (plain drill damage). Only a command that
+	# asks for a refund gets one, and it always goes to the actor.
+	var store_id := ""
+	if bool(parameters.get("refund_to_actor", false)):
+		store_id = PlayerIdentity.store_id(actor_uid)
 	return apply_damage(element_id, amount, refund_fraction, store_id)
 
 
@@ -1339,7 +1355,7 @@ func _construction_apply(
 			var repair := RepairElementCommand.new()
 			repair.element_id = element.element_id
 			repair.expected_state_revision = element.state_revision
-			repair.store_id = "player"
+			repair.store_id = PlayerIdentity.store_id(actor_uid)
 			repair.max_material_amount = 1.0
 			return _structural_result(
 				_session.world.apply_structural_command_now(repair)
@@ -1398,7 +1414,7 @@ func _weld_element(
 	var weld := WeldElementCommand.new()
 	weld.element_id = element.element_id
 	weld.expected_state_revision = element.state_revision
-	weld.store_id = "player"
+	weld.store_id = PlayerIdentity.store_id(actor_uid)
 	weld.max_material_amount = 1.0
 	return _structural_result(
 		_session.world.apply_structural_command_now(weld)
@@ -1407,6 +1423,10 @@ func _weld_element(
 
 func _apply_place_plan(plan: Dictionary) -> Dictionary:
 	var place := plan.get("command") as PlaceElementCommand
+	# The plan was built client-side, so its owner is a suggestion. Re-stamp it:
+	# a peer must not be able to spend someone else's materials by sending a
+	# plan that names their store.
+	place.store_id = PlayerIdentity.store_id(actor_uid)
 	var result := _session.world.apply_structural_command_now(place)
 	return _structural_result(result)
 
@@ -1917,7 +1937,7 @@ func _collect_world_loot(command: Dictionary) -> Dictionary:
 	var to_store_id := str(
 		parameters.get(
 			"to_store_id",
-			IndustryStoreService.PLAYER_STORE_ID
+			PlayerIdentity.store_id(actor_uid)
 		)
 	)
 	var result := _session.world.collect_world_loot_pile(
@@ -1957,7 +1977,7 @@ func _dismantle_element(
 	var dismantle := DismantleElementCommand.new()
 	dismantle.element_id = element.element_id
 	dismantle.expected_assembly_revision = assembly.topology_revision
-	dismantle.store_id = "player"
+	dismantle.store_id = PlayerIdentity.store_id(actor_uid)
 	return _structural_result(
 		_session.world.apply_structural_command_now(dismantle)
 	)

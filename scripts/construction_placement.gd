@@ -9,7 +9,7 @@ static func plan(
 	target: Dictionary,
 	archetype: ElementArchetype,
 	orientation_index: int,
-	store_id: String = "player",
+	store_id: String,
 	held_ground_pivot: Vector3 = Vector3(INF, INF, INF),
 	held_attach_pivot: Vector3 = Vector3(INF, INF, INF)
 ) -> Dictionary:
@@ -138,7 +138,7 @@ static func baseline_ground_pivot(
 	world: SimulationWorld,
 	target: Dictionary,
 	archetype: ElementArchetype,
-	store_id: String = "player"
+	store_id: String
 ) -> Vector3:
 	var baseline := plan(world, target, archetype, 0, store_id)
 	if not bool(baseline.get("valid", false)):
@@ -311,7 +311,7 @@ static func ranked_attach_plans(
 	target: Dictionary,
 	archetype: ElementArchetype,
 	orientation_index: int,
-	store_id: String = "player",
+	store_id: String,
 	held_ground_pivot: Vector3 = Vector3(INF, INF, INF),
 	held_attach_pivot: Vector3 = Vector3(INF, INF, INF)
 ) -> Array[Dictionary]:

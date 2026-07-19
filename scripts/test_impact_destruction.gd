@@ -15,6 +15,9 @@ func _ready() -> void:
 
 func _run_tests() -> void:
 	_HeadlessTestHarness.arm_watchdog(self, "KINETIC-INTERACTION-V1", 25.0)
+	# Pin the local player so gateway-stamped store ids match the fixture and
+	# no test touches user:// for a generated uid.
+	PlayerIdentity.override_local_uid("player")
 	var tests: Array[Callable] = [
 		_test_damage_scales_with_impulse,
 		_test_weak_impulse_ignored,
@@ -831,7 +834,7 @@ func _new_fixture() -> Dictionary:
 	session.impact_service.bind(session.world, gateway)
 	ProjectedAssemblyBody.impact_service = session.impact_service
 	session.projection.bind_impact_service(session.impact_service)
-	session.world.ensure_resource_store("player")
+	session.world.ensure_resource_store(PlayerIdentity.store_id("player"))
 	for item_id: String in [
 		"plate_metal",
 		"girder",
@@ -841,7 +844,7 @@ func _new_fixture() -> Dictionary:
 		"sintered_basalt",
 		"plate_alloy",
 	]:
-		session.world.set_resource_amount("player", item_id, 500.0)
+		session.world.set_resource_amount(PlayerIdentity.store_id("player"), item_id, 500.0)
 	for _frame: int in range(12):
 		await get_tree().physics_frame
 	return {
@@ -896,14 +899,14 @@ func _spawn(
 
 func _spawn_piston_on_ground(fixture: Dictionary) -> Dictionary:
 	var world: SimulationWorld = fixture.world
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 100.0)
-	world.set_resource_amount("player", "girder", 100.0)
-	world.set_resource_amount("player", "mechanism", 100.0)
-	world.set_resource_amount("player", "conduit", 100.0)
-	world.set_resource_amount("player", "plate_basalt", 100.0)
-	world.set_resource_amount("player", "sintered_basalt", 100.0)
-	world.set_resource_amount("player", "plate_alloy", 100.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 100.0)
 	world.get_archetype_registry().register(PISTON_HEAD)
 	var foundation := _spawn(
 		world,
@@ -921,7 +924,7 @@ func _spawn_piston_on_ground(fixture: Dictionary) -> Dictionary:
 	frame_place.archetype = Slice01Archetypes.frame()
 	frame_place.origin_cell = Vector3i(4, 0, 0)
 	frame_place.orientation_index = 0
-	frame_place.store_id = "player"
+	frame_place.store_id = PlayerIdentity.store_id("player")
 	var frame_result := world.apply_structural_command_now(frame_place)
 	if not frame_result.is_ok():
 		return {}
@@ -933,7 +936,7 @@ func _spawn_piston_on_ground(fixture: Dictionary) -> Dictionary:
 	piston_place.archetype = PISTON_BASE
 	piston_place.origin_cell = Vector3i(5, 0, 0)
 	piston_place.orientation_index = 0
-	piston_place.store_id = "player"
+	piston_place.store_id = PlayerIdentity.store_id("player")
 	var piston_result := world.apply_structural_command_now(piston_place)
 	if not piston_result.is_ok():
 		return {}
@@ -964,7 +967,7 @@ func _weld_element(world: SimulationWorld, element_id: int) -> void:
 	weld.element_id = element_id
 	weld.expected_state_revision = element.state_revision
 	weld.max_material_amount = 100.0
-	weld.store_id = "player"
+	weld.store_id = PlayerIdentity.store_id("player")
 	world.apply_structural_command_now(weld)
 
 

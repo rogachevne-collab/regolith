@@ -94,14 +94,14 @@ func _run_tests() -> void:
 
 func _test_piston_atomic_placement() -> bool:
 	var world := SimulationWorld.new()
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 100.0)
-	world.set_resource_amount("player", "girder", 100.0)
-	world.set_resource_amount("player", "mechanism", 100.0)
-	world.set_resource_amount("player", "conduit", 100.0)
-	world.set_resource_amount("player", "plate_basalt", 100.0)
-	world.set_resource_amount("player", "sintered_basalt", 100.0)
-	world.set_resource_amount("player", "plate_alloy", 100.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 100.0)
 	var archetypes := {"base": PISTON_BASE, "head": PISTON_HEAD}
 	world.get_archetype_registry().register(archetypes["head"])
 	var foundation := _spawn(
@@ -119,7 +119,7 @@ func _test_piston_atomic_placement() -> bool:
 	frame_place.archetype = Slice01Archetypes.frame()
 	frame_place.origin_cell = Vector3i(4, 0, 0)
 	frame_place.orientation_index = 0
-	frame_place.store_id = "player"
+	frame_place.store_id = PlayerIdentity.store_id("player")
 	var frame_result := world.apply_structural_command_now(frame_place)
 	if not frame_result.is_ok():
 		world.free()
@@ -136,7 +136,7 @@ func _test_piston_atomic_placement() -> bool:
 	piston_place.archetype = archetypes["base"]
 	piston_place.origin_cell = Vector3i(5, 0, 0)
 	piston_place.orientation_index = 0
-	piston_place.store_id = "player"
+	piston_place.store_id = PlayerIdentity.store_id("player")
 	var piston_result := world.apply_structural_command_now(piston_place)
 	if not piston_result.is_ok():
 		world.free()
@@ -156,7 +156,7 @@ func _test_piston_atomic_placement() -> bool:
 	):
 		world.free()
 		return _fail("piston joint missing motor state")
-	if world.get_resource_store("player").amount("plate_metal") >= 100.0:
+	if world.get_resource_store(PlayerIdentity.store_id("player")).amount("plate_metal") >= 100.0:
 		world.free()
 		return _fail("piston placement did not spend materials")
 	world.free()
@@ -165,10 +165,10 @@ func _test_piston_atomic_placement() -> bool:
 
 func _test_piston_large_atomic_placement() -> bool:
 	var world := SimulationWorld.new()
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 200.0)
-	world.set_resource_amount("player", "girder", 200.0)
-	world.set_resource_amount("player", "mechanism", 200.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 200.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 200.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 200.0)
 	world.get_archetype_registry().register(PISTON_HEAD_LARGE)
 	var foundation := _spawn(
 		world,
@@ -185,7 +185,7 @@ func _test_piston_large_atomic_placement() -> bool:
 	platform.archetype = Slice01Archetypes.large_frame()
 	platform.origin_cell = Vector3i(0, 1, 0)
 	platform.orientation_index = 0
-	platform.store_id = "player"
+	platform.store_id = PlayerIdentity.store_id("player")
 	var platform_result := world.apply_structural_command_now(platform)
 	if not platform_result.is_ok():
 		world.free()
@@ -211,7 +211,7 @@ func _test_piston_large_atomic_placement() -> bool:
 	piston.archetype = PISTON_BASE_LARGE
 	piston.origin_cell = Vector3i(0, 6, 0)
 	piston.orientation_index = 0
-	piston.store_id = "player"
+	piston.store_id = PlayerIdentity.store_id("player")
 	var result := world.apply_structural_command_now(piston)
 	if not result.is_ok():
 		world.free()
@@ -242,10 +242,10 @@ func _test_piston_large_atomic_placement() -> bool:
 func _test_piston_large_head_attachment() -> bool:
 	GridSurfaceUtil.clear_descriptor_cache()
 	var world := SimulationWorld.new()
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 200.0)
-	world.set_resource_amount("player", "girder", 200.0)
-	world.set_resource_amount("player", "mechanism", 200.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 200.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 200.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 200.0)
 	world.get_archetype_registry().register(PISTON_HEAD_LARGE)
 	var foundation := _spawn(
 		world,
@@ -262,7 +262,7 @@ func _test_piston_large_head_attachment() -> bool:
 	platform.archetype = Slice01Archetypes.large_frame()
 	platform.origin_cell = Vector3i(0, 1, 0)
 	platform.orientation_index = 0
-	platform.store_id = "player"
+	platform.store_id = PlayerIdentity.store_id("player")
 	var platform_result := world.apply_structural_command_now(platform)
 	if not platform_result.is_ok():
 		world.free()
@@ -277,7 +277,7 @@ func _test_piston_large_head_attachment() -> bool:
 	piston.archetype = PISTON_BASE_LARGE
 	piston.origin_cell = Vector3i(0, 6, 0)
 	piston.orientation_index = 0
-	piston.store_id = "player"
+	piston.store_id = PlayerIdentity.store_id("player")
 	var piston_result := world.apply_structural_command_now(piston)
 	if not piston_result.is_ok():
 		world.free()
@@ -293,7 +293,7 @@ func _test_piston_large_head_attachment() -> bool:
 	deck.archetype = Slice01Archetypes.frame()
 	deck.origin_cell = Vector3i(0, 9, 0)
 	deck.orientation_index = 0
-	deck.store_id = "player"
+	deck.store_id = PlayerIdentity.store_id("player")
 	var deck_result := world.apply_structural_command_now(deck)
 	if not deck_result.is_ok():
 		world.free()
@@ -309,7 +309,7 @@ func _test_piston_large_head_attachment() -> bool:
 	drill.archetype = Slice01Archetypes.stationary_drill()
 	drill.origin_cell = Vector3i(1, 9, 1)
 	drill.orientation_index = 0
-	drill.store_id = "player"
+	drill.store_id = PlayerIdentity.store_id("player")
 	var drill_result := world.apply_structural_command_now(drill)
 	if not drill_result.is_ok():
 		world.free()
@@ -326,7 +326,7 @@ func _test_piston_large_head_attachment() -> bool:
 	side.archetype = Slice01Archetypes.frame()
 	side.origin_cell = Vector3i(3, 8, 1)
 	side.orientation_index = 0
-	side.store_id = "player"
+	side.store_id = PlayerIdentity.store_id("player")
 	var side_result := world.apply_structural_command_now(side)
 	if side_result.is_ok():
 		world.free()
@@ -381,10 +381,10 @@ func _test_piston_large_horizontal_head_drill() -> bool:
 	if horizontal_ori < 0:
 		return _fail("no wall-mount horizontal piston orientation")
 	var world := SimulationWorld.new()
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 200.0)
-	world.set_resource_amount("player", "girder", 200.0)
-	world.set_resource_amount("player", "mechanism", 200.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 200.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 200.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 200.0)
 	world.get_archetype_registry().register(PISTON_HEAD_LARGE)
 	var foundation := _spawn(
 		world,
@@ -401,7 +401,7 @@ func _test_piston_large_horizontal_head_drill() -> bool:
 	platform.archetype = Slice01Archetypes.large_frame()
 	platform.origin_cell = Vector3i(0, 1, 0)
 	platform.orientation_index = 0
-	platform.store_id = "player"
+	platform.store_id = PlayerIdentity.store_id("player")
 	var platform_result := world.apply_structural_command_now(platform)
 	if not platform_result.is_ok():
 		world.free()
@@ -418,7 +418,7 @@ func _test_piston_large_horizontal_head_drill() -> bool:
 	piston.archetype = PISTON_BASE_LARGE
 	piston.origin_cell = Vector3i(5, 2, 1)
 	piston.orientation_index = horizontal_ori
-	piston.store_id = "player"
+	piston.store_id = PlayerIdentity.store_id("player")
 	var piston_result := world.apply_structural_command_now(piston)
 	if not piston_result.is_ok():
 		world.free()
@@ -447,7 +447,7 @@ func _test_piston_large_horizontal_head_drill() -> bool:
 	drill.archetype = Slice01Archetypes.stationary_drill()
 	drill.origin_cell = drill_origin
 	drill.orientation_index = 0
-	drill.store_id = "player"
+	drill.store_id = PlayerIdentity.store_id("player")
 	var drill_result := world.apply_structural_command_now(drill)
 	if not drill_result.is_ok():
 		world.free()
@@ -543,10 +543,10 @@ func _test_piston_large_head_nearest_face_snap() -> bool:
 
 func _test_piston_stack_chain() -> bool:
 	var world := SimulationWorld.new()
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 200.0)
-	world.set_resource_amount("player", "girder", 200.0)
-	world.set_resource_amount("player", "mechanism", 200.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 200.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 200.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 200.0)
 	world.get_archetype_registry().register(PISTON_HEAD)
 	var foundation := _spawn(
 		world,
@@ -602,10 +602,10 @@ func _test_piston_stack_chain() -> bool:
 
 func _test_piston_fifth_rejected_at_placement() -> bool:
 	var world := SimulationWorld.new()
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 200.0)
-	world.set_resource_amount("player", "girder", 200.0)
-	world.set_resource_amount("player", "mechanism", 200.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 200.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 200.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 200.0)
 	world.get_archetype_registry().register(PISTON_HEAD)
 	var foundation := _spawn(
 		world,
@@ -635,7 +635,7 @@ func _test_piston_fifth_rejected_at_placement() -> bool:
 				% [index + 1, piston.reason]
 			)
 		prior = piston
-	var before_amount := world.get_resource_store("player").amount("mechanism")
+	var before_amount := world.get_resource_store(PlayerIdentity.store_id("player")).amount("mechanism")
 	var fifth := _place_piston(
 		world,
 		assembly_id,
@@ -648,7 +648,7 @@ func _test_piston_fifth_rejected_at_placement() -> bool:
 			"piston %d should be driven_joint_chain_too_long, got %s"
 			% [max_chain + 1, fifth.reason]
 		)
-	var after_amount := world.get_resource_store("player").amount("mechanism")
+	var after_amount := world.get_resource_store(PlayerIdentity.store_id("player")).amount("mechanism")
 	if not is_equal_approx(before_amount, after_amount):
 		world.free()
 		return _fail("rejected fifth piston spent materials")
@@ -740,14 +740,14 @@ func _test_piston_angular_compliance_config() -> bool:
 
 func _test_body_group_compiler() -> bool:
 	var world := SimulationWorld.new()
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 100.0)
-	world.set_resource_amount("player", "girder", 100.0)
-	world.set_resource_amount("player", "mechanism", 100.0)
-	world.set_resource_amount("player", "conduit", 100.0)
-	world.set_resource_amount("player", "plate_basalt", 100.0)
-	world.set_resource_amount("player", "sintered_basalt", 100.0)
-	world.set_resource_amount("player", "plate_alloy", 100.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 100.0)
 	var archetypes := {"base": PISTON_BASE, "head": PISTON_HEAD}
 	world.get_archetype_registry().register(archetypes["head"])
 	var foundation := _spawn(
@@ -771,7 +771,7 @@ func _test_body_group_compiler() -> bool:
 	platform.archetype = Slice01Archetypes.frame()
 	platform.origin_cell = Vector3i(6, 1, 0)
 	platform.orientation_index = 0
-	platform.store_id = "player"
+	platform.store_id = PlayerIdentity.store_id("player")
 	var platform_result := world.apply_structural_command_now(platform)
 	if not platform_result.is_ok():
 		world.free()
@@ -817,14 +817,14 @@ func _test_body_group_compiler() -> bool:
 
 func _test_reconstruct_carriage_from_extension() -> bool:
 	var world := SimulationWorld.new()
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 100.0)
-	world.set_resource_amount("player", "girder", 100.0)
-	world.set_resource_amount("player", "mechanism", 100.0)
-	world.set_resource_amount("player", "conduit", 100.0)
-	world.set_resource_amount("player", "plate_basalt", 100.0)
-	world.set_resource_amount("player", "sintered_basalt", 100.0)
-	world.set_resource_amount("player", "plate_alloy", 100.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 100.0)
 	world.get_archetype_registry().register(PISTON_HEAD)
 	var foundation := _spawn(
 		world,
@@ -894,14 +894,14 @@ func _test_reconstruct_carriage_from_extension() -> bool:
 
 func _test_piston_dual_anchor_root_group() -> bool:
 	var world := SimulationWorld.new()
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 100.0)
-	world.set_resource_amount("player", "girder", 100.0)
-	world.set_resource_amount("player", "mechanism", 100.0)
-	world.set_resource_amount("player", "conduit", 100.0)
-	world.set_resource_amount("player", "plate_basalt", 100.0)
-	world.set_resource_amount("player", "sintered_basalt", 100.0)
-	world.set_resource_amount("player", "plate_alloy", 100.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 100.0)
 	world.get_archetype_registry().register(PISTON_HEAD)
 	var foundation := _spawn(
 		world,
@@ -971,14 +971,14 @@ func _test_piston_dual_anchor_root_group() -> bool:
 
 func _test_snapshot_v6_roundtrip() -> bool:
 	var world := SimulationWorld.new()
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 100.0)
-	world.set_resource_amount("player", "girder", 100.0)
-	world.set_resource_amount("player", "mechanism", 100.0)
-	world.set_resource_amount("player", "conduit", 100.0)
-	world.set_resource_amount("player", "plate_basalt", 100.0)
-	world.set_resource_amount("player", "sintered_basalt", 100.0)
-	world.set_resource_amount("player", "plate_alloy", 100.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 100.0)
 	var archetypes := {"base": PISTON_BASE, "head": PISTON_HEAD}
 	world.get_archetype_registry().register(archetypes["head"])
 	var foundation := _spawn(
@@ -1057,14 +1057,14 @@ func _test_snapshot_v6_roundtrip() -> bool:
 
 func _test_piston_snapshot_tuning_migration() -> bool:
 	var world := SimulationWorld.new()
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 100.0)
-	world.set_resource_amount("player", "girder", 100.0)
-	world.set_resource_amount("player", "mechanism", 100.0)
-	world.set_resource_amount("player", "conduit", 100.0)
-	world.set_resource_amount("player", "plate_basalt", 100.0)
-	world.set_resource_amount("player", "sintered_basalt", 100.0)
-	world.set_resource_amount("player", "plate_alloy", 100.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 100.0)
 	world.get_archetype_registry().register(PISTON_HEAD)
 	var foundation := _spawn(
 		world,
@@ -1109,14 +1109,14 @@ func _test_piston_snapshot_tuning_migration() -> bool:
 
 func _test_set_actuator_target() -> bool:
 	var world := SimulationWorld.new()
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 100.0)
-	world.set_resource_amount("player", "girder", 100.0)
-	world.set_resource_amount("player", "mechanism", 100.0)
-	world.set_resource_amount("player", "conduit", 100.0)
-	world.set_resource_amount("player", "plate_basalt", 100.0)
-	world.set_resource_amount("player", "sintered_basalt", 100.0)
-	world.set_resource_amount("player", "plate_alloy", 100.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 100.0)
 	var archetypes := {"base": PISTON_BASE, "head": PISTON_HEAD}
 	world.get_archetype_registry().register(archetypes["head"])
 	var foundation := _spawn(
@@ -1168,14 +1168,14 @@ func _test_set_actuator_target() -> bool:
 
 func _test_configure_actuator() -> bool:
 	var world := SimulationWorld.new()
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 100.0)
-	world.set_resource_amount("player", "girder", 100.0)
-	world.set_resource_amount("player", "mechanism", 100.0)
-	world.set_resource_amount("player", "conduit", 100.0)
-	world.set_resource_amount("player", "plate_basalt", 100.0)
-	world.set_resource_amount("player", "sintered_basalt", 100.0)
-	world.set_resource_amount("player", "plate_alloy", 100.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 100.0)
 	var archetypes := {"base": PISTON_BASE, "head": PISTON_HEAD}
 	world.get_archetype_registry().register(archetypes["head"])
 	var foundation := _spawn(
@@ -1264,14 +1264,14 @@ func _test_force_limit_caps_velocity() -> bool:
 
 func _test_overload_status() -> bool:
 	var world := SimulationWorld.new()
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 100.0)
-	world.set_resource_amount("player", "girder", 100.0)
-	world.set_resource_amount("player", "mechanism", 100.0)
-	world.set_resource_amount("player", "conduit", 100.0)
-	world.set_resource_amount("player", "plate_basalt", 100.0)
-	world.set_resource_amount("player", "sintered_basalt", 100.0)
-	world.set_resource_amount("player", "plate_alloy", 100.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 100.0)
 	var archetypes := {"base": PISTON_BASE, "head": PISTON_HEAD}
 	world.get_archetype_registry().register(archetypes["head"])
 	var foundation := _spawn(
@@ -1319,14 +1319,14 @@ func _test_overload_status() -> bool:
 
 func _test_dismantle_splits_carriage() -> bool:
 	var world := SimulationWorld.new()
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 100.0)
-	world.set_resource_amount("player", "girder", 100.0)
-	world.set_resource_amount("player", "mechanism", 100.0)
-	world.set_resource_amount("player", "conduit", 100.0)
-	world.set_resource_amount("player", "plate_basalt", 100.0)
-	world.set_resource_amount("player", "sintered_basalt", 100.0)
-	world.set_resource_amount("player", "plate_alloy", 100.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 100.0)
 	var archetypes := {"base": PISTON_BASE, "head": PISTON_HEAD}
 	world.get_archetype_registry().register(archetypes["head"])
 	var foundation := _spawn(
@@ -1347,7 +1347,7 @@ func _test_dismantle_splits_carriage() -> bool:
 	dismantle.expected_assembly_revision = world.get_assembly_raw(
 		assembly_id
 	).topology_revision
-	dismantle.store_id = "player"
+	dismantle.store_id = PlayerIdentity.store_id("player")
 	var result := world.apply_structural_command_now(dismantle)
 	if not result.is_ok() or not bool(result.data.get("split", false)):
 		world.free()
@@ -1358,14 +1358,14 @@ func _test_dismantle_splits_carriage() -> bool:
 
 func _test_bridge_rejection() -> bool:
 	var world := SimulationWorld.new()
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 100.0)
-	world.set_resource_amount("player", "girder", 100.0)
-	world.set_resource_amount("player", "mechanism", 100.0)
-	world.set_resource_amount("player", "conduit", 100.0)
-	world.set_resource_amount("player", "plate_basalt", 100.0)
-	world.set_resource_amount("player", "sintered_basalt", 100.0)
-	world.set_resource_amount("player", "plate_alloy", 100.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 100.0)
 	var archetypes := {"base": PISTON_BASE, "head": PISTON_HEAD}
 	world.get_archetype_registry().register(archetypes["head"])
 	var foundation := _spawn(
@@ -1389,7 +1389,7 @@ func _test_bridge_rejection() -> bool:
 	bridge.archetype = Slice01Archetypes.frame()
 	bridge.origin_cell = Vector3i(6, 0, 0)
 	bridge.orientation_index = 0
-	bridge.store_id = "player"
+	bridge.store_id = PlayerIdentity.store_id("player")
 	var bridge_result := world.apply_structural_command_now(bridge)
 	if bridge_result.reason != StructuralCommandResult.REASON_DRIVEN_JOINT_CYCLE:
 		world.free()
@@ -1424,7 +1424,7 @@ func _test_rotor_atomic_placement() -> bool:
 	):
 		world.free()
 		return _fail("rotor joint missing angular motor state")
-	if world.get_resource_store("player").amount("plate_metal") >= 100.0:
+	if world.get_resource_store(PlayerIdentity.store_id("player")).amount("plate_metal") >= 100.0:
 		world.free()
 		return _fail("rotor placement did not spend materials")
 	world.free()
@@ -1480,14 +1480,14 @@ func _test_rotor_large_atomic_placement() -> bool:
 
 func _rotor_large_world_with_top() -> SimulationWorld:
 	var world := SimulationWorld.new()
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 200.0)
-	world.set_resource_amount("player", "girder", 200.0)
-	world.set_resource_amount("player", "mechanism", 200.0)
-	world.set_resource_amount("player", "conduit", 200.0)
-	world.set_resource_amount("player", "plate_basalt", 200.0)
-	world.set_resource_amount("player", "sintered_basalt", 200.0)
-	world.set_resource_amount("player", "plate_alloy", 200.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 200.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 200.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 200.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 200.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 200.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 200.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 200.0)
 	world.get_archetype_registry().register(ROTOR_TOP_LARGE)
 	return world
 
@@ -1507,7 +1507,7 @@ func _rotor_large_setup(world: SimulationWorld) -> Dictionary:
 	platform.archetype = Slice01Archetypes.large_frame()
 	platform.origin_cell = Vector3i(0, 1, 0)
 	platform.orientation_index = 0
-	platform.store_id = "player"
+	platform.store_id = PlayerIdentity.store_id("player")
 	var platform_result := world.apply_structural_command_now(platform)
 	if not platform_result.is_ok():
 		push_error(
@@ -1521,7 +1521,7 @@ func _rotor_large_setup(world: SimulationWorld) -> Dictionary:
 	place.archetype = ROTOR_BASE_LARGE
 	place.origin_cell = Vector3i(0, 6, 0)
 	place.orientation_index = 0
-	place.store_id = "player"
+	place.store_id = PlayerIdentity.store_id("player")
 	var rotor := world.apply_structural_command_now(place)
 	if not rotor.is_ok():
 		push_error(
@@ -1551,7 +1551,7 @@ func _test_rotor_body_groups_and_reconstruct() -> bool:
 	platform.archetype = Slice01Archetypes.frame()
 	platform.origin_cell = Vector3i(6, 1, 0)
 	platform.orientation_index = 0
-	platform.store_id = "player"
+	platform.store_id = PlayerIdentity.store_id("player")
 	var platform_result := world.apply_structural_command_now(platform)
 	if not platform_result.is_ok():
 		world.free()
@@ -1810,7 +1810,7 @@ func _test_rotor_dismantle_splits_top() -> bool:
 	platform.archetype = Slice01Archetypes.frame()
 	platform.origin_cell = Vector3i(6, 1, 0)
 	platform.orientation_index = 0
-	platform.store_id = "player"
+	platform.store_id = PlayerIdentity.store_id("player")
 	if not world.apply_structural_command_now(platform).is_ok():
 		world.free()
 		return _fail("platform attach failed before dismantle")
@@ -1820,7 +1820,7 @@ func _test_rotor_dismantle_splits_top() -> bool:
 	dismantle.expected_assembly_revision = world.get_assembly_raw(
 		assembly_id
 	).topology_revision
-	dismantle.store_id = "player"
+	dismantle.store_id = PlayerIdentity.store_id("player")
 	var result := world.apply_structural_command_now(dismantle)
 	if not result.is_ok() or not bool(result.data.get("split", false)):
 		world.free()
@@ -1852,7 +1852,7 @@ func _test_rotor_moving_top_construction_rejected() -> bool:
 	platform.archetype = Slice01Archetypes.frame()
 	platform.origin_cell = Vector3i(6, 1, 0)
 	platform.orientation_index = 0
-	platform.store_id = "player"
+	platform.store_id = PlayerIdentity.store_id("player")
 	var result := world.apply_structural_command_now(platform)
 	if result.reason != StructuralCommandResult.REASON_MOVING_TARGET_NOT_SUPPORTED:
 		world.free()
@@ -1893,7 +1893,7 @@ func _test_hinge_atomic_placement() -> bool:
 	):
 		world.free()
 		return _fail("hinge joint did not inherit authored angle bounds")
-	if world.get_resource_store("player").amount("plate_metal") >= 100.0:
+	if world.get_resource_store(PlayerIdentity.store_id("player")).amount("plate_metal") >= 100.0:
 		world.free()
 		return _fail("hinge placement did not spend materials")
 	world.free()
@@ -1918,7 +1918,7 @@ func _test_hinge_body_groups_and_reconstruct() -> bool:
 	platform.archetype = Slice01Archetypes.frame()
 	platform.origin_cell = Vector3i(5, 2, 0)
 	platform.orientation_index = 0
-	platform.store_id = "player"
+	platform.store_id = PlayerIdentity.store_id("player")
 	var platform_result := world.apply_structural_command_now(platform)
 	if not platform_result.is_ok():
 		world.free()
@@ -2272,7 +2272,7 @@ func _test_hinge_dismantle_splits_top() -> bool:
 	platform.archetype = Slice01Archetypes.frame()
 	platform.origin_cell = Vector3i(5, 2, 0)
 	platform.orientation_index = 0
-	platform.store_id = "player"
+	platform.store_id = PlayerIdentity.store_id("player")
 	if not world.apply_structural_command_now(platform).is_ok():
 		world.free()
 		return _fail("platform attach failed before hinge dismantle")
@@ -2282,7 +2282,7 @@ func _test_hinge_dismantle_splits_top() -> bool:
 	dismantle.expected_assembly_revision = world.get_assembly_raw(
 		assembly_id
 	).topology_revision
-	dismantle.store_id = "player"
+	dismantle.store_id = PlayerIdentity.store_id("player")
 	var result := world.apply_structural_command_now(dismantle)
 	if not result.is_ok() or not bool(result.data.get("split", false)):
 		world.free()
@@ -2313,7 +2313,7 @@ func _test_hinge_moving_top_construction_rejected() -> bool:
 	platform.archetype = Slice01Archetypes.frame()
 	platform.origin_cell = Vector3i(5, 2, 0)
 	platform.orientation_index = 0
-	platform.store_id = "player"
+	platform.store_id = PlayerIdentity.store_id("player")
 	var result := world.apply_structural_command_now(platform)
 	if result.reason != StructuralCommandResult.REASON_MOVING_TARGET_NOT_SUPPORTED:
 		world.free()
@@ -2462,7 +2462,7 @@ func _test_construction_rejected_on_bent_hinge_branch() -> bool:
 	platform.archetype = Slice01Archetypes.frame()
 	platform.origin_cell = Vector3i(5, 2, 0)
 	platform.orientation_index = 0
-	platform.store_id = "player"
+	platform.store_id = PlayerIdentity.store_id("player")
 	var platform_result := world.apply_structural_command_now(platform)
 	if not platform_result.is_ok():
 		world.free()
@@ -2479,7 +2479,7 @@ func _test_construction_rejected_on_bent_hinge_branch() -> bool:
 	tip_idle.archetype = Slice01Archetypes.frame()
 	tip_idle.origin_cell = Vector3i(5, 3, 0)
 	tip_idle.orientation_index = 0
-	tip_idle.store_id = "player"
+	tip_idle.store_id = PlayerIdentity.store_id("player")
 	var idle_result := world.apply_structural_command_now(tip_idle)
 	if not idle_result.is_ok():
 		world.free()
@@ -2497,7 +2497,7 @@ func _test_construction_rejected_on_bent_hinge_branch() -> bool:
 	tip_moving.archetype = Slice01Archetypes.frame()
 	tip_moving.origin_cell = Vector3i(5, 4, 0)
 	tip_moving.orientation_index = 0
-	tip_moving.store_id = "player"
+	tip_moving.store_id = PlayerIdentity.store_id("player")
 	var result := world.apply_structural_command_now(tip_moving)
 	if result.reason != StructuralCommandResult.REASON_MOVING_TARGET_NOT_SUPPORTED:
 		world.free()
@@ -2575,14 +2575,14 @@ func _test_driven_chain_length_limit() -> bool:
 
 func _nested_rotor_hinge_world() -> SimulationWorld:
 	var world := SimulationWorld.new()
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 200.0)
-	world.set_resource_amount("player", "girder", 200.0)
-	world.set_resource_amount("player", "mechanism", 200.0)
-	world.set_resource_amount("player", "conduit", 200.0)
-	world.set_resource_amount("player", "plate_basalt", 200.0)
-	world.set_resource_amount("player", "sintered_basalt", 200.0)
-	world.set_resource_amount("player", "plate_alloy", 200.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 200.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 200.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 200.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 200.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 200.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 200.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 200.0)
 	world.get_archetype_registry().register(ROTOR_TOP)
 	world.get_archetype_registry().register(HINGE_TOP)
 	var foundation := _spawn(
@@ -2604,7 +2604,7 @@ func _nested_rotor_hinge_world() -> SimulationWorld:
 	rotor_place.archetype = ROTOR_BASE
 	rotor_place.origin_cell = Vector3i(5, 0, 0)
 	rotor_place.orientation_index = 0
-	rotor_place.store_id = "player"
+	rotor_place.store_id = PlayerIdentity.store_id("player")
 	var rotor := world.apply_structural_command_now(rotor_place)
 	if not rotor.is_ok():
 		world.free()
@@ -2615,7 +2615,7 @@ func _nested_rotor_hinge_world() -> SimulationWorld:
 	mast.archetype = Slice01Archetypes.frame()
 	mast.origin_cell = Vector3i(5, 2, 0)
 	mast.orientation_index = 0
-	mast.store_id = "player"
+	mast.store_id = PlayerIdentity.store_id("player")
 	var mast_result := world.apply_structural_command_now(mast)
 	if not mast_result.is_ok():
 		world.free()
@@ -2628,7 +2628,7 @@ func _nested_rotor_hinge_world() -> SimulationWorld:
 	hinge_place.archetype = HINGE_BASE
 	hinge_place.origin_cell = Vector3i(5, 3, 0)
 	hinge_place.orientation_index = 0
-	hinge_place.store_id = "player"
+	hinge_place.store_id = PlayerIdentity.store_id("player")
 	var hinge := world.apply_structural_command_now(hinge_place)
 	if not hinge.is_ok():
 		world.free()
@@ -2639,7 +2639,7 @@ func _nested_rotor_hinge_world() -> SimulationWorld:
 	platform.archetype = Slice01Archetypes.frame()
 	platform.origin_cell = Vector3i(5, 5, 0)
 	platform.orientation_index = 0
-	platform.store_id = "player"
+	platform.store_id = PlayerIdentity.store_id("player")
 	var platform_result := world.apply_structural_command_now(platform)
 	if not platform_result.is_ok():
 		world.free()
@@ -2654,14 +2654,14 @@ func _nested_rotor_hinge_world() -> SimulationWorld:
 
 func _hinge_world_with_foundation() -> SimulationWorld:
 	var world := SimulationWorld.new()
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 100.0)
-	world.set_resource_amount("player", "girder", 100.0)
-	world.set_resource_amount("player", "mechanism", 100.0)
-	world.set_resource_amount("player", "conduit", 100.0)
-	world.set_resource_amount("player", "plate_basalt", 100.0)
-	world.set_resource_amount("player", "sintered_basalt", 100.0)
-	world.set_resource_amount("player", "plate_alloy", 100.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 100.0)
 	world.get_archetype_registry().register(HINGE_TOP)
 	return world
 
@@ -2684,7 +2684,7 @@ func _hinge_setup(world: SimulationWorld) -> Dictionary:
 	place.archetype = HINGE_BASE
 	place.origin_cell = Vector3i(5, 0, 0)
 	place.orientation_index = 0
-	place.store_id = "player"
+	place.store_id = PlayerIdentity.store_id("player")
 	var hinge := world.apply_structural_command_now(place)
 	if not hinge.is_ok():
 		push_error(
@@ -2699,14 +2699,14 @@ func _hinge_setup(world: SimulationWorld) -> Dictionary:
 
 func _rotor_world_with_foundation() -> SimulationWorld:
 	var world := SimulationWorld.new()
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 100.0)
-	world.set_resource_amount("player", "girder", 100.0)
-	world.set_resource_amount("player", "mechanism", 100.0)
-	world.set_resource_amount("player", "conduit", 100.0)
-	world.set_resource_amount("player", "plate_basalt", 100.0)
-	world.set_resource_amount("player", "sintered_basalt", 100.0)
-	world.set_resource_amount("player", "plate_alloy", 100.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 100.0)
 	world.get_archetype_registry().register(ROTOR_TOP)
 	return world
 
@@ -2729,7 +2729,7 @@ func _rotor_setup(world: SimulationWorld) -> Dictionary:
 	place.archetype = ROTOR_BASE
 	place.origin_cell = Vector3i(5, 0, 0)
 	place.orientation_index = 0
-	place.store_id = "player"
+	place.store_id = PlayerIdentity.store_id("player")
 	var rotor := world.apply_structural_command_now(place)
 	if not rotor.is_ok():
 		return {}
@@ -2751,7 +2751,7 @@ func _place_frame(
 	place.archetype = Slice01Archetypes.frame()
 	place.origin_cell = origin_cell
 	place.orientation_index = 0
-	place.store_id = "player"
+	place.store_id = PlayerIdentity.store_id("player")
 	return world.apply_structural_command_now(place)
 
 
@@ -2768,7 +2768,7 @@ func _place_piston(
 	place.archetype = archetypes["base"]
 	place.origin_cell = origin_cell
 	place.orientation_index = 0
-	place.store_id = "player"
+	place.store_id = PlayerIdentity.store_id("player")
 	return world.apply_structural_command_now(place)
 
 
@@ -2783,7 +2783,7 @@ func _place_frame_on_head(
 	place.archetype = Slice01Archetypes.frame()
 	place.origin_cell = Vector3i(6, 1, 0)
 	place.orientation_index = 0
-	place.store_id = "player"
+	place.store_id = PlayerIdentity.store_id("player")
 	return world.apply_structural_command_now(place)
 
 
@@ -2793,7 +2793,7 @@ func _weld_element(world: SimulationWorld, element_id: int) -> void:
 	weld.element_id = element_id
 	weld.expected_state_revision = element.state_revision
 	weld.max_material_amount = 100.0
-	weld.store_id = "player"
+	weld.store_id = PlayerIdentity.store_id("player")
 	world.apply_structural_command_now(weld)
 
 

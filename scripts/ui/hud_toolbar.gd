@@ -30,7 +30,7 @@ class DropSlot:
 			data is Dictionary
 			and String(data.get("kind", "")) == HudInventoryTransferUtil.PAYLOAD_KIND
 			and str(data.get("source_store_id", ""))
-				== IndustryStoreService.PLAYER_STORE_ID
+				== PlayerIdentity.local_store_id()
 			and not str(data.get("instance_id", "")).is_empty()
 			and tools != null
 			and tools.toolbar_slot_accepts_tool_instance(

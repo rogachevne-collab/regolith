@@ -595,14 +595,14 @@ func _test_piston_multibody_projection() -> bool:
 	var fixture: Dictionary = _new_fixture()
 	var world: SimulationWorld = fixture["world"]
 	var projection: SimulationPhysicsProjection = fixture["projection"]
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 100.0)
-	world.set_resource_amount("player", "girder", 100.0)
-	world.set_resource_amount("player", "mechanism", 100.0)
-	world.set_resource_amount("player", "conduit", 100.0)
-	world.set_resource_amount("player", "plate_basalt", 100.0)
-	world.set_resource_amount("player", "sintered_basalt", 100.0)
-	world.set_resource_amount("player", "plate_alloy", 100.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 100.0)
 	world.get_archetype_registry().register(PISTON_HEAD)
 	world.get_archetype_registry().register(STATIONARY_DRILL)
 	var foundation := _spawn(
@@ -763,10 +763,10 @@ func _test_piston_split_keeps_extended_carriage_pose() -> bool:
 	var fixture: Dictionary = _new_fixture()
 	var world: SimulationWorld = fixture["world"]
 	var projection: SimulationPhysicsProjection = fixture["projection"]
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 100.0)
-	world.set_resource_amount("player", "girder", 100.0)
-	world.set_resource_amount("player", "mechanism", 100.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 100.0)
 	world.get_archetype_registry().register(PISTON_HEAD)
 	var foundation := _spawn(
 		world,
@@ -844,7 +844,7 @@ func _test_piston_split_keeps_extended_carriage_pose() -> bool:
 	dismantle.expected_assembly_revision = world.get_assembly_raw(
 		assembly_id
 	).topology_revision
-	dismantle.store_id = "player"
+	dismantle.store_id = PlayerIdentity.store_id("player")
 	var result := world.apply_structural_command_now(dismantle)
 	if not result.is_ok() or not bool(result.data.get("split", false)):
 		_free_fixture(fixture)
@@ -901,7 +901,7 @@ func _place_frame_for_piston(
 	place.archetype = Slice01Archetypes.frame()
 	place.origin_cell = origin_cell
 	place.orientation_index = 0
-	place.store_id = "player"
+	place.store_id = PlayerIdentity.store_id("player")
 	return world.apply_structural_command_now(place)
 
 
@@ -917,7 +917,7 @@ func _place_piston_for_projection(
 	place.archetype = PISTON_BASE
 	place.origin_cell = origin_cell
 	place.orientation_index = 0
-	place.store_id = "player"
+	place.store_id = PlayerIdentity.store_id("player")
 	return world.apply_structural_command_now(place)
 
 
@@ -934,7 +934,7 @@ func _place_element_for_projection(
 	place.archetype = archetype
 	place.origin_cell = origin_cell
 	place.orientation_index = 0
-	place.store_id = "player"
+	place.store_id = PlayerIdentity.store_id("player")
 	return world.apply_structural_command_now(place)
 
 
@@ -944,7 +944,7 @@ func _weld_piston_element(world: SimulationWorld, element_id: int) -> void:
 	weld.element_id = element_id
 	weld.expected_state_revision = element.state_revision
 	weld.max_material_amount = 100.0
-	weld.store_id = "player"
+	weld.store_id = PlayerIdentity.store_id("player")
 	world.apply_structural_command_now(weld)
 
 

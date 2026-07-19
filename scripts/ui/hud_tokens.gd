@@ -283,6 +283,9 @@ static func load_theme() -> Theme:
 
 
 static func store_label(store_id: String) -> String:
+	if PlayerIdentity.is_player_store(store_id):
+		# Every player store is "player:<uid>"; the uid is plumbing, not chrome.
+		return STORE_LABELS["player"]
 	if STORE_LABELS.has(store_id):
 		return STORE_LABELS[store_id]
 	if store_id.is_empty():

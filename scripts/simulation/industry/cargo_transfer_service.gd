@@ -34,8 +34,8 @@ func transfer_between_stores(
 	if (
 		ResourceCatalog.is_tool_item(resource_id)
 		and (
-			from_store_id == IndustryStoreService.PLAYER_STORE_ID
-			or to_store_id == IndustryStoreService.PLAYER_STORE_ID
+			PlayerIdentity.is_player_store(from_store_id)
+			or PlayerIdentity.is_player_store(to_store_id)
 		)
 	):
 		return _transfer_tool_item(world, from_store_id, to_store_id, resource_id, requested_amount)
@@ -105,7 +105,7 @@ func _transfer_player_tool_instance(
 	to_store_id: String,
 	instance_id: String
 ) -> Dictionary:
-	if from_store_id != IndustryStoreService.PLAYER_STORE_ID:
+	if not PlayerIdentity.is_player_store(from_store_id):
 		return _failed(&"invalid_target")
 	var registry := world.ensure_player_inventory()
 	if registry == null or not registry.has_instance(instance_id):
@@ -136,9 +136,9 @@ func _transfer_tool_item(
 	resource_id: String,
 	requested_amount: float
 ) -> Dictionary:
-	if from_store_id == IndustryStoreService.PLAYER_STORE_ID:
+	if PlayerIdentity.is_player_store(from_store_id):
 		return _failed(&"invalid_target")
-	if to_store_id != IndustryStoreService.PLAYER_STORE_ID:
+	if not PlayerIdentity.is_player_store(to_store_id):
 		return _transfer_stack_only(
 			world,
 			from_store_id,
@@ -157,7 +157,10 @@ func _transfer_tool_item(
 		return _failed(&"no_input")
 	var registry := world.ensure_player_inventory()
 	var capacity_l := IndustryStoreService.player_carry_capacity_l()
-	var projected := IndustryStoreService.player_total_volume_l(world)
+	var projected := IndustryStoreService.player_total_volume_l(
+		world,
+		PlayerIdentity.uid_from_store(to_store_id)
+	)
 	projected += ResourceCatalog.resource_volume_l(resource_id, 1.0)
 	if projected > capacity_l + EPSILON:
 		return _failed(&"storage_full")
@@ -212,7 +215,7 @@ func _destination_extra_used_l(
 	world: SimulationWorld,
 	store_id: String
 ) -> float:
-	if store_id != IndustryStoreService.PLAYER_STORE_ID:
+	if not PlayerIdentity.is_player_store(store_id):
 		return 0.0
 	return IndustryStoreService.player_instance_volume_l(world)
 

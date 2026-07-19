@@ -24,6 +24,10 @@ func _ready() -> void:
 	# Explicit player identity for impact resolution and suit lookup — see
 	# ImpactResolver.is_player_partner.
 	add_to_group(ImpactResolver.PLAYER_GROUP)
+	if not has_meta("player_id"):
+		# Remote players get their uid stamped by the join code; a body that
+		# nobody claimed is this machine's player.
+		set_meta("player_id", PlayerIdentity.local_uid())
 	_support_frame = get_node_or_null(support_frame_path)
 	up_direction = Vector3.UP
 	floor_snap_length = step_height

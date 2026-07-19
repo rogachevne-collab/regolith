@@ -11,7 +11,7 @@ func _ready() -> void:
 func _run() -> void:
 	var phrase := _phrase_from_args()
 	var world := SimulationWorld.new()
-	world.ensure_resource_store("player")
+	world.ensure_resource_store(PlayerIdentity.local_store_id())
 	for item_id: String in [
 		"plate_metal",
 		"girder",
@@ -21,7 +21,11 @@ func _run() -> void:
 		"sintered_basalt",
 		"plate_alloy",
 	]:
-		world.set_resource_amount("player", item_id, 800.0)
+		world.set_resource_amount(
+			PlayerIdentity.local_store_id(),
+			item_id,
+			800.0
+		)
 	for archetype: ElementArchetype in Slice01Archetypes.load_rover_archetypes():
 		world.get_archetype_registry().register(archetype)
 	var intent := RoverIntent.from_phrase(phrase)

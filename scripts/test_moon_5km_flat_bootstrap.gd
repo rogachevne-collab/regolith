@@ -146,7 +146,7 @@ func _tick_weld_regression(delta: float) -> void:
 				_session.world.get_assembly_raw(_rig_assembly_id)
 				.topology_revision
 			)
-			dismantle.store_id = "player"
+			dismantle.store_id = PlayerIdentity.store_id("player")
 			var dismantle_result := (
 				_session.world.apply_structural_command_now(dismantle)
 			)
@@ -247,7 +247,7 @@ func _spawn_demo_piston_rig() -> void:
 		_session,
 		spawn_pos,
 		demo_piston_phrase,
-		"player",
+		PlayerIdentity.store_id("player"),
 		_terrain,
 		tool,
 		space_state
@@ -286,8 +286,8 @@ func _weld_test_frame_on_rig() -> void:
 	if assembly == null:
 		print("TestYard: rig assembly missing")
 		return
-	world.set_resource_amount("player", "plate_metal", 500.0)
-	world.set_resource_amount("player", "girder", 500.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 500.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 500.0)
 	# Successive presses stack frames sideways off the mast base.
 	var candidates: Array[Vector3i] = [
 		Vector3i(0, 1 + _weld_test_count, 2),
@@ -301,7 +301,7 @@ func _weld_test_frame_on_rig() -> void:
 		command.archetype = Slice01Archetypes.frame()
 		command.origin_cell = origin_cell
 		command.orientation_index = 0
-		command.store_id = "player"
+		command.store_id = PlayerIdentity.store_id("player")
 		print("TestYard: weld attempt @ %s" % origin_cell)
 		var result := world.apply_structural_command_now(command)
 		print(

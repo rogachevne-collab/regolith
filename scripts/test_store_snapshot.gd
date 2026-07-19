@@ -13,6 +13,9 @@ func _ready() -> void:
 
 func _run() -> void:
 	_HeadlessTestHarness.arm_watchdog(self, "STORE-SNAPSHOT")
+	# Pin the local player so gateway-stamped store ids match the fixture and
+	# no test touches user:// for a generated uid.
+	PlayerIdentity.override_local_uid("player")
 	if not _test_unknown_store_failure():
 		_abort()
 		return
@@ -55,16 +58,16 @@ func _test_unknown_store_failure() -> bool:
 
 func _test_player_store_snapshot() -> bool:
 	var world := SimulationWorld.new()
-	var store := IndustryStoreService.ensure_player_store(world)
+	var store := IndustryStoreService.ensure_player_store(world, "player")
 	store.set_amount("ore_mare_regolith", 2.5)
 	store.set_amount("plate_metal", 1.0)
-	var snap := StoreSnapshotBuilder.build(world, IndustryStoreService.PLAYER_STORE_ID)
+	var snap := StoreSnapshotBuilder.build(world, PlayerIdentity.store_id("player"))
 	world.free()
 	if not bool(snap.get("valid", false)):
 		return _fail("player snapshot must be valid")
-	if snap.get("store_id", "") != IndustryStoreService.PLAYER_STORE_ID:
+	if snap.get("store_id", "") != PlayerIdentity.store_id("player"):
 		return _fail("player snapshot store_id mismatch")
-	if snap.get("title", "") != HudTokens.store_label(IndustryStoreService.PLAYER_STORE_ID):
+	if snap.get("title", "") != HudTokens.store_label(PlayerIdentity.store_id("player")):
 		return _fail("player snapshot title mismatch")
 	var entries: Array = snap.get("entries", [])
 	var cargo_entries: Array = []
@@ -231,7 +234,7 @@ func _test_item_icon_mapping() -> bool:
 
 func _test_gateway_not_ready() -> bool:
 	var gateway := WorldCommandGateway.new()
-	var snap := gateway.store_snapshot(IndustryStoreService.PLAYER_STORE_ID)
+	var snap := gateway.store_snapshot(PlayerIdentity.store_id("player"))
 	gateway.free()
 	if bool(snap.get("valid", true)):
 		return _fail("gateway without session must return valid=false")

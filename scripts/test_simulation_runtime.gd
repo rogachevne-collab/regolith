@@ -333,14 +333,14 @@ func _test_placement_anchors_every_touching_block() -> bool:
 	# Otherwise the whole construction hangs off one anchor and detaching it frees
 	# (and physically ejects) everything else.
 	var world := SimulationWorld.new()
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 100.0)
-	world.set_resource_amount("player", "girder", 100.0)
-	world.set_resource_amount("player", "mechanism", 100.0)
-	world.set_resource_amount("player", "conduit", 100.0)
-	world.set_resource_amount("player", "plate_basalt", 100.0)
-	world.set_resource_amount("player", "sintered_basalt", 100.0)
-	world.set_resource_amount("player", "plate_alloy", 100.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 100.0)
 	world.set_terrain_contact_probe(
 		func(_a: SimulationAssembly, elements: Array[SimulationElement]) -> Array[int]:
 			var touching: Array[int] = []
@@ -379,7 +379,7 @@ func _test_placement_anchors_every_touching_block() -> bool:
 	dismantle.expected_assembly_revision = (
 		world.get_assembly_raw(assembly_id).topology_revision
 	)
-	dismantle.store_id = "player"
+	dismantle.store_id = PlayerIdentity.store_id("player")
 	var result := world.apply_structural_command_now(dismantle)
 	if not result.is_ok():
 		world.free()
@@ -405,7 +405,7 @@ func _place_frame(
 	command.origin_cell = origin_cell
 	command.orientation_index = 0
 	command.new_assembly_grid_frame = grid_frame
-	command.store_id = "player"
+	command.store_id = PlayerIdentity.store_id("player")
 	return world.apply_structural_command_now(command)
 
 
@@ -539,14 +539,14 @@ func _test_custom_archetype_snapshot_restore() -> bool:
 
 func _test_unified_grid_edge_surface_joint() -> bool:
 	var world := SimulationWorld.new()
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 100.0)
-	world.set_resource_amount("player", "girder", 100.0)
-	world.set_resource_amount("player", "mechanism", 100.0)
-	world.set_resource_amount("player", "conduit", 100.0)
-	world.set_resource_amount("player", "plate_basalt", 100.0)
-	world.set_resource_amount("player", "sintered_basalt", 100.0)
-	world.set_resource_amount("player", "plate_alloy", 100.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 100.0)
 	var large := _place_large_frame(world, Vector3i.ZERO, 0, -1)
 	if not large.is_ok():
 		world.free()
@@ -559,7 +559,7 @@ func _test_unified_grid_edge_surface_joint() -> bool:
 	place.archetype = Slice01Archetypes.frame()
 	place.origin_cell = Vector3i(5, 0, 0)
 	place.orientation_index = 0
-	place.store_id = "player"
+	place.store_id = PlayerIdentity.store_id("player")
 	var placed := world.apply_structural_command_now(place)
 	if not placed.is_ok():
 		world.free()
@@ -605,14 +605,14 @@ func _test_unified_grid_edge_surface_joint() -> bool:
 
 func _test_unified_grid_middle_surface_joint() -> bool:
 	var world := SimulationWorld.new()
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 100.0)
-	world.set_resource_amount("player", "girder", 100.0)
-	world.set_resource_amount("player", "mechanism", 100.0)
-	world.set_resource_amount("player", "conduit", 100.0)
-	world.set_resource_amount("player", "plate_basalt", 100.0)
-	world.set_resource_amount("player", "sintered_basalt", 100.0)
-	world.set_resource_amount("player", "plate_alloy", 100.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 100.0)
 	var large := _place_large_frame(world, Vector3i.ZERO, 0, -1)
 	if not large.is_ok():
 		world.free()
@@ -625,7 +625,7 @@ func _test_unified_grid_middle_surface_joint() -> bool:
 	place.archetype = Slice01Archetypes.frame()
 	place.origin_cell = Vector3i(5, 2, 0)
 	place.orientation_index = 0
-	place.store_id = "player"
+	place.store_id = PlayerIdentity.store_id("player")
 	var placed := world.apply_structural_command_now(place)
 	if not placed.is_ok():
 		world.free()
@@ -658,14 +658,14 @@ func _test_unified_grid_middle_surface_joint() -> bool:
 
 func _test_unified_grid_mount_pad_policy() -> bool:
 	var world := SimulationWorld.new()
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 100.0)
-	world.set_resource_amount("player", "girder", 100.0)
-	world.set_resource_amount("player", "mechanism", 100.0)
-	world.set_resource_amount("player", "conduit", 100.0)
-	world.set_resource_amount("player", "plate_basalt", 100.0)
-	world.set_resource_amount("player", "sintered_basalt", 100.0)
-	world.set_resource_amount("player", "plate_alloy", 100.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 100.0)
 	var store := PlaceElementCommand.new()
 	store.assembly_id = 0
 	store.expected_assembly_revision = -1
@@ -673,7 +673,7 @@ func _test_unified_grid_mount_pad_policy() -> bool:
 	store.origin_cell = Vector3i.ZERO
 	store.orientation_index = 0
 	store.new_assembly_grid_frame = GridTransform.identity()
-	store.store_id = "player"
+	store.store_id = PlayerIdentity.store_id("player")
 	var store_result := world.apply_structural_command_now(store)
 	if not store_result.is_ok():
 		world.free()
@@ -685,7 +685,7 @@ func _test_unified_grid_mount_pad_policy() -> bool:
 	allow.archetype = Slice01Archetypes.frame()
 	allow.origin_cell = Vector3i(-1, 0, 1)
 	allow.orientation_index = 0
-	allow.store_id = "player"
+	allow.store_id = PlayerIdentity.store_id("player")
 	var allow_result := world.apply_structural_command_now(allow)
 	if not allow_result.is_ok():
 		world.free()
@@ -696,7 +696,7 @@ func _test_unified_grid_mount_pad_policy() -> bool:
 	deny.archetype = Slice01Archetypes.frame()
 	deny.origin_cell = Vector3i(0, 0, 3)
 	deny.orientation_index = 0
-	deny.store_id = "player"
+	deny.store_id = PlayerIdentity.store_id("player")
 	var deny_result := world.apply_structural_command_now(deny)
 	if deny_result.reason != StructuralCommandResult.REASON_INCOMPATIBLE_CONNECTION:
 		world.free()
@@ -759,14 +759,14 @@ func _test_unified_grid_full_surface_contact_count() -> bool:
 
 func _test_snapshot_canonical_joint_roundtrip() -> bool:
 	var world := SimulationWorld.new()
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 100.0)
-	world.set_resource_amount("player", "girder", 100.0)
-	world.set_resource_amount("player", "mechanism", 100.0)
-	world.set_resource_amount("player", "conduit", 100.0)
-	world.set_resource_amount("player", "plate_basalt", 100.0)
-	world.set_resource_amount("player", "sintered_basalt", 100.0)
-	world.set_resource_amount("player", "plate_alloy", 100.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 100.0)
 	var large := _place_large_frame(world, Vector3i.ZERO, 0, -1)
 	if not large.is_ok():
 		world.free()
@@ -778,7 +778,7 @@ func _test_snapshot_canonical_joint_roundtrip() -> bool:
 	place.archetype = Slice01Archetypes.frame()
 	place.origin_cell = Vector3i(5, 0, 0)
 	place.orientation_index = 0
-	place.store_id = "player"
+	place.store_id = PlayerIdentity.store_id("player")
 	if not world.apply_structural_command_now(place).is_ok():
 		world.free()
 		return _fail("edge frame placement failed for snapshot roundtrip")
@@ -826,7 +826,7 @@ func _place_large_frame(
 	command.orientation_index = 0
 	if assembly_id == 0:
 		command.new_assembly_grid_frame = GridTransform.identity()
-	command.store_id = "player"
+	command.store_id = PlayerIdentity.store_id("player")
 	return world.apply_structural_command_now(command)
 
 

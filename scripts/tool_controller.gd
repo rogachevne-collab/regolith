@@ -452,7 +452,7 @@ func _emit_command_for_action(
 				parameters = {
 					"damage": _grinder_damage_per_tick(),
 					"refund_fraction_on_destroy": GRINDER_REFUND_FRACTION,
-					"store_id": "player",
+					"refund_to_actor": true,
 				}
 		elif hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT:
 			command_kind = &"damage_element"
@@ -1211,7 +1211,7 @@ func _try_collect_world_loot(hit: InteractionHit) -> bool:
 		"target": hit.snapshot(),
 		"parameters": {
 			"pile_id": pile_id,
-			"to_store_id": IndustryStoreService.PLAYER_STORE_ID,
+			"to_store_id": PlayerIdentity.local_store_id(),
 		},
 	})
 	return true

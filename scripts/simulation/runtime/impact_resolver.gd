@@ -134,7 +134,9 @@ static func is_player_partner(partner: Object) -> bool:
 static func player_id_of(partner: Object) -> String:
 	if not is_player_partner(partner):
 		return ""
-	return str((partner as Node).get_meta("player_id", "player"))
+	return str(
+		(partner as Node).get_meta("player_id", PlayerIdentity.local_uid())
+	)
 
 
 static func player_damage_amount(impulse_length: float) -> float:

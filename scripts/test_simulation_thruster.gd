@@ -40,14 +40,14 @@ func _fail(message: String) -> bool:
 
 func _boot_world() -> SimulationWorld:
 	var world := SimulationWorld.new()
-	world.ensure_resource_store("player")
-	world.set_resource_amount("player", "plate_metal", 500.0)
-	world.set_resource_amount("player", "girder", 500.0)
-	world.set_resource_amount("player", "mechanism", 500.0)
-	world.set_resource_amount("player", "conduit", 500.0)
-	world.set_resource_amount("player", "plate_basalt", 500.0)
-	world.set_resource_amount("player", "sintered_basalt", 500.0)
-	world.set_resource_amount("player", "plate_alloy", 500.0)
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 500.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 500.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 500.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 500.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 500.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 500.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 500.0)
 	for archetype: ElementArchetype in Slice01Archetypes.load_rover_archetypes():
 		world.get_archetype_registry().register(archetype)
 	for archetype: ElementArchetype in Slice01Archetypes.load_flight_archetypes():
@@ -87,7 +87,7 @@ func _test_archetypes_validate() -> bool:
 
 func _test_flight_assembly_detection() -> bool:
 	var world := _boot_world()
-	var helper := AssemblyBuildHelper.new(world, "player")
+	var helper := AssemblyBuildHelper.new(world, PlayerIdentity.store_id("player"))
 	helper.ensure_materials(200.0)
 	if not helper.spawn_anchor(Slice01Archetypes.rover_frame()):
 		return _fail("spawn frame: %s" % helper.last_error)
@@ -179,7 +179,7 @@ func _test_thrust_and_gyro_math() -> bool:
 
 func _test_power_demand_scales_with_throttle() -> bool:
 	var world := _boot_world()
-	var helper := AssemblyBuildHelper.new(world, "player")
+	var helper := AssemblyBuildHelper.new(world, PlayerIdentity.store_id("player"))
 	helper.ensure_materials(300.0)
 	if not helper.spawn_anchor(Slice01Archetypes.rover_frame()):
 		return _fail("spawn: %s" % helper.last_error)
