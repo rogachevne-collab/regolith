@@ -138,8 +138,15 @@ Legacy flat yard: `scenes/flat_moon.tscn` + `scripts/flat_moon_bootstrap.gd`.
   Quit waits for dig flush (`auto_accept_quit=false`). Editor Stop still
   kills without drain — prefer window close after big digs.
 - **Декор (камни):** `VoxelInstancer` child of terrain, `up_mode=Sphere`,
-  library `resources/moon_boulder_instance_library.tres` (3 persistent MultiMesh
+  library `resources/moon_boulder_instance_library.tres` (7 persistent MultiMesh
   tiers). Стримится с чанками; удаления после копок сохраняются в SQLite.
+  **Плотность per-chunk** (на LOD0-чанк), **не** per km² планеты — при росте
+  диаметра **не** делить density на `(D_ref/D)²`. Bootstrap дублирует library
+  в runtime: `boulder_density_scale` (default **−1** → auto **0.65** через
+  `MoonGeometry.boulder_density_scale_for_decor()`), LOD-ярусы
+  (`pebble_a/b`→LOD0; `pebble_c`/`rock_*`→LOD1; `boulder*`→LOD1), native SDF
+  path выключает `snap_to_generator_sdf`. Tunables: `enable_boulder_instancer`,
+  `boulder_density_scale` на Main (`bootstrap.gd`).
   См. [Instancing](https://voxel-tools.readthedocs.io/en/latest/instancing/).
 - **Нельзя:** live GDScript 565-кратеров; неполный RegionFiles-bake + plain fallback
   (дырявые дальние LOD, исчезающие при приближении). `VoxelStreamRegionFiles`

@@ -36,6 +36,8 @@ radius = 675.0
 
 [node name="Main" type="Node3D" unique_id=426261859]
 script = ExtResource("1")
+enable_boulder_instancer = true
+boulder_density_scale = -1.0
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1964025307]
 environment = SubResource("Environment_moon")

@@ -23,19 +23,19 @@ const ITEM_DEFS: Array[Dictionary] = [
 	},
 	{
 		"id": 2, "name": "pebble_c", "mesh_kind": "small", "mesh_profile": 2,
-		"tint": 2, "lod_index": 0,
+		"tint": 2, "lod_index": 1,
 		"density": 0.009, "min_slope": 4.0, "max_slope": 26.0,
 		"offset": -0.12, "min_scale": 0.48, "max_scale": 0.74, "noise_seed": 618,
 	},
 	{
 		"id": 3, "name": "rock_a", "mesh_kind": "small", "mesh_profile": 0,
-		"tint": 1, "lod_index": 0,
+		"tint": 1, "lod_index": 1,
 		"density": 0.006, "min_slope": 3.0, "max_slope": 26.0,
 		"offset": -0.13, "min_scale": 0.72, "max_scale": 1.05, "noise_seed": 722,
 	},
 	{
 		"id": 4, "name": "rock_b", "mesh_kind": "small", "mesh_profile": 1,
-		"tint": 0, "lod_index": 0,
+		"tint": 0, "lod_index": 1,
 		"density": 0.005, "min_slope": 3.0, "max_slope": 24.0,
 		"offset": -0.14, "min_scale": 0.78, "max_scale": 1.12, "noise_seed": 833,
 	},

@@ -46,6 +46,12 @@ const DIG_STREAM_DIR := "user://moon_experiment"
 const WORLD_SAVE_PATH := "user://moon_experiment/world_save.json"
 
 
+static func boulder_density_scale_for_decor() -> float:
+	## Density is per terrain chunk (same LOD0 mesh size at any diameter).
+	## Slight cut vs the Ø1 km library — perf, still visible on foot.
+	return 0.65
+
+
 static func view_distance_voxels_for_camera_distance(distance_from_center_m: float) -> int:
 	## Farthest crust point from the camera ≈ |cam| + R; convert to voxels.
 	var reach_m: float = (
