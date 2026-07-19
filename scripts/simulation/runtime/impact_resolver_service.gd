@@ -327,7 +327,10 @@ func integrate_contacts(
 	var assembly_id := int(body.get_meta("assembly_id", 0))
 	if assembly_id <= 0:
 		return
-	if not ImpactResolver.assembly_has_construction_elements(_world, assembly_id):
+	var has_construction := ImpactResolver.assembly_has_construction_elements(
+		_world, assembly_id
+	)
+	if not has_construction:
 		return
 	for contact_index: int in range(state.get_contact_count()):
 		var impulse: Vector3 = state.get_contact_impulse(contact_index)

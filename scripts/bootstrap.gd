@@ -28,6 +28,7 @@ const TERRAIN_LOD_FADE_DURATION_S := 0.25
 ## Detail normalmaps from LOD 2+ — illusion of geometry on distant blocks.
 const TERRAIN_NORMALMAP_BEGIN_LOD := 2
 const DEMO_ROVER_OFFSET_M := 32.0
+const DEBUG_ROVER_SPAWN_OFFSET_M := 6.0
 const DEMO_HOPPER_OFFSET_M := 68.0
 ## Shrink streaming during spawn so VT finishes local colliders first
 ## (full shell budget restored at world_ready).
@@ -92,6 +93,7 @@ var _warmup_frames := 0
 var _player_spawn_hint := Vector3.UP
 var _player_spawn_pos := Vector3.ZERO
 var _world_ready := false
+var _debug_rover_spawn_busy := false
 var _autosave_accum := 0.0
 var _last_save_ms := 0
 var _save_load_attempted := false
@@ -105,6 +107,7 @@ var _dig_persist_cooldown_s := 0.0
 var _dig_persist_in_flight := false
 var _quit_after_dig_persist := false
 var _generator_is_native := false
+var _native_generator: Object = null
 var _map_heightmap_scheduled := false
 
 
@@ -171,6 +174,13 @@ func _process(delta: float) -> void:
 				_dig_persist_cooldown_s -= delta
 			if _dig_persist_cooldown_s <= 0.0:
 				_persist_digs_durable()
+		# Poll action: _unhandled_input is often eaten by HUD/focus while
+		# mouse is captured; same pattern as gameplay move axes.
+		if (
+			not _debug_rover_spawn_busy
+			and Input.is_action_just_pressed(&"spawn_debug_rover")
+		):
+			_spawn_debug_rover_near_player()
 	if not debug_overlay:
 		return
 	var player_position: Vector3 = _player.global_position
@@ -245,6 +255,22 @@ func _apply_planet_terrain_shader_params(shader_mat: ShaderMaterial) -> void:
 		"MoonExperiment: terrain shader radial R=%.0f m"
 		% MoonGeometry.active_surface_radius_m()
 	)
+	_apply_brightness_map(shader_mat)
+
+
+## Display-only albedo brightness (dark maria + fresh-crater ray systems)
+## baked natively (~1 s MT at startup); SDF untouched — no GENERATOR_VERSION.
+func _apply_brightness_map(shader_mat: ShaderMaterial) -> void:
+	if _native_generator == null or not _native_generator.has_method("bake_brightness_map"):
+		return
+	var img: Image = _native_generator.bake_brightness_map(1024, 512)
+	if img == null:
+		push_warning("MoonExperiment: brightness map bake failed")
+		return
+	var tex := ImageTexture.create_from_image(img)
+	shader_mat.set_shader_parameter("u_moon_brightness", tex)
+	shader_mat.set_shader_parameter("u_moon_brightness_on", 1.0)
+	print("MoonExperiment: albedo brightness map applied (maria + rays)")
 
 
 func _make_planet_generator() -> VoxelGenerator:
@@ -252,6 +278,7 @@ func _make_planet_generator() -> VoxelGenerator:
 		var native := _NativeSdfGen.new(MoonGeometry.radius_voxels())
 		if native.is_native_ready():
 			_generator_is_native = true
+			_native_generator = native
 			print("MoonExperiment: native SDF generator — %s" % native.describe())
 			_print_nearest_cave_entrances(native)
 			return native
@@ -600,60 +627,172 @@ func _apply_playtest_cargo_if_enabled() -> void:
 
 
 func _spawn_demo_rover_near_player() -> void:
-	if _session == null or _base_spawn == null:
+	var hint := _demo_spawn_hint_offset(Vector3(0.0, 0.0, -1.0), DEMO_ROVER_OFFSET_M)
+	await _spawn_rover_at_hint(hint, "Demo rover")
+
+
+func _spawn_debug_rover_near_player() -> void:
+	if _debug_rover_spawn_busy:
+		return
+	_debug_rover_spawn_busy = true
+	print("MoonExperiment: U → spawn debug rover…")
+	_set_debug_spawn_status("U: собираю ровер перед тобой…")
+	# Seat on the aim point in front of the camera — do not wander for a
+	# "best flat" patch (that parked the rover ~20m away while compose ran).
+	var hint := _debug_rover_spawn_hint()
+	await _spawn_rover_at_hint(hint, "Debug rover (U)", true)
+	_debug_rover_spawn_busy = false
+
+
+func _player_flat_forward() -> Vector3:
+	if _player == null:
+		return Vector3.FORWARD
+	var forward := -_player.global_transform.basis.z
+	if _gravity_field != null:
+		var up := _gravity_field.up_at(_player.global_position)
+		forward = forward - up * forward.dot(up)
+	if forward.length_squared() <= 0.000001:
+		var basis := _gravity_field.tangent_basis_at(_player.global_position)
+		return -basis.z
+	return forward.normalized()
+
+
+func _debug_rover_spawn_hint() -> Vector3:
+	var origin := _player.global_position
+	var forward := _player_flat_forward()
+	var camera: Camera3D = _player.get_node_or_null("Camera") as Camera3D
+	if camera != null and camera.has_method("aim_transform"):
+		var aim: Transform3D = camera.call("aim_transform")
+		origin = aim.origin
+		forward = -aim.basis.z
+		if _gravity_field != null:
+			var up := _gravity_field.up_at(origin)
+			forward = (forward - up * forward.dot(up)).normalized()
+			if forward.length_squared() <= 0.000001:
+				forward = _player_flat_forward()
+	return origin + forward * DEBUG_ROVER_SPAWN_OFFSET_M
+
+
+func _set_debug_spawn_status(text: String) -> void:
+	if _hint != null:
+		_hint.text = text
+
+
+func _spawn_rover_at_hint(
+	hint: Vector3,
+	label: String,
+	immediate_hint: bool = false
+) -> void:
+	if _session == null:
+		push_warning("%s spawn failed: no session" % label)
 		return
 	var tool: VoxelTool = TerrainCompat.get_voxel_tool(_terrain)
 	if tool == null:
+		push_warning("%s spawn failed: no voxel tool" % label)
 		return
 	tool.channel = VoxelBuffer.CHANNEL_SDF
-	var hint := _demo_spawn_hint_offset(Vector3(0.0, 0.0, -1.0), DEMO_ROVER_OFFSET_M)
+	var space := _physics_space_state()
 	var ground: Vector3 = Vector3(NAN, NAN, NAN)
-	for _attempt in 90:
-		var ground_variant: Variant = RoverDemoSpawn.find_flat_ground_near(
+	if immediate_hint:
+		# Aim point may be mid-air; seat along gravity to the crust first.
+		var surface_variant: Variant = RoverDemoSpawn._ground_point_along_field(
 			_terrain,
 			tool,
-			_physics_space_state(),
-			hint,
-			12.0,
-			4.0,
-			true
+			space,
+			hint
 		)
-		if ground_variant is Vector3:
-			ground = ground_variant as Vector3
-			break
-		await get_tree().physics_frame
+		ground = surface_variant as Vector3 if surface_variant is Vector3 else hint
+	else:
+		for _attempt in 30:
+			var flat_variant: Variant = RoverDemoSpawn.find_flat_ground_near(
+				_terrain,
+				tool,
+				space,
+				hint,
+				24.0,
+				3.0,
+				false
+			)
+			if flat_variant is Vector3:
+				ground = flat_variant as Vector3
+				break
+			await get_tree().physics_frame
+		if not _is_finite_vec3(ground):
+			ground = hint
+			print("%s: no flat patch, seating at hint" % label)
 	if not _is_finite_vec3(ground):
-		push_warning("Demo rover spawn failed: no flat ground near BaseSpawn")
+		push_warning("%s spawn failed: no ground near player" % label)
+		_set_debug_spawn_status("%s: нет земли под точкой спавна" % label)
 		return
+	# Wheel locomotives are raycast-supported (solid wheel colliders off).
+	# SDF seating before the voxel trimesh cooks → freefall through crust.
+	ground = await _await_physics_ground_at(ground, label)
+	if not _is_finite_vec3(ground):
+		_set_debug_spawn_status("%s: нет physics-коллизии под точкой спавна" % label)
+		return
+	var phrase := demo_rover_phrase.strip_edges()
+	var t0 := Time.get_ticks_msec()
 	var result: Dictionary
-	if demo_rover_phrase.strip_edges().is_empty():
+	if phrase.is_empty():
 		result = RoverDemoSpawn.spawn_on_terrain(
 			_session,
 			ground,
 			RoverDemoSpawn.STORE_ID,
 			_terrain,
 			tool,
-			_physics_space_state()
+			space
 		)
 	else:
 		result = RoverComposer.spawn_on_terrain_from_phrase(
 			_session,
 			ground,
-			demo_rover_phrase,
+			phrase,
 			RoverDemoSpawn.STORE_ID,
 			_terrain,
 			tool,
-			_physics_space_state()
+			space
 		)
+	var body_pos := Vector3(NAN, NAN, NAN)
+	var assembly_id := int(result.get("assembly_id", 0))
+	if bool(result.get("ok", false)) and assembly_id > 0 and _session.projection != null:
+		var body := _session.projection.get_physics_body(assembly_id)
+		if body != null:
+			body_pos = body.global_position
+	var dist := (
+		_player.global_position.distance_to(body_pos)
+		if _is_finite_vec3(body_pos) and _player != null
+		else -1.0
+	)
 	if not bool(result.get("ok", false)):
 		push_warning(
-			"Demo rover spawn failed: %s %s"
-			% [str(result.get("error", "unknown")), str(result.get("failures", []))]
+			"%s spawn failed: %s %s"
+			% [
+				label,
+				str(result.get("error", "unknown")),
+				str(result.get("failures", [])),
+			]
+		)
+		_set_debug_spawn_status(
+			"%s FAIL: %s" % [label, str(result.get("error", "unknown"))]
 		)
 	else:
 		print(
-			"MoonExperiment: demo rover spawned assembly_id=%d at %s"
-			% [int(result.get("assembly_id", 0)), str(ground)]
+			(
+				"MoonExperiment: %s spawned assembly_id=%d body=%s "
+				+ "dist=%.1fm compose=%dms phrase='%s'"
+			)
+			% [
+				label,
+				assembly_id,
+				str(body_pos),
+				dist,
+				Time.get_ticks_msec() - t0,
+				phrase,
+			]
+		)
+		_set_debug_spawn_status(
+			"U: ровер #%d рядом (%.0fm). Собирался %dms."
+			% [assembly_id, dist, Time.get_ticks_msec() - t0]
 		)
 
 
@@ -682,6 +821,9 @@ func _spawn_demo_hopper_near_player() -> void:
 		await get_tree().physics_frame
 	if not _is_finite_vec3(ground):
 		push_warning("Demo hopper spawn failed: no flat ground near offset hint")
+		return
+	ground = await _await_physics_ground_at(ground, "Demo hopper")
+	if not _is_finite_vec3(ground):
 		return
 	var result := HopperDemoSpawn.spawn_on_terrain(
 		_session,
@@ -1024,6 +1166,41 @@ func _peek_saved_player_position() -> Vector3:
 				float(position_data[2]),
 			)
 	return Vector3.ZERO
+
+
+## Wait until a cooked voxel collider exists under `hint` (SDF alone is not
+## enough for raycast-wheel locomotives). Returns physics surface or NaN.
+func _await_physics_ground_at(
+	hint: Vector3,
+	label: String,
+	timeout_ms: int = PHYSICS_GROUND_TIMEOUT_MS
+) -> Vector3:
+	if not _is_finite_vec3(hint) or _gravity_field == null:
+		return Vector3(NAN, NAN, NAN)
+	var origin := MoonGeometry.spawn_hold_point(hint)
+	var direction := _gravity_field.probe_direction_toward_ground(origin)
+	var wait_start_ms := Time.get_ticks_msec()
+	while Time.get_ticks_msec() - wait_start_ms < timeout_ms:
+		var physics_point := VoxelSpaceUtil.physics_surface_along_ray(
+			_physics_space_state(),
+			origin,
+			direction,
+			MoonGeometry.GROUND_PROBE_DISTANCE_M
+		)
+		if _is_finite_vec3(physics_point):
+			var waited := Time.get_ticks_msec() - wait_start_ms
+			if waited > 0:
+				print(
+					"MoonExperiment: %s physics ground ready at %s (waited %d ms)"
+					% [label, str(physics_point), waited]
+				)
+			return physics_point
+		await get_tree().physics_frame
+	push_warning(
+		"%s: physics collider not ready near %s after %d ms"
+		% [label, str(hint), timeout_ms]
+	)
+	return Vector3(NAN, NAN, NAN)
 
 
 func _resolve_spawn_with_floor(

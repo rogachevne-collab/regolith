@@ -107,7 +107,10 @@ static func spawn_on_terrain(
 	var locomotion := session.world.get_locomotion_controller(assembly_id)
 	locomotion.set_parking_brake(true)
 	var motion := AssemblyMotionState.from_grid_frame(grid_frame)
-	motion.transform.origin.y = assembly_transform.origin.y
+	# Full seated pose — origin.y alone buries the chassis on radial gravity
+	# (grid snap keeps XZ while terrain seating is along local up).
+	motion.transform.origin = assembly_transform.origin
+	motion.transform.basis = assembly_transform.basis
 	motion.frozen = false
 	motion.sleeping = false
 	motion.linear_velocity = Vector3.ZERO

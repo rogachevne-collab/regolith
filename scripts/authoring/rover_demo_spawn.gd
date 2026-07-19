@@ -176,7 +176,7 @@ static func spawn_on_terrain(
 	_wire_demo_power(world, module_ids)
 	_charge_demo_battery(world, int(module_ids.get("battery", 0)))
 	_configure_steerable(world, module_ids)
-	# Floating on wheels with parking brake; no freeze monolith.
+	# Floating on wheels with parking brake; park-freeze settles after rest.
 	world.get_locomotion_controller(assembly_id).mark_released_from_anchor()
 	var locomotion := world.get_locomotion_controller(assembly_id)
 	locomotion.set_parking_brake(true)

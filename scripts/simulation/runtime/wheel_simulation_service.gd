@@ -1,6 +1,9 @@
 class_name WheelSimulationService
 extends RefCounted
 
+## assembly_id -> {"topology_revision": int, "pairs": Array[Dictionary]}
+static var _pair_cache: Dictionary = {}
+
 
 static func discover_pairs(
 	world: SimulationWorld,
@@ -11,7 +14,15 @@ static func discover_pairs(
 		return pairs
 	var assembly := world.get_assembly_raw(assembly_id)
 	if assembly == null or assembly.tombstoned:
+		_pair_cache.erase(assembly_id)
 		return pairs
+	var cached: Variant = _pair_cache.get(assembly_id)
+	if (
+		cached is Dictionary
+		and int(cached.get("topology_revision", -1))
+		== assembly.topology_revision
+	):
+		return cached["pairs"] as Array[Dictionary]
 	for element_id: int in assembly.element_ids:
 		var element := world.get_element(element_id)
 		if element == null or element.archetype_id != "wheel_suspension":
@@ -27,6 +38,10 @@ static func discover_pairs(
 				< int(right.get("suspension_element_id", 0))
 			)
 	)
+	_pair_cache[assembly_id] = {
+		"topology_revision": assembly.topology_revision,
+		"pairs": pairs,
+	}
 	return pairs
 
 

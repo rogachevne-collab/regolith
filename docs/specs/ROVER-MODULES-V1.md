@@ -491,6 +491,14 @@ KINETIC-INTERACTION); разные groups одной assembly бьют друг 
 raycasts; piston/frame kinetic carve не затрагивается. После правки
 террейна будят locomotive `RigidBody3D`, иначе sleeping Jolt-тело не
 замечает исчезнувшую опору.
+**Physics:** wheel-locomotive body на layer assembly, `collision_mask`
+= terrain|assembly (шасси — safety net при tip-over; без terrain body
+проваливается сквозь кору). Смягчение контакта: `continuous_cd=false`,
+`bounce=0`. Solid-коллайдеры `drive_wheel` / `wheel_suspension` на
+locomotive disabled (ход через raycast). Flight/landing-leg — тот же
+mask с terrain. Demo/debug spawn (`bootstrap._spawn_rover_at_hint`)
+ждёт cooked physics ground под точкой посадки — SDF-only seating при
+отстающем voxel collider (VT #677) даёт freefall сквозь кору.
 
 ## Электропитание
 
