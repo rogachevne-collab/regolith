@@ -97,7 +97,6 @@ static func drill_requires_power() -> bool:
 	)
 
 
-## TEMP dig-feel boost in game_balance.json (was radius 1.0 / bite 0.18 / interval 0.08).
 static func hand_drill_carve_radius_m() -> float:
 	return GameBalance.industry_float(
 		PackedStringArray(["hand_drill", "carve_radius_m"]),
@@ -115,7 +114,7 @@ static func hand_drill_bite_depth_m() -> float:
 static func hand_drill_reach_m() -> float:
 	return GameBalance.industry_float(
 		PackedStringArray(["hand_drill", "reach_m"]),
-		3.2
+		2.25
 	)
 
 
@@ -143,7 +142,7 @@ static func hand_drill_loot_pile_max_mass_kg() -> float:
 static func hand_drill_interval_s() -> float:
 	return GameBalance.industry_float(
 		PackedStringArray(["hand_drill", "interval_s"]),
-		0.08
+		0.15
 	)
 
 

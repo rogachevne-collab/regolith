@@ -240,7 +240,7 @@ Gameplay-код не читает физические keycode или mouse butt
 - terrain request обрабатывает единый `TerrainExcavationService`; звук и VFX
   подтверждают только непустой результат операции;
 - cadence continuous action сохраняется (`interval = 0.08`);
-- `max_range = 3.2` (`IndustryArchetypeProfile.hand_drill_reach_m`): луч прицела
+- `max_range = 2.25` (`IndustryArchetypeProfile.hand_drill_reach_m`): луч прицела
   стартует от глаз (~1.6–1.65 м над стопами), поэтому земля прямо под игроком
   уже ~1.66 м, а под естественным взглядом вниз — дальше; reach перекрывает
   eye-to-floor плюс рабочую глубину, чтобы бурение под ногами срабатывало

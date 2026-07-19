@@ -217,20 +217,27 @@ func _remove_voxel(
 			and gap_ms <= IndustryArchetypeProfile.hand_drill_path_max_gap_ms()
 		)
 	if use_path_sweep:
-		var sweep := _excavation.excavate(
-			_voxel_tool,
-			{
-				"stamp_kind": &"path",
-				"terrain": _terrain,
-				"points": PackedVector3Array([
-					_hand_drill_last_bite_center,
-					bite_center,
-				]),
-				"radii": PackedFloat32Array([radius, radius]),
-				"sdf_scale": sdf_scale,
-			}
-		)
-		total_removed_m3 += float(sweep["removed_volume_m3"])
+		# do_path trips a VoxelDataGrid assert in the pinned godot_voxel
+		# build (is_valid_block_position), so sweep the gap with
+		# overlapping sphere bites instead.
+		var last_center: Vector3 = _hand_drill_last_bite_center
+		var span := bite_center - last_center
+		var step := maxf(radius * 0.5, 0.01)
+		var count := clampi(ceili(span.length() / step), 1, 8)
+		for index: int in range(count):
+			var sweep := _excavation.excavate(
+				_voxel_tool,
+				{
+					"stamp_kind": &"sphere",
+					"terrain": _terrain,
+					"center": last_center + span * (
+						float(index + 1) / float(count)
+					),
+					"radius": radius,
+					"sdf_scale": sdf_scale,
+				}
+			)
+			total_removed_m3 += float(sweep["removed_volume_m3"])
 	var excavation := _excavation.excavate(
 		_voxel_tool,
 		{

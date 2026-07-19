@@ -1,0 +1,35 @@
+[gd_resource type="AudioStreamRandomizer" load_steps=10 format=3]
+
+[ext_resource type="AudioStream" uid="uid://fs77d164567358" path="res://resources/audio/footsteps/gravel_run_01.wav" id="1"]
+[ext_resource type="AudioStream" uid="uid://fsbbb0c64a4c84" path="res://resources/audio/footsteps/gravel_run_02.wav" id="2"]
+[ext_resource type="AudioStream" uid="uid://fsd3817ef1a662" path="res://resources/audio/footsteps/gravel_run_03.wav" id="3"]
+[ext_resource type="AudioStream" uid="uid://fs1fdf632f9619" path="res://resources/audio/footsteps/gravel_run_04.wav" id="4"]
+[ext_resource type="AudioStream" uid="uid://fsfbfde5858722" path="res://resources/audio/footsteps/gravel_run_05.wav" id="5"]
+[ext_resource type="AudioStream" uid="uid://fsde5bd2a0b5a3" path="res://resources/audio/footsteps/gravel_run_06.wav" id="6"]
+[ext_resource type="AudioStream" uid="uid://fsc674a5cc63cb" path="res://resources/audio/footsteps/gravel_run_07.wav" id="7"]
+[ext_resource type="AudioStream" uid="uid://fs23add33aa45a" path="res://resources/audio/footsteps/gravel_run_08.wav" id="8"]
+[ext_resource type="AudioStream" uid="uid://fsfa20fd1d3f07" path="res://resources/audio/footsteps/gravel_run_09.wav" id="9"]
+
+[resource]
+playback_mode = 0
+random_pitch = 1.04
+random_volume_offset_db = 1.2
+streams_count = 9
+stream_0/stream = ExtResource("1")
+stream_0/weight = 1.0
+stream_1/stream = ExtResource("2")
+stream_1/weight = 1.0
+stream_2/stream = ExtResource("3")
+stream_2/weight = 1.0
+stream_3/stream = ExtResource("4")
+stream_3/weight = 1.0
+stream_4/stream = ExtResource("5")
+stream_4/weight = 1.0
+stream_5/stream = ExtResource("6")
+stream_5/weight = 1.0
+stream_6/stream = ExtResource("7")
+stream_6/weight = 1.0
+stream_7/stream = ExtResource("8")
+stream_7/weight = 1.0
+stream_8/stream = ExtResource("9")
+stream_8/weight = 1.0

@@ -34,6 +34,7 @@ func set_spawn_locked(locked: bool) -> void:
 func begin_spawn_settle(pos: Vector3) -> void:
 	global_position = pos
 	velocity = Vector3.ZERO
+	reset_physics_interpolation()
 	_spawn_locked = false
 	_spawn_settling = true
 	_settled_frames = 0
@@ -46,10 +47,11 @@ func is_spawn_settled() -> bool:
 
 func set_spawn_ready(pos: Vector3) -> void:
 	global_position = pos
+	velocity = Vector3.ZERO
+	reset_physics_interpolation()
 	_spawn_locked = false
 	_spawn_settling = false
 	_settled_frames = 0
-	velocity = Vector3.ZERO
 	set_physics_process(true)
 
 
@@ -111,6 +113,9 @@ func _ready() -> void:
 	_head = get_node(head_path)
 	_voxel_viewer = get_node_or_null("VoxelViewer") as VoxelViewer
 	_world_parent = get_parent()
+	## Foot mode: interpolation OFF — yaw/basis mix on voxel ground.
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+	reset_physics_interpolation()
 	set_physics_process(false)
 
 
@@ -132,7 +137,6 @@ func enter_vehicle(vehicle: Node3D, seat_position: Vector3) -> void:
 	reparent(vehicle, false)
 	position = seat_position
 	rotation = Vector3.ZERO
-	# Foot mode keeps interpolation OFF (yaw/basis mix on voxel ground).
 	# Seated child of RigidBody must interpolate or the top-level camera
 	# judders at physics rate while the world renders at display rate.
 	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_ON

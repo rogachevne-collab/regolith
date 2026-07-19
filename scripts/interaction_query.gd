@@ -27,10 +27,24 @@ func _ready() -> void:
 	_player = get_node(player_path)
 	_camera = get_node(camera_path)
 	_tools = get_node_or_null(tool_controller_path) as ToolController
-	_terrain = get_node(terrain_path)
+	_terrain = get_node_or_null(terrain_path) as Node3D
 	_session = get_node_or_null(simulation_session_path) as SimulationSession
+	var scene := get_tree().current_scene
+	if scene != null:
+		if _terrain == null:
+			_terrain = scene.get_node_or_null("VoxelTerrain") as Node3D
+		if _session == null:
+			_session = scene.get_node_or_null(
+				"SimulationSession"
+			) as SimulationSession
 	_voxel_tool = TerrainCompat.get_voxel_tool(_terrain)
-	_voxel_tool.channel = VoxelBuffer.CHANNEL_SDF
+	if _voxel_tool != null:
+		_voxel_tool.channel = VoxelBuffer.CHANNEL_SDF
+	elif _terrain == null:
+		push_warning(
+			"InteractionQuery: VoxelTerrain not found (path=%s)"
+			% str(terrain_path)
+		)
 
 
 func _physics_process(_delta: float) -> void:
@@ -127,6 +141,8 @@ func _query_voxel(
 	direction: Vector3,
 	reach: float = -1.0
 ) -> InteractionHit:
+	if _voxel_tool == null or _terrain == null:
+		return InteractionHit.empty()
 	if reach <= 0.0:
 		reach = max_distance
 	var raw: VoxelRaycastResult = VoxelSpaceUtil.raycast_world(
