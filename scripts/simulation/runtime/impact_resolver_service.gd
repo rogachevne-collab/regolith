@@ -223,7 +223,7 @@ func _on_body_shape_entered(
 	if body == null or not is_instance_valid(body) or body.freeze or other_body == null:
 		return
 	var is_world_surface := ImpactResolver.is_world_surface_partner(other_body)
-	var hits_player := ImpactResolver.player_suit_state(other_body) != null
+	var hits_player := ImpactResolver.is_player_partner(other_body)
 	if (
 		not is_world_surface
 		and not ImpactResolver.is_assembly_partner(other_body)
@@ -360,7 +360,7 @@ func integrate_contacts(
 		if (
 			not ImpactResolver.is_world_surface_partner(partner)
 			and not ImpactResolver.is_assembly_partner(partner)
-			and ImpactResolver.player_suit_state(partner) == null
+			and not ImpactResolver.is_player_partner(partner)
 		):
 			continue
 		if ImpactResolver.same_assembly_subgrid(body, partner):
@@ -583,11 +583,10 @@ func _apply_entry(
 	var batch_key := str(entry.get("batch_key", ""))
 	if not batch_key.is_empty():
 		_cooldown_until[batch_key] = Time.get_ticks_msec() + COOLDOWN_MS
-	var suit := ImpactResolver.player_suit_state(partner)
-	if suit != null:
+	if ImpactResolver.is_player_partner(partner):
 		# V2-6: the player absorbs the hit; no carve and no self-damage to
 		# the striker from squashing something soft.
-		_apply_player_hit(partner, suit, impulse_length)
+		_apply_player_hit(partner, impulse_length)
 		return 0.0
 	var used_volume := 0.0
 	var world_surface := ImpactResolver.is_world_surface_partner(partner)
@@ -803,18 +802,23 @@ func _nudge_integer_ray_origin(origin: Vector3) -> Vector3:
 
 func _apply_player_hit(
 	partner: Object,
-	suit: SuitState,
 	impulse_length: float
 ) -> void:
-	var player_id := partner.get_instance_id()
+	# Cooldown is keyed by body instance, the suit by player id: two players
+	# sharing one suit id must still be rate-limited independently.
+	var body_key := partner.get_instance_id()
 	var now := Time.get_ticks_msec()
-	if now < int(_player_hit_until.get(player_id, 0)):
+	if now < int(_player_hit_until.get(body_key, 0)):
 		return
 	var amount := ImpactResolver.player_damage_amount(impulse_length)
-	if amount <= 0.0:
+	if amount <= 0.0 or _world == null:
 		return
-	_player_hit_until[player_id] = now + ImpactResolver.PLAYER_HIT_COOLDOWN_MS
-	suit.apply_damage(amount, &"kinetic_impact")
+	_player_hit_until[body_key] = now + ImpactResolver.PLAYER_HIT_COOLDOWN_MS
+	_world.apply_suit_damage(
+		ImpactResolver.player_id_of(partner),
+		amount,
+		&"kinetic_impact"
+	)
 
 
 func _apply_element_damage(

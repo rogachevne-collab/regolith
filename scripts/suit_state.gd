@@ -1,108 +1,100 @@
 class_name SuitState
 extends Node
-## Minimal authoritative survival state of the player's suit: health, oxygen and
-## hydrogen, each as current + max with a normalized fraction. This is the single
-## source of truth for the HUD Vitals widget — presentation reads it via `changed`
-## and never writes it (see docs/PHYSICAL-LANGUAGE.md "Состояние скафандра" and
-## docs/specs/HUD-UI-01.md). It is deliberately NOT a full atmosphere / life-support
-## system (no sealed volumes, pressure, leaks or gas exchange).
+## Presentation-side VIEW of one player's suit. The authoritative state lives in
+## `SimulationWorld` as `SimulationSuitState`, keyed by player id
+## (COOP-HOST-V0 "Per-peer player state"); this node only mirrors it and
+## re-emits `changed` so the HUD Vitals widget keeps its existing contract
+## (see docs/PHYSICAL-LANGUAGE.md "Состояние скафандра" and
+## docs/specs/HUD-UI-01.md).
+##
+## It owns no values: every read forwards to the world. If the world is not
+## bound yet (headless scenes without a SimulationSession), the getters report
+## a full suit rather than dividing by zero.
 
-## Emitted whenever any current value actually changes.
+## Emitted whenever any current value of THIS player's suit actually changes.
 signal changed
 
-@export var health_max := 100.0
-@export var oxygen_max := 100.0
-@export var hydrogen_max := 100.0
+## Which suit in the world this view mirrors. Per-peer ids land in stage 1 of
+## COOP-HOST-V0, alongside per-peer store ids.
+@export var player_id := "player"
 
-## Placeholder consumption/regen rates (units per second). Clearly a tunable stub
-## so the bars are alive; a real balance/life-support system will own these later.
-@export var oxygen_drain_per_sec := 0.6
-@export var hydrogen_drain_per_sec := 0.35
-@export var health_regen_per_sec := 0.0
-
-## When true the node self-ticks the placeholder drain/regen each frame. Tests
-## drive tick() directly and keep this off for determinism.
-@export var simulate := true
-
-var health := 0.0
-var oxygen := 0.0
-var hydrogen := 0.0
+var _world: SimulationWorld
 
 
 func _ready() -> void:
-	fill()
+	# The gateway registers itself in _ready too, and the player scene may be
+	# instanced before it, so keep retrying instead of binding once and
+	# silently showing full bars forever.
+	set_process(true)
 
 
-func _process(delta: float) -> void:
-	if simulate:
-		tick(delta)
+## Explicit binding for scenes that build the world themselves (tests).
+func bind_world(world: SimulationWorld) -> void:
+	if _world == world:
+		return
+	if _world != null and _world.suit_changed.is_connected(_on_suit_changed):
+		_world.suit_changed.disconnect(_on_suit_changed)
+	_world = world
+	if _world == null:
+		return
+	_world.suit_changed.connect(_on_suit_changed)
+	_world.ensure_suit_state(player_id)
+	changed.emit()
 
 
-## Reset all channels to full and notify. Called on spawn.
+func world() -> SimulationWorld:
+	return _world
+
+
 func fill() -> void:
-	health = health_max
-	oxygen = oxygen_max
-	hydrogen = hydrogen_max
-	changed.emit()
+	if _world != null:
+		_world.fill_suit_state(player_id)
 
 
-## Advance the placeholder drain/regen by `delta` seconds. Always applies (the
-## `simulate` flag only gates the automatic per-frame call), so tests can step it
-## deterministically. Emits `changed` once if anything moved.
-func tick(delta: float) -> void:
-	var next_health := clampf(health + health_regen_per_sec * delta, 0.0, health_max)
-	var next_oxygen := clampf(oxygen - oxygen_drain_per_sec * delta, 0.0, oxygen_max)
-	var next_hydrogen := clampf(hydrogen - hydrogen_drain_per_sec * delta, 0.0, hydrogen_max)
-	if next_health == health and next_oxygen == oxygen and next_hydrogen == hydrogen:
-		return
-	health = next_health
-	oxygen = next_oxygen
-	hydrogen = next_hydrogen
-	changed.emit()
-
-
-## Externally inflicted damage (kinetic impacts, V2-6). Source is kept for
-## future HUD/death messaging; delivery must happen on the main thread.
-func apply_damage(amount: float, _source: StringName = &"") -> void:
-	if amount <= 0.0:
-		return
-	set_health(health - amount)
-
-
-func set_health(value: float) -> void:
-	var clamped := clampf(value, 0.0, health_max)
-	if clamped != health:
-		health = clamped
-		changed.emit()
-
-
-func set_oxygen(value: float) -> void:
-	var clamped := clampf(value, 0.0, oxygen_max)
-	if clamped != oxygen:
-		oxygen = clamped
-		changed.emit()
-
-
-func set_hydrogen(value: float) -> void:
-	var clamped := clampf(value, 0.0, hydrogen_max)
-	if clamped != hydrogen:
-		hydrogen = clamped
-		changed.emit()
+func apply_damage(amount: float, source: StringName = &"") -> void:
+	if _world != null:
+		_world.apply_suit_damage(player_id, amount, source)
 
 
 func health_fraction() -> float:
-	return _fraction(health, health_max)
+	var suit := _suit()
+	return 1.0 if suit == null else suit.health_fraction()
 
 
 func oxygen_fraction() -> float:
-	return _fraction(oxygen, oxygen_max)
+	var suit := _suit()
+	return 1.0 if suit == null else suit.oxygen_fraction()
 
 
 func hydrogen_fraction() -> float:
-	return _fraction(hydrogen, hydrogen_max)
+	var suit := _suit()
+	return 1.0 if suit == null else suit.hydrogen_fraction()
 
 
-static func _fraction(current: float, maximum: float) -> float:
-	if maximum <= 0.0:
-		return 0.0
-	return clampf(current / maximum, 0.0, 1.0)
+func is_dead() -> bool:
+	var suit := _suit()
+	return suit != null and suit.is_dead()
+
+
+func _suit() -> SimulationSuitState:
+	if _world == null:
+		return null
+	return _world.get_suit_state(player_id)
+
+
+func _process(_delta: float) -> void:
+	var gateway := get_tree().get_first_node_in_group(
+		&"world_command_gateway"
+	) as WorldCommandGateway
+	if gateway == null:
+		return
+	var world_node := gateway.get_world()
+	if world_node == null:
+		return
+	bind_world(world_node)
+	set_process(false)
+
+
+func _on_suit_changed(changed_player_id: String) -> void:
+	if changed_player_id == player_id:
+		changed.emit()

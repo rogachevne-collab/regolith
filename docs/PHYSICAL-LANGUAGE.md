@@ -819,12 +819,29 @@ debug-спавна рядом с игроком — на узле `MeteoriteSyst
 
 ## Состояние скафандра (SuitState)
 
-`SuitState` — минимальное authoritative состояние выживания игрока: `health`
-(hp), `oxygen` (O₂) и `hydrogen` (H₂), каждое как `current` + `max` с
-нормализованной долей, плюс сигнал изменения. Это самодостаточное survival-state,
-а **не** полная система атмосфер/жизнеобеспечения (герметичные объёмы, давление,
-утечки `volume_leaking`, газообмен) — они остаются вне scope. HUD (`Vitals`)
-только читает `SuitState`; контракт HUD — `docs/specs/HUD-UI-01.md`.
+`SimulationSuitState` — минимальное authoritative состояние выживания игрока:
+`health` (hp), `oxygen` (O₂) и `hydrogen` (H₂), каждое как `current` + `max` с
+нормализованной долей. Это самодостаточное survival-state, а **не** полная
+система атмосфер/жизнеобеспечения (герметичные объёмы, давление, утечки
+`volume_leaking`, газообмен) — они остаются вне scope.
+
+**Владение.** Состояние живёт в `SimulationWorld`, по одному на `player_id`
+(`ensure_suit_state` / `apply_suit_damage` / `tick_suits`, сигнал
+`suit_changed`). Поэтому оно попадает в `capture_snapshot()` — то есть в сейв
+и в join-снапшот кооп-сессии — тем же механизмом, что и остальное состояние
+мира, без отдельного пути репликации (`docs/specs/COOP-HOST-V0.md`,
+«Per-peer player state»).
+
+Тик не самозапускающийся: его вызывает `SimulationSession`, чтобы
+headless-тесты шагали детерминированно.
+
+`SuitState` (узел на сцене игрока) — **view**, а не состояние: он зеркалит
+суту своего `player_id` и переизлучает `changed` для HUD. HUD (`Vitals`)
+только читает; контракт HUD — `docs/specs/HUD-UI-01.md`.
+
+Принадлежность тела игроку определяется группой `ImpactResolver.PLAYER_GROUP`
+(`is_player_partner`), а не наличием узла: этот же предикат держит игрока вне
+carve- и assembly-impact путей.
 
 ## Производительность
 

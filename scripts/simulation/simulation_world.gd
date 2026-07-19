@@ -26,6 +26,8 @@ signal structural_command_completed(
 	result: StructuralCommandResult
 )
 signal player_inventory_changed()
+## Emitted when any channel of one player's suit actually moved.
+signal suit_changed(player_id: String)
 
 ## Monotonic world-wide topology counter: bumps on every structural mutation.
 ## Cheap staleness check for presentation-side caches (snap resolve reuse).
@@ -42,6 +44,8 @@ var _redirects: Dictionary = {}
 var _resource_stores: Dictionary = {}
 var _player_inventory: PlayerInventoryRegistry
 var _player_inventory_revision := 0
+## player_id → SimulationSuitState.
+var _suits: Dictionary = {}
 var _industry_network := IndustryNetworkState.create_default()
 var _industry_elements: Dictionary = {}
 var _wheel_instances: Dictionary = {}
@@ -106,6 +110,54 @@ func list_resource_stores() -> Array[SimulationResourceStore]:
 
 func get_resource_store(store_id: String) -> SimulationResourceStore:
 	return _resource_stores.get(store_id) as SimulationResourceStore
+
+## Suit state is per player id (COOP-HOST-V0 "Per-peer player state"): it lives
+## here rather than on the player scene so it rides the snapshot into the save
+## and, later, into the join payload. Presentation reads it through the
+## `SuitState` view node and never writes it.
+func get_suit_state(player_id: String) -> SimulationSuitState:
+	return _suits.get(player_id) as SimulationSuitState
+
+func ensure_suit_state(player_id: String) -> SimulationSuitState:
+	var suit := get_suit_state(player_id)
+	if suit == null:
+		suit = SimulationSuitState.new()
+		_suits[player_id] = suit
+		suit_changed.emit(player_id)
+	return suit
+
+func has_suit_state(player_id: String) -> bool:
+	return _suits.has(player_id)
+
+func list_suit_state_ids() -> Array[String]:
+	var ids: Array[String] = []
+	for player_id: String in _suits.keys():
+		ids.append(player_id)
+	ids.sort()
+	return ids
+
+func apply_suit_damage(
+	player_id: String,
+	amount: float,
+	source: StringName = &""
+) -> bool:
+	var suit := ensure_suit_state(player_id)
+	if not suit.apply_damage(amount, source):
+		return false
+	suit_changed.emit(player_id)
+	return true
+
+func fill_suit_state(player_id: String) -> void:
+	if ensure_suit_state(player_id).fill():
+		suit_changed.emit(player_id)
+
+## Advances the placeholder drain/regen for every known suit. Driven by
+## SimulationSession so headless tests can step it deterministically.
+func tick_suits(delta: float) -> void:
+	for player_id: String in _suits.keys():
+		var suit: SimulationSuitState = _suits[player_id]
+		if suit.tick(delta):
+			suit_changed.emit(player_id)
 
 func get_player_inventory() -> PlayerInventoryRegistry:
 	return _player_inventory
@@ -808,6 +860,7 @@ func restore_snapshot(snapshot: Dictionary, emit_event := true) -> bool:
 	_joints = restored._joints
 	_redirects = restored._redirects
 	_resource_stores = restored._resource_stores
+	_suits = restored._suits
 	_player_inventory = restored._player_inventory
 	_player_inventory_revision = restored._player_inventory_revision
 	_industry_network = restored._industry_network
@@ -1118,6 +1171,9 @@ func _register_resource_store(store: SimulationResourceStore) -> void:
 
 func _register_player_inventory(registry: PlayerInventoryRegistry) -> void:
 	_player_inventory = registry
+
+func _register_suit_state(player_id: String, suit: SimulationSuitState) -> void:
+	_suits[player_id] = suit
 
 func _joints_for_assembly(assembly_id: int) -> Array[SimulationJoint]:
 	var result: Array[SimulationJoint] = []

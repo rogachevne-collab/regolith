@@ -423,12 +423,13 @@ func _test_player_hit_damages_suit() -> bool:
 	var body: RigidBody3D = fixture.projection.get_physics_body(
 		int(spawn.data["assembly_id"])
 	) as RigidBody3D
+	# Player identity is group membership now; the suit itself lives in the
+	# world, keyed by player id (COOP-HOST-V0 "Per-peer player state").
 	var player := CharacterBody3D.new()
-	var suit := SuitState.new()
-	suit.name = "SuitState"
-	suit.simulate = false
-	player.add_child(suit)
+	player.add_to_group(ImpactResolver.PLAYER_GROUP)
+	player.set_meta("player_id", "player")
 	add_child(player)
+	var suit: SimulationSuitState = fixture.world.ensure_suit_state("player")
 	var entry := {
 		"batch_key": "player_hit_test",
 		"striker_element_id": element_id,

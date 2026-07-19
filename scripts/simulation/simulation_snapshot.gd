@@ -17,6 +17,7 @@ static func capture(world) -> Dictionary:
 		"redirects": _serialize_redirects(world),
 		"resource_stores": _serialize_resource_stores(world),
 		"player_inventory": _serialize_player_inventory(world),
+		"suits": _serialize_suits(world),
 		"industry_network": world.get_industry_network().to_dict(true),
 		"industry_elements": world.list_industry_element_runtimes(),
 		"wheel_instances": world.list_wheel_instance_rows(),
@@ -60,6 +61,9 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 	var redirect_rows: Variant = snapshot.get("redirects")
 	var store_rows: Variant = snapshot.get("resource_stores")
 	var player_inventory_row: Variant = snapshot.get("player_inventory", {})
+	## Optional on purpose: saves written before suits moved into the world
+	## must keep loading, they just start with a fresh suit on spawn.
+	var suit_rows: Variant = snapshot.get("suits", {})
 	var industry_network_row: Variant = snapshot.get("industry_network", {})
 	var industry_element_rows: Variant = snapshot.get("industry_elements", [])
 	var wheel_instance_rows: Variant = snapshot.get("wheel_instances", [])
@@ -563,6 +567,17 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 		)
 	else:
 		world.ensure_player_inventory().migrate_legacy_save()
+	if suit_rows is Dictionary:
+		var suit_ids: Array = (suit_rows as Dictionary).keys()
+		suit_ids.sort()
+		for player_id: Variant in suit_ids:
+			var suit_row: Variant = (suit_rows as Dictionary)[player_id]
+			if not suit_row is Dictionary:
+				return false
+			world._register_suit_state(
+				str(player_id),
+				SimulationSuitState.from_dict(suit_row)
+			)
 	world._register_industry_network(industry_network)
 	for element_id: int in _sorted_int_keys(industry_elements):
 		world._register_industry_element_runtime(
@@ -631,6 +646,15 @@ static func _serialize_player_inventory(world) -> Dictionary:
 	if registry == null:
 		return {}
 	return registry.to_dict()
+
+
+static func _serialize_suits(world) -> Dictionary:
+	var rows: Dictionary = {}
+	for player_id: String in world.list_suit_state_ids():
+		var suit: SimulationSuitState = world.get_suit_state(player_id)
+		if suit != null:
+			rows[player_id] = suit.to_dict()
+	return rows
 
 
 static func _element_has_port(

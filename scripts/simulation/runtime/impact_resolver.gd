@@ -116,13 +116,25 @@ static func is_world_surface_partner(partner: Object) -> bool:
 	return false
 
 
-## The player is a CharacterBody3D carrying a SuitState child (player.tscn).
-static func player_suit_state(partner: Object) -> SuitState:
+## Group every player body joins (CharacterMotor._ready).
+const PLAYER_GROUP := &"player"
+
+## "Is this collider a player?" — used both to gate player damage and to keep
+## players out of the carve / assembly-impact paths. Membership is explicit:
+## it used to be inferred from a SuitState child node, but suit state now lives
+## in SimulationWorld and that node became an optional view, so inferring it
+## would silently classify players as non-players.
+static func is_player_partner(partner: Object) -> bool:
 	if not partner is CharacterBody3D:
-		return null
-	return (partner as CharacterBody3D).get_node_or_null(
-		"SuitState"
-	) as SuitState
+		return false
+	return (partner as CharacterBody3D).is_in_group(PLAYER_GROUP)
+
+
+## Which suit in SimulationWorld this body owns; empty when not a player.
+static func player_id_of(partner: Object) -> String:
+	if not is_player_partner(partner):
+		return ""
+	return str((partner as Node).get_meta("player_id", "player"))
 
 
 static func player_damage_amount(impulse_length: float) -> float:

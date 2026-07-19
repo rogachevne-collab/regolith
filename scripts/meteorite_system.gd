@@ -354,10 +354,11 @@ func _on_meteor_contact(body: RigidBody3D, other: Node) -> void:
 	var hits_terrain := (
 		other != null and ImpactResolver.is_world_surface_partner(other)
 	)
-	var suit := (
-		ImpactResolver.player_suit_state(other) if other != null else null
+	var hit_player_id := (
+		ImpactResolver.player_id_of(other) if other != null else ""
 	)
-	if not hits_terrain and suit == null:
+	var hits_player := not hit_player_id.is_empty()
+	if not hits_terrain and not hits_player:
 		return
 	body.set_meta("meteorite_spent", true)
 	# Stop further physics callbacks before carve/free.
@@ -367,16 +368,16 @@ func _on_meteor_contact(body: RigidBody3D, other: Node) -> void:
 	var up := _up_at(contact)
 	print(
 		"MeteoriteSystem: impact terrain=%s player=%s at %s"
-		% [hits_terrain, suit != null, contact]
+		% [hits_terrain, hits_player, contact]
 	)
 	if hits_terrain:
 		_carve_crater(contact, -up)
 		_spawn_vfx(contact, up)
-	elif suit != null and damage_player:
+	elif hits_player and damage_player:
 		# Still show a burst if we only clipped the player.
 		_spawn_vfx(contact, up)
-	if damage_player and suit != null:
-		suit.apply_damage(player_damage, &"meteorite")
+	if damage_player and hits_player and _gateway != null:
+		_gateway.damage_player_suit(hit_player_id, player_damage, &"meteorite")
 	body.queue_free()
 
 

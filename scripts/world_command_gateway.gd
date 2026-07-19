@@ -607,6 +607,25 @@ func get_voxel_tool() -> VoxelTool:
 	return _voxel_tool
 
 
+func get_world() -> SimulationWorld:
+	if _session == null:
+		return null
+	return _session.world
+
+
+## Suit damage from world events that are not structural commands (meteorites).
+## Routed through the gateway so presentation never writes the world directly.
+func damage_player_suit(
+	player_id: String,
+	amount: float,
+	source: StringName = &""
+) -> bool:
+	var world := get_world()
+	if world == null or player_id.is_empty():
+		return false
+	return world.apply_suit_damage(player_id, amount, source)
+
+
 func _place_block(
 	command: Dictionary,
 	target: Dictionary

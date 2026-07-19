@@ -37,6 +37,7 @@ func _ready() -> void:
 
 func _physics_process(delta: float) -> void:
 	_industry_simulation.tick(world, delta)
+	world.tick_suits(delta)
 	var gateway: WorldCommandGateway = null
 	if not gateway_path.is_empty():
 		gateway = get_node_or_null(gateway_path) as WorldCommandGateway

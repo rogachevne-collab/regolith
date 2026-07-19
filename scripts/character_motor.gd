@@ -21,6 +21,9 @@ var _passive_step_height := 0.0
 
 
 func _ready() -> void:
+	# Explicit player identity for impact resolution and suit lookup — see
+	# ImpactResolver.is_player_partner.
+	add_to_group(ImpactResolver.PLAYER_GROUP)
 	_support_frame = get_node_or_null(support_frame_path)
 	up_direction = Vector3.UP
 	floor_snap_length = step_height
