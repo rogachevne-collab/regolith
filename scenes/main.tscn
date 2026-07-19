@@ -98,10 +98,10 @@ script = ExtResource("10")
 gateway_path = NodePath("../WorldCommandGateway")
 
 [node name="BaseSpawn" type="Marker3D" parent="." unique_id=490737595]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 505, 8)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 9500, 0)
 
 [node name="Player" parent="." unique_id=2047904443 instance=ExtResource("2")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 520, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 9580, 0)
 
 [node name="MeteoriteSystem" type="Node" parent="."]
 script = ExtResource("17")
@@ -137,7 +137,7 @@ theme_override_colors/font_color = Color(1, 1, 1, 0.9)
 theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.8)
 theme_override_constants/shadow_offset_x = 1
 theme_override_constants/shadow_offset_y = 1
-text = "Regolith — Ø1 км
+text = "Regolith — Ø19 км
 WASD — ходьба, Shift — бег, Space — прыжок, Esc — настройки
 1–9 — инструменты, ЛКМ — действие
 F8 — метеорит рядом (debug)"

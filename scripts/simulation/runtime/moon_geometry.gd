@@ -6,6 +6,8 @@ extends RefCounted
 
 const DIAMETER_M := 19000.0
 const SURFACE_RADIUS_M := DIAMETER_M * 0.5
+## Optional test-scene override (see test_moon_5km_flat_bootstrap.gd).
+static var _test_diameter_m := 0.0
 ## Same uniform node scale as main (Voxel Tools has no separate voxel_size).
 const VOXEL_SCALE := 0.65
 ## Bounds margin over surface radius in local voxel units.
@@ -46,16 +48,41 @@ const DIG_STREAM_DIR := "user://moon_experiment"
 const WORLD_SAVE_PATH := "user://moon_experiment/world_save.json"
 
 
+static func set_test_diameter(diameter_m: float) -> void:
+	_test_diameter_m = maxf(diameter_m, 0.0)
+
+
+static func clear_test_diameter() -> void:
+	_test_diameter_m = 0.0
+
+
+static func active_diameter_m() -> float:
+	return _test_diameter_m if _test_diameter_m > 0.0 else DIAMETER_M
+
+
+static func active_surface_radius_m() -> float:
+	return active_diameter_m() * 0.5
+
+
 static func boulder_density_scale_for_decor() -> float:
 	## Density is per terrain chunk (same LOD0 mesh size at any diameter).
 	## Slight cut vs the Ø1 km library — perf, still visible on foot.
 	return 0.65
 
 
+## transvoxel_terrain.gdshader biome/macro use wpos.xz — scale when R grows.
+## u_detail_scale is world-periodic (~1/scale m); leave it from .tres.
+const TERRAIN_SHADER_REFERENCE_RADIUS_M := 500.0
+
+
+static func terrain_shader_uv_scale() -> float:
+	return TERRAIN_SHADER_REFERENCE_RADIUS_M / active_surface_radius_m()
+
+
 static func view_distance_voxels_for_camera_distance(distance_from_center_m: float) -> int:
 	## Farthest crust point from the camera ≈ |cam| + R; convert to voxels.
 	var reach_m: float = (
-		maxf(distance_from_center_m, 0.0) + SURFACE_RADIUS_M
+		maxf(distance_from_center_m, 0.0) + active_surface_radius_m()
 	) * VIEW_DISTANCE_RADIUS_MARGIN
 	var needed := int(ceili(reach_m / VOXEL_SCALE))
 	return clampi(needed, MIN_VIEW_DISTANCE_VOXELS, MAX_VIEW_DISTANCE_VOXELS)
@@ -70,7 +97,7 @@ static func world_save_path() -> String:
 
 
 static func radius_voxels() -> float:
-	return SURFACE_RADIUS_M / VOXEL_SCALE
+	return active_surface_radius_m() / VOXEL_SCALE
 
 
 static func bounds_half_extent_voxels() -> int:
@@ -84,7 +111,7 @@ static func voxel_bounds_aabb() -> AABB:
 
 
 static func gravity_area_radius_m() -> float:
-	return SURFACE_RADIUS_M * GRAVITY_AREA_RADIUS_FACTOR
+	return active_surface_radius_m() * GRAVITY_AREA_RADIUS_FACTOR
 
 
 static func surface_point(direction: Vector3) -> Vector3:
@@ -93,7 +120,7 @@ static func surface_point(direction: Vector3) -> Vector3:
 		dir = Vector3.UP
 	else:
 		dir = dir.normalized()
-	return dir * SURFACE_RADIUS_M
+	return dir * active_surface_radius_m()
 
 
 static func spawn_hold_point(direction: Vector3) -> Vector3:
@@ -102,4 +129,4 @@ static func spawn_hold_point(direction: Vector3) -> Vector3:
 		dir = Vector3.UP
 	else:
 		dir = dir.normalized()
-	return dir * (SURFACE_RADIUS_M + SPAWN_SKY_OFFSET_M)
+	return dir * (active_surface_radius_m() + SPAWN_SKY_OFFSET_M)
