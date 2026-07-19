@@ -12,7 +12,25 @@ pick_godot() {
 		echo "/Applications/Godot.app/Contents/MacOS/Godot"
 		return
 	fi
-	# Windows (native / Git Bash / MSYS): prefer Y:\Godot 4.7.1
+	# The voxel GDExtension in addons/zylann.voxel is built against a 4.8
+	# double-precision build, so a stock release engine loads the project with
+	# the extension disabled: EVERY script touching VoxelTool / VoxelBuffer
+	# then dies with "Could not find type", and every test fails for a reason
+	# that has nothing to do with the code under test. Prefer the matching
+	# custom build; the stock candidates below are a last resort.
+	for candidate in \
+		"/y/godot-engine/bin/godot.windows.editor.double.x86_64.exe" \
+		"/Y/godot-engine/bin/godot.windows.editor.double.x86_64.exe" \
+		"Y:/godot-engine/bin/godot.windows.editor.double.x86_64.exe" \
+		"/y/Godot/godot.windows.editor.double.x86_64.exe" \
+		"Y:/Godot/godot.windows.editor.double.x86_64.exe"
+	do
+		if [[ -x "$candidate" || -f "$candidate" ]]; then
+			echo "$candidate"
+			return
+		fi
+	done
+	# Windows (native / Git Bash / MSYS): stock Y:\Godot 4.7.1
 	for candidate in \
 		"/y/Godot/Godot_v4.7.1-stable_win64_console.exe" \
 		"/Y/Godot/Godot_v4.7.1-stable_win64_console.exe" \
@@ -37,8 +55,9 @@ pick_godot() {
 
 GODOT_BIN="$(pick_godot)"
 if [[ -z "$GODOT_BIN" ]]; then
-	echo "Stock Godot 4.7+ not found." >&2
-	echo "Install Godot 4.7.1 (Windows: Y:\\Godot\\) or set GODOT=/path/to/Godot" >&2
+	echo "No Godot binary found." >&2
+	echo "Expected the double-precision 4.8 build at Y:\\godot-engine\\bin\\ (it" >&2
+	echo "matches addons/zylann.voxel), or set GODOT=/path/to/Godot" >&2
 	exit 1
 fi
 
