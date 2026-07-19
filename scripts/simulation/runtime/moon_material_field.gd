@@ -15,11 +15,16 @@ const _Params := preload(
 ## Search radius for guaranteed starter lenses (not a solid ore disk).
 const START_OVERLAY_RADIUS_M := 200.0
 const ICE_LATITUDE_ABS := 0.72
-## Direction-space cell scale. Arc ≈ SURFACE_RADIUS / scale ≈ 70 m.
-const LENS_CELL_SCALE := 7.0
+## Target hosting-cell arc on the surface (TERRAIN-MATERIALS-V1: 60–80 m).
+## Direction-space scale = R / arc so Ø1 km and Ø19 km keep the same meters.
+const LENS_CELL_ARC_M := 70.0
 ## Soft blob radius inside a hosting cell (cell units).
 const LENS_RADIUS_MIN := 0.28
 const LENS_RADIUS_MAX := 0.48
+
+
+func lens_cell_scale() -> float:
+	return MoonGeometry.active_surface_radius_m() / LENS_CELL_ARC_M
 
 
 func material_id_at_world(world_pos: Vector3, spawn_world: Vector3 = Vector3.ZERO) -> String:
@@ -161,7 +166,7 @@ func _in_band(depth_m: float, material_id: String) -> bool:
 func _lens_blob(dir: Vector3, salt: int, coverage: float) -> bool:
 	## Rare hosting cells + soft radial blob → readable ore patches, not grit.
 	var n := dir.normalized()
-	var scaled := n * LENS_CELL_SCALE
+	var scaled := n * lens_cell_scale()
 	var cell := Vector3i(
 		int(floor(scaled.x)),
 		int(floor(scaled.y)),

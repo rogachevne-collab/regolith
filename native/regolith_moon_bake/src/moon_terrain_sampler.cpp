@@ -130,6 +130,16 @@ float MoonTerrainSampler::height_meters(const Vector3f &n, float stride_m) const
 	return h;
 }
 
+float MoonTerrainSampler::height_meters_map(const Vector3f &n) const {
+	const Vector3f domain = n * radius_voxels_;
+	const float mare = mare_factor(domain);
+	const float highland = 1.f - mare;
+	float h = lerpf(-kMariaDepthM, kHighlandLiftM, highland);
+	h += highland_meso_roughness(domain, highland) * 0.35f;
+	h += crater_field_map(n, mare, highland);
+	return h;
+}
+
 float MoonTerrainSampler::mare_factor(const Vector3f &domain) const {
 	const Vector3f n = domain / radius_voxels_;
 	float mare = 0.f;
@@ -197,6 +207,36 @@ float MoonTerrainSampler::crater_field(
 		}
 		const float t = std::acos(cos_a) / crater.rad;
 		float visibility = lod_fade * crater_visibility(crater.cclass, highland);
+		visibility *= lerpf(1.f, 0.03f, mare);
+		if (visibility <= 0.001f) {
+			continue;
+		}
+		const float d = crater.depth * visibility;
+		float c = 0.f;
+		float r = 0.f;
+		crater_contribution(t, d, crater.rim_frac, crater.cclass, crater.seed, c, r);
+		carve = std::min(carve, c);
+		rim = std::max(rim, r);
+	}
+	return carve + rim;
+}
+
+float MoonTerrainSampler::crater_field_map(
+		const Vector3f &n, float mare, float highland) const {
+	float carve = 0.f;
+	float rim = 0.f;
+	const int cell = dir_to_cell_index(n);
+	for (int idx : crater_cells_[cell]) {
+		const Crater &crater = craters_[idx];
+		if (crater.cclass >= kClassSmall) {
+			continue;
+		}
+		const float cos_a = clampf(n.dot(crater.center), -1.f, 1.f);
+		if (cos_a < crater.cos_cutoff) {
+			continue;
+		}
+		const float t = std::acos(cos_a) / crater.rad;
+		float visibility = crater_visibility(crater.cclass, highland);
 		visibility *= lerpf(1.f, 0.03f, mare);
 		if (visibility <= 0.001f) {
 			continue;

@@ -66,6 +66,12 @@ void MoonHeightmapBake::_bind_methods() {
 			&MoonHeightmapBake::encode_values_s16);
 	ClassDB::bind_method(
 			D_METHOD("height_clamp_voxels"), &MoonHeightmapBake::height_clamp_voxels);
+	ClassDB::bind_method(
+			D_METHOD("sample_height_meters", "direction"),
+			&MoonHeightmapBake::sample_height_meters);
+	ClassDB::bind_method(
+			D_METHOD("sample_height_meters_map", "direction"),
+			&MoonHeightmapBake::sample_height_meters_map);
 
 	BIND_ENUM_CONSTANT(BLOCK_MIXED);
 	BIND_ENUM_CONSTANT(BLOCK_AIR);
@@ -84,6 +90,28 @@ void MoonHeightmapBake::setup(float radius_voxels) {
 
 float MoonHeightmapBake::height_clamp_voxels() const {
 	return MoonTerrainSampler::kHeightClampM / MoonTerrainSampler::kVoxelScale;
+}
+
+float MoonHeightmapBake::sample_height_meters(const Vector3 &direction) const {
+	if (sampler_ == nullptr) {
+		return 0.f;
+	}
+	Vector3f n;
+	n.x = direction.x;
+	n.y = direction.y;
+	n.z = direction.z;
+	return sampler_->height_voxels(n.normalized(), 0.f) * MoonTerrainSampler::kVoxelScale;
+}
+
+float MoonHeightmapBake::sample_height_meters_map(const Vector3 &direction) const {
+	if (sampler_ == nullptr) {
+		return 0.f;
+	}
+	Vector3f n;
+	n.x = direction.x;
+	n.y = direction.y;
+	n.z = direction.z;
+	return sampler_->height_meters_map(n.normalized());
 }
 
 int MoonHeightmapBake::classify_block(

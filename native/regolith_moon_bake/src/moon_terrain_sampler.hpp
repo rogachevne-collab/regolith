@@ -79,6 +79,9 @@ public:
 	/// stride_m > 0 fades out features smaller than the sampling step
 	/// (LOD-aware: cheaper far blocks, no sub-voxel aliasing). 0 = full detail.
 	float height_voxels(const Vector3f &n, float stride_m = 0.f) const;
+	/// Orbital map globe: mare/highland + huge/large/med craters only — no
+	/// meter-scale pepper or surface grain (reads as bubble-wrap at map scale).
+	float height_meters_map(const Vector3f &n) const;
 	static Vector3f direction_from_node_uv(float u, float v);
 
 	/// Same config as MoonHeightmapUtil._make_zn_noise / MoonTerrainGenerator._setup_noise.
@@ -123,6 +126,7 @@ private:
 			const Vector3f &domain, float mare, float highland, float stride_m) const;
 	float crater_field(
 			const Vector3f &n, float mare, float highland, float stride_m) const;
+	float crater_field_map(const Vector3f &n, float mare, float highland) const;
 
 	/// LOD detail fade is DISABLED (returns 1): Transvoxel transition meshes
 	/// assume every LOD meshes the SAME field. Any per-LOD amplitude culling

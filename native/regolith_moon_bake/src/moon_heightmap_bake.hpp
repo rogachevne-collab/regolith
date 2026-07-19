@@ -70,6 +70,11 @@ public:
 
 	float height_clamp_voxels() const;
 
+	/// Analytic relief H(n) in meters — same as MoonNativeSdfGenerator shell.
+	float sample_height_meters(const godot::Vector3 &direction) const;
+	/// Macro relief for the orbital map globe (no meter-scale craters/grain).
+	float sample_height_meters_map(const godot::Vector3 &direction) const;
+
 protected:
 	static void _bind_methods();
 

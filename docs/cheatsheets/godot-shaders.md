@@ -51,6 +51,9 @@ void fragment() { ALBEDO = tint.rgb; /* + ROUGHNESS, METALLIC, EMISSION, ALPHA *
 
 - **Terrain:** `resources/transvoxel_terrain.gdshader` — triplanar + SDF mesh.
   Не ломай uniform'ы, на которые ссылается `terrain_material*.tres`.
+  На луне bootstrap масштабирует только `u_biome_scale` / `u_large_scale` через
+  `MoonGeometry.terrain_shader_uv_scale()` (tres = Ø1 km). `u_detail_scale` не
+  трогать — triplanar уже в метрах.
 - **VFX:** искры бура, пыль, выхлоп — см. [`vfx-authoring.md`](vfx-authoring.md).
 - **Jolt + spatial:** collider mesh terrain может отставать от SDF на 1–2 кадра;
   для contact-эффектов опирайся на physics raycast (как в `scripts/drill.gd`).

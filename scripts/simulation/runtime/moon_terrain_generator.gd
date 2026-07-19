@@ -196,6 +196,20 @@ func _height_meters(n: Vector3) -> float:
 	return h
 
 
+func _height_meters_map(n: Vector3) -> float:
+	var domain := n * _radius_voxels
+	var mare := _mare_factor(domain)
+	var highland := 1.0 - mare
+	var h := lerpf(
+		-MoonTerrainParams.MARIA_DEPTH_M,
+		MoonTerrainParams.HIGHLAND_LIFT_M,
+		highland
+	)
+	h += _highland_meso_roughness(domain, highland) * 0.35
+	h += _crater_field(n, mare, highland, CLASS_MED)
+	return h
+
+
 func _mare_factor(domain: Vector3) -> float:
 	var n := domain / _radius_voxels
 	var mare := 0.0
@@ -236,7 +250,9 @@ func _surface_texture(domain: Vector3, _mare: float, highland: float) -> float:
 	return mid * mid_amp + fine * fine_amp
 
 
-func _crater_field(n: Vector3, mare: float, highland: float) -> float:
+func _crater_field(
+	n: Vector3, mare: float, highland: float, max_class: int = CLASS_SMALL
+) -> float:
 	var carve := 0.0
 	var rim := 0.0
 	var cell := _dir_to_cell(n)
@@ -259,13 +275,15 @@ func _crater_field(n: Vector3, mare: float, highland: float) -> float:
 						continue
 					seen[ii] = true
 					var crater: Dictionary = _craters[ii]
+					var cclass: int = crater["class"]
+					if cclass > max_class:
+						continue
 					var center: Vector3 = crater["center"]
 					var rad: float = crater["rad"]
 					var cos_a := clampf(n.dot(center), -1.0, 1.0)
 					if cos_a < cos(rad * 1.35):
 						continue
 					var t := acos(cos_a) / rad
-					var cclass: int = crater["class"]
 					var visibility := _crater_visibility(cclass, highland)
 					visibility *= lerpf(1.0, 0.03, mare)
 					if visibility <= 0.001:

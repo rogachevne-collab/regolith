@@ -12,8 +12,12 @@ extends RefCounted
 ## 240 m — meter-deep km-wide bowls read as flat noise on Ø19 km.
 ## 29: LOD detail fade removed (ring-boundary gap lines) — cached v28 blocks
 ## in SQLite carry faded far-LOD data and must not mix with unfaded.
-const GENERATOR_VERSION := 29
+## 30: material lens cells scale with surface radius (arc ≈ 70 m) — Ø19 km
+## no longer stretches ore patches to ~1.4 km.
+const GENERATOR_VERSION := 30
 const SEED := 0x4D004E
+## Optional isolated stream for test scenes (no gen_v bump).
+static var _test_stream_label := ""
 
 
 static func bake_is_present() -> bool:
@@ -53,7 +57,17 @@ static func meters_to_voxels(meters: float) -> float:
 	return meters / MoonGeometry.VOXEL_SCALE
 
 
+static func set_test_stream_label(label: String) -> void:
+	_test_stream_label = label.strip_edges()
+
+
+static func clear_test_stream_label() -> void:
+	_test_stream_label = ""
+
+
 static func stream_directory() -> String:
+	if not _test_stream_label.is_empty():
+		return "%s/%s" % [MoonGeometry.DIG_STREAM_DIR, _test_stream_label]
 	return "%s/gen_v%d" % [MoonGeometry.DIG_STREAM_DIR, GENERATOR_VERSION]
 
 
