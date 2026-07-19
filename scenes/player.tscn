@@ -87,13 +87,13 @@ spot_angle = 42.0
 [node name="DrillVisual" type="Node3D" parent="Camera" unique_id=352285946]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.28, -0.22, -0.45)
 
-[node name="ShakePivot" type="Node3D" parent="Camera/DrillVisual"]
+[node name="ShakePivot" type="Node3D" parent="Camera/DrillVisual" unique_id=1866519951]
 
 [node name="Mount" type="Node3D" parent="Camera/DrillVisual/ShakePivot" unique_id=1333315461]
 transform = Transform3D(2.5, 0, 0, 0, 2.5, 0, 0, 0, 2.5, 0, 0, 0.08)
 
 [node name="Model" parent="Camera/DrillVisual/ShakePivot/Mount" unique_id=2115948937 instance=ExtResource("7_y4r1p")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0.011997536)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.02067247)
 
 [node name="ImpactVfx" parent="Camera" unique_id=1174185237 instance=ExtResource("16")]
 
