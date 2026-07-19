@@ -127,6 +127,9 @@ Step solver использует motion tests `up → forward → down`; camera 
   остановки; `exit_vehicle` сбрасывает orbit в FP и не freeze’ит шасси;
 - procedural bob/sway воздействует только на visual rig и имеет малую амплитуду;
 - interaction ray использует согласованную aim pose и не дрожит из-за camera bob;
+- FP tool meshes (hand drill / welder) — children world Camera (`rest_offset`);
+  large-world shimmer решается custom Godot `precision=double` (см. README),
+  не отдельным viewmodel SubViewport;
 - sensitivity и FOV доступны игроку и сохраняются в `user://`.
 
 ## InteractionQuery

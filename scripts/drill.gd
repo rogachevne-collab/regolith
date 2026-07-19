@@ -192,7 +192,7 @@ class CrossfadeBed:
 @export var debris_audio_a_path: NodePath = NodePath("DrillDebrisAudioA")
 @export var debris_audio_b_path: NodePath = NodePath("DrillDebrisAudioB")
 @export var drill_spin_speed := 28.0
-## Local offset under Camera. Do not drive globals — DrillVisual is a Camera child.
+## Local offset under Camera. Double-precision Godot keeps this stable at ~9.5 km.
 @export var rest_offset := Vector3(0.28, -0.22, -0.45)
 ## Mild screen shake while contacting.
 @export var mining_camera_shake := 0.28
@@ -228,6 +228,7 @@ var _bit_spin := 0.0
 var _hold_lmb := false
 var _work_volume_current_db := -16.0
 var _drill_shake_amp := 0.0
+var _fp_visuals_allowed := true
 
 
 func _ready() -> void:
@@ -340,13 +341,17 @@ func _compute_hold_lmb() -> bool:
 
 
 func _bind_weapon_visuals_local() -> void:
-	## Plain Camera child. Local rest once; mining buzz only on ShakePivot.
+	## Camera child under double-precision Godot (viewmodel SubViewport removed).
 	_drill_visual.top_level = false
+	_drill_visual.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	_drill_visual.transform = Transform3D(Basis.IDENTITY, rest_offset)
 	_shake_pivot = _drill_visual.get_node("ShakePivot") as Node3D
 	_shake_pivot.transform = Transform3D.IDENTITY
 	if _welder_visual != null:
 		_welder_visual.top_level = false
+		_welder_visual.physics_interpolation_mode = (
+			Node.PHYSICS_INTERPOLATION_MODE_OFF
+		)
 		_welder_visual.transform = Transform3D(Basis.IDENTITY, rest_offset)
 	if _impact_vfx != null:
 		_impact_vfx.top_level = true
@@ -355,7 +360,29 @@ func _bind_weapon_visuals_local() -> void:
 		)
 
 
+func set_first_person_visuals_visible(visible: bool) -> void:
+	_fp_visuals_allowed = visible
+	## Seat: stop drill _process (audio/spin) — was still running in cockpit.
+	set_process(visible)
+	if not visible:
+		if _drill_visual != null:
+			_drill_visual.visible = false
+		if _welder_visual != null:
+			_welder_visual.visible = false
+		_clear_drill_feedback()
+		return
+	if _tool_controller != null:
+		_on_active_tool_changed(_tool_controller.active_tool)
+
+
 func _on_active_tool_changed(active_tool: StringName) -> void:
+	if not _fp_visuals_allowed:
+		if _drill_visual != null:
+			_drill_visual.visible = false
+		if _welder_visual != null:
+			_welder_visual.visible = false
+		_clear_drill_feedback()
+		return
 	_drill_visual.visible = active_tool == &"drill"
 	if _welder_visual != null:
 		_welder_visual.visible = active_tool == &"weld"

@@ -142,7 +142,7 @@ func enter_vehicle(vehicle: Node3D, seat_position: Vector3) -> void:
 	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_ON
 	reset_physics_interpolation()
 	$Drill.set_physics_process(false)
-	$Camera/DrillVisual.visible = false
+	$Drill.call("set_first_person_visuals_visible", false)
 	if _voxel_viewer != null:
 		_voxel_viewer.global_position = global_position
 
@@ -159,7 +159,7 @@ func exit_vehicle(world_position: Vector3) -> void:
 	reset_physics_interpolation()
 	$CollisionShape3D.set_deferred("disabled", false)
 	$Drill.set_physics_process(true)
-	$Camera/DrillVisual.visible = true
+	$Drill.call("set_first_person_visuals_visible", true)
 	set_physics_process(true)
 
 

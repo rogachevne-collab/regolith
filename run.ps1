@@ -7,6 +7,14 @@ function Pick-Godot {
 	if ($env:GODOT -and (Test-Path $env:GODOT)) {
 		return $env:GODOT
 	}
+	## Prefer custom large-world build (master + precision=double + Jolt 5.6).
+	$doubleCandidates = @(
+		"Y:\godot-engine\bin\godot.windows.editor.double.x86_64.exe",
+		"Y:\Godot\godot.windows.editor.double.x86_64.exe"
+	)
+	foreach ($c in $doubleCandidates) {
+		if (Test-Path $c) { return $c }
+	}
 	$candidates = @(
 		"Y:\Godot\Godot_v4.7.1-stable_win64_console.exe",
 		"Y:\Godot\Godot_v4.7.1-stable_win64.exe"
