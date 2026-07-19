@@ -241,16 +241,11 @@ Anchor делает static только содержащую его body group. 
 rules и создают `Rigid` edges с head element. Вся rigid-connected ветвь становится
 carriage body group и движется вместе с head.
 
-Construction target на non-root body group разрешён в v1 только если:
-
-- все driven joints на path к root находятся в lower limit;
-- observed velocity каждого такого joint меньше `0.01 m/s`;
-- command отсутствовал не менее двух physics frames;
-- snap использует home grid pose.
-
-Иначе preview/command возвращает `moving_target_not_supported`. Строительство на
-выдвинутой голове не округляет physical pose обратно в grid и не телепортирует
-head.
+Construction target на non-root body group разрешён, если observed velocity
+каждого driven joint на path к root меньше `0.01 m/s` (idle). Extension /
+провис не блокируют стройку: preview и weld используют live body-group frame,
+occupancy остаётся в blueprint grid. Пока joint движется — preview/command
+возвращает `moving_target_not_supported`.
 
 Нельзя создать обычный `Rigid` edge, который соединит две уже разные body groups
 в обход существующего Piston и образует mechanical cycle. Причина:

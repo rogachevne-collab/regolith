@@ -557,10 +557,9 @@ func _append_face(
 	var element := world.get_element(element_id)
 	if element == null:
 		return
-	# Occupancy cells live in assembly grid space. Extended carriages sit
-	# elsewhere physically — skip magnet faces unless the driven path is at
-	# home (same rule as construction validation). Slight pose drift at home
-	# uses the group transform for the world aim point.
+	# Occupancy cells live in assembly grid space; world aim uses the live
+	# group frame so extended/bent carriages magnet correctly. Skip only while
+	# the driven path is still moving (same rule as construction validation).
 	var group_transform := world.element_group_transform(element_id)
 	if (
 		not single_group

@@ -12,9 +12,8 @@ extends RefCounted
 ## hard stops stay aligned after snapshot restore / bent reproject.
 
 
-## Softness / damping on the twist stop — keeps stock torque from fighting
-## the hard limit into a solver explosion while status stays joint_limit.
-const LIMIT_SOFTNESS := 0.15
+## Damping on the twist stop — keeps stock torque from fighting the hard
+## limit into a solver explosion while status stays joint_limit.
 const LIMIT_DAMPING := 1.0
 const LIMIT_RESTITUTION := 0.0
 
@@ -61,10 +60,11 @@ static func configure_hinge_limit_joint(
 		joint.set("angular_limit_%s/lower_angle" % axis, 0.0)
 		joint.set("angular_limit_%s/upper_angle" % axis, 0.0)
 	joint.set("angular_limit_x/enabled", true)
-	joint.set("angular_limit_x/softness", LIMIT_SOFTNESS)
+	# Jolt ignores angular limit softness (warns on every set) — do not write it.
 	joint.set("angular_limit_x/damping", LIMIT_DAMPING)
 	joint.set("angular_limit_x/restitution", LIMIT_RESTITUTION)
 	update_hinge_angle_limits(joint, motor, angle_offset_rad)
+	RotorProjectionUtil.update_angular_motor(joint, "x", 0.0, 0.0)
 
 
 ## Live retune of twist stops only (configure_actuator may change min/max).

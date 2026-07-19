@@ -45,6 +45,8 @@ func _run() -> void:
 		return
 	if not await _test_piston_multibody_projection():
 		return
+	if not await _test_piston_split_keeps_extended_carriage_pose():
+		return
 	print("KERNEL-PROJECTION-V0: PASS")
 	get_tree().quit(0)
 
@@ -750,6 +752,119 @@ func _test_piston_multibody_projection() -> bool:
 		return _fail(
 			"piston projection did not extend head: %.3f -> %.3f"
 			% [start_extension, end_extension]
+		)
+	_free_fixture(fixture)
+	return true
+
+
+## Cutting the base of an extended piston must leave the carriage (and welded
+## blocks) at the live world pose — not snap them back to home grid.
+func _test_piston_split_keeps_extended_carriage_pose() -> bool:
+	var fixture: Dictionary = _new_fixture()
+	var world: SimulationWorld = fixture["world"]
+	var projection: SimulationPhysicsProjection = fixture["projection"]
+	world.ensure_resource_store("player")
+	world.set_resource_amount("player", "plate_metal", 100.0)
+	world.set_resource_amount("player", "girder", 100.0)
+	world.set_resource_amount("player", "mechanism", 100.0)
+	world.get_archetype_registry().register(PISTON_HEAD)
+	var foundation := _spawn(
+		world,
+		_single_blueprint(Slice01Archetypes.foundation()),
+		GridTransform.identity()
+	)
+	if not foundation.is_ok():
+		return _fail("extended-split foundation failed")
+	var assembly_id := int(foundation.data["assembly_id"])
+	var frame := _place_frame_for_piston(
+		world,
+		assembly_id,
+		Vector3i(4, 0, 0),
+		foundation
+	)
+	if not frame.is_ok():
+		return _fail("extended-split frame failed")
+	var piston := _place_piston_for_projection(
+		world,
+		assembly_id,
+		Vector3i(5, 0, 0),
+		frame
+	)
+	if not piston.is_ok():
+		return _fail("extended-split piston failed")
+	var base_id := int(piston.data["element_id"])
+	var head_id := int(piston.data["head_element_id"])
+	var joint_id := int(piston.data["piston_joint_id"])
+	var tip := _place_element_for_projection(
+		world,
+		assembly_id,
+		Slice01Archetypes.frame(),
+		Vector3i(5, 2, 0),
+		piston
+	)
+	if not tip.is_ok():
+		return _fail("extended-split tip frame failed")
+	var tip_id := int(tip.data["element_id"])
+	for element_id: int in [base_id, head_id, tip_id]:
+		_weld_piston_element(world, element_id)
+	projection.project_assembly_now(
+		assembly_id,
+		world.get_assembly_raw(assembly_id).motion.duplicate_state()
+	)
+	var compiled := BodyGroupCompiler.compile(
+		world.get_assembly_raw(assembly_id).element_ids,
+		_elements_by_id(world, assembly_id),
+		_joints_for_assembly(world, assembly_id)
+	)
+	var head_group := int(
+		(compiled["element_to_group"] as Dictionary).get(head_id, 0)
+	)
+	var head_body := projection.get_group_physics_body(assembly_id, head_group)
+	if head_body == null:
+		return _fail("extended-split missing carriage body")
+	(head_body as RigidBody3D).gravity_scale = 0.0
+	var root_body := projection.get_physics_body(assembly_id) as RigidBody3D
+	if root_body != null:
+		root_body.gravity_scale = 0.0
+	# Force an extended carriage pose without waiting on the motor.
+	var axis := Vector3.UP
+	var extended_origin: Vector3 = (
+		head_body.global_transform.origin + axis * 1.0
+	)
+	head_body.global_transform = Transform3D(
+		head_body.global_transform.basis,
+		extended_origin
+	)
+	world.get_joint(joint_id).motor.observed_position_m = 1.0
+	var tip_before: Vector3 = (
+		projection.get_element_projection(tip_id).get("body") as PhysicsBody3D
+	).global_transform.origin
+	var dismantle := DismantleElementCommand.new()
+	dismantle.element_id = base_id
+	dismantle.expected_assembly_revision = world.get_assembly_raw(
+		assembly_id
+	).topology_revision
+	dismantle.store_id = "player"
+	var result := world.apply_structural_command_now(dismantle)
+	if not result.is_ok() or not bool(result.data.get("split", false)):
+		_free_fixture(fixture)
+		return _fail("extended-split dismantle base did not split")
+	var tip_element := world.get_element(tip_id)
+	if tip_element == null:
+		_free_fixture(fixture)
+		return _fail("extended-split tip vanished")
+	var tip_after_body := projection.get_element_projection(tip_id).get(
+		"body"
+	) as PhysicsBody3D
+	if tip_after_body == null:
+		_free_fixture(fixture)
+		return _fail("extended-split tip body missing after split")
+	var tip_after: Vector3 = tip_after_body.global_transform.origin
+	if tip_before.distance_to(tip_after) > 0.15:
+		_free_fixture(fixture)
+		return _fail(
+			"extended carriage snapped on piston cut: before=%s after=%s"
+			% [tip_before, tip_after]
 		)
 	_free_fixture(fixture)
 	return true

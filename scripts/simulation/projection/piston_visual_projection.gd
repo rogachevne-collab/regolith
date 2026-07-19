@@ -68,6 +68,9 @@ func _on_structural_event(event: Dictionary) -> void:
 
 
 func _rebuild_assembly(assembly_id: int) -> void:
+	# Harvest extension before teardown: deferred rebuild runs after physics
+	# freed the old bodies/joint, but record dicts still hold last sync state.
+	var frozen_extensions := _harvest_extension_by_element(assembly_id)
 	_clear_assembly(assembly_id)
 	if _world == null or _physics_projection == null:
 		return
@@ -83,10 +86,93 @@ func _rebuild_assembly(assembly_id: int) -> void:
 		var visual_record := _create_visual_record(constraint_variant)
 		if not visual_record.is_empty():
 			records.append(visual_record)
+	# Paired visuals are joint-keyed; after one half is destroyed the joint is
+	# gone and list_piston_constraint_records is empty — reattach the survivor.
+	_attach_orphan_piston_visuals(assembly, records, frozen_extensions)
 	if records.is_empty():
 		return
 	_records_by_assembly[assembly_id] = records
 	_sync_assembly(assembly_id)
+
+
+func _harvest_extension_by_element(assembly_id: int) -> Dictionary:
+	var out: Dictionary = {}
+	var records_variant: Variant = _records_by_assembly.get(assembly_id, [])
+	if not records_variant is Array:
+		return out
+	for record_variant: Variant in records_variant:
+		if not record_variant is Dictionary:
+			continue
+		var record: Dictionary = record_variant
+		var sim_joint: SimulationJoint = record.get("sim_joint")
+		var extension_m := float(record.get("last_extension_m", NAN))
+		if (
+			not is_finite(extension_m)
+			and sim_joint != null
+			and sim_joint.motor != null
+		):
+			extension_m = sim_joint.motor.observed_position_m
+		if not is_finite(extension_m):
+			continue
+		extension_m = maxf(extension_m, 0.0)
+		var base_root: Node = record.get("base_root") as Node
+		if (
+			base_root != null
+			and is_instance_valid(base_root)
+			and base_root.has_meta("element_id")
+		):
+			out[int(base_root.get_meta("element_id"))] = extension_m
+		if sim_joint != null:
+			out[sim_joint.element_a_id] = extension_m
+		var element_id := int(record.get("element_id", 0))
+		if element_id > 0:
+			out[element_id] = extension_m
+	return out
+
+
+func _attach_orphan_piston_visuals(
+	assembly: SimulationAssembly,
+	records: Array[Dictionary],
+	frozen_extensions: Dictionary = {}
+) -> void:
+	if assembly == null:
+		return
+	var covered: Dictionary = {}
+	for record_variant: Variant in records:
+		if not record_variant is Dictionary:
+			continue
+		var record: Dictionary = record_variant
+		var sim_joint: SimulationJoint = record.get("sim_joint")
+		if sim_joint != null:
+			covered[sim_joint.element_a_id] = true
+			covered[sim_joint.element_b_id] = true
+		var element_id := int(record.get("element_id", 0))
+		if element_id > 0:
+			covered[element_id] = true
+	for element_id: int in assembly.element_ids:
+		if covered.has(element_id):
+			continue
+		var element := _world.get_element(element_id)
+		if (
+			element == null
+			or not PistonVisualScript.is_piston_element(element.archetype_id)
+		):
+			continue
+		var projection := _physics_projection.get_element_projection(element_id)
+		var body: PhysicsBody3D = projection.get("body") as PhysicsBody3D
+		if body == null or not is_instance_valid(body):
+			continue
+		var frozen_extension_m := float(
+			frozen_extensions.get(element_id, 0.0)
+		)
+		var orphan := PistonVisualScript.attach_runtime_orphan(
+			body,
+			element,
+			assembly.assembly_id,
+			frozen_extension_m
+		)
+		if not orphan.is_empty():
+			records.append(orphan)
 
 
 func _create_visual_record(constraint_record: Variant) -> Dictionary:
@@ -170,9 +256,11 @@ func _sync_assembly(assembly_id: int) -> void:
 		var status := ActuatorSimulationService.status_name_for_motor(
 			sim_joint.motor
 		)
+		var extension_m := float(measured.get("extension_m", 0.0))
+		record["last_extension_m"] = extension_m
 		PistonVisualScript.update_runtime(
 			record,
-			float(measured.get("extension_m", 0.0)),
+			extension_m,
 			powered,
 			status
 		)

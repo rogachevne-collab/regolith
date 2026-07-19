@@ -5,6 +5,17 @@ const POSITION_ARRIVE_EPSILON_M := 0.005
 const STOP_BRAKE_DAMPING_SCALE := 3.0
 const VELOCITY_RESPONSE_TIME_S := 0.15
 const MIN_CARRIAGE_MASS_KG := 0.001
+## Position mode decelerates over this horizon near the target so the solver
+## motor does not bang-bang around the arrive epsilon at high speed limits.
+const POSITION_APPROACH_TIME_S := 0.1
+## Observed axial speed below this fraction of the commanded speed means the
+## solver motor is pushing at its force limit (saturation for status/overlay).
+const SATURATION_TRACKING_FRACTION := 0.3
+const DRIVE_VELOCITY_EPSILON_MPS := 0.0005
+## Tracking failure must persist this long before the drive reports
+## saturation — single-tick velocity dips (solver stick-slip) must not spam
+## force-limit impact entries or flicker the SAT overlay.
+const SATURATION_CONFIRM_S := 0.15
 
 
 static func build_collision_shapes_for_elements(
@@ -359,6 +370,88 @@ static func configure_slider_joint(
 		joint.set("angular_spring_%s/equilibrium_point" % axis, 0.0)
 		joint.set("angular_spring_%s/stiffness" % axis, stiffness)
 		joint.set("angular_spring_%s/damping" % axis, damping)
+	# Solver-side axial drive: Jolt resolves the motor together with every
+	# other constraint in the chain, so external per-tick forces are not needed
+	# and long piston chains stay stable.
+	joint.set("linear_motor_y/enabled", true)
+	joint.set("linear_motor_y/target_velocity", 0.0)
+	joint.set("linear_motor_y/force_limit", maxf(motor.force_limit_n, 0.0))
+
+
+## Cheap per-tick motor update — never touches limits or springs, so Jolt
+## warm-starting stays intact.
+static func update_slider_motor(
+	joint: Generic6DOFJoint3D,
+	target_velocity_mps: float,
+	force_limit_n: float
+) -> void:
+	joint.set("linear_motor_y/target_velocity", target_velocity_mps)
+	joint.set("linear_motor_y/force_limit", maxf(force_limit_n, 0.0))
+
+
+## Rewrite only the axial travel stops (configure_actuator retune on a live
+## joint); limits stay absolute via the bind offset.
+static func update_slider_limits(
+	joint: Generic6DOFJoint3D,
+	motor: SimulationMotorState,
+	bind_extension_m: float
+) -> void:
+	joint.set("linear_limit_y/lower_distance", motor.lower_limit_m - bind_extension_m)
+	joint.set("linear_limit_y/upper_distance", motor.upper_limit_m - bind_extension_m)
+
+
+## Target velocity for the solver motor. STOP and overload hold at zero
+## velocity; position mode tapers near the target instead of bang-banging.
+static func drive_velocity_mps(
+	motor: SimulationMotorState,
+	active: bool
+) -> float:
+	if motor == null or not active or not motor.enabled:
+		return 0.0
+	if motor.status == SimulationMotorState.Status.OVERLOADED:
+		return 0.0
+	match motor.control_mode:
+		SimulationMotorState.ControlMode.POSITION:
+			var error := motor.position_error()
+			if absf(error) <= POSITION_ARRIVE_EPSILON_M:
+				return 0.0
+			var direction := signf(error)
+			return direction * minf(
+				motor.velocity_limit_for_sign(direction),
+				absf(error) / POSITION_APPROACH_TIME_S
+			)
+		SimulationMotorState.ControlMode.VELOCITY:
+			return motor.clamp_target_velocity()
+	return 0.0
+
+
+## The solver does not report constraint impulses, so applied force for the
+## status machine / overlay is estimated: static hold load while tracking,
+## force limit when the motor visibly cannot reach its commanded speed.
+static func estimate_drive_effort(
+	motor: SimulationMotorState,
+	desired_velocity_mps: float,
+	observed_velocity_mps: float,
+	mass_kg: float,
+	axis_world: Vector3,
+	gravity: Vector3
+) -> Dictionary:
+	if motor == null:
+		return {"force_n": 0.0, "saturated": false}
+	var hold_abs := absf(axial_load_hold_force_n(mass_kg, axis_world, gravity))
+	var limit := maxf(motor.force_limit_n, 0.0)
+	var commanded := absf(desired_velocity_mps) > DRIVE_VELOCITY_EPSILON_MPS
+	var tracking_broken := commanded and (
+		observed_velocity_mps * desired_velocity_mps <= 0.0
+		or absf(observed_velocity_mps)
+		< absf(desired_velocity_mps) * SATURATION_TRACKING_FRACTION
+	)
+	var saturated := tracking_broken or hold_abs >= limit
+	return {
+		"force_n": limit if saturated else minf(hold_abs, limit),
+		"hold_n": minf(hold_abs, limit),
+		"saturated": saturated,
+	}
 
 
 static func compliance_from_definition(definition: PistonDefinition) -> Dictionary:

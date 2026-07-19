@@ -1,7 +1,7 @@
 class_name BodyGroupCompiler
 extends RefCounted
 
-const MAX_DRIVEN_JOINTS_ON_PATH := 4
+const MAX_DRIVEN_JOINTS_ON_PATH := 16
 
 static func compile(
 	element_ids: Array[int],

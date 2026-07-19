@@ -968,8 +968,9 @@ static func validate_driven_head_construction_target(world,
 	return null
 
 
-## True when every driven joint on the path from element → root is at home.
-## Used by magnetic snap to allow carriage faces only while construction is legal.
+## True when every driven joint on the path from element → root is idle.
+## Used by magnetic snap / construction — pose may be extended or bent; live
+## group frames keep attach geometry correct (see POC-ACTUATORS-V1).
 static func is_driven_path_at_home(
 	world,
 	element_id: int
@@ -983,7 +984,8 @@ static func is_driven_path_at_home(
 
 
 ## Every driven joint on the path from the target element group to root must
-## be at home / idle — not only when the snap face is a hub endpoint.
+## be idle — not only when the snap face is a hub endpoint. Extension / bend
+## is allowed; moving joints are not.
 static func _validate_driven_path_home_for_element(
 	world,
 	existing: SimulationElement
@@ -1015,9 +1017,9 @@ static func _validate_driven_path_home_for_element(
 		)
 		if joint == null or joint.motor == null:
 			break
-		var home_error := _driven_joint_not_home_result(joint)
-		if home_error != null:
-			return home_error
+		var idle_error := _driven_joint_not_idle_result(joint)
+		if idle_error != null:
+			return idle_error
 		var base_group := 0
 		for spec_variant: Variant in compiled.get("driven_specs", []):
 			if not spec_variant is Dictionary:
@@ -1032,30 +1034,13 @@ static func _validate_driven_path_home_for_element(
 	return null
 
 
-static func _driven_joint_not_home_result(
+static func _driven_joint_not_idle_result(
 	joint: SimulationJoint
 ) -> StructuralCommandResult:
 	var motor := joint.motor
-	var at_home := true
-	if joint.kind in [
-		SimulationJoint.Kind.ROTOR,
-		SimulationJoint.Kind.HINGE,
-	]:
-		# Angular home is 0 rad for both; wrap is a no-op inside
-		# hinge limits and required for the continuous rotor.
-		at_home = (
-			absf(SimulationMotorState.wrap_angle(motor.observed_position_m))
-			<= SimulationMotorState.OVERLOAD_ERROR_M
-		)
-	else:
-		# Use motor epsilon — is_equal_approx is far too tight for a parked
-		# horizontal piston with tiny solver drift, and hides all attach ghosts.
-		at_home = motor.is_at_lower_limit()
-	if not at_home:
-		return StructuralCommandResult.failed(
-			StructuralCommandResult.REASON_MOVING_TARGET_NOT_SUPPORTED
-		)
-	if absf(motor.observed_velocity_mps) > SimulationMotorState.OVERLOAD_VELOCITY_MPS:
+	# Live body-group frames make attach on extended/rotated branches correct;
+	# reject only while the joint is still moving (POC-ACTUATORS idle band).
+	if absf(motor.observed_velocity_mps) > SimulationMotorState.CONSTRUCTION_IDLE_VELOCITY:
 		return StructuralCommandResult.failed(
 			StructuralCommandResult.REASON_MOVING_TARGET_NOT_SUPPORTED
 		)

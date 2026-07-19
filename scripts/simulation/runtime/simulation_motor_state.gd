@@ -14,6 +14,10 @@ const HINGE_TOP_PORT := "hinge_top"
 
 const OVERLOAD_ERROR_M := 0.02
 const OVERLOAD_VELOCITY_MPS := 0.003
+## Construction on a non-root driven branch (POC-ACTUATORS-V1/V2/V3): path
+## joints must be quieter than this. Pose may be extended/bent — live group
+## frames keep attach correct. Separate from overload (0.003).
+const CONSTRUCTION_IDLE_VELOCITY := 0.01
 const STATUS_POSITION_PROGRESS_M := 0.00003
 const STUCK_FORCE_FRACTION := 0.1
 const LIMIT_EPSILON_M := 0.005

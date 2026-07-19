@@ -184,10 +184,9 @@ Body groups, root policy, acyclic-валидация — Piston v1 без изм
 Обычные элементы крепятся к `hinge_top` через существующие structural
 surface rules и становятся частью top body group.
 
-Construction target на hinge top branch разрешён только когда hinge в
-home angle: `|observed_angle| ≤ 0.02 rad`, observed velocity ниже
-`0.01 rad/s`, snap использует home grid pose. Иначе
-`moving_target_not_supported`. Согнутый top не округляется обратно в grid.
+Construction target на hinge top branch разрешён в idle: observed velocity
+ниже `0.01 rad/s`. Home angle не требуется — preview/weld используют live
+body-group frame. Пока шарнир движется — `moving_target_not_supported`.
 
 Нельзя создать `Rigid` edge, замыкающий mechanical cycle через Hinge:
 `driven_joint_cycle` (общая проверка с Piston/Rotor).
@@ -339,8 +338,8 @@ enabled, status). Логи — на transition, не каждый frame.
 6. насыщение момента без прогресса вне упора даёт `overloaded`,
    power loss — `no_power`;
 7. dismantle base/top отделяет top branch отдельной Assembly;
-8. construction на согнутом top отклоняется
-   `moving_target_not_supported`.
+8. construction на движущемся top отклоняется
+   `moving_target_not_supported`; idle согнутый top — разрешён.
 
 Gameplay/HUD/презентация верифицируются в запущенной игре человеком
 (построить стрелу на hinge, согнуть до упора, увидеть joint_limit;

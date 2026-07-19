@@ -216,16 +216,23 @@ static func _dominant_grid_direction(direction: Vector3) -> Vector3i:
 
 
 static func _attach_frame_for_target(
-	_world: SimulationWorld,
+	world: SimulationWorld,
 	assembly: SimulationAssembly,
-	_metadata: Dictionary
+	metadata: Dictionary
 ) -> Transform3D:
-	# Occupancy / origin_cell live in root assembly grid space. Using a driven
-	# carriage group transform here maps the hit into the wrong cell basis and
-	# kills attach preview (drill on large piston head, etc.).
-	if assembly != null and assembly.motion != null:
-		return assembly.motion.transform
-	return Transform3D.IDENTITY
+	# Hit->cell mapping and the ghost follow the aimed element's LIVE body
+	# group frame: group colliders keep blueprint-local offsets, so on a
+	# sagged/flexed branch this frame resolves the same cells as the root
+	# frame does at home, while the ghost hugs the real geometry. Occupancy
+	# itself stays in blueprint grid space and is unaffected.
+	if assembly == null or assembly.motion == null:
+		return Transform3D.IDENTITY
+	var element_id := int(metadata.get("element_id", 0))
+	if element_id > 0 and world != null:
+		var element := world.get_element(element_id)
+		if element != null and element.assembly_id == assembly.assembly_id:
+			return world.element_group_transform(element_id)
+	return assembly.motion.transform
 
 
 static func _attach_snap_context(

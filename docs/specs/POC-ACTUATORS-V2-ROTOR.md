@@ -185,10 +185,9 @@ Body groups, root policy, acyclic-валидация — Piston v1 без изм
 Обычные элементы крепятся к `rotor_top` через существующие structural
 surface rules и становятся частью top body group.
 
-Construction target на rotor top branch разрешён только когда rotor в home
-angle: `|wrap(observed_angle)| ≤ 0.02 rad`, observed velocity ниже
-`0.01 rad/s`, snap использует home grid pose. Иначе
-`moving_target_not_supported`. Повёрнутый top не округляется обратно в grid.
+Construction target на rotor top branch разрешён в idle: observed velocity
+ниже `0.01 rad/s`. Угол home не требуется — preview/weld используют live
+body-group frame. Пока ротор крутится — `moving_target_not_supported`.
 
 Нельзя создать `Rigid` edge, замыкающий mechanical cycle через Rotor:
 `driven_joint_cycle` (общая проверка с Piston).
@@ -330,8 +329,8 @@ status). Логи — на transition, не каждый frame.
 6. насыщение момента без прогресса даёт `overloaded`, power loss —
    `no_power`;
 7. dismantle base/top отделяет top branch отдельной Assembly;
-8. construction на повёрнутом top отклоняется
-   `moving_target_not_supported`.
+8. construction на крутящемся top отклоняется
+   `moving_target_not_supported`; idle повёрнутый top — разрешён.
 
 Gameplay/HUD/презентация верифицируются в запущенной игре человеком
 (построить башню на роторе, раскрутить, остановить препятствием, увидеть

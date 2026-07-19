@@ -29,7 +29,16 @@ static func compile_for_assembly(world, assembly_id: int) -> Dictionary:
 	)
 
 
-static func reconstruct_all_group_motions(world, assembly_id: int) -> Dictionary:
+## `live_overrides` (group_id -> AssemblyMotionState) are trusted live poses
+## captured from the physics bodies just before a rebuild: overridden groups
+## keep them verbatim (sag, flex and velocities survive), and child groups
+## without an override are derived from the overridden parent pose instead of
+## the idealized one. The root group is never overridden by the caller.
+static func reconstruct_all_group_motions(
+	world,
+	assembly_id: int,
+	live_overrides: Dictionary = {}
+) -> Dictionary:
 	# Prefer world.compile_body_groups so topology-revision cache is shared with
 	# element_group_motion / preview validation (avoids 100s of compiles/s).
 	var compiled: Dictionary = (
@@ -52,6 +61,13 @@ static func reconstruct_all_group_motions(world, assembly_id: int) -> Dictionary
 		if int(group_id) == root_group_id:
 			continue
 		result[int(group_id)] = root_motion.duplicate_state()
+	for override_id_variant: Variant in live_overrides:
+		var override_id := int(override_id_variant)
+		if override_id == root_group_id or not result.has(override_id):
+			continue
+		var live: AssemblyMotionState = live_overrides[override_id_variant]
+		if live != null:
+			result[override_id] = live.duplicate_state()
 	# Parent driven joints before children so nested hinge/piston bases see
 	# the already-spun/extended parent group motion (joint_id order is not
 	# a topological guarantee after edits / restore).
@@ -61,6 +77,8 @@ static func reconstruct_all_group_motions(world, assembly_id: int) -> Dictionary
 	):
 		var base_group_id := int(spec.get("base_group_id", 0))
 		var head_group_id := int(spec.get("head_group_id", 0))
+		if live_overrides.has(head_group_id):
+			continue
 		var base_motion: AssemblyMotionState = result.get(base_group_id)
 		if base_motion == null:
 			continue

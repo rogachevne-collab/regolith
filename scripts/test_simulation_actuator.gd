@@ -620,7 +620,8 @@ func _test_piston_fifth_rejected_at_placement() -> bool:
 	if not prior.is_ok():
 		world.free()
 		return _fail("fifth-reject frame failed")
-	for index: int in range(4):
+	var max_chain := BodyGroupCompiler.MAX_DRIVEN_JOINTS_ON_PATH
+	for index: int in range(max_chain):
 		var piston := _place_piston(
 			world,
 			assembly_id,
@@ -630,17 +631,22 @@ func _test_piston_fifth_rejected_at_placement() -> bool:
 		if not piston.is_ok():
 			world.free()
 			return _fail(
-				"setup piston %d failed before fifth: %s"
+				"setup piston %d failed before overflow: %s"
 				% [index + 1, piston.reason]
 			)
 		prior = piston
 	var before_amount := world.get_resource_store("player").amount("mechanism")
-	var fifth := _place_piston(world, assembly_id, Vector3i(5, 8, 0), prior)
+	var fifth := _place_piston(
+		world,
+		assembly_id,
+		Vector3i(5, max_chain * 2, 0),
+		prior
+	)
 	if fifth.reason != StructuralCommandResult.REASON_DRIVEN_JOINT_CHAIN_TOO_LONG:
 		world.free()
 		return _fail(
-			"fifth piston should be driven_joint_chain_too_long, got %s"
-			% fifth.reason
+			"piston %d should be driven_joint_chain_too_long, got %s"
+			% [max_chain + 1, fifth.reason]
 		)
 	var after_amount := world.get_resource_store("player").amount("mechanism")
 	if not is_equal_approx(before_amount, after_amount):
@@ -1832,7 +1838,11 @@ func _test_rotor_moving_top_construction_rejected() -> bool:
 	var rotor: StructuralCommandResult = setup["rotor"]
 	var assembly_id := int(setup["assembly_id"])
 	var joint := world.get_joint(int(rotor.data["rotor_joint_id"]))
+	# Pose may be away from home; reject only while still moving.
 	joint.motor.observed_position_m = 0.5
+	joint.motor.observed_velocity_mps = (
+		SimulationMotorState.CONSTRUCTION_IDLE_VELOCITY + 0.01
+	)
 
 	var platform := PlaceElementCommand.new()
 	platform.assembly_id = assembly_id
@@ -1846,7 +1856,7 @@ func _test_rotor_moving_top_construction_rejected() -> bool:
 	var result := world.apply_structural_command_now(platform)
 	if result.reason != StructuralCommandResult.REASON_MOVING_TARGET_NOT_SUPPORTED:
 		world.free()
-		return _fail("construction on turned rotor top was not rejected")
+		return _fail("construction on moving rotor top was not rejected")
 	world.free()
 	return true
 
@@ -2291,6 +2301,9 @@ func _test_hinge_moving_top_construction_rejected() -> bool:
 	var assembly_id := int(setup["assembly_id"])
 	var joint := world.get_joint(int(hinge.data["hinge_joint_id"]))
 	joint.motor.observed_position_m = 0.5
+	joint.motor.observed_velocity_mps = (
+		SimulationMotorState.CONSTRUCTION_IDLE_VELOCITY + 0.01
+	)
 
 	var platform := PlaceElementCommand.new()
 	platform.assembly_id = assembly_id
@@ -2304,7 +2317,7 @@ func _test_hinge_moving_top_construction_rejected() -> bool:
 	var result := world.apply_structural_command_now(platform)
 	if result.reason != StructuralCommandResult.REASON_MOVING_TARGET_NOT_SUPPORTED:
 		world.free()
-		return _fail("construction on a bent hinge top was not rejected")
+		return _fail("construction on a moving hinge top was not rejected")
 	world.free()
 	return true
 
@@ -2455,21 +2468,41 @@ func _test_construction_rejected_on_bent_hinge_branch() -> bool:
 		world.free()
 		return _fail("platform attach before bend failed")
 	var joint := world.get_joint(int(hinge.data["hinge_joint_id"]))
+	# Bent but idle: live group frames allow attach. Moving: reject.
 	joint.motor.observed_position_m = 0.5
-	var tip := PlaceElementCommand.new()
-	tip.assembly_id = assembly_id
-	tip.expected_assembly_revision = world.get_assembly_raw(
+	joint.motor.observed_velocity_mps = 0.0
+	var tip_idle := PlaceElementCommand.new()
+	tip_idle.assembly_id = assembly_id
+	tip_idle.expected_assembly_revision = world.get_assembly_raw(
 		assembly_id
 	).topology_revision
-	tip.archetype = Slice01Archetypes.frame()
-	tip.origin_cell = Vector3i(5, 3, 0)
-	tip.orientation_index = 0
-	tip.store_id = "player"
-	var result := world.apply_structural_command_now(tip)
+	tip_idle.archetype = Slice01Archetypes.frame()
+	tip_idle.origin_cell = Vector3i(5, 3, 0)
+	tip_idle.orientation_index = 0
+	tip_idle.store_id = "player"
+	var idle_result := world.apply_structural_command_now(tip_idle)
+	if not idle_result.is_ok():
+		world.free()
+		return _fail(
+			"construction on bent idle hinge branch should be allowed"
+		)
+	joint.motor.observed_velocity_mps = (
+		SimulationMotorState.CONSTRUCTION_IDLE_VELOCITY + 0.01
+	)
+	var tip_moving := PlaceElementCommand.new()
+	tip_moving.assembly_id = assembly_id
+	tip_moving.expected_assembly_revision = world.get_assembly_raw(
+		assembly_id
+	).topology_revision
+	tip_moving.archetype = Slice01Archetypes.frame()
+	tip_moving.origin_cell = Vector3i(5, 4, 0)
+	tip_moving.orientation_index = 0
+	tip_moving.store_id = "player"
+	var result := world.apply_structural_command_now(tip_moving)
 	if result.reason != StructuralCommandResult.REASON_MOVING_TARGET_NOT_SUPPORTED:
 		world.free()
 		return _fail(
-			"construction on bent hinge branch frame was not rejected"
+			"construction on moving hinge branch frame was not rejected"
 		)
 	world.free()
 	return true
@@ -2478,9 +2511,10 @@ func _test_construction_rejected_on_bent_hinge_branch() -> bool:
 func _test_driven_chain_length_limit() -> bool:
 	var definition := HINGE_BASE.hinge_definition
 	var frame := Slice01Archetypes.frame()
+	var max_chain := BodyGroupCompiler.MAX_DRIVEN_JOINTS_ON_PATH
 	var element_ids: Array[int] = []
 	var elements_by_id: Dictionary = {}
-	for index: int in range(1, 7):
+	for index: int in range(1, max_chain + 3):
 		element_ids.append(index)
 		elements_by_id[index] = SimulationElement.frame(
 			index,
@@ -2493,7 +2527,7 @@ func _test_driven_chain_length_limit() -> bool:
 	var too_long: Array[SimulationJoint] = [
 		SimulationJoint.anchor(100, 1, 1, "anchor"),
 	]
-	for index: int in range(1, 6):
+	for index: int in range(1, max_chain + 2):
 		too_long.append(
 			SimulationJoint.hinge(index, 1, index, index + 1, definition)
 		)
@@ -2503,7 +2537,9 @@ func _test_driven_chain_length_limit() -> bool:
 		too_long
 	)
 	if bool(rejected.get("valid", true)):
-		return _fail("5 driven joints on a path should be rejected")
+		return _fail(
+			"%d driven joints on a path should be rejected" % (max_chain + 1)
+		)
 	if String(rejected.get("reason", "")) != "driven_joint_chain_too_long":
 		return _fail(
 			"expected driven_joint_chain_too_long, got %s"
@@ -2511,7 +2547,7 @@ func _test_driven_chain_length_limit() -> bool:
 		)
 	var ok_ids: Array[int] = []
 	var ok_elements: Dictionary = {}
-	for index: int in range(1, 6):
+	for index: int in range(1, max_chain + 2):
 		ok_ids.append(index)
 		ok_elements[index] = SimulationElement.frame(
 			index,
@@ -2524,15 +2560,15 @@ func _test_driven_chain_length_limit() -> bool:
 	var ok_joints: Array[SimulationJoint] = [
 		SimulationJoint.anchor(100, 1, 1, "anchor"),
 	]
-	for index: int in range(1, 5):
+	for index: int in range(1, max_chain + 1):
 		ok_joints.append(
 			SimulationJoint.hinge(index, 1, index, index + 1, definition)
 		)
 	var accepted := BodyGroupCompiler.compile(ok_ids, ok_elements, ok_joints)
 	if not bool(accepted.get("valid", false)):
 		return _fail(
-			"4 driven joints on a path must remain valid: %s"
-			% str(accepted.get("reason", ""))
+			"%d driven joints on a path must remain valid: %s"
+			% [max_chain, str(accepted.get("reason", ""))]
 		)
 	return true
 

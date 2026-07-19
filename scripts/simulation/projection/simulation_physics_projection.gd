@@ -253,7 +253,7 @@ func _try_append_placed_element(
 	if _world == null or element_id <= 0 or _element_records.has(element_id):
 		fail_reason = &"already_projected_or_bad_id"
 	elif _assembly_group_bodies.has(assembly_id):
-		fail_reason = &"multibody_groups"
+		return _try_append_multibody_element(assembly_id, element_id)
 	elif _mounted_bodies.has(assembly_id):
 		fail_reason = &"mounted"
 	var assembly: SimulationAssembly = null
@@ -301,6 +301,141 @@ func _try_append_placed_element(
 	_refresh_single_body_mass_com(assembly_id, body as RigidBody3D, assembly)
 	_projected_revision[assembly_id] = assembly.topology_revision
 	return true
+
+## Non-topological place on a multibody assembly: the new element joined an
+## existing rigid group, so its colliders attach to that group body in place.
+## No body teardown and no joint rebuild — an extended/sagged actuator chain
+## keeps its live pose and solver warm-start untouched.
+func _try_append_multibody_element(
+	assembly_id: int,
+	element_id: int
+) -> bool:
+	if _mounted_bodies.has(assembly_id):
+		return false
+	var assembly: SimulationAssembly = _world.get_assembly_raw(assembly_id)
+	if assembly == null or assembly.tombstoned:
+		return false
+	var compiled := _compile_assembly_groups(assembly)
+	if not bool(compiled.get("valid", false)):
+		return false
+	if not _multibody_topology_matches(assembly_id, compiled):
+		return false
+	var group_id := int(
+		(compiled.get("element_to_group", {}) as Dictionary).get(element_id, 0)
+	)
+	var groups_map: Dictionary = _assembly_group_bodies.get(assembly_id, {})
+	var body: PhysicsBody3D = groups_map.get(group_id) as PhysicsBody3D
+	if group_id <= 0 or body == null or not is_instance_valid(body):
+		return false
+	var records: Array[Dictionary] = (
+		PistonProjectionUtil.build_collision_shapes_for_elements(
+			_world,
+			assembly,
+			[element_id] as Array[int]
+		)
+	)
+	if records.is_empty():
+		return false
+	WheelSimulationService.invalidate_park_anchors(_world, assembly_id)
+	_attach_colliders_to_body(
+		body,
+		records,
+		assembly_id,
+		[element_id] as Array[int]
+	)
+	_refresh_group_body_mass_com(
+		assembly,
+		body,
+		(compiled.get("groups", {}) as Dictionary).get(group_id, [])
+	)
+	_append_element_to_carriage_records(assembly_id, body, element_id)
+	_projected_revision[assembly_id] = assembly.topology_revision
+	return true
+
+## True when the compiled topology matches what is currently projected: same
+## rigid group ids, same root and same driven joints — i.e. the edit stayed
+## inside one existing group.
+func _multibody_topology_matches(
+	assembly_id: int,
+	compiled: Dictionary
+) -> bool:
+	var groups_map: Dictionary = _assembly_group_bodies.get(assembly_id, {})
+	var compiled_groups: Dictionary = compiled.get("groups", {})
+	if groups_map.size() != compiled_groups.size():
+		return false
+	for group_id_variant: Variant in compiled_groups:
+		if not groups_map.has(int(group_id_variant)):
+			return false
+	if int(compiled.get("root_group_id", 0)) != int(
+		_root_group_ids.get(assembly_id, 0)
+	):
+		return false
+	var projected_joint_ids: Dictionary = {}
+	for record_variant: Variant in _piston_constraints.get(assembly_id, []):
+		if record_variant is Dictionary:
+			projected_joint_ids[
+				int((record_variant as Dictionary).get("joint_id", 0))
+			] = true
+	for record_variant: Variant in _rotor_constraints.get(assembly_id, []):
+		if record_variant is Dictionary:
+			projected_joint_ids[
+				int((record_variant as Dictionary).get("joint_id", 0))
+			] = true
+	var specs: Array = compiled.get("driven_specs", [])
+	if specs.size() != projected_joint_ids.size():
+		return false
+	for spec_variant: Variant in specs:
+		if not spec_variant is Dictionary:
+			return false
+		if not projected_joint_ids.has(
+			int((spec_variant as Dictionary).get("joint_id", 0))
+		):
+			return false
+	return true
+
+func _refresh_group_body_mass_com(
+	assembly: SimulationAssembly,
+	body: PhysicsBody3D,
+	member_ids: Array
+) -> void:
+	if not body is RigidBody3D:
+		return
+	var element_ids: Array[int] = []
+	for member_variant: Variant in member_ids:
+		element_ids.append(int(member_variant))
+	var rigid := body as RigidBody3D
+	rigid.mass = maxf(
+		PistonProjectionUtil.dry_mass_for_elements(_world, element_ids),
+		MIN_MASS
+	)
+	rigid.center_of_mass_mode = RigidBody3D.CENTER_OF_MASS_MODE_CUSTOM
+	rigid.center_of_mass = (
+		PistonProjectionUtil.center_of_mass_local_for_records(
+			PistonProjectionUtil.build_collision_shapes_for_elements(
+				_world,
+				assembly,
+				element_ids
+			)
+		)
+	)
+
+## Keep piston carriage element lists fresh so load estimates and sustained
+## impact strikers see blocks welded onto the carriage after projection.
+func _append_element_to_carriage_records(
+	assembly_id: int,
+	group_body: PhysicsBody3D,
+	element_id: int
+) -> void:
+	for record_variant: Variant in _piston_constraints.get(assembly_id, []):
+		if not record_variant is Dictionary:
+			continue
+		var record: Dictionary = record_variant
+		if record.get("head_body") != group_body:
+			continue
+		var carriage: Array = record.get("carriage_element_ids", [])
+		if not carriage.has(element_id):
+			carriage.append(element_id)
+			record["carriage_element_ids"] = carriage
 
 func _try_remove_projected_element(
 	assembly_id: int,
@@ -364,6 +499,10 @@ func _refresh_single_body_mass_com(
 		rigid.angular_velocity = Vector3.ZERO
 
 func _reproject_assembly(assembly_id: int) -> void:
+	# Capture per-element live poses BEFORE teardown. Multibody rebuild used to
+	# call _capture_live_group_motions after _remove_body — always empty — so
+	# cutting an extended piston snapped survivors to home grid pose.
+	var live_capture := _capture_live_element_motions(assembly_id)
 	var body := get_physics_body(assembly_id)
 	var motion: AssemblyMotionState = (
 		_capture_body_motion(body)
@@ -372,16 +511,19 @@ func _reproject_assembly(assembly_id: int) -> void:
 	)
 	WheelSimulationService.invalidate_park_anchors(_world, assembly_id)
 	_remove_body(assembly_id)
-	_project_assembly(assembly_id, motion)
+	_project_assembly(assembly_id, motion, live_capture)
 
 func _handle_split(event: Dictionary) -> void:
 	var survivor_id: int = int(event["survivor_assembly_id"])
 	var parent_body: PhysicsBody3D = get_physics_body(survivor_id)
 	var parent_motion := AssemblyMotionState.new()
 	var parent_com_world := Vector3.ZERO
+	var parent_body_id := 0
+	var live_capture := _capture_live_element_motions(survivor_id)
 	if parent_body != null:
 		parent_motion = _capture_body_motion(parent_body)
 		parent_com_world = _body_center_of_mass_world(parent_body)
+		parent_body_id = parent_body.get_instance_id()
 	var new_ids: Array[int] = []
 	for mapping_variant: Variant in event.get("new_assemblies", []):
 		if mapping_variant is Dictionary:
@@ -391,29 +533,78 @@ func _handle_split(event: Dictionary) -> void:
 		_project_split_child(
 			assembly_id,
 			parent_motion,
-			parent_com_world
+			parent_com_world,
+			parent_body_id,
+			live_capture
 		)
 	_project_split_child(
 		survivor_id,
 		parent_motion,
-		parent_com_world
+		parent_com_world,
+		parent_body_id,
+		live_capture
 	)
 
 func _project_split_child(
 	assembly_id: int,
 	parent_motion: AssemblyMotionState,
-	parent_com_world: Vector3
+	parent_com_world: Vector3,
+	parent_body_id: int = 0,
+	live_capture: Dictionary = {}
 ) -> void:
 	var assembly: SimulationAssembly = _world.get_assembly_raw(assembly_id)
 	if assembly == null:
 		return
-	var motion: AssemblyMotionState = parent_motion.duplicate_state()
-	if _world.assembly_has_anchor(assembly_id):
+	var motion := _seed_motion_for_split_child(
+		assembly,
+		parent_motion,
+		parent_com_world,
+		parent_body_id,
+		live_capture
+	)
+	_project_assembly(assembly_id, motion, live_capture)
+
+
+## Prefer the live pose of any element that still belongs to this child.
+## Same rigid body as the pre-split root → COM velocity inheritance.
+## Distinct body (extended carriage) → keep that body's transform and velocity.
+func _seed_motion_for_split_child(
+	assembly: SimulationAssembly,
+	parent_motion: AssemblyMotionState,
+	parent_com_world: Vector3,
+	parent_body_id: int,
+	live_capture: Dictionary
+) -> AssemblyMotionState:
+	var motions: Dictionary = live_capture.get("motions", {})
+	var body_ids: Dictionary = live_capture.get("body_ids", {})
+	var live_seed: AssemblyMotionState = null
+	var seed_body_id := 0
+	for element_id: int in assembly.element_ids:
+		if not motions.has(element_id):
+			continue
+		var candidate: Variant = motions[element_id]
+		if candidate is AssemblyMotionState:
+			live_seed = candidate as AssemblyMotionState
+			seed_body_id = int(body_ids.get(element_id, 0))
+			break
+	var motion: AssemblyMotionState = (
+		live_seed.duplicate_state()
+		if live_seed != null
+		else parent_motion.duplicate_state()
+	)
+	if _world.assembly_has_anchor(assembly.assembly_id):
 		motion.linear_velocity = Vector3.ZERO
 		motion.angular_velocity = Vector3.ZERO
 		motion.sleeping = true
 		motion.frozen = true
-	else:
+		return motion
+	var same_parent_body := (
+		live_seed == null
+		or parent_body_id == 0
+		or seed_body_id == 0
+		or seed_body_id == parent_body_id
+	)
+	if same_parent_body:
 		var child_com_world: Vector3 = parent_motion.transform * (
 			ColliderProjectionUtil.assembly_center_of_mass_local(
 				_world,
@@ -430,9 +621,9 @@ func _project_split_child(
 		)
 		motion.linear_velocity = inherited["linear_velocity"]
 		motion.angular_velocity = inherited["angular_velocity"]
-		motion.sleeping = false
-		motion.frozen = false
-	_project_assembly(assembly_id, motion)
+	motion.sleeping = false
+	motion.frozen = false
+	return motion
 
 func _handle_merge(event: Dictionary) -> void:
 	var survivor_id: int = int(event["survivor_assembly_id"])
@@ -535,7 +726,8 @@ func _merged_motion(
 
 func _project_assembly(
 	assembly_id: int,
-	motion_override: AssemblyMotionState
+	motion_override: AssemblyMotionState,
+	live_capture: Dictionary = {}
 ) -> void:
 	var assembly: SimulationAssembly = _world.get_assembly_raw(assembly_id)
 	if assembly == null or assembly.tombstoned:
@@ -543,6 +735,7 @@ func _project_assembly(
 		return
 	if (
 		motion_override == null
+		and live_capture.is_empty()
 		and _projected_revision.get(assembly_id, -1)
 		== assembly.topology_revision
 		and get_physics_body(assembly_id) != null
@@ -558,7 +751,8 @@ func _project_assembly(
 		_project_assembly_multibody(
 			assembly_id,
 			motion_override,
-			compiled
+			compiled,
+			live_capture
 		)
 		return
 	_project_assembly_single(assembly_id, motion_override)
@@ -716,14 +910,26 @@ func _project_assembly_single(
 func _project_assembly_multibody(
 	assembly_id: int,
 	motion_override: AssemblyMotionState,
-	compiled: Dictionary
+	compiled: Dictionary,
+	live_capture: Dictionary = {}
 ) -> void:
 	var assembly: SimulationAssembly = _world.get_assembly_raw(assembly_id)
 	if assembly == null:
 		return
+	# Live poses/velocities of surviving groups must ride across the rebuild:
+	# reconstruction from motor state snaps sagged/flexed joints to their
+	# idealized pose and kicks the whole chain on every placed block.
+	# Prefer caller-captured element motions (reproject/split tear down bodies
+	# first); fall back to an in-place group capture when bodies still exist.
+	var live_group_motions: Dictionary = (
+		_remap_element_motions_to_groups(assembly_id, live_capture)
+		if not live_capture.is_empty()
+		else _capture_live_group_motions(assembly_id)
+	)
 	_remove_body(assembly_id)
 	var groups: Dictionary = compiled["groups"]
 	var root_group_id := int(compiled.get("root_group_id", 0))
+	live_group_motions.erase(root_group_id)
 	var source_motion: AssemblyMotionState = (
 		motion_override
 		if motion_override != null
@@ -751,7 +957,11 @@ func _project_assembly_multibody(
 	_world.sync_assembly_motion(assembly_id, seed_motion)
 	assembly.clear_body_group_motions()
 	var group_motions: Dictionary = (
-		BodyGroupMotionUtilScript.reconstruct_all_group_motions(_world, assembly_id)
+		BodyGroupMotionUtilScript.reconstruct_all_group_motions(
+			_world,
+			assembly_id,
+			live_group_motions
+		)
 	)
 	var groups_map: Dictionary = {}
 	var carriage_group_ids: Dictionary = {}
@@ -1055,6 +1265,14 @@ func _project_assembly_multibody(
 			"axis_local": axis_local,
 			"bind_extension_m": bind_extension,
 			"angular_compliance": compliance,
+			"cfg_operational": spawn_operational,
+			"cfg_flex": spawn_operational,
+			"cfg_limits": Vector2(
+				sim_joint.motor.lower_limit_m,
+				sim_joint.motor.upper_limit_m
+			),
+			"motor_target_v": 0.0,
+			"motor_limit_n": sim_joint.motor.force_limit_n,
 			"carriage_element_ids": groups.get(
 				int(spec.get("head_group_id", 0)),
 				[]
@@ -1411,45 +1629,80 @@ func _tick_rotor_actuators(delta: float) -> void:
 			var observed_velocity := float(
 				measured.get("relative_velocity_rad_s", 0.0)
 			)
-			_world.sync_actuator_observation(
-				int(record.get("joint_id", 0)),
-				float(measured.get("angle_rad", 0.0)),
-				observed_velocity,
-				sim_joint.motor.applied_force_n,
-				sim_joint.motor.force_saturated
-			)
 			var powered: bool = PistonProjectionUtil.is_piston_powered(
 				_world,
 				sim_joint.element_a_id
 			)
-			var effective_inertia := (
-				RotorProjectionUtil.reduced_inertia_about_axis(
-					head_body,
-					base_body,
-					axis_world
+			var drive_velocity := RotorProjectionUtil.drive_velocity_rad_s(
+				sim_joint.motor,
+				powered
+			)
+			var drive_limit_nm := (
+				sim_joint.motor.force_limit_n if powered else 0.0
+			)
+			var constraint: Generic6DOFJoint3D = (
+				record.get("constraint") as Generic6DOFJoint3D
+			)
+			var motor_axis: String = (
+				"x" if sim_joint.kind == SimulationJoint.Kind.HINGE else "y"
+			)
+			if constraint != null and (
+				drive_velocity != float(record.get("motor_target_v", NAN))
+				or drive_limit_nm != float(record.get("motor_limit_n", NAN))
+			):
+				RotorProjectionUtil.update_angular_motor(
+					constraint,
+					motor_axis,
+					drive_velocity,
+					drive_limit_nm
+				)
+				record["motor_target_v"] = drive_velocity
+				record["motor_limit_n"] = drive_limit_nm
+			var gravity := GravityField.resolve_gravity_accel(
+				self,
+				(
+					(head_body as Node3D).global_position
+					if head_body is Node3D
+					else Vector3.ZERO
 				)
 			)
-			var torque_result: Dictionary = (
-				RotorProjectionUtil.compute_motor_torque_scalar(
+			var anchor_world: Vector3 = (
+				constraint.global_position
+				if constraint != null
+				else Vector3.ZERO
+			)
+			var effort: Dictionary = (
+				RotorProjectionUtil.estimate_angular_drive_effort(
 					sim_joint.motor,
+					drive_velocity,
 					observed_velocity,
-					powered,
-					effective_inertia
+					head_body,
+					anchor_world,
+					axis_world,
+					gravity
 				)
 			)
-			var torque_nm := float(torque_result.get("torque_nm", 0.0))
-			var saturated := bool(torque_result.get("saturated", false))
-			sim_joint.motor.applied_force_n = absf(torque_nm)
+			var sat_time := (
+				float(record.get("sat_time_s", 0.0)) + delta
+				if bool(effort.get("saturated", false))
+				else 0.0
+			)
+			record["sat_time_s"] = sat_time
+			var saturated := (
+				sat_time >= PistonProjectionUtil.SATURATION_CONFIRM_S
+			)
+			var torque_nm := (
+				sim_joint.motor.force_limit_n
+				if saturated
+				else float(effort.get("hold_nm", 0.0))
+			)
+			sim_joint.motor.applied_force_n = torque_nm
 			sim_joint.motor.force_saturated = saturated
-			if head_body is RigidBody3D:
-				(head_body as RigidBody3D).apply_torque(axis_world * torque_nm)
-			if RotorProjectionUtil.is_dynamic_rigid(base_body):
-				(base_body as RigidBody3D).apply_torque(-axis_world * torque_nm)
 			_world.sync_actuator_observation(
 				int(record.get("joint_id", 0)),
 				float(measured.get("angle_rad", 0.0)),
 				observed_velocity,
-				absf(torque_nm),
+				torque_nm,
 				saturated
 			)
 
@@ -1484,17 +1737,49 @@ func _tick_piston_actuators(delta: float) -> void:
 				record.get("head_anchor_local", Vector3.ZERO),
 				axis_world
 			)
-			_world.sync_actuator_observation(
-				int(record.get("joint_id", 0)),
-				float(measured.get("extension_m", 0.0)),
-				float(measured.get("relative_velocity_mps", 0.0)),
-				sim_joint.motor.applied_force_n,
-				sim_joint.motor.force_saturated
+			var extension_m := float(measured.get("extension_m", 0.0))
+			var relative_velocity_mps := float(
+				measured.get("relative_velocity_mps", 0.0)
 			)
 			var powered: bool = PistonProjectionUtil.is_piston_powered(
 				_world,
 				sim_joint.element_a_id
 			)
+			var base_element := _world.get_element(sim_joint.element_a_id)
+			var operational := (
+				base_element != null and base_element.is_operational()
+			)
+			var constraint: Generic6DOFJoint3D = record.get("constraint")
+			if constraint != null:
+				_refresh_piston_constraint_config(
+					record,
+					constraint,
+					sim_joint.motor,
+					base_element,
+					extension_m,
+					operational,
+					powered and operational
+				)
+			var drive_velocity := PistonProjectionUtil.drive_velocity_mps(
+				sim_joint.motor,
+				powered and operational
+			)
+			var drive_limit_n := (
+				sim_joint.motor.force_limit_n
+				if powered and operational
+				else 0.0
+			)
+			if constraint != null and (
+				drive_velocity != float(record.get("motor_target_v", NAN))
+				or drive_limit_n != float(record.get("motor_limit_n", NAN))
+			):
+				PistonProjectionUtil.update_slider_motor(
+					constraint,
+					drive_velocity,
+					drive_limit_n
+				)
+				record["motor_target_v"] = drive_velocity
+				record["motor_limit_n"] = drive_limit_n
 			var head_mass := PistonProjectionUtil.carriage_mass_kg(
 				_world,
 				record.get("carriage_element_ids", [])
@@ -1509,79 +1794,101 @@ func _tick_piston_actuators(delta: float) -> void:
 					else Vector3.ZERO
 				)
 			)
-			var base_element := _world.get_element(sim_joint.element_a_id)
-			var operational := (
-				base_element != null and base_element.is_operational()
+			var effort: Dictionary = PistonProjectionUtil.estimate_drive_effort(
+				sim_joint.motor,
+				drive_velocity,
+				relative_velocity_mps,
+				head_mass,
+				axis_world,
+				gravity
 			)
-			var force_result: Dictionary = (
-				PistonProjectionUtil.compute_motor_force_scalar(
-					sim_joint.motor,
-					float(measured.get("relative_velocity_mps", 0.0)),
-					powered and operational,
-					head_mass,
-					axis_world,
-					gravity
-				)
+			var sat_time := (
+				float(record.get("sat_time_s", 0.0)) + delta
+				if bool(effort.get("saturated", false))
+				else 0.0
 			)
-			var force_n := float(force_result.get("force_n", 0.0))
-			var saturated := bool(force_result.get("saturated", false))
-			var constraint: Generic6DOFJoint3D = record.get("constraint")
-			if constraint != null:
-				var base_archetype: ElementArchetype = (
-					base_element.get_archetype()
-					if base_element != null
-					else null
-				)
-				var compliance := (
-					PistonProjectionUtil.runtime_angular_compliance(
-						(
-							base_archetype.piston_definition
-							if base_archetype != null
-							else null
-						),
-						powered and operational
-					)
-				)
-				var lock_extension := (
-					float(measured.get("extension_m", 0.0))
-					if not operational
-					else NAN
-				)
-				PistonProjectionUtil.configure_slider_joint(
-					constraint,
-					sim_joint.motor,
-					compliance,
-					lock_extension,
-					float(record.get("bind_extension_m", 0.0))
-				)
-			sim_joint.motor.applied_force_n = absf(force_n)
+			record["sat_time_s"] = sat_time
+			var saturated := (
+				sat_time >= PistonProjectionUtil.SATURATION_CONFIRM_S
+			)
+			var force_n := (
+				sim_joint.motor.force_limit_n
+				if saturated
+				else float(effort.get("hold_n", 0.0))
+			)
+			sim_joint.motor.applied_force_n = force_n
 			sim_joint.motor.force_saturated = saturated
-			var axis_dir := axis_world.normalized()
-			if head_body is RigidBody3D:
-				(head_body as RigidBody3D).apply_central_force(
-					axis_dir * force_n
-				)
-			if base_body is RigidBody3D and not base_body is StaticBody3D:
-				(base_body as RigidBody3D).apply_central_force(
-					-axis_dir * force_n
-				)
 			_world.sync_actuator_observation(
 				int(record.get("joint_id", 0)),
-				float(measured.get("extension_m", 0.0)),
-				float(measured.get("relative_velocity_mps", 0.0)),
-				absf(force_n),
+				extension_m,
+				relative_velocity_mps,
+				force_n,
 				saturated
 			)
 			if operational:
 				_emit_piston_sustained_kinetic(
 					record,
 					head_body,
-					absf(force_n),
+					force_n,
 					saturated,
-					float(measured.get("relative_velocity_mps", 0.0)),
+					relative_velocity_mps,
 					delta
 				)
 	_world.tick_actuators(delta)
+
+
+## Full joint reconfiguration only on state transitions (operational / flex /
+## retuned limits) — rewriting limits and springs every tick fights Jolt
+## warm-starting and is what used to make chains explode.
+func _refresh_piston_constraint_config(
+	record: Dictionary,
+	constraint: Generic6DOFJoint3D,
+	motor: SimulationMotorState,
+	base_element: SimulationElement,
+	extension_m: float,
+	operational: bool,
+	allow_flex: bool
+) -> void:
+	var limits := Vector2(motor.lower_limit_m, motor.upper_limit_m)
+	var bind_extension := float(record.get("bind_extension_m", 0.0))
+	var state_changed: bool = (
+		record.get("cfg_operational") != operational
+		or record.get("cfg_flex") != allow_flex
+	)
+	if state_changed:
+		var base_archetype: ElementArchetype = (
+			base_element.get_archetype() if base_element != null else null
+		)
+		var compliance := PistonProjectionUtil.runtime_angular_compliance(
+			(
+				base_archetype.piston_definition
+				if base_archetype != null
+				else null
+			),
+			allow_flex
+		)
+		# Incomplete pistons lock at the extension they had when they lost
+		# operational state (no per-tick re-lock creep).
+		var lock_extension := extension_m if not operational else NAN
+		PistonProjectionUtil.configure_slider_joint(
+			constraint,
+			motor,
+			compliance,
+			lock_extension,
+			bind_extension
+		)
+		record["cfg_operational"] = operational
+		record["cfg_flex"] = allow_flex
+		record["cfg_limits"] = limits
+		record["motor_target_v"] = 0.0
+		record["motor_limit_n"] = motor.force_limit_n
+	elif operational and record.get("cfg_limits") != limits:
+		PistonProjectionUtil.update_slider_limits(
+			constraint,
+			motor,
+			bind_extension
+		)
+		record["cfg_limits"] = limits
 
 func _emit_piston_sustained_kinetic(
 	record: Dictionary,
@@ -1755,6 +2062,84 @@ func _clear_body_colliders(body: PhysicsBody3D) -> void:
 		collider.disabled = true
 		collider.queue_free()
 
+## Snapshot live per-group body motions (group_id -> AssemblyMotionState)
+## before a multibody teardown so the rebuild can reseed surviving groups.
+func _capture_live_group_motions(assembly_id: int) -> Dictionary:
+	var captured: Dictionary = {}
+	var groups_map: Variant = _assembly_group_bodies.get(assembly_id)
+	if not groups_map is Dictionary:
+		return captured
+	for group_id_variant: Variant in (groups_map as Dictionary):
+		var body: PhysicsBody3D = (
+			(groups_map as Dictionary)[group_id_variant] as PhysicsBody3D
+		)
+		if body != null and is_instance_valid(body):
+			captured[int(group_id_variant)] = _capture_body_motion(body)
+	return captured
+
+
+## Snapshot live body motion per element_id before teardown/split.
+## Group ids are min(element_id) and change when members are removed; element
+## keys stay stable across topology mutation so split children can reseed.
+func _capture_live_element_motions(assembly_id: int) -> Dictionary:
+	var motions: Dictionary = {}
+	var body_ids: Dictionary = {}
+	var groups_map: Variant = _assembly_group_bodies.get(assembly_id)
+	if not groups_map is Dictionary:
+		return {"motions": motions, "body_ids": body_ids}
+	var body_motion_cache: Dictionary = {}
+	for group_id_variant: Variant in (groups_map as Dictionary):
+		var body: PhysicsBody3D = (
+			(groups_map as Dictionary)[group_id_variant] as PhysicsBody3D
+		)
+		if body == null or not is_instance_valid(body):
+			continue
+		var body_id := body.get_instance_id()
+		if not body_motion_cache.has(body_id):
+			body_motion_cache[body_id] = _capture_body_motion(body)
+		var motion: AssemblyMotionState = body_motion_cache[body_id]
+		for element_id_variant: Variant in _element_records.keys():
+			var element_id := int(element_id_variant)
+			var record: Variant = _element_records[element_id_variant]
+			if not record is Dictionary:
+				continue
+			if int(record.get("assembly_id", 0)) != assembly_id:
+				continue
+			if record.get("body") != body:
+				continue
+			motions[element_id] = motion
+			body_ids[element_id] = body_id
+	return {"motions": motions, "body_ids": body_ids}
+
+
+## Map pre-teardown element motions onto the assembly's current group ids.
+func _remap_element_motions_to_groups(
+	assembly_id: int,
+	live_capture: Dictionary
+) -> Dictionary:
+	var overrides: Dictionary = {}
+	var motions: Dictionary = live_capture.get("motions", {})
+	if motions.is_empty() or _world == null:
+		return overrides
+	var compiled: Dictionary = _world.compile_body_groups(assembly_id)
+	if not bool(compiled.get("valid", false)):
+		return overrides
+	var groups: Dictionary = compiled.get("groups", {})
+	var root_group_id := int(compiled.get("root_group_id", 0))
+	for group_id_variant: Variant in groups.keys():
+		var group_id := int(group_id_variant)
+		if group_id == root_group_id:
+			continue
+		for member_variant: Variant in groups[group_id_variant]:
+			var element_id := int(member_variant)
+			if not motions.has(element_id):
+				continue
+			var motion_variant: Variant = motions[element_id]
+			if motion_variant is AssemblyMotionState:
+				overrides[group_id] = motion_variant
+				break
+	return overrides
+
 func _capture_body_motion(
 	body: PhysicsBody3D
 ) -> AssemblyMotionState:
@@ -1857,4 +2242,3 @@ func _sorted_int_keys(dictionary: Dictionary) -> Array[int]:
 		result.append(int(key))
 	result.sort()
 	return result
-

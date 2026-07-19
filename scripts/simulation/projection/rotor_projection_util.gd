@@ -33,6 +33,80 @@ static func configure_hinge_joint(joint: Generic6DOFJoint3D) -> void:
 		joint.set("angular_limit_%s/upper_angle" % axis, 0.0)
 	# Continuous rotation: the rotor axis stays unconstrained.
 	joint.set("angular_limit_y/enabled", false)
+	update_angular_motor(joint, "y", 0.0, 0.0)
+
+
+## Solver-side angular drive (rotor spins about joint Y, hinge bends about
+## joint X). Cheap to call per tick — never touches limits or springs.
+static func update_angular_motor(
+	joint: Generic6DOFJoint3D,
+	axis_name: String,
+	target_velocity_rad_s: float,
+	torque_limit_nm: float
+) -> void:
+	joint.set("angular_motor_%s/enabled" % axis_name, true)
+	joint.set(
+		"angular_motor_%s/target_velocity" % axis_name,
+		target_velocity_rad_s
+	)
+	joint.set(
+		"angular_motor_%s/force_limit" % axis_name,
+		maxf(torque_limit_nm, 0.0)
+	)
+
+
+## Target velocity for the solver motor; STOP and overload brake at zero.
+static func drive_velocity_rad_s(
+	motor: SimulationMotorState,
+	active: bool
+) -> float:
+	if motor == null or not active or not motor.enabled:
+		return 0.0
+	if motor.status == SimulationMotorState.Status.OVERLOADED:
+		return 0.0
+	if motor.control_mode == SimulationMotorState.ControlMode.STOP:
+		return 0.0
+	return desired_angular_velocity_rad_s(motor)
+
+
+## Estimated applied torque for the status machine / overlay: gravity hold
+## torque of the head group about the joint axis while tracking, torque limit
+## when the motor visibly cannot reach its commanded speed.
+static func estimate_angular_drive_effort(
+	motor: SimulationMotorState,
+	desired_velocity_rad_s: float,
+	observed_velocity_rad_s: float,
+	head_body: PhysicsBody3D,
+	anchor_world: Vector3,
+	axis_world: Vector3,
+	gravity: Vector3
+) -> Dictionary:
+	if motor == null:
+		return {"torque_nm": 0.0, "saturated": false}
+	var hold_abs := 0.0
+	if head_body is RigidBody3D:
+		var rigid := head_body as RigidBody3D
+		var com_world: Vector3 = (
+			rigid.global_transform * rigid.center_of_mass
+		)
+		hold_abs = absf(
+			((com_world - anchor_world).cross(rigid.mass * gravity))
+			.dot(axis_world.normalized())
+		)
+	var limit := maxf(motor.force_limit_n, 0.0)
+	var commanded := absf(desired_velocity_rad_s) > 0.0005
+	var tracking_broken := commanded and (
+		observed_velocity_rad_s * desired_velocity_rad_s <= 0.0
+		or absf(observed_velocity_rad_s)
+		< absf(desired_velocity_rad_s)
+		* PistonProjectionUtil.SATURATION_TRACKING_FRACTION
+	)
+	var saturated := tracking_broken or hold_abs >= limit
+	return {
+		"torque_nm": limit if saturated else minf(hold_abs, limit),
+		"hold_nm": minf(hold_abs, limit),
+		"saturated": saturated,
+	}
 
 
 static func measure_angular_state(
