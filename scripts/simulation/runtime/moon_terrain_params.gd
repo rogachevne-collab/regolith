@@ -10,7 +10,9 @@ extends RefCounted
 ## changed everywhere, prior digs don't line up.
 ## 28: crater depth ∝ diameter (lunar depth/diameter ratios), relief clamp
 ## 240 m — meter-deep km-wide bowls read as flat noise on Ø19 km.
-const GENERATOR_VERSION := 28
+## 29: LOD detail fade removed (ring-boundary gap lines) — cached v28 blocks
+## in SQLite carry faded far-LOD data and must not mix with unfaded.
+const GENERATOR_VERSION := 29
 const SEED := 0x4D004E
 
 

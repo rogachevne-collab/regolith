@@ -124,16 +124,15 @@ private:
 	float crater_field(
 			const Vector3f &n, float mare, float highland, float stride_m) const;
 
-	/// AMPLITUDE-based LOD fade: 1 when amp >= 0.08*stride, 0 when <=
-	/// 0.03*stride. Cull only truly sub-quantization features: the SDF
-	/// disagreement between adjacent LODs stays ≤3% of a coarse cell, which
-	/// Transvoxel stitching absorbs invisibly (higher thresholds showed up
-	/// as hairline gaps at LOD ring boundaries).
-	static float detail_fade(float amp_m, float stride_m) {
-		if (stride_m <= 0.f) {
-			return 1.f;
-		}
-		return clampf((amp_m / stride_m - 0.03f) / 0.05f, 0.f, 1.f);
+	/// LOD detail fade is DISABLED (returns 1): Transvoxel transition meshes
+	/// assume every LOD meshes the SAME field. Any per-LOD amplitude culling
+	/// (tried at 12% and 3% of a coarse cell) opens grazing-angle gap lines
+	/// at ring boundaries — empirically confirmed in-game 2026-07-19. Far
+	/// LODs pay full H(n); the exact far-field/uniform fast paths (which
+	/// never disagree between LODs) carry the perf budget instead. The
+	/// stride plumbing is kept for a future viewer-continuous approach.
+	static float detail_fade(float /*amp_m*/, float /*stride_m*/) {
+		return 1.f;
 	}
 	float crater_visibility(int cclass, float highland) const;
 	void crater_contribution(
