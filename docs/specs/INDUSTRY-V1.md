@@ -569,11 +569,14 @@ those hooks do not define production yield semantics.
 
 ### Voxel scale (v1)
 
-- `VoxelTerrain` в `main.tscn`: uniform scale **0.65** (официальный workaround
-  плагина; свойства `voxel_size` у узла нет).
-- `max_view_distance` terrain ≈ **200** локальных вокселей (≈128 м мира /
-  0.65); иначе плагин клампит `VoxelViewer` и блоки вокруг игрока не грузятся.
-- `VoxelViewer` игрока: `view_distance` ≈ **197** (128 м / 0.65).
+- `VoxelTerrain` / `VoxelLodTerrain`: uniform scale **1.0** (= 1 м на воксель;
+  нативный unit Voxel Tools; свойства `voxel_size` у узла нет). Канон —
+  `MoonGeometry.VOXEL_SCALE`. Раньше держали 0.65 как scale-workaround под
+  более мелкую копку; отказ из‑за ~3.6× вокселей на м³ при слабом линейном
+  выигрыше.
+- Flat yard (`flat_moon`): `max_view_distance` / `VoxelViewer.view_distance`
+  в локальных вокселях ≈ мировые метры при scale 1.0 (раньше ≈128 м /
+  0.65). Иначе плагин клампит viewer и блоки вокруг игрока не грузятся.
 - **VoxelSpaceUtil:** `VoxelTool.raycast` — **Godot world-space**
   origin/direction/max_distance (плагин сам учитывает transform terrain);
   world hit = `origin + direction * hit.distance`. Редактирование SDF
@@ -609,9 +612,28 @@ those hooks do not define production yield semantics.
   продолжает работать без движения курсора, даже пока physics collider
   перестраивается.
 
+### Floating terrain chunks (post-dig)
+
+После успешной копки (`WorldCommandGateway`: hand drill, stationary drill,
+`apply_terrain_carve` / impact / meteorite) вызывается
+`VoxelToolLodTerrain.separate_floating_chunks` через
+`TerrainFloatingDebrisService` (только `VoxelLodTerrain`; на plain
+`VoxelTerrain` — no-op).
+
+- Box ~**30** local voxels (VT docs; balance `industry.floating_chunks`).
+- Оторванные острова → ephemeral `RigidBody3D` (convex), kinematic→rigid
+  (плагин), despawn / cap тел — balance; **не** world loot piles.
+- Материал: `terrain_debris_material.tres` (object-local triplanar) — не
+  Transvoxel/VT шейдер коры (ломается на detached mesh).
+- Коллизии: layer debris (2) + mask terrain|debris|player (4), чтобы толкать.
+- Копка: `KIND_TERRAIN_DEBRIS` → `dig_terrain_debris` (HP от массы, yield как
+  hand drill, scale↓ / destroy). Aim mask включает layer 2.
+- Separation снова правит SDF → повторный `terrain_modified` для dig persist.
+- Троттлинг: `min_removed_m3` + `cooldown_ms` (бур тикает чаще, чем scan).
+
 ### Hand drill carving recipe
 
-Ручной бур (радиус **0.65 м**, bite **0.18 м**, `sdf_scale` **0.8**):
+Ручной бур (радиус **1.0 м**, bite **0.18 м**, `sdf_scale` **0.8**):
 
 1. Каждый принятый тик: `do_sphere` с центром, сдвинутым **вглубь** на
    `radius - bite`, чтобы врезалась только кромка (upstream VoxelTool Note 4).

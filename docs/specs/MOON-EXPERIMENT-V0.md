@@ -33,11 +33,11 @@ legacy flat yard (стройка, физика, шарниры, колёса, б
 
 | Параметр | Значение |
 |---|---|
-| Диаметр | 1000 м |
-| Радиус поверхности (целевой) | 500 м |
-| Voxel node scale | **0.65** (как `main`, INDUSTRY-V1) |
-| Радиус в local voxel | ≈ 500 / 0.65 ≈ **769** voxel |
-| Bounds (local, с запасом) | ≈ ± radius_voxels × 1.25 |
+| Диаметр | **19000 м** (`MoonGeometry.DIAMETER_M`) |
+| Радиус поверхности (целевой) | 9500 м |
+| Voxel node scale | **1.0** (1 м / воксель; `MoonGeometry.VOXEL_SCALE`) |
+| Радиус в local voxel | 9500 / 1.0 = **9500** voxel |
+| Bounds (local, с запасом) | ≈ ± radius_voxels × 1.25 (~±11875); `lod_count=10` |
 | Центр луны | world origin `(0,0,0)` на v0 (без origin shifting) |
 
 ## Официальные опоры (сверять, не угадывать)
@@ -137,6 +137,7 @@ Legacy flat yard: `scenes/flat_moon.tscn` + `scripts/flat_moon_bootstrap.gd`.
   SQLite lock races that can leave cave walls incomplete after reload).
   Quit waits for dig flush (`auto_accept_quit=false`). Editor Stop still
   kills without drain — prefer window close after big digs.
+  После копки — `separate_floating_chunks` (INDUSTRY-V1 § Floating; LOD only).
 - **Декор (камни):** `VoxelInstancer` child of terrain, `up_mode=Sphere`,
   library `resources/moon_boulder_instance_library.tres` (7 persistent MultiMesh
   tiers). Стримится с чанками; удаления после копок сохраняются в SQLite.
@@ -153,14 +154,15 @@ Legacy flat yard: `scenes/flat_moon.tscn` + `scripts/flat_moon_bootstrap.gd`.
   не сохраняет instance data — только SQLite.
 - Mesher: `VoxelMesherTransvoxel`.
 - Material: `transvoxel_terrain` / moon albedo (как main).
-- `transform.basis` uniform scale **0.65**.
+- `transform.basis` uniform scale **1.0**.
 - Collisions: on; streaming вокруг viewer (**не** `full_load` с SQLite —
   плагин отвергает).
-- **Дальняя видимость (планета):** конечные `voxel_bounds` + `lod_count=6`
-  (coarsest block 512; **не** 8 — block 2048 > bounds ±R·1.25 → cubic cuts /
-  floating scraps). `view_distance` **динамический**
+- **Дальняя видимость (планета):** конечные `voxel_bounds` +
+  `lod_count=10` (`MoonGeometry.DEFAULT_LOD_COUNT`; coarsest block 8192 ≤
+  bounds ~±11875 at scale 1.0; **не** 11 — block 16384 > bounds → cubic cuts).
+  `view_distance` **динамический**
   (`MoonGeometry.view_distance_voxels_for_camera_distance`): на поверхности
-  ≥2048 вокселей, с высотой растёт до 50k. `VoxelViewer` синхронизируется в
+  ≥2048 вокселей, с высотой растёт. `VoxelViewer` синхронизируется в
   bootstrap. Орбита — camera-relative impostor (не раздувать `Camera.far`:
   ломает light culler / `create_frustum_points`). Туман выключен (вакуум).
 - Spawn: SDF gate → short physics probe (~1.5s) → temp landing pad if
@@ -223,7 +225,7 @@ Legacy flat yard: `scenes/flat_moon.tscn` + `scripts/flat_moon_bootstrap.gd`.
 
 - Абстракция для `VoxelTerrain` | `VoxelLodTerrain`.
 - Aim, ручной бур, impact carve на луне (локально у полюса).
-- **DoD:** hit не «к игроку»; SDF edit в local; physics aim при scale 0.65.
+- **DoD:** hit не «к игроку»; SDF edit в local; physics aim при scale 1.0.
 
 ### Фаза 3 — радиальная гравитация для RigidBody
 
@@ -269,7 +271,7 @@ Legacy flat yard: `scenes/flat_moon.tscn` + `scripts/flat_moon_bootstrap.gd`.
 | Joints (hinge / slider / piston) | стабильны под point gravity |
 | Loot / projection write-back | падает к центру луны |
 | Dig persistence | переживает рестарт main-сцены |
-| Scale 0.65 | контракт шпаргалки соблюдён |
+| Scale 1.0 | контракт шпаргалки соблюдён |
 
 ## Риски
 
