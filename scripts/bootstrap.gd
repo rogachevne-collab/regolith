@@ -32,7 +32,9 @@ const DEMO_HOPPER_OFFSET_M := 14.0
 ## (full shell budget restored at world_ready).
 const SPAWN_FOCUS_VIEW_DISTANCE_VOXELS := 512
 ## LOD0+LOD1 colliders — coarser shell often ready before LOD0 (VT #676).
-const SPAWN_COLLISION_LOD_COUNT := 2
+## 3: coarse collider exists sooner under fast descents from orbit
+## (LOD0-only cooking can't outrun a free fall — tunnelling through crust).
+const SPAWN_COLLISION_LOD_COUNT := 3
 ## Map/HUD panorama for moon_map_globe hillshade. Display-only with the
 ## native SDF generator (terrain no longer reads it) — baked in background
 ## after world_ready. Cinematic tools may rebake at their own resolution.
@@ -58,6 +60,8 @@ const MAP_HEIGHTMAP_SIZE := Vector2i(2048, 1024)
 @export var persist_digs := true
 ## VoxelInstancer decorative rocks (streams with terrain chunks).
 @export var enable_boulder_instancer := true
+## Multiplier on library densities; <0 = auto (reference Ø1 km → current diameter).
+@export var boulder_density_scale := -1.0
 
 @export_group("Planet generator")
 ## Preferred play path: analytic native SDF (MoonNativeSdfGenerator — same
@@ -207,6 +211,9 @@ func _configure_terrain() -> void:
 		lod.view_distance = MoonGeometry.DEFAULT_VIEW_DISTANCE_VOXELS
 		lod.generate_collisions = true
 		lod.collision_lod_count = SPAWN_COLLISION_LOD_COUNT
+		## 8x fewer mesh blocks / collider bodies per LOD ring update — the
+		## run-vs-stand FPS gap is ring rebuild + trimesh cooking churn.
+		lod.mesh_block_size = 32
 		lod.lod_count = MoonGeometry.DEFAULT_LOD_COUNT
 		lod.lod_distance = MoonGeometry.DEFAULT_LOD_DISTANCE
 		lod.lod_fade_duration = TERRAIN_LOD_FADE_DURATION_S
@@ -311,7 +318,10 @@ func _configure_dig_stream() -> void:
 	## Fresh gen_v dir (no partial LOD scraps). Generator fills crust; digs persist.
 	var stream := VoxelStreamSQLite.new()
 	stream.database_path = MoonTerrainParams.stream_database_path()
-	stream.save_generator_output = false
+	## Persist generated blocks too: Ø19 km analytic gen is heavy enough that
+	## re-deriving the whole shell every launch costs ~30 s; second launch
+	## reads SQLite instead. GENERATOR_VERSION bump → fresh DB, no staleness.
+	stream.save_generator_output = true
 	_voxel_stream = stream
 	var lod := _terrain as VoxelLodTerrain
 	lod.stream = stream
@@ -329,16 +339,44 @@ func _configure_boulder_instancer() -> void:
 	if not enable_boulder_instancer:
 		_boulder_instancer.library = null
 		return
-	if _generator_is_native and _boulder_instancer.library != null:
-		## snap_to_generator_sdf needs generator series generation — graph-only;
-		## with a script generator VT errors per chunk and skips the snap anyway.
-		## Mesh-surface placement (+offset_along_normal) carries boulder seating.
-		var library: VoxelInstanceLibrary = _boulder_instancer.library
-		for id in library.get_all_item_ids():
-			var item := library.get_item(id)
-			var item_generator: VoxelInstanceGenerator = item.get("generator")
-			if item_generator != null:
+	var source_lib := _boulder_instancer.library as VoxelInstanceLibrary
+	if source_lib == null:
+		push_warning("MoonExperiment: boulder library missing")
+		return
+	var density_scale := boulder_density_scale
+	if density_scale < 0.0:
+		density_scale = MoonGeometry.boulder_density_scale_for_decor()
+	var library := source_lib.duplicate(true) as VoxelInstanceLibrary
+	if library.get_all_item_ids().is_empty():
+		push_warning("MoonExperiment: boulder library duplicate empty — using source")
+		library = source_lib
+	## Fewer tiers on LOD0 = less work when streaming; boulders on LOD1 mesh.
+	const LOD_BY_NAME := {
+		"pebble_a": 0, "pebble_b": 0,
+		"pebble_c": 1, "rock_a": 1, "rock_b": 1,
+		"boulder": 1, "boulder_flat": 1,
+	}
+	for id in library.get_all_item_ids():
+		var item := library.get_item(id)
+		var item_name: String = str(item.name)
+		if LOD_BY_NAME.has(item_name):
+			item.lod_index = LOD_BY_NAME[item_name]
+		var item_generator: VoxelInstanceGenerator = item.generator
+		if item_generator != null:
+			item_generator = item_generator.duplicate() as VoxelInstanceGenerator
+			item_generator.density *= density_scale
+			if _generator_is_native:
 				item_generator.snap_to_generator_sdf_enabled = false
+			item.generator = item_generator
+	_boulder_instancer.library = library
+	var sample := library.get_item(0)
+	var sample_density := -1.0
+	if sample != null and sample.generator != null:
+		sample_density = sample.generator.density
+	print(
+		"MoonExperiment: boulders items=%d density_scale=%.2f pebble_a=%.4f"
+		% [library.get_all_item_ids().size(), density_scale, sample_density]
+	)
 
 
 func _persist_world(force := false) -> void:

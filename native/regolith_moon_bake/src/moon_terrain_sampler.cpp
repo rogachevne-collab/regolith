@@ -64,7 +64,9 @@ void MoonTerrainSampler::register_class(
 		const float depth = std::min(depth_m * diameter_m, kMaxCraterDepthM) *
 				lerpf(0.82f, 1.0f, hash01(seed_base + i * 47));
 		const int idx = static_cast<int>(craters_.size());
-		craters_.push_back(Crater{center, rad, depth, rim_frac, class_id, seed_base + i * 17});
+		craters_.push_back(Crater{
+				center, rad, depth, rim_frac, class_id, seed_base + i * 17,
+				std::cos(rad * 1.35f) });
 
 		/// Exact influence box (query reads a SINGLE cell, so every cell the
 		/// crater touches must be registered): angular reach 1.35*rad over a
@@ -190,7 +192,7 @@ float MoonTerrainSampler::crater_field(
 			continue;
 		}
 		const float cos_a = clampf(n.dot(crater.center), -1.f, 1.f);
-		if (cos_a < std::cos(crater.rad * 1.35f)) {
+		if (cos_a < crater.cos_cutoff) {
 			continue;
 		}
 		const float t = std::acos(cos_a) / crater.rad;

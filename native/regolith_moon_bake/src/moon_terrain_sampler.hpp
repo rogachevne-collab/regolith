@@ -35,6 +35,8 @@ struct Crater {
 	float rim_frac = 0.f;
 	int cclass = 0;
 	int seed = 0;
+	/// Precomputed cos(rad*1.35) — the reject test runs ~100x per sample.
+	float cos_cutoff = -1.f;
 };
 
 /// Lunar height sampler matching scripts/simulation/runtime/moon_terrain_generator.gd.
