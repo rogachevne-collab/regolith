@@ -167,11 +167,10 @@ Legacy flat yard: `scenes/flat_moon.tscn` + `scripts/flat_moon_bootstrap.gd`.
   collider lag; pad retires when voxel floor appears. Spawn-focus
   `view_distance` (512) + `collision_lod_count=2` until world_ready.
 - Смена рельефа → bump `GENERATOR_VERSION` + повторный bake.
-- **Heightmap bake (display-only):** terrain панораму больше не читает.
-  `crust_heightmap.exr` нужен только карте (`moon_map_globe` hillshade) —
-  bootstrap печёт его фоном 2048×1024 после `world_ready`
-  (`MAP_HEIGHTMAP_SIZE`). Cinematic-сцены могут перепечь своё разрешение
-  через `MoonHeightmapUtil.ensure_heightmap`. Bump `GENERATOR_VERSION`
+- **Heightmap bake (display-only):** terrain и map globe панораму не читают
+  (оба берут analytic H(n) / `MoonReliefSampler`). `crust_heightmap.exr`
+  остаётся для cinematic-тулов; bootstrap может печь его фоном 2048×1024
+  после `world_ready` (`MAP_HEIGHTMAP_SIZE`). Bump `GENERATOR_VERSION`
   on relief change (соглашение прежнее).
 - Мир-сейв сборок: `gen_v{N}/world_save.json` (отдельно от flat_moon).
 

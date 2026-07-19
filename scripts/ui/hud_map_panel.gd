@@ -46,6 +46,7 @@ func setup(ctx: Dictionary) -> void:
 	_gateway = ctx.get("gateway")
 	_player = ctx.get("player")
 	_camera = ctx.get("camera")
+	call_deferred("_warm_globe_cache")
 
 
 func is_open() -> bool:
@@ -63,6 +64,16 @@ func _ready() -> void:
 	_load_user_markers()
 	_build()
 	_apply_open_state()
+	call_deferred("_warm_globe_cache")
+
+
+func _warm_globe_cache() -> void:
+	if not _planetoid or _globe == null:
+		return
+	var spawn := player_world_position()
+	if spawn.length() <= 0.001:
+		spawn = Vector3(MoonGeometry.active_surface_radius_m(), 0.0, 0.0)
+	_globe.warm_cache(spawn)
 
 
 func _process(delta: float) -> void:
@@ -107,7 +118,7 @@ func _open_map() -> void:
 	_rebuild_marker_list()
 	_spawn_world_hint = player_world_position()
 	if _spawn_world_hint.length() <= 0.001:
-		_spawn_world_hint = Vector3(MoonGeometry.SURFACE_RADIUS_M, 0.0, 0.0)
+		_spawn_world_hint = Vector3(MoonGeometry.active_surface_radius_m(), 0.0, 0.0)
 	_sync_map_mode()
 	if _planetoid and _globe != null:
 		_globe.ensure_built(_spawn_world_hint)
@@ -200,7 +211,7 @@ func _build() -> void:
 	title.theme_type_variation = &"HudTitle"
 	title_col.add_child(title)
 	var subtitle := Label.new()
-	subtitle.text = "ОРБИТАЛЬНЫЙ ВИД  ·  Ø1 км  ·  ортографическая проекция"
+	subtitle.text = "ОРБИТАЛЬНЫЙ ВИД  ·  Ø19 км  ·  ортографическая проекция"
 	subtitle.theme_type_variation = &"HudSmall"
 	subtitle.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	title_col.add_child(subtitle)
@@ -447,7 +458,7 @@ static func lat_lon_altitude(world_pos: Vector3) -> Vector3:
 	var n := world_pos / r
 	var lat := rad_to_deg(asin(clampf(n.y, -1.0, 1.0)))
 	var lon := rad_to_deg(atan2(n.x, -n.z))
-	var alt := r - MoonGeometry.SURFACE_RADIUS_M
+	var alt := r - MoonGeometry.active_surface_radius_m()
 	return Vector3(lat, lon, alt)
 
 
@@ -543,7 +554,7 @@ func _hit_user_marker_world(world: Vector3) -> String:
 	for marker: Dictionary in _user_markers:
 		var mdir: Vector3 = (marker["position"] as Vector3).normalized()
 		var ang := acos(clampf(dir.dot(mdir), -1.0, 1.0))
-		var arc_m := ang * MoonGeometry.SURFACE_RADIUS_M
+		var arc_m := ang * MoonGeometry.active_surface_radius_m()
 		if arc_m <= best_arc:
 			best_arc = arc_m
 			best_id = str(marker["id"])

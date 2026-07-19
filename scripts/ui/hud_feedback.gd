@@ -259,7 +259,7 @@ func _reason_text(reason: StringName, data: Dictionary = {}) -> String:
 		&"duplicate_connection":
 			return "Провод уже подключён"
 		&"moving_target_not_supported":
-			return "Втяни поршень / ротор до упора"
+			return "Подожди, пока актуатор остановится"
 		&"incompatible_connection":
 			var detail := StringName(data.get("detail", &""))
 			var wheel_text := _wheel_placement_prompt(detail)

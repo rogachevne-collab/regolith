@@ -40,27 +40,32 @@ func _run_tests() -> void:
 
 func _test_map_deposit_overlay() -> bool:
 	var spawn := Vector3(MoonGeometry.SURFACE_RADIUS_M, 0.0, 0.0)
-	var tex := MoonMapDepositOverlay.build_texture(spawn)
-	if tex == null or tex.get_width() < 8 or tex.get_height() < 8:
-		push_error("deposit overlay texture missing")
+	var images: Array[Image] = MoonMapDepositOverlay.build_cubemap_images(spawn)
+	if images.size() != 6:
+		push_error("deposit cubemap needs 6 faces")
 		return false
-	var img := tex.get_image()
-	if img == null:
-		push_error("deposit overlay image missing")
+	var cube := MoonMapDepositOverlay.build_cubemap(spawn)
+	if cube == null:
+		push_error("deposit cubemap missing")
 		return false
 	var lens_pixels := 0
-	var total := img.get_width() * img.get_height()
-	for y in img.get_height():
-		for x in img.get_width():
-			if img.get_pixel(x, y).a > 0.05:
-				lens_pixels += 1
+	var total := 0
+	for img: Image in images:
+		if img == null or img.get_width() < 8:
+			push_error("deposit cubemap face missing")
+			return false
+		total += img.get_width() * img.get_height()
+		for y in img.get_height():
+			for x in img.get_width():
+				if img.get_pixel(x, y).a > 0.05:
+					lens_pixels += 1
 	if lens_pixels <= 0:
-		push_error("deposit overlay has no lens pixels")
+		push_error("deposit cubemap has no lens pixels")
 		return false
 	## Lenses must stay sparse — not a uniform worm carpet.
 	var coverage := float(lens_pixels) / float(maxi(total, 1))
 	if coverage > 0.22:
-		push_error("deposit overlay too dense (coverage=%.3f)" % coverage)
+		push_error("deposit cubemap too dense (coverage=%.3f)" % coverage)
 		return false
 	## Starter anorthite pocket (~east 32 m, north 28 m from +X spawn).
 	var field: MoonMaterialField = _Field.new()
@@ -230,5 +235,14 @@ func _test_material_field_deterministic() -> bool:
 	var deep_id := field.material_id_at_world(deep, spawn)
 	if deep_id.is_empty():
 		push_error("empty material id")
+		return false
+	## Lens cells keep ~70 m arc when radius changes (Ø19 km must not stretch).
+	var scale := field.lens_cell_scale()
+	var arc_m := MoonGeometry.active_surface_radius_m() / scale
+	if absf(arc_m - _Field.LENS_CELL_ARC_M) > 0.05:
+		push_error("lens cell arc %.1f != %.1f" % [arc_m, _Field.LENS_CELL_ARC_M])
+		return false
+	if scale < 50.0:
+		push_error("lens_cell_scale too small for Ø19 km: %.2f" % scale)
 		return false
 	return true

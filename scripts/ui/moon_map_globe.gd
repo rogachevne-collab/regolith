@@ -2,19 +2,13 @@ class_name MoonMapGlobe
 extends Control
 
 ## Interactive orthographic moon globe for MapPanel (satellite projection).
-## Mesh from baked crust heightmap; drag to rotate, wheel to zoom.
-## Spec: docs/specs/MAP-UI-01.md
+## Play-world relief mesh + lit regolith material. Spec: MAP-UI-01.
 
-const _SHADER := preload("res://resources/ui/shaders/hud_moon_globe.gdshader")
 const _Builder := preload("res://scripts/presentation/moon_globe_mesh_builder.gd")
+const _SHADER := preload("res://resources/ui/shaders/hud_moon_globe.gdshader")
 
 const VIEWPORT_SIZE := 640
-const CAMERA_DIST_M := 2200.0
-const ORTHO_SIZE_DEFAULT := 1180.0
-const ORTHO_SIZE_MIN := 720.0
-const ORTHO_SIZE_MAX := 1600.0
 const DRAG_THRESHOLD_PX := 5.0
-## Grab-the-ball feel (drag right → that side comes toward you).
 const ROTATE_SENS := 0.0085
 
 signal cursor_world_changed(world_pos: Vector3, inside: bool)
@@ -29,14 +23,12 @@ var _pivot: Node3D
 var _camera: Camera3D
 var _mesh_instance: MeshInstance3D
 var _mat: ShaderMaterial
-var _dem_cube: Cubemap
-var _deposit_cube: Cubemap
 var _built := false
 var _dragging := false
 var _drag_moved := false
 var _drag_last := Vector2.ZERO
 var _press_pos := Vector2.ZERO
-var _ortho_size := ORTHO_SIZE_DEFAULT
+var _ortho_size := 0.0
 var _overlay: _MarkerOverlay
 
 
@@ -44,6 +36,7 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	clip_contents = true
 	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	_ortho_size = _ortho_default()
 	_build_viewport()
 	_overlay = _MarkerOverlay.new()
 	_overlay.owner_globe = self
@@ -53,24 +46,26 @@ func _ready() -> void:
 	set_active(false)
 
 
+func warm_cache(spawn_world: Vector3 = Vector3.ZERO) -> void:
+	_Builder.warm_cache(spawn_world)
+
+
 func ensure_built(spawn_world: Vector3 = Vector3.ZERO) -> void:
 	if _built:
 		_apply_deposit_strength()
 		return
 	_built = true
-	var height_img := _load_height_image()
-	var mesh: Mesh = _Builder.build_mesh(height_img)
-	## Cubemap-only: DEM + deposits. No equirect in the shader (stops the loop).
-	_dem_cube = _Builder.build_hillshade_cubemap(height_img)
-	_deposit_cube = _Builder.build_deposit_cubemap(spawn_world)
-	if _mesh_instance != null:
-		_mesh_instance.mesh = mesh
-	if _dem_cube != null:
-		_mat.set_shader_parameter("dem_cube", _dem_cube)
-	if _deposit_cube != null:
-		_mat.set_shader_parameter("deposit_cube", _deposit_cube)
-	_apply_deposit_strength()
+	_mesh_instance.mesh = _Builder.build_mesh()
 	_update_camera()
+	## Soft deposit stains after first frame so the globe paints immediately.
+	call_deferred("_finish_deposits", spawn_world)
+
+
+func _finish_deposits(spawn_world: Vector3) -> void:
+	var cube: Cubemap = _Builder.build_deposit_cubemap(spawn_world)
+	if _mat != null:
+		_mat.set_shader_parameter("deposit_cube", cube)
+	_apply_deposit_strength()
 
 
 func set_active(active: bool) -> void:
@@ -84,13 +79,22 @@ func set_active(active: bool) -> void:
 func set_deposit_visible(visible: bool) -> void:
 	show_deposits = visible
 	_apply_deposit_strength()
+	queue_redraw_markers()
+
+
+func _apply_deposit_strength() -> void:
+	if _mat == null:
+		return
+	_mat.set_shader_parameter(
+		"deposit_strength",
+		1.0 if show_deposits else 0.0
+	)
 
 
 func focus_world(world_pos: Vector3) -> void:
 	if world_pos.length_squared() < 0.0001 or _pivot == null:
 		return
 	var dir := world_pos.normalized()
-	## Face this direction toward the camera (+Z).
 	_pivot.basis = Basis(Quaternion(dir, Vector3(0.0, 0.0, 1.0)))
 	queue_redraw_markers()
 
@@ -101,12 +105,11 @@ func queue_redraw_markers() -> void:
 
 
 func project_world(world_pos: Vector3) -> Dictionary:
-	## { ok: bool, pos: Vector2 } — screen pos in this Control, front-facing only.
 	if _camera == null or _pivot == null or world_pos.length_squared() < 0.0001:
 		return {"ok": false, "pos": Vector2.ZERO}
+	var r := _surface_radius_m()
 	var dir := world_pos.normalized()
-	var visual := _pivot.to_global(dir * MoonGeometry.SURFACE_RADIUS_M)
-	## Front-facing vs camera (not a raw +Z test — survives pivot / ortho).
+	var visual := _pivot.to_global(dir * r)
 	var to_cam := (_camera.global_position - visual).normalized()
 	if visual.normalized().dot(to_cam) < 0.04:
 		return {"ok": false, "pos": Vector2.ZERO}
@@ -125,15 +128,51 @@ func pick_world(local_pos: Vector2) -> Vector3:
 	)
 	var origin := _camera.project_ray_origin(vp_pos)
 	var ray_dir := _camera.project_ray_normal(vp_pos)
-	var hit := _intersect_sphere(origin, ray_dir, Vector3.ZERO, MoonGeometry.SURFACE_RADIUS_M)
+	var hit := _intersect_sphere(origin, ray_dir, Vector3.ZERO, _surface_radius_m())
 	if not hit.get("ok", false):
 		return Vector3.ZERO
 	var hit_pos: Vector3 = hit["pos"]
-	## Near-hit only (front limb). Undo pivot → game direction.
 	var local := _pivot.to_local(hit_pos)
 	if local.length_squared() < 0.0001:
 		return Vector3.ZERO
 	return MoonGeometry.surface_point(local.normalized())
+
+
+func _surface_radius_m() -> float:
+	return MoonGeometry.active_surface_radius_m()
+
+
+func _camera_dist_m() -> float:
+	return _surface_radius_m() * 1.35
+
+
+func _ortho_default() -> float:
+	return _surface_radius_m() * 2.0 * 0.96
+
+
+func _ortho_min() -> float:
+	return _surface_radius_m() * 0.72
+
+
+func _ortho_max() -> float:
+	return _surface_radius_m() * 2.18
+
+
+func _make_moon_material() -> ShaderMaterial:
+	var mat := ShaderMaterial.new()
+	mat.shader = _SHADER
+	mat.set_shader_parameter("albedo_tint", Color(0.58, 0.59, 0.61))
+	mat.set_shader_parameter("macro_amp", 0.04)
+	mat.set_shader_parameter("macro_freq", 2.4)
+	mat.set_shader_parameter("deposit_strength", 1.0)
+	## Transparent cubemap placeholder until bake finishes.
+	var empty := Image.create(1, 1, false, Image.FORMAT_RGBA8)
+	empty.set_pixel(0, 0, Color(0, 0, 0, 0))
+	var faces: Array[Image] = [empty, empty, empty, empty, empty, empty]
+	var cube := Cubemap.new()
+	cube.create_from_images(faces)
+	mat.set_shader_parameter("deposit_cube", cube)
+	return mat
 
 
 func _build_viewport() -> void:
@@ -146,10 +185,8 @@ func _build_viewport() -> void:
 	_viewport = SubViewport.new()
 	_viewport.size = Vector2i(VIEWPORT_SIZE, VIEWPORT_SIZE)
 	_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-	## Opaque BG — transparent_bg can fight depth and show backface scraps.
 	_viewport.transparent_bg = false
 	_viewport.own_world_3d = true
-	_viewport.positional_shadow_atlas_size = 1024
 	_container.add_child(_viewport)
 
 	var world := Node3D.new()
@@ -158,23 +195,21 @@ func _build_viewport() -> void:
 	var env := WorldEnvironment.new()
 	var environment := Environment.new()
 	environment.background_mode = Environment.BG_COLOR
-	environment.background_color = Color(0.02, 0.025, 0.035, 1.0)
+	environment.background_color = Color(0.015, 0.016, 0.018, 1.0)
 	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	environment.ambient_light_color = Color(0.16, 0.17, 0.20)
-	environment.ambient_light_energy = 0.32
+	## Neutral vacuum ambient — no blue fill in the terminator.
+	environment.ambient_light_color = Color(0.14, 0.135, 0.13)
+	environment.ambient_light_energy = 0.22
 	environment.tonemap_mode = Environment.TONE_MAPPER_ACES
-	environment.tonemap_exposure = 1.08
+	environment.tonemap_exposure = 1.02
 	env.environment = environment
 	world.add_child(env)
 
 	_pivot = Node3D.new()
 	world.add_child(_pivot)
 	_mesh_instance = MeshInstance3D.new()
-	## No realtime shadows — key is camera-locked; hillshade is in the albedo.
 	_mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	_mat = ShaderMaterial.new()
-	_mat.shader = _SHADER
-	_mat.set_shader_parameter("deposit_strength", 1.0)
+	_mat = _make_moon_material()
 	_mesh_instance.material_override = _mat
 	_pivot.add_child(_mesh_instance)
 
@@ -182,42 +217,32 @@ func _build_viewport() -> void:
 	_camera.projection = Camera3D.PROJECTION_ORTHOGONAL
 	_camera.size = _ortho_size
 	_camera.near = 10.0
-	_camera.far = 8000.0
+	_camera.far = _camera_dist_m() + _ortho_max() + 5000.0
 	_camera.current = true
 	world.add_child(_camera)
 	_camera.look_at_from_position(
-		Vector3(0.0, 0.0, CAMERA_DIST_M),
+		Vector3(0.0, 0.0, _camera_dist_m()),
 		Vector3.ZERO,
 		Vector3.UP
 	)
 
-	## Camera-locked key: facing side lit; angle keeps crater relief readable.
 	var sun := DirectionalLight3D.new()
 	sun.light_color = Color(1.0, 0.98, 0.94)
-	sun.light_energy = 2.4
+	sun.light_energy = 2.8
 	sun.shadow_enabled = false
-	sun.rotation_degrees = Vector3(-22.0, 28.0, 0.0)
+	sun.rotation_degrees = Vector3(-18.0, 36.0, 0.0)
 	_camera.add_child(sun)
 
+	## Soft warm bounce only — keep night side grey, not cyan/lavender.
 	var fill := DirectionalLight3D.new()
-	fill.light_color = Color(0.45, 0.52, 0.70)
-	fill.light_energy = 0.22
+	fill.light_color = Color(0.62, 0.58, 0.52)
+	fill.light_energy = 0.07
 	fill.shadow_enabled = false
-	fill.rotation_degrees = Vector3(30.0, -50.0, 0.0)
+	fill.rotation_degrees = Vector3(25.0, -50.0, 0.0)
 	_camera.add_child(fill)
 
 
-func _apply_deposit_strength() -> void:
-	if _mat != null:
-		_mat.set_shader_parameter(
-			"deposit_strength",
-			1.0 if show_deposits else 0.0
-		)
-
-
 func _orbit_drag(delta: Vector2) -> void:
-	## Trackball: no pitch clamp, no euler gimbal weirdness.
-	## Horizontal around world up; vertical around camera right.
 	if _pivot == null or _camera == null:
 		return
 	_pivot.rotate(Vector3.UP, delta.x * ROTATE_SENS)
@@ -228,29 +253,20 @@ func _update_camera() -> void:
 	if _camera == null:
 		return
 	_camera.size = _ortho_size
-
-
-func _load_height_image() -> Image:
-	var path := MoonHeightmapUtil.heightmap_path()
-	if FileAccess.file_exists(path):
-		var img := Image.new()
-		if img.load(path) == OK and img.get_width() > 0:
-			return img
-	## Avoid baking 8k heightmap on the HUD thread — soft sphere fallback.
-	return null
+	_camera.far = _camera_dist_m() + _ortho_max() + 5000.0
 
 
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.button_index == MOUSE_BUTTON_WHEEL_UP and mb.pressed:
-			_ortho_size = clampf(_ortho_size * 0.9, ORTHO_SIZE_MIN, ORTHO_SIZE_MAX)
+			_ortho_size = clampf(_ortho_size * 0.9, _ortho_min(), _ortho_max())
 			_update_camera()
 			queue_redraw_markers()
 			accept_event()
 			return
 		if mb.button_index == MOUSE_BUTTON_WHEEL_DOWN and mb.pressed:
-			_ortho_size = clampf(_ortho_size * 1.1, ORTHO_SIZE_MIN, ORTHO_SIZE_MAX)
+			_ortho_size = clampf(_ortho_size * 1.1, _ortho_min(), _ortho_max())
 			_update_camera()
 			queue_redraw_markers()
 			accept_event()
@@ -289,7 +305,6 @@ func _gui_input(event: InputEvent) -> void:
 
 
 func _disk_contains(local_pos: Vector2) -> bool:
-	## Approximate orthographic limb as inscribed circle.
 	var c := size * 0.5
 	var r := minf(size.x, size.y) * 0.48
 	return local_pos.distance_to(c) <= r
@@ -322,7 +337,6 @@ func _process(_delta: float) -> void:
 		_overlay.queue_redraw()
 
 
-## 2D markers / chrome over the rendered globe.
 class _MarkerOverlay:
 	extends Control
 

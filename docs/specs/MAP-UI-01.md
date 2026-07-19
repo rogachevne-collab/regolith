@@ -6,7 +6,7 @@
 
 - `docs/PHYSICAL-LANGUAGE.md` — presentation не владеет simulation state;
 - `docs/specs/HUD-UI-01.md` — HUD framework / theme / presentation-only;
-- `docs/specs/MOON-EXPERIMENT-V0.md` — геометрия Ø1 km;
+- `docs/specs/MOON-EXPERIMENT-V0.md` — геометрия Ø19 km (`MoonGeometry`);
 - `docs/specs/INDUSTRY-V1.md` — world loot piles, resource ids;
 - `docs/specs/TERRAIN-MATERIALS-V1.md` — залежи / TerrainMaterial / MoonMaterialField.
 
@@ -47,13 +47,13 @@
 
 ### Проекция (planetoid / `main.tscn`)
 
-- **Ортографический глобус** (satellite / planetary science view):
-  displaced **cube-sphere** mesh из baked `crust_heightmap`
-  (`MoonGlobeMeshBuilder` — без UV-sphere pinch на полюсах),
-  UV = `MoonHeightmapUtil` NODE_SDF panorama.
-- Вращение: trackball (без лимита pitch); wheel — zoom.
-- Рендер в `SubViewport` (`MoonMapGlobe`): directional light + hillshade
-  albedo + слой залежей (`hud_moon_globe.gdshader`).
+- **Ортографический глобус** (satellite view): displaced cube-sphere
+  (`MoonGlobeMeshBuilder`) + cool matte procedural grey
+  (`hud_moon_globe.gdshader` — без ground-albedo jpeg, иначе «песок» с орбиты).
+  Залежи — **cubemap** stains. Высоты — `MoonReliefSampler.Profile.MAP`.
+- Масштаб камеры — от `MoonGeometry.active_surface_radius_m()` (Ø19 km в main).
+- Вращение: trackball; wheel — zoom.
+- Рендер в `SubViewport` (`MoonMapGlobe`).
 - Открытие карты **центрирует** текущую позицию игрока на лицевой полусфере.
 - Ввод: drag — вращение; wheel — zoom; ЛКМ без drag — метка / выбор;
   ПКМ — удалить метку.
@@ -122,7 +122,8 @@ structures. HUD только читает.
 | Панель | `scripts/ui/hud_map_panel.gd` |
 | Глобус | `scripts/ui/moon_map_globe.gd` |
 | Меш | `scripts/presentation/moon_globe_mesh_builder.gd` |
-| Шейдер | `resources/ui/shaders/hud_moon_globe.gdshader` |
+| Рельеф | `scripts/simulation/runtime/moon_relief_sampler.gd` |
+| Материал | `resources/ui/shaders/hud_moon_globe.gdshader` (procedural grey + deposit cubemap) |
 | Залежи | `scripts/simulation/runtime/moon_map_deposit_overlay.gd` |
 
 ## Не входит
