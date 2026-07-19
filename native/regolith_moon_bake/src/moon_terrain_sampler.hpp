@@ -59,7 +59,7 @@ public:
 	static constexpr int kClassTiny = 4;
 
 	static constexpr int kSeed = 0x4D004E;
-	static constexpr float kVoxelScale = 0.65f;
+	static constexpr float kVoxelScale = 1.0f;
 	static constexpr float kMariaDepthM = 18.f;
 	static constexpr float kHighlandLiftM = 6.5f;
 	static constexpr float kHighlandRoughAmpM = 1.15f;

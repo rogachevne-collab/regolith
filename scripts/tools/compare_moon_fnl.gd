@@ -18,11 +18,12 @@ func _run() -> void:
 		quit(1)
 		return
 
+	var vs := MoonGeometry.VOXEL_SCALE
 	var params := [
-		{"name": "mare", "seed": 0x4D004E + 11, "period": 480.0 / 0.65, "oct": 2, "gain": 0.32, "lac": 2.0},
-		{"name": "highland", "seed": 0x4D004E + 41, "period": 55.0 / 0.65, "oct": 3, "gain": 0.42, "lac": 2.0},
-		{"name": "surface", "seed": 0x4D004E + 73, "period": 20.0 / 0.65, "oct": 2, "gain": 0.45, "lac": 2.0},
-		{"name": "regolith", "seed": 0x4D004E + 67, "period": 4.5 / 0.65, "oct": 2, "gain": 0.5, "lac": 2.0},
+		{"name": "mare", "seed": 0x4D004E + 11, "period": 480.0 / vs, "oct": 2, "gain": 0.32, "lac": 2.0},
+		{"name": "highland", "seed": 0x4D004E + 41, "period": 55.0 / vs, "oct": 3, "gain": 0.42, "lac": 2.0},
+		{"name": "surface", "seed": 0x4D004E + 73, "period": 20.0 / vs, "oct": 2, "gain": 0.45, "lac": 2.0},
+		{"name": "regolith", "seed": 0x4D004E + 67, "period": 4.5 / vs, "oct": 2, "gain": 0.5, "lac": 2.0},
 	]
 	var baker: Object = ClassDB.instantiate("MoonHeightmapBake")
 	var n := 4000

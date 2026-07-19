@@ -75,7 +75,7 @@ const MAP_HEIGHTMAP_SIZE := Vector2i(2048, 1024)
 ## native NODE_SDF_SPHERE_HEIGHTMAP (pole pinch at ±Y is inherent to it).
 @export var use_baked_heightmap := true
 ## Bake/play resolution for NODE_SDF_SPHERE_HEIGHTMAP. 8192×4096 ≈ 0.38 m/texel
-## (sub-voxel at scale 0.65) so bilinear sampling stays smooth without a runtime
+## (sub-voxel at scale 1.0) so bilinear sampling stays smooth without a runtime
 ## cubic upsample. Drop to 4096×2048 if memory/bake time is tight.
 @export var heightmap_size := Vector2i(8192, 4096)
 @export_subgroup("Knobs (only if Planet Graph is empty)")
@@ -238,16 +238,12 @@ func _configure_terrain() -> void:
 func _apply_planet_terrain_shader_params(shader_mat: ShaderMaterial) -> void:
 	shader_mat.set_shader_parameter("u_radial_up", 1.0)
 	shader_mat.set_shader_parameter("u_planet_radius", MoonGeometry.active_surface_radius_m())
-	## .tres biome/macro use wpos.xz (grows with R). Detail triplanar is ~1/scale m
-	## in world space — do not shrink u_detail_scale or the crust goes soapy.
-	var uv_scale := MoonGeometry.terrain_shader_uv_scale()
-	for param: String in ["u_biome_scale", "u_large_scale"]:
-		var base: Variant = shader_mat.get_shader_parameter(param)
-		if base is float or base is int:
-			shader_mat.set_shader_parameter(param, float(base) * uv_scale)
+	## Biome/macro are meter-periodic on dir*R inside the shader — do not shrink
+	## u_biome_scale / u_large_scale with diameter (that flattened tri-biome into
+	## one soup on Ø19 km). u_detail_scale stays world-triplanar metres.
 	print(
-		"MoonExperiment: terrain shader macro_scale=%.4f (R=%.0f m)"
-		% [uv_scale, MoonGeometry.active_surface_radius_m()]
+		"MoonExperiment: terrain shader radial R=%.0f m"
+		% MoonGeometry.active_surface_radius_m()
 	)
 
 

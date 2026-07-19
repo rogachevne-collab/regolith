@@ -6,7 +6,7 @@ const MAX_RADIUS := 1.6
 ## Unit-cube SDF resolution; the stamp is scaled per collider, so a modest
 ## grid keeps the one-time bake cheap without visible faceting.
 const MESH_STAMP_CELL_COUNT := 24
-## Slight inflation so the stamp overlaps boundary voxels at scale 0.65.
+## Slight inflation so the stamp overlaps boundary voxels at scale 1.0.
 const MESH_STAMP_INFLATE := 1.05
 
 ## Impulse craters stay local; sustained actuator drag may use larger stamps.
@@ -140,7 +140,7 @@ static func unit_box_mesh_sdf() -> VoxelMeshSDF:
 ## uses the sphere op instead.
 ##
 ## Collider boxes are often smaller than one voxel (frame = 0.5 m, terrain
-## scale 0.65). Like build_sphere_op, the stamp is floored to a measurable
+## scale 1.0). Like build_sphere_op, the stamp is floored to a measurable
 ## half-extent so MODE_REMOVE actually clears cells.
 static func build_mesh_op(
 	contact_world: Vector3,
@@ -191,7 +191,7 @@ static func build_mesh_op(
 		bite = maxf(bite, minimum_measurable_radius_m(terrain))
 	# Keep the approach face near the contact while most of the oriented
 	# volume goes below it — otherwise MODE_REMOVE only softens SDF and the
-	# isosurface never opens a visible crater at scale 0.65.
+	# isosurface never opens a visible crater at scale 1.0.
 	bite = clampf(bite, support * 0.85, support * 0.95)
 	# Dig-side face at contact + bite*dir; approach face stays near contact.
 	var center := contact_world - direction * (support - bite)

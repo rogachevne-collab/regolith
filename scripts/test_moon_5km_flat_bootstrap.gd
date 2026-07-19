@@ -5,7 +5,8 @@ extends "res://scripts/bootstrap.gd"
 
 const TEST_DIAMETER_M := 5000.0
 const TEST_STREAM_LABEL := "test_5km_flat_sphere"
-const TEST_LOD_COUNT := 9
+## Coarsest block at lod 9 = 4096 > bounds half ~3125 at scale 1.0; lod 8 = 2048.
+const TEST_LOD_COUNT := 8
 const _PistonDebug := preload(
 	"res://scripts/debug/piston_debug_instrumentation.gd"
 )

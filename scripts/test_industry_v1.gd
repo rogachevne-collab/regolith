@@ -499,7 +499,7 @@ func _test_terrain_excavation_contract() -> bool:
 		return _fail("invalid stamp kind must return zero removed volume")
 
 	var terrain := Node3D.new()
-	terrain.scale = Vector3(0.65, 0.65, 0.65)
+	terrain.scale = Vector3(1.0, 1.0, 1.0)
 	var before := VoxelBuffer.new()
 	before.create(1, 1, 1)
 	before.set_voxel_f(-0.5, 0, 0, 0, VoxelBuffer.CHANNEL_SDF)
@@ -512,14 +512,15 @@ func _test_terrain_excavation_contract() -> bool:
 			"single-cell occupancy delta expected ~1.0, got %.6f" % removed_cells
 		)
 	var expected_m3: float = VoxelSpaceUtil.cell_volume_m3(terrain)
-	if absf(expected_m3 - 0.274625) > 0.0001:
+	if absf(expected_m3 - 1.0) > 0.0001:
 		return _fail(
-			"cell volume at scale 0.65 expected 0.274625, got %.6f" % expected_m3
+			"cell volume at scale 1.0 expected 1.0, got %.6f" % expected_m3
 		)
 	var world_m3 := removed_cells * expected_m3
-	if absf(world_m3 - expected_m3) > 0.02:
+	# Occupancy delta is ~0.98 (SDF snorm), not exact 1.0 — match the 0.05 cell tol.
+	if absf(world_m3 - expected_m3) > 0.05:
 		return _fail(
-			"world m3 at scale 0.65 expected %.6f, got %.6f"
+			"world m3 at scale 1.0 expected %.6f, got %.6f"
 			% [expected_m3, world_m3]
 		)
 
