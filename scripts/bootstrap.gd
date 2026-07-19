@@ -253,6 +253,7 @@ func _make_planet_generator() -> VoxelGenerator:
 		if native.is_native_ready():
 			_generator_is_native = true
 			print("MoonExperiment: native SDF generator — %s" % native.describe())
+			_print_nearest_cave_entrances(native)
 			return native
 		push_warning(
 			"MoonExperiment: native SDF generator unavailable; falling back"
@@ -316,6 +317,30 @@ func _away_from_pole(dir: Vector3) -> Vector3:
 	const LAT_Y := 0.6  # sin(~37°)
 	var ring := sqrt(maxf(0.0, 1.0 - LAT_Y * LAT_Y))
 	return Vector3(horiz.x * ring, signf(n.y) * LAT_Y, horiz.y * ring).normalized()
+
+
+## Debug aid: caves cover ~0.1% of the surface — without coordinates nobody
+## finds one. Prints the three skylights nearest the current player position.
+func _print_nearest_cave_entrances(native: Object) -> void:
+	if not native.has_method("cave_entrances"):
+		return
+	var entrances: PackedVector3Array = native.cave_entrances()
+	if entrances.is_empty():
+		return
+	var origin := Vector3.UP * MoonGeometry.radius_voxels()
+	if _player != null:
+		origin = _player.global_position
+	var by_dist: Array = []
+	for p in entrances:
+		by_dist.append([origin.distance_to(p), p])
+	by_dist.sort_custom(func(a, b): return a[0] < b[0])
+	print("MoonExperiment: %d caves generated" % entrances.size())
+	for i in mini(3, by_dist.size()):
+		var entry: Array = by_dist[i]
+		print(
+			"MoonExperiment: cave skylight %d — %.0f m away at %v"
+			% [i + 1, entry[0], entry[1]]
+		)
 
 
 func _configure_dig_stream() -> void:
