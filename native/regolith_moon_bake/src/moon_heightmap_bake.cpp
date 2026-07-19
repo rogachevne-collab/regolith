@@ -20,6 +20,17 @@ namespace {
 /// whether a sample/block can skip the analytic height evaluation.
 constexpr float kShellMarginVoxels = 4.f;
 
+/// iq's opSmoothSubtraction: carve `cave` (negative inside) out of `base`.
+/// Degenerates to `base` exactly when the cave is farther than kCaveSmoothK,
+/// so LOD rings that share a cave list mesh the SAME field (see detail_fade
+/// note in moon_terrain_sampler.hpp — no per-LOD divergence allowed).
+inline float carve_cave(float base, float cave) {
+	const float k = MoonTerrainSampler::kCaveSmoothK;
+	float h = 0.5f - 0.5f * (base + cave) / k;
+	h = h < 0.f ? 0.f : (h > 1.f ? 1.f : h);
+	return base + (-cave - base) * h + k * h * (1.f - h);
+}
+
 inline uint16_t encode_sdf_s16(float sdf, float encode_scale) {
 	/// Mirror voxel tools: snorm_to_s16(sdf * QUANTIZED_SDF_16_BITS_SCALE),
 	/// snorm_to_s16(v) = clamp(int(32767 * clamp(v, -1, 1)), -32767, 32767).
@@ -67,6 +78,8 @@ void MoonHeightmapBake::_bind_methods() {
 	ClassDB::bind_method(
 			D_METHOD("height_clamp_voxels"), &MoonHeightmapBake::height_clamp_voxels);
 	ClassDB::bind_method(
+			D_METHOD("cave_entrances"), &MoonHeightmapBake::cave_entrances);
+	ClassDB::bind_method(
 			D_METHOD("sample_height_meters", "direction"),
 			&MoonHeightmapBake::sample_height_meters);
 	ClassDB::bind_method(
@@ -90,6 +103,18 @@ void MoonHeightmapBake::setup(float radius_voxels) {
 
 float MoonHeightmapBake::height_clamp_voxels() const {
 	return MoonTerrainSampler::kHeightClampM / MoonTerrainSampler::kVoxelScale;
+}
+
+PackedVector3Array MoonHeightmapBake::cave_entrances() const {
+	PackedVector3Array out;
+	if (sampler_ == nullptr) {
+		return out;
+	}
+	for (const CaveFeature &cave : sampler_->caves()) {
+		out.push_back(Vector3(
+				cave.entrance_center.x, cave.entrance_center.y, cave.entrance_center.z));
+	}
+	return out;
 }
 
 float MoonHeightmapBake::sample_height_meters(const Vector3 &direction) const {
@@ -147,9 +172,17 @@ int MoonHeightmapBake::classify_block(
 	const float far_r = std::sqrt(far_sq);
 
 	if (near_r > radius + shell) {
+		/// Caves only subtract matter — deep-space AIR stays AIR.
 		return BLOCK_AIR;
 	}
 	if (far_r < radius - shell) {
+		/// A cave inside the crust would be silently swallowed by the SOLID
+		/// uniform fill — such blocks must take the exact-SDF path.
+		const Vector3f mn{ min_c[0], min_c[1], min_c[2] };
+		const Vector3f mx{ max_c[0], max_c[1], max_c[2] };
+		if (sampler_->caves_touch_aabb(mn, mx)) {
+			return BLOCK_MIXED;
+		}
 		return BLOCK_SOLID;
 	}
 	return BLOCK_MIXED;
@@ -190,6 +223,16 @@ PackedFloat32Array MoonHeightmapBake::sample_block_sdf_f(
 	/// 16-bit quantizer's ±500-voxel window (zero crossings are invariant
 	/// under a constant scale; clamping is NOT and tears LOD seams).
 	const float lod_scale = std::min(1.f, 460.f / (4.f * float(stride) + height_clamp_voxels() + 8.f));
+
+	/// One AABB pass per block; the per-sample loop only sees hits (usually 0).
+	std::vector<int> cave_hits;
+	sampler_->gather_caves(
+			Vector3f{ float(origin.x), float(origin.y), float(origin.z) },
+			Vector3f{ float(origin.x + (size.x - 1) * stride),
+					float(origin.y + (size.y - 1) * stride),
+					float(origin.z + (size.z - 1) * stride) },
+			cave_hits);
+
 	out.resize(int64_t(size.x) * size.y * size.z);
 	float *dst = out.ptrw();
 	/// VoxelBuffer memory order: index = y + sy * (x + sx * z).
@@ -199,7 +242,14 @@ PackedFloat32Array MoonHeightmapBake::sample_block_sdf_f(
 			const float px = float(origin.x + x * stride);
 			for (int y = 0; y < size.y; ++y) {
 				const float py = float(origin.y + y * stride);
-				*dst++ = sample_sdf(px, py, pz, shell, stride_m) * lod_scale;
+				float sd = sample_sdf(px, py, pz, shell, stride_m);
+				if (!cave_hits.empty()) {
+					sd = carve_cave(
+							sd,
+							sampler_->cave_carve_sdf_voxels(
+									Vector3f{ px, py, pz }, cave_hits));
+				}
+				*dst++ = sd * lod_scale;
 			}
 		}
 	}
@@ -220,6 +270,15 @@ PackedByteArray MoonHeightmapBake::sample_block_sdf16(
 	const float stride_m = float(stride) * MoonTerrainSampler::kVoxelScale;
 	/// See sample_block_sdf_f: keep coarse corners inside the s16 window.
 	const float lod_scale = std::min(1.f, 460.f / (4.f * float(stride) + height_clamp_voxels() + 8.f));
+
+	std::vector<int> cave_hits;
+	sampler_->gather_caves(
+			Vector3f{ float(origin.x), float(origin.y), float(origin.z) },
+			Vector3f{ float(origin.x + (size.x - 1) * stride),
+					float(origin.y + (size.y - 1) * stride),
+					float(origin.z + (size.z - 1) * stride) },
+			cave_hits);
+
 	out.resize(int64_t(size.x) * size.y * size.z * 2);
 	uint8_t *dst = out.ptrw();
 	for (int z = 0; z < size.z; ++z) {
@@ -228,9 +287,14 @@ PackedByteArray MoonHeightmapBake::sample_block_sdf16(
 			const float px = float(origin.x + x * stride);
 			for (int y = 0; y < size.y; ++y) {
 				const float py = float(origin.y + y * stride);
-				const uint16_t raw = encode_sdf_s16(
-						sample_sdf(px, py, pz, shell, stride_m) * lod_scale,
-						encode_scale);
+				float sd = sample_sdf(px, py, pz, shell, stride_m);
+				if (!cave_hits.empty()) {
+					sd = carve_cave(
+							sd,
+							sampler_->cave_carve_sdf_voxels(
+									Vector3f{ px, py, pz }, cave_hits));
+				}
+				const uint16_t raw = encode_sdf_s16(sd * lod_scale, encode_scale);
 				/// Little-endian, matching VoxelBuffer channel bytes on x86/ARM.
 				dst[0] = uint8_t(raw & 0xFF);
 				dst[1] = uint8_t(raw >> 8);

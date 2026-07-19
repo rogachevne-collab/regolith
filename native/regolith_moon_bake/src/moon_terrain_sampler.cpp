@@ -37,6 +37,149 @@ MoonTerrainSampler::MoonTerrainSampler(float radius_voxels) : radius_voxels_(rad
 	configure_fnl(regolith_, kSeed + 67, 4.5f / scale, 2, 0.5f, 2.f);
 	build_mare_regions();
 	rebuild_crater_index();
+	build_caves();
+}
+
+void MoonTerrainSampler::build_caves() {
+	caves_.clear();
+	const float radius_m = radius_voxels_ * kVoxelScale;
+	const float area = (radius_m / 500.f) * (radius_m / 500.f);
+	const float s = std::min(std::pow(area, 0.7f), 100.f);
+	const int count = std::clamp(int(kCaveBaseCount * s * 0.5f), 3, 400);
+	caves_.reserve(size_t(count));
+
+	for (int i = 0; i < count; ++i) {
+		const int cs = kSeed + 9000 + i * 131;
+
+		/// Anchor prefers maria (real lunar lava tubes; also flat floors make
+		/// skylight pits legible). Rejection-sample, keep last try as fallback.
+		Vector3f n = seed_dir(cs);
+		for (int k = 0; k < 8; ++k) {
+			const Vector3f cand = seed_dir(cs + k * 977);
+			n = cand;
+			if (mare_factor(cand * radius_voxels_) > 0.35f) {
+				break;
+			}
+		}
+
+		CaveFeature cave;
+		cave.tube_radius = meters_to_voxels(lerpf(7.f, 12.f, hash01(cs + 5)));
+		cave.point_count = std::min(4 + int(hash01(cs + 9) * 3.f), CaveFeature::kMaxPoints);
+
+		/// Tangent walk along the sphere; degenerate-projection guarded.
+		Vector3f t = seed_dir(cs + 7);
+		t = (t - n * t.dot(n));
+		if (t.length() < 0.05f) {
+			t = n.cross(Vector3f{0.f, 1.f, 0.f});
+		}
+		t = t.normalized();
+
+		float depth = cave.tube_radius * 1.6f;
+		for (int j = 0; j < cave.point_count; ++j) {
+			const float h_vox = height_voxels(n);
+			cave.pts[j] = n * (radius_voxels_ + h_vox - depth);
+
+			if (j == 0) {
+				/// Collapsed skylight over the first tube point: radial shaft
+				/// plus a shallow entrance bowl biting into the surface.
+				cave.shaft_bottom = cave.pts[0];
+				cave.shaft_top = n * (radius_voxels_ + h_vox + meters_to_voxels(20.f));
+				cave.shaft_radius = cave.tube_radius * 0.55f;
+				cave.entrance_center =
+						n * (radius_voxels_ + h_vox + cave.tube_radius * 0.45f);
+				cave.entrance_radius = cave.tube_radius * 1.5f;
+			}
+
+			const float step_vox = meters_to_voxels(lerpf(40.f, 80.f, hash01(cs + 21 + j * 7)));
+			const float ang = step_vox / radius_voxels_;
+			const Vector3f n_next = (n * std::cos(ang) + t * std::sin(ang)).normalized();
+			t = (t - n_next * t.dot(n_next)).normalized();
+			const float yaw = (hash01(cs + 33 + j * 13) - 0.5f) * 0.9f;
+			t = (t * std::cos(yaw) + n_next.cross(t) * std::sin(yaw)).normalized();
+			n = n_next;
+			/// Dive away from the entrance; sealed far end reads as a collapse.
+			depth = std::min(
+					depth + cave.tube_radius * lerpf(0.15f, 0.5f, hash01(cs + 41 + j * 11)),
+					cave.tube_radius * 2.8f);
+		}
+
+		const float pad = cave.tube_radius + kCaveSmoothK + 4.f;
+		Vector3f mn = cave.pts[0];
+		Vector3f mx = cave.pts[0];
+		auto grow = [&mn, &mx](const Vector3f &p, float r) {
+			mn.x = std::min(mn.x, p.x - r);
+			mn.y = std::min(mn.y, p.y - r);
+			mn.z = std::min(mn.z, p.z - r);
+			mx.x = std::max(mx.x, p.x + r);
+			mx.y = std::max(mx.y, p.y + r);
+			mx.z = std::max(mx.z, p.z + r);
+		};
+		for (int j = 0; j < cave.point_count; ++j) {
+			grow(cave.pts[j], pad);
+		}
+		grow(cave.shaft_top, cave.shaft_radius + kCaveSmoothK + 4.f);
+		grow(cave.shaft_bottom, cave.shaft_radius + kCaveSmoothK + 4.f);
+		grow(cave.entrance_center, cave.entrance_radius + kCaveSmoothK + 4.f);
+		cave.aabb_min = mn;
+		cave.aabb_max = mx;
+
+		caves_.push_back(cave);
+	}
+}
+
+namespace {
+inline bool aabb_overlap(
+		const Vector3f &a_min,
+		const Vector3f &a_max,
+		const Vector3f &b_min,
+		const Vector3f &b_max) {
+	return a_min.x <= b_max.x && a_max.x >= b_min.x && a_min.y <= b_max.y &&
+			a_max.y >= b_min.y && a_min.z <= b_max.z && a_max.z >= b_min.z;
+}
+} // namespace
+
+bool MoonTerrainSampler::caves_touch_aabb(
+		const Vector3f &aabb_min, const Vector3f &aabb_max) const {
+	for (const CaveFeature &cave : caves_) {
+		if (aabb_overlap(cave.aabb_min, cave.aabb_max, aabb_min, aabb_max)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+void MoonTerrainSampler::gather_caves(
+		const Vector3f &aabb_min,
+		const Vector3f &aabb_max,
+		std::vector<int> &out) const {
+	for (size_t i = 0; i < caves_.size(); ++i) {
+		if (aabb_overlap(caves_[i].aabb_min, caves_[i].aabb_max, aabb_min, aabb_max)) {
+			out.push_back(int(i));
+		}
+	}
+}
+
+float MoonTerrainSampler::sd_capsule(
+		const Vector3f &p, const Vector3f &a, const Vector3f &b, float r) {
+	const Vector3f pa = p - a;
+	const Vector3f ba = b - a;
+	const float len_sq = ba.dot(ba);
+	const float h = len_sq > 0.000001f ? clampf(pa.dot(ba) / len_sq, 0.f, 1.f) : 0.f;
+	return (pa - ba * h).length() - r;
+}
+
+float MoonTerrainSampler::cave_carve_sdf_voxels(
+		const Vector3f &p, const std::vector<int> &cave_indices) const {
+	float d = 1.0e9f;
+	for (int idx : cave_indices) {
+		const CaveFeature &cave = caves_[idx];
+		for (int j = 0; j + 1 < cave.point_count; ++j) {
+			d = std::min(d, sd_capsule(p, cave.pts[j], cave.pts[j + 1], cave.tube_radius));
+		}
+		d = std::min(d, sd_capsule(p, cave.shaft_bottom, cave.shaft_top, cave.shaft_radius));
+		d = std::min(d, (p - cave.entrance_center).length() - cave.entrance_radius);
+	}
+	return d;
 }
 
 void MoonTerrainSampler::build_mare_regions() {

@@ -44,6 +44,13 @@ func is_native_ready() -> bool:
 	return _baker != null
 
 
+## World-space (moon-centered) skylight centers of generated caves.
+func cave_entrances() -> PackedVector3Array:
+	if _baker == null or not _baker.has_method("cave_entrances"):
+		return PackedVector3Array()
+	return _baker.call("cave_entrances")
+
+
 func describe() -> String:
 	if _baker == null:
 		return "native sampler unavailable"

@@ -26,6 +26,13 @@ struct Vector3f {
 	Vector3f operator*(float s) const { return {x * s, y * s, z * s}; }
 	Vector3f operator/(float s) const { return {x / s, y / s, z / s}; }
 	Vector3f operator+(const Vector3f &o) const { return {x + o.x, y + o.y, z + o.z}; }
+	Vector3f operator-(const Vector3f &o) const { return {x - o.x, y - o.y, z - o.z}; }
+
+	Vector3f cross(const Vector3f &o) const {
+		return {y * o.z - z * o.y, z * o.x - x * o.z, x * o.y - y * o.x};
+	}
+
+	float length() const { return std::sqrt(x * x + y * y + z * z); }
 };
 
 struct Crater {
@@ -37,6 +44,24 @@ struct Crater {
 	int seed = 0;
 	/// Precomputed cos(rad*1.35) — the reject test runs ~100x per sample.
 	float cos_cutoff = -1.f;
+};
+
+/// Lava-tube cave: capsule-chain tunnel below the local surface plus a
+/// collapsed skylight shaft and entrance bowl. Carved out of the crust by SDF
+/// subtraction (SE2-style local 3D features over a heightfield base, but
+/// analytic and deterministic — no storage). All coordinates in voxel space.
+struct CaveFeature {
+	static constexpr int kMaxPoints = 8;
+	Vector3f pts[kMaxPoints];
+	int point_count = 0;
+	float tube_radius = 0.f;
+	Vector3f shaft_top;
+	Vector3f shaft_bottom;
+	float shaft_radius = 0.f;
+	Vector3f entrance_center;
+	float entrance_radius = 0.f;
+	Vector3f aabb_min;
+	Vector3f aabb_max;
 };
 
 /// Lunar height sampler matching scripts/simulation/runtime/moon_terrain_generator.gd.
@@ -57,6 +82,11 @@ public:
 	static constexpr int kClassMed = 2;
 	static constexpr int kClassSmall = 3;
 	static constexpr int kClassTiny = 4;
+
+	/// Cave counts scale with area like craters (see build_caves).
+	static constexpr int kCaveBaseCount = 4;
+	/// Smooth-subtraction blend width (voxels) where tube meets crust.
+	static constexpr float kCaveSmoothK = 3.f;
 
 	static constexpr int kSeed = 0x4D004E;
 	static constexpr float kVoxelScale = 1.0f;
@@ -79,6 +109,19 @@ public:
 	/// stride_m > 0 fades out features smaller than the sampling step
 	/// (LOD-aware: cheaper far blocks, no sub-voxel aliasing). 0 = full detail.
 	float height_voxels(const Vector3f &n, float stride_m = 0.f) const;
+
+	/// Cave query API (positions/AABBs in voxel space, moon-centered).
+	/// Subtraction-only: caves never ADD matter, so an AIR block stays AIR —
+	/// only SOLID classification must consult caves_touch_aabb.
+	bool caves_touch_aabb(const Vector3f &aabb_min, const Vector3f &aabb_max) const;
+	void gather_caves(
+			const Vector3f &aabb_min,
+			const Vector3f &aabb_max,
+			std::vector<int> &out) const;
+	/// SDF of the union of the listed cave volumes (negative inside).
+	float cave_carve_sdf_voxels(
+			const Vector3f &p, const std::vector<int> &cave_indices) const;
+	const std::vector<CaveFeature> &caves() const { return caves_; }
 	/// Orbital map globe: mare/highland + huge/large/med craters only — no
 	/// meter-scale pepper or surface grain (reads as bubble-wrap at map scale).
 	float height_meters_map(const Vector3f &n) const;
@@ -107,9 +150,14 @@ private:
 	std::array<float, kMareCount> mare_radii_{};
 	std::vector<Crater> craters_;
 	std::vector<std::vector<int>> crater_cells_;
+	std::vector<CaveFeature> caves_;
 
 	void build_mare_regions();
 	void rebuild_crater_index();
+	/// Needs mare + crater fields (anchors read final surface height).
+	void build_caves();
+	static float sd_capsule(
+			const Vector3f &p, const Vector3f &a, const Vector3f &b, float r);
 	void register_class(
 			int count,
 			int seed_base,
