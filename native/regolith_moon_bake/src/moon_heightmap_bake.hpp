@@ -71,6 +71,11 @@ public:
 
 	float height_clamp_voxels() const;
 
+	/// Equirect brightness panorama (R8, width*height bytes): dark maria +
+	/// crater ray systems. Display-only albedo multiplier (value = b*1.5).
+	/// Mapping: v = acos(ny)/pi, lon = (0.5-u)*2pi, dir=(r cos, ny, r sin).
+	godot::PackedByteArray bake_brightness_panorama(int width, int height) const;
+
 	/// Skylight-entrance centers of all cave features, voxel/world space
 	/// (moon-centered). Debug/teleport aid — caves are hard to find by eye.
 	godot::PackedVector3Array cave_entrances() const;

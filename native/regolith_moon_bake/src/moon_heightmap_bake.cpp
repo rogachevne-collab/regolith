@@ -6,6 +6,7 @@
 #include <godot_cpp/core/class_db.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <memory>
@@ -80,6 +81,9 @@ void MoonHeightmapBake::_bind_methods() {
 	ClassDB::bind_method(
 			D_METHOD("cave_entrances"), &MoonHeightmapBake::cave_entrances);
 	ClassDB::bind_method(
+			D_METHOD("bake_brightness_panorama", "width", "height"),
+			&MoonHeightmapBake::bake_brightness_panorama);
+	ClassDB::bind_method(
 			D_METHOD("sample_height_meters", "direction"),
 			&MoonHeightmapBake::sample_height_meters);
 	ClassDB::bind_method(
@@ -103,6 +107,49 @@ void MoonHeightmapBake::setup(float radius_voxels) {
 
 float MoonHeightmapBake::height_clamp_voxels() const {
 	return MoonTerrainSampler::kHeightClampM / MoonTerrainSampler::kVoxelScale;
+}
+
+PackedByteArray MoonHeightmapBake::bake_brightness_panorama(
+		int width, int height) const {
+	PackedByteArray out;
+	if (sampler_ == nullptr || width <= 0 || height <= 0) {
+		return out;
+	}
+	out.resize(int64_t(width) * height);
+	uint8_t *dst = out.ptrw();
+	const MoonTerrainSampler *sampler = sampler_.get();
+
+	const int cpu = OS::get_singleton()->get_processor_count();
+	const int worker_count = std::clamp(cpu, 1, height);
+	std::vector<std::thread> threads;
+	threads.reserve(size_t(worker_count));
+	std::atomic<int> next_row{ 0 };
+	constexpr float kPi = 3.14159265358979f;
+	for (int w = 0; w < worker_count; ++w) {
+		threads.emplace_back([&next_row, dst, width, height, sampler, kPi]() {
+			for (;;) {
+				const int y = next_row.fetch_add(1);
+				if (y >= height) {
+					return;
+				}
+				const float v = (float(y) + 0.5f) / float(height);
+				const float ny = std::cos(v * kPi);
+				const float r = std::sin(v * kPi);
+				uint8_t *row = dst + int64_t(y) * width;
+				for (int x = 0; x < width; ++x) {
+					const float u = (float(x) + 0.5f) / float(width);
+					const float lon = (0.5f - u) * 2.f * kPi;
+					const Vector3f n{ r * std::cos(lon), ny, r * std::sin(lon) };
+					row[x] = uint8_t(
+							std::clamp(sampler->brightness01(n), 0.f, 1.f) * 255.f + 0.5f);
+				}
+			}
+		});
+	}
+	for (std::thread &thread : threads) {
+		thread.join();
+	}
+	return out;
 }
 
 PackedVector3Array MoonHeightmapBake::cave_entrances() const {

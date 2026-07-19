@@ -38,7 +38,8 @@ const VIEW_DISTANCE_RADIUS_MARGIN := 1.15
 ## (bounds ~±11875): lod_count 11 → block 16384 > bounds → cubic cuts;
 ## 10 → block 8192 ≤ half-extent, fits.
 const DEFAULT_LOD_COUNT := 10
-const DEFAULT_LOD_DISTANCE := 56.0
+## Keep denser near-field mesh — 56 m made mid-range crust read as soap.
+const DEFAULT_LOD_DISTANCE := 88.0
 ## Beyond this distance from planet center, show a camera-relative impostor.
 ## Parked far out for Ø19 km: billboard was baked for the Ø1 km moon and
 ## would lie at this scale. Stay below ~5–6 km altitude until scaled-space.
