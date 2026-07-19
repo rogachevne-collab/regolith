@@ -27,7 +27,8 @@ const LANDING_PAD_SIZE_M := Vector3(48.0, 4.0, 48.0)
 const TERRAIN_LOD_FADE_DURATION_S := 0.25
 ## Detail normalmaps from LOD 2+ — illusion of geometry on distant blocks.
 const TERRAIN_NORMALMAP_BEGIN_LOD := 2
-const DEMO_HOPPER_OFFSET_M := 14.0
+const DEMO_ROVER_OFFSET_M := 32.0
+const DEMO_HOPPER_OFFSET_M := 68.0
 ## Shrink streaming during spawn so VT finishes local colliders first
 ## (full shell budget restored at world_ready).
 const SPAWN_FOCUS_VIEW_DISTANCE_VOXELS := 512
@@ -35,9 +36,8 @@ const SPAWN_FOCUS_VIEW_DISTANCE_VOXELS := 512
 ## 3: coarse collider exists sooner under fast descents from orbit
 ## (LOD0-only cooking can't outrun a free fall — tunnelling through crust).
 const SPAWN_COLLISION_LOD_COUNT := 3
-## Map/HUD panorama for moon_map_globe hillshade. Display-only with the
-## native SDF generator (terrain no longer reads it) — baked in background
-## after world_ready. Cinematic tools may rebake at their own resolution.
+## Display-only panorama (cinematics / legacy tools). Terrain and map globe
+## sample analytic H(n) directly; bake runs in background after world_ready.
 const MAP_HEIGHTMAP_SIZE := Vector2i(2048, 1024)
 
 @onready var _terrain: Node3D = $VoxelTerrain
@@ -138,21 +138,20 @@ func _ready() -> void:
 	_player_spawn_hint = _player.global_position
 	if _player_spawn_hint.length_squared() <= 0.000001:
 		_player_spawn_hint = Vector3.UP
+	else:
+		_player_spawn_hint = _player_spawn_hint.normalized()
 	if not _generator_is_native:
 		## Equirectangular heightmap fallback: keep spawn off the ±Y pole
 		## singularity where all longitude texels converge into a pinch/star.
 		## The analytic generator has no poles — spawn anywhere.
-		_player_spawn_hint = _away_from_pole(_player_spawn_hint)
+		_player_spawn_hint = _away_from_pole(_player_spawn_hint).normalized()
 	## Point VoxelViewer at the saved spot from frame 0 so stream isn't at
 	## the default spawn while we still intend to load.
 	var early_saved := _peek_saved_player_position()
 	if _is_usable_saved_player_position(early_saved):
 		_player_spawn_hint = early_saved.normalized()
 	if _base_spawn != null:
-		var base_len := _base_spawn.global_position.length()
-		if base_len < 0.001:
-			base_len = MoonGeometry.SURFACE_RADIUS_M
-		_base_spawn.global_position = _player_spawn_hint * base_len
+		_base_spawn.global_position = MoonGeometry.surface_point(_player_spawn_hint)
 	if _player.has_method("set_spawn_locked"):
 		_player.set_spawn_locked(true)
 	_player.global_position = MoonGeometry.spawn_hold_point(_player_spawn_hint)
@@ -231,10 +230,25 @@ func _configure_terrain() -> void:
 		_terrain.material = mat
 		if mat is ShaderMaterial:
 			var shader_mat := mat as ShaderMaterial
-			shader_mat.set_shader_parameter("u_radial_up", 1.0)
-			shader_mat.set_shader_parameter("u_planet_radius", MoonGeometry.SURFACE_RADIUS_M)
+			_apply_planet_terrain_shader_params(shader_mat)
 	_terrain.scale = Vector3.ONE * MoonGeometry.VOXEL_SCALE
 	_ensure_player_viewer_for_planet()
+
+
+func _apply_planet_terrain_shader_params(shader_mat: ShaderMaterial) -> void:
+	shader_mat.set_shader_parameter("u_radial_up", 1.0)
+	shader_mat.set_shader_parameter("u_planet_radius", MoonGeometry.active_surface_radius_m())
+	## .tres biome/macro use wpos.xz (grows with R). Detail triplanar is ~1/scale m
+	## in world space — do not shrink u_detail_scale or the crust goes soapy.
+	var uv_scale := MoonGeometry.terrain_shader_uv_scale()
+	for param: String in ["u_biome_scale", "u_large_scale"]:
+		var base: Variant = shader_mat.get_shader_parameter(param)
+		if base is float or base is int:
+			shader_mat.set_shader_parameter(param, float(base) * uv_scale)
+	print(
+		"MoonExperiment: terrain shader macro_scale=%.4f (R=%.0f m)"
+		% [uv_scale, MoonGeometry.active_surface_radius_m()]
+	)
 
 
 func _make_planet_generator() -> VoxelGenerator:
@@ -379,6 +393,36 @@ func _configure_boulder_instancer() -> void:
 	)
 
 
+func _sync_demo_spawn_anchor() -> void:
+	if _base_spawn == null or _player == null:
+		return
+	var anchor := _player.global_position
+	if anchor.length_squared() <= 0.000001:
+		return
+	_base_spawn.global_position = anchor
+
+
+func _demo_spawn_hint_offset(local_axis: Vector3, offset_m: float) -> Vector3:
+	var anchor := Vector3.ZERO
+	if _player != null and _player.global_position.length_squared() > 0.000001:
+		anchor = _player.global_position
+	elif _base_spawn != null:
+		anchor = _base_spawn.global_position
+	else:
+		anchor = MoonGeometry.surface_point(Vector3.UP)
+	if _gravity_field == null:
+		return anchor + local_axis * offset_m
+	var basis := _gravity_field.tangent_basis_at(anchor)
+	var world_axis := (
+		basis.x * local_axis.x
+		+ basis.y * local_axis.y
+		+ basis.z * local_axis.z
+	)
+	if world_axis.length_squared() <= 0.000001:
+		world_axis = basis.z
+	return anchor + world_axis.normalized() * offset_m
+
+
 func _persist_world(force := false) -> void:
 	_persist_world_snapshot_only(force)
 	if force:
@@ -500,9 +544,11 @@ func _finish_world_entry(player_position: Vector3) -> void:
 	_resync_player_camera()
 	_session.get_industry_simulation().bind_world(_session.world)
 	_apply_playtest_cargo_if_enabled()
+	_sync_demo_spawn_anchor()
 	if spawn_demo_rover:
 		await _spawn_demo_rover_near_player()
-		await get_tree().process_frame
+		for _i in 3:
+			await get_tree().physics_frame
 	if spawn_demo_hopper:
 		await _spawn_demo_hopper_near_player()
 	_set_spawn_streaming_focus(false)
@@ -539,13 +585,14 @@ func _spawn_demo_rover_near_player() -> void:
 	if tool == null:
 		return
 	tool.channel = VoxelBuffer.CHANNEL_SDF
+	var hint := _demo_spawn_hint_offset(Vector3(0.0, 0.0, -1.0), DEMO_ROVER_OFFSET_M)
 	var ground: Vector3 = Vector3(NAN, NAN, NAN)
 	for _attempt in 90:
 		var ground_variant: Variant = RoverDemoSpawn.find_flat_ground_near(
 			_terrain,
 			tool,
 			_physics_space_state(),
-			_base_spawn.global_position,
+			hint,
 			12.0,
 			4.0,
 			true
@@ -596,14 +643,7 @@ func _spawn_demo_hopper_near_player() -> void:
 	if tool == null:
 		return
 	tool.channel = VoxelBuffer.CHANNEL_SDF
-	var hint := _base_spawn.global_position + Vector3(DEMO_HOPPER_OFFSET_M, 0.0, 0.0)
-	var field := GravityField.find_in_tree(_terrain)
-	if field != null:
-		hint = (
-			_base_spawn.global_position
-			+ field.tangent_basis_at(_base_spawn.global_position).x
-			* DEMO_HOPPER_OFFSET_M
-		)
+	var hint := _demo_spawn_hint_offset(Vector3(1.0, 0.0, 0.0), DEMO_HOPPER_OFFSET_M)
 	var ground: Vector3 = Vector3(NAN, NAN, NAN)
 	for _attempt in 90:
 		var ground_variant: Variant = RoverDemoSpawn.find_flat_ground_near(
@@ -902,8 +942,8 @@ func _configure_far_impostor() -> void:
 	_far_impostor = MeshInstance3D.new()
 	_far_impostor.name = "MoonFarImpostor"
 	var sphere := SphereMesh.new()
-	sphere.radius = MoonGeometry.SURFACE_RADIUS_M
-	sphere.height = MoonGeometry.SURFACE_RADIUS_M * 2.0
+	sphere.radius = MoonGeometry.active_surface_radius_m()
+	sphere.height = MoonGeometry.active_surface_radius_m() * 2.0
 	sphere.radial_segments = 48
 	sphere.rings = 24
 	_far_impostor.mesh = sphere
@@ -1215,16 +1255,16 @@ func _is_usable_saved_player_position(pos: Vector3) -> bool:
 	if not pos.is_finite():
 		return false
 	# Reject near-origin flat-world leftovers if a wrong save is loaded.
-	if pos.length() < MoonGeometry.SURFACE_RADIUS_M * 0.5:
+	if pos.length() < MoonGeometry.active_surface_radius_m() * 0.5:
 		return false
-	## Relief is SURFACE_RADIUS_M ± HEIGHT_CLAMP_M; reject stale noise-graph saves.
+	## Relief is active_surface_radius_m ± HEIGHT_CLAMP_M; reject stale saves.
 	var min_r := (
-		MoonGeometry.SURFACE_RADIUS_M
+		MoonGeometry.active_surface_radius_m()
 		- MoonTerrainParams.HEIGHT_CLAMP_M
 		- 10.0
 	)
 	var max_r := (
-		MoonGeometry.SURFACE_RADIUS_M
+		MoonGeometry.active_surface_radius_m()
 		+ MoonTerrainParams.HEIGHT_CLAMP_M
 		+ MoonGeometry.SPAWN_SKY_OFFSET_M
 	)
