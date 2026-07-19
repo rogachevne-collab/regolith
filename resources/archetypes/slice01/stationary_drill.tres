@@ -53,7 +53,6 @@ local_face = 2
 
 [sub_resource type="Resource" id="Mount_ny00"]
 script = ExtResource("5_pad")
-local_cell = Vector3i(0, 0, 0)
 local_face = 3
 
 [sub_resource type="Resource" id="Mount_ny01"]

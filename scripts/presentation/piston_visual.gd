@@ -8,11 +8,18 @@ const HEAD_SCENE := preload(
 	"res://scenes/presentation/piston_head_visual.tscn"
 )
 
-const MIN_SHAFT_HEIGHT_M := 0.04
-const SHAFT_RADIUS_M := 0.07
-const SHAFT_RADIUS_LARGE_M := 0.18
 const LARGE_VISUAL_SCALE := 2.4
 const TRAVEL_GHOST_RADIUS_M := 0.045
+## Art keys (meters, local +Y from base bottom). Translation + slight Y scale on extend.
+const SEGMENT1_REST_Y_M := 0.0
+const SEGMENT1_EXTEND_Y_M := 0.84
+const SEGMENT1_EXTEND_SCALE_Y := 1.082
+const SEGMENT2_REST_Y_M := 0.0
+const SEGMENT2_EXTEND_Y_M := 1.865
+const SEGMENT2_EXTEND_SCALE_Y := 1.079
+const ART_TRAVEL_M := 2.0
+## Folded art: head bottom 0.9m, game carriage port 0.5m → +0.4m visual bias.
+const ART_HEAD_BOTTOM_OFFSET_FROM_CARRIAGE_M := 0.4
 static func is_piston_element(archetype_id: String) -> bool:
 	return (
 		archetype_id == "piston_base"
@@ -51,13 +58,13 @@ static func attach_runtime(
 		base_element,
 		definition
 	)
-	var drive_local := PistonProjectionUtil.port_anchor_assembly_local(
+	var base_bottom_local := _base_bottom_assembly_local(
 		base_element,
-		SimulationMotorState.PISTON_DRIVE_PORT
+		axis_local
 	)
-	var carriage_local := PistonProjectionUtil.port_anchor_assembly_local(
+	var head_anchor_local := _head_visual_anchor_assembly_local(
 		head_element,
-		SimulationMotorState.PISTON_CARRIAGE_PORT
+		axis_local
 	)
 	var base_root: Node3D = BASE_SCENE.instantiate() as Node3D
 	var head_root: Node3D = HEAD_SCENE.instantiate() as Node3D
@@ -66,50 +73,129 @@ static func attach_runtime(
 	var large := is_large_piston_element(base_element.archetype_id)
 	var visual_scale := LARGE_VISUAL_SCALE if large else 1.0
 	var basis := PistonProjectionUtil.basis_from_axis(axis_local)
-	base_root.transform = Transform3D(basis, drive_local)
-	head_root.transform = Transform3D(basis, carriage_local)
+	base_root.transform = Transform3D(basis, base_bottom_local)
+	head_root.transform = Transform3D(basis, head_anchor_local)
 	base_root.scale = Vector3.ONE * visual_scale
 	head_root.scale = Vector3.ONE * visual_scale
 	_tag_runtime_node(base_root, assembly_id, joint_id, base_element.element_id)
 	_tag_runtime_node(head_root, assembly_id, joint_id, head_element.element_id)
 	base_body.add_child(base_root)
 	head_body.add_child(head_root)
-	var shaft_mesh := base_root.get_node("Shaft") as MeshInstance3D
+	var segments := _resolve_segment_nodes(base_root)
 	return {
 		"joint_id": joint_id,
 		"assembly_id": assembly_id,
 		"base_root": base_root,
 		"head_root": head_root,
-		"shaft_mesh": shaft_mesh,
+		"segment1": segments.get("segment1"),
+		"segment2": segments.get("segment2"),
 		"axis_local": axis_local,
-		"shaft_radius_m": SHAFT_RADIUS_LARGE_M if large else SHAFT_RADIUS_M,
 		"visual_scale": visual_scale,
+		"travel_m": maxf(definition.upper_limit_m, ART_TRAVEL_M),
 	}
+
+
+## Surviving half after the piston joint is gone (dismantle/damage).
+## Base keeps `frozen_extension_m` so an extended cut does not visually collapse.
+static func attach_runtime_orphan(
+	body: PhysicsBody3D,
+	element: SimulationElement,
+	assembly_id: int,
+	frozen_extension_m: float = 0.0
+) -> Dictionary:
+	if body == null or element == null:
+		return {}
+	var is_head := element.archetype_id.begins_with("piston_head")
+	var scene: PackedScene = HEAD_SCENE if is_head else BASE_SCENE
+	var axis_local := _orphan_axis_assembly_local(element)
+	var anchor_local := _visual_anchor_assembly_local(element, axis_local)
+	var root: Node3D = scene.instantiate() as Node3D
+	if root == null:
+		return {}
+	root.name = (
+		"PistonHeadVisual_orphan_%d" % element.element_id
+		if is_head
+		else "PistonBaseVisual_orphan_%d" % element.element_id
+	)
+	var large := is_large_piston_element(element.archetype_id)
+	var visual_scale := LARGE_VISUAL_SCALE if large else 1.0
+	var basis := PistonProjectionUtil.basis_from_axis(axis_local)
+	root.transform = Transform3D(basis, anchor_local)
+	root.scale = Vector3.ONE * visual_scale
+	_tag_runtime_node(root, assembly_id, 0, element.element_id)
+	body.add_child(root)
+	var travel_m := ART_TRAVEL_M
+	var archetype := element.get_archetype()
+	if (
+		archetype != null
+		and archetype.piston_definition != null
+	):
+		travel_m = maxf(
+			archetype.piston_definition.upper_limit_m,
+			ART_TRAVEL_M
+		)
+	var record := {
+		"joint_id": 0,
+		"assembly_id": assembly_id,
+		"element_id": element.element_id,
+		"orphan": true,
+		"axis_local": axis_local,
+		"visual_scale": visual_scale,
+		"travel_m": travel_m,
+		"last_extension_m": maxf(frozen_extension_m, 0.0),
+	}
+	if is_head:
+		record["head_root"] = root
+	else:
+		record["base_root"] = root
+		var segments := _resolve_segment_nodes(root)
+		record["segment1"] = segments.get("segment1")
+		record["segment2"] = segments.get("segment2")
+		update_runtime(record, maxf(frozen_extension_m, 0.0), false, &"idle")
+	return record
+
+
+static func _orphan_axis_assembly_local(element: SimulationElement) -> Vector3:
+	var archetype := element.get_archetype()
+	if archetype != null and archetype.piston_definition != null:
+		return PistonProjectionUtil.piston_axis_assembly_local(
+			element,
+			archetype.piston_definition
+		)
+	# Head archetypes have no piston_definition; default authored axis is +Y.
+	var axis_cell := OrientationUtil.rotate_direction(
+		OrientationUtil.face_to_vector(OrientationUtil.Face.POS_Y),
+		element.orientation_index
+	)
+	return Vector3(axis_cell).normalized()
 
 
 static func update_runtime(
 	record: Dictionary,
 	extension_m: float,
-	powered: bool,
-	status: StringName
+	_powered: bool,
+	_status: StringName
 ) -> void:
-	var shaft_mesh: MeshInstance3D = record.get("shaft_mesh")
-	if shaft_mesh == null:
-		return
-	var visual_scale := maxf(float(record.get("visual_scale", 1.0)), 0.001)
-	# Shaft lives under a scaled parent; keep world length ≈ extension_m.
-	var height := maxf(extension_m / visual_scale, MIN_SHAFT_HEIGHT_M)
-	var radius := float(record.get("shaft_radius_m", SHAFT_RADIUS_M)) / visual_scale
-	var cylinder := shaft_mesh.mesh as CylinderMesh
-	if cylinder == null:
-		cylinder = CylinderMesh.new()
-		cylinder.radial_segments = 12
-		shaft_mesh.mesh = cylinder
-	cylinder.top_radius = radius
-	cylinder.bottom_radius = radius
-	cylinder.height = height
-	shaft_mesh.position = Vector3(0.0, height * 0.5, 0.0)
-	_apply_runtime_shaft_material(shaft_mesh, powered, status)
+	var travel_m := maxf(float(record.get("travel_m", ART_TRAVEL_M)), 0.001)
+	var t := clampf(extension_m / travel_m, 0.0, 1.0)
+	var segment1: Node3D = record.get("segment1") as Node3D
+	var segment2: Node3D = record.get("segment2") as Node3D
+	if segment1 != null:
+		var scale1 := lerpf(1.0, SEGMENT1_EXTEND_SCALE_Y, t)
+		segment1.scale = Vector3(1.0, scale1, 1.0)
+		segment1.position = Vector3(
+			0.0,
+			lerpf(SEGMENT1_REST_Y_M, SEGMENT1_EXTEND_Y_M, t),
+			0.0
+		)
+	if segment2 != null:
+		var scale2 := lerpf(1.0, SEGMENT2_EXTEND_SCALE_Y, t)
+		segment2.scale = Vector3(1.0, scale2, 1.0)
+		segment2.position = Vector3(
+			0.0,
+			lerpf(SEGMENT2_REST_Y_M, SEGMENT2_EXTEND_Y_M, t),
+			0.0
+		)
 
 
 static func build_placement_preview_nodes(
@@ -170,7 +256,6 @@ static func build_placement_preview_nodes(
 		BASE_SCENE,
 		base_element,
 		axis_local,
-		SimulationMotorState.PISTON_DRIVE_PORT,
 		base_material,
 		"PreviewPistonBase",
 		visual_scale
@@ -179,7 +264,6 @@ static func build_placement_preview_nodes(
 		HEAD_SCENE,
 		head_element,
 		axis_local,
-		SimulationMotorState.PISTON_CARRIAGE_PORT,
 		head_material,
 		"PreviewPistonHead",
 		visual_scale
@@ -232,17 +316,13 @@ static func _instantiate_preview_part(
 	scene: PackedScene,
 	element: SimulationElement,
 	axis_local: Vector3,
-	port_id: String,
 	material: Material,
 	node_name: String,
 	visual_scale: float = 1.0
 ) -> Node3D:
 	if scene == null or element == null:
 		return null
-	var anchor_local := PistonProjectionUtil.port_anchor_assembly_local(
-		element,
-		port_id
-	)
+	var anchor_local := _visual_anchor_assembly_local(element, axis_local)
 	var root: Node3D = scene.instantiate() as Node3D
 	root.name = node_name
 	root.transform = Transform3D(
@@ -251,24 +331,18 @@ static func _instantiate_preview_part(
 	)
 	root.scale = Vector3.ONE * visual_scale
 	_apply_material_recursive(root, material)
-	var shaft := root.get_node_or_null("Shaft") as MeshInstance3D
-	if shaft != null:
-		shaft.visible = port_id == SimulationMotorState.PISTON_DRIVE_PORT
-		if shaft.visible:
-			update_runtime(
-				{
-					"shaft_mesh": shaft,
-					"visual_scale": visual_scale,
-					"shaft_radius_m": (
-						SHAFT_RADIUS_LARGE_M
-						if visual_scale > 1.0
-						else SHAFT_RADIUS_M
-					),
-				},
-				MIN_SHAFT_HEIGHT_M,
-				false,
-				&"standby"
-			)
+	if node_name.contains("Base"):
+		var segments := _resolve_segment_nodes(root)
+		update_runtime(
+			{
+				"segment1": segments.get("segment1"),
+				"segment2": segments.get("segment2"),
+				"travel_m": ART_TRAVEL_M,
+			},
+			0.0,
+			false,
+			&"standby"
+		)
 	return root
 
 
@@ -338,34 +412,46 @@ static func _build_axis_arrow(
 	return root
 
 
-static func _apply_runtime_shaft_material(
-	shaft_mesh: MeshInstance3D,
-	powered: bool,
-	status: StringName
-) -> void:
-	var color := Color(0.34, 0.48, 0.62, 1.0)
-	var emission := Color(0.0, 0.0, 0.0, 1.0)
-	var emission_energy := 0.0
-	if status == &"overloaded":
-		color = Color(0.82, 0.22, 0.12, 1.0)
-		emission = Color(0.9, 0.18, 0.05, 1.0)
-		emission_energy = 1.4
-	elif status == &"no_power":
-		color = Color(0.22, 0.24, 0.28, 1.0)
-	elif powered:
-		color = Color(0.28, 0.58, 0.78, 1.0)
-		emission = Color(0.12, 0.42, 0.62, 1.0)
-		emission_energy = 0.8
-	var material := shaft_mesh.material_override as StandardMaterial3D
-	if material == null:
-		material = StandardMaterial3D.new()
-		material.metallic = 0.82
-		material.roughness = 0.22
-		shaft_mesh.material_override = material
-	material.albedo_color = color
-	material.emission_enabled = emission_energy > 0.0
-	material.emission = emission
-	material.emission_energy_multiplier = emission_energy
+static func _base_bottom_assembly_local(
+	element: SimulationElement,
+	axis_local: Vector3
+) -> Vector3:
+	var axis := axis_local.normalized()
+	var cell_center := GridPoseUtil.element_cell_center(
+		element.origin_cell,
+		Vector3i.ZERO,
+		element.orientation_index
+	)
+	return cell_center - axis * GridMetric.HALF_CELL_SIZE_M
+
+
+static func _head_visual_anchor_assembly_local(
+	element: SimulationElement,
+	axis_local: Vector3
+) -> Vector3:
+	var carriage := PistonProjectionUtil.port_anchor_assembly_local(
+		element,
+		SimulationMotorState.PISTON_CARRIAGE_PORT
+	)
+	return carriage + axis_local.normalized() * ART_HEAD_BOTTOM_OFFSET_FROM_CARRIAGE_M
+
+
+static func _visual_anchor_assembly_local(
+	element: SimulationElement,
+	axis_local: Vector3
+) -> Vector3:
+	if element.archetype_id.begins_with("piston_head"):
+		return _head_visual_anchor_assembly_local(element, axis_local)
+	return _base_bottom_assembly_local(element, axis_local)
+
+
+static func _resolve_segment_nodes(base_root: Node) -> Dictionary:
+	var out := {"segment1": null, "segment2": null}
+	if base_root == null:
+		return out
+	out["segment1"] = base_root.find_child("PistonSegment1", true, false)
+	out["segment2"] = base_root.find_child("PistonSegment2", true, false)
+	return out
 
 
 static func _preview_material(color: Color) -> StandardMaterial3D:

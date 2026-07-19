@@ -1,36 +1,7 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene load_steps=2 format=3]
 
-[sub_resource type="StandardMaterial3D" id="Material_plate"]
-albedo_color = Color(0.2, 0.46, 0.62, 1)
-metallic = 0.78
-roughness = 0.24
-
-[sub_resource type="StandardMaterial3D" id="Material_rim"]
-albedo_color = Color(0.34, 0.72, 0.9, 1)
-metallic = 0.72
-roughness = 0.2
-emission_enabled = true
-emission = Color(0.08, 0.22, 0.34, 1)
-emission_energy_multiplier = 0.45
-
-[sub_resource type="BoxMesh" id="Mesh_plate"]
-material = SubResource("Material_plate")
-size = Vector3(0.48, 0.12, 0.48)
-
-[sub_resource type="TorusMesh" id="Mesh_rim"]
-material = SubResource("Material_rim")
-inner_radius = 0.17
-outer_radius = 0.23
-rings = 16
-ring_segments = 8
+[ext_resource type="PackedScene" uid="uid://cnh83hojfna2o" path="res://resources/models/piston_small_head.glb" id="1_head"]
 
 [node name="PistonHeadVisual" type="Node3D"]
 
-[node name="Plate" type="MeshInstance3D" parent="."]
-position = Vector3(0, 0.2, 0)
-mesh = SubResource("Mesh_plate")
-
-[node name="MountRim" type="MeshInstance3D" parent="."]
-position = Vector3(0, 0.27, 0)
-rotation = Vector3(1.5708, 0, 0)
-mesh = SubResource("Mesh_rim")
+[node name="Model" parent="." instance=ExtResource("1_head")]
