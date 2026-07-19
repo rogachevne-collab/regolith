@@ -9,7 +9,8 @@ const SURFACE_RADIUS_M := DIAMETER_M * 0.5
 ## Optional test-scene override (see test_moon_5km_flat_bootstrap.gd).
 static var _test_diameter_m := 0.0
 ## Same uniform node scale as main (Voxel Tools has no separate voxel_size).
-const VOXEL_SCALE := 0.65
+## 1.0 = native VT unit; avoids the old 0.65 scale tax (~3.6× voxels/m³).
+const VOXEL_SCALE := 1.0
 ## Bounds margin over surface radius in local voxel units.
 ## Must stay above coarsest LodTerrain block (16 * 2^(lod_count-1)).
 const BOUNDS_MARGIN := 1.25
@@ -33,11 +34,12 @@ const MAX_VIEW_DISTANCE_VOXELS := 80_000
 const DEFAULT_VIEW_DISTANCE_VOXELS := MIN_VIEW_DISTANCE_VOXELS
 ## Extra radius so the far limb stays inside the load sphere.
 const VIEW_DISTANCE_RADIUS_MARGIN := 1.15
-## Coarsest mesh block = 16 * 2^(lod_count-1). For Ø19 km (bounds ~±18269)
-## lod_count 12 → block 32768 > bounds → cubic cuts / floating scraps.
-## 11 → block 16384 ≤ half-extent, fits.
-const DEFAULT_LOD_COUNT := 11
-const DEFAULT_LOD_DISTANCE := 56.0
+## Coarsest mesh block = 16 * 2^(lod_count-1). For Ø19 km at scale 1.0
+## (bounds ~±11875): lod_count 11 → block 16384 > bounds → cubic cuts;
+## 10 → block 8192 ≤ half-extent, fits.
+const DEFAULT_LOD_COUNT := 10
+## Keep denser near-field mesh — 56 m made mid-range crust read as soap.
+const DEFAULT_LOD_DISTANCE := 88.0
 ## Beyond this distance from planet center, show a camera-relative impostor.
 ## Parked far out for Ø19 km: billboard was baked for the Ø1 km moon and
 ## would lie at this scale. Stay below ~5–6 km altitude until scaled-space.
@@ -70,13 +72,13 @@ static func boulder_density_scale_for_decor() -> float:
 	return 0.65
 
 
-## transvoxel_terrain.gdshader biome/macro use wpos.xz — scale when R grows.
-## u_detail_scale is world-periodic (~1/scale m); leave it from .tres.
+## Legacy: old bootstrap multiplied biome UV by R_ref/R. Shader now samples
+## meter-periodic noise on dir*R; keep helper at 1.0 so callers stay harmless.
 const TERRAIN_SHADER_REFERENCE_RADIUS_M := 500.0
 
 
 static func terrain_shader_uv_scale() -> float:
-	return TERRAIN_SHADER_REFERENCE_RADIUS_M / active_surface_radius_m()
+	return 1.0
 
 
 static func view_distance_voxels_for_camera_distance(distance_from_center_m: float) -> int:

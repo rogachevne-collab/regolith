@@ -33,7 +33,7 @@ static func is_terrain_collider(
 ## Sub-voxel raycast refinement (VoxelToolLodTerrain). With the default 0 the
 ## raycast stops at voxel granularity and reports hits up to ~1 voxel above
 ## the smooth SDF surface, so ground-seated blocks float above the terrain.
-## 8 halvings refine a 0.65 m voxel to ~2.5 mm.
+## 8 halvings refine a 1.0 m voxel to ~4 mm.
 const RAYCAST_BINARY_SEARCH_ITERATIONS := 8
 
 

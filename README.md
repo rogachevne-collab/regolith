@@ -29,8 +29,16 @@ cd Y:\regolith
 ```
 
 `run.sh` ищет stock Godot в `/Applications/Godot.app`, `$GODOT` или `PATH`.
-`run.ps1` (Windows) — **`Y:\Godot\Godot_v4.7.1-stable_win64*.exe`**, затем `$GODOT` / `PATH`.
+`run.ps1` (Windows) — сначала **custom double** (`Y:\godot-engine\bin\godot.windows.editor.double.x86_64.exe`),
+затем stock **`Y:\Godot\Godot_v4.7.1-stable_win64*.exe`**, затем `$GODOT` / `PATH`.
 Проект ожидает **Godot 4.7+** (`project.godot` → `config/features`).
+
+### Large world / double precision (Windows)
+
+Для Ø19 km moon: editor из `master` с `precision=double` (Jolt 5.6) + GDExtension,
+собранные тем же API. Скрипт: [`tools/build_godot_double.ps1`](tools/build_godot_double.ps1).
+Исходники/артефакты вне репо: `Y:\godot-engine`, `Y:\godot-cpp-double`, `Y:\godot_voxel`.
+Stock float Godot **несовместим** с double-сборками Voxel / moon_bake DLL.
 
 После клонирования (один раз, пока нет `.godot/`):
 
@@ -96,6 +104,7 @@ Windows: нужен VS 2022 Build Tools (MSVC x64) + Python + SCons.
 | WASD | ходьба |
 | Shift | бег |
 | Space | прыжок |
+| X | debug fly / noclip (повтор — выкл; Space/C вверх/вниз) |
 | ЛКМ (зажать) | бурить |
 | ПКМ | поставить блок |
 | E у корабля | кокпит |

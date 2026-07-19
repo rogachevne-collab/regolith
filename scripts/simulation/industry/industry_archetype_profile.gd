@@ -100,7 +100,7 @@ static func drill_requires_power() -> bool:
 static func hand_drill_carve_radius_m() -> float:
 	return GameBalance.industry_float(
 		PackedStringArray(["hand_drill", "carve_radius_m"]),
-		0.65
+		1.0
 	)
 
 
@@ -114,7 +114,7 @@ static func hand_drill_bite_depth_m() -> float:
 static func hand_drill_reach_m() -> float:
 	return GameBalance.industry_float(
 		PackedStringArray(["hand_drill", "reach_m"]),
-		3.2
+		2.25
 	)
 
 
@@ -142,7 +142,7 @@ static func hand_drill_loot_pile_max_mass_kg() -> float:
 static func hand_drill_interval_s() -> float:
 	return GameBalance.industry_float(
 		PackedStringArray(["hand_drill", "interval_s"]),
-		0.08
+		0.15
 	)
 
 
@@ -218,6 +218,55 @@ static func hand_drill_loot_despawn_s() -> float:
 	return GameBalance.industry_float(
 		PackedStringArray(["hand_drill", "loot_despawn_s"]),
 		600.0
+	)
+
+
+static func floating_chunks_enabled() -> bool:
+	return GameBalance.industry_bool(
+		PackedStringArray(["floating_chunks", "enabled"]),
+		true
+	)
+
+
+static func floating_chunks_box_size_voxels() -> int:
+	return GameBalance.industry_int(
+		PackedStringArray(["floating_chunks", "box_size_voxels"]),
+		30
+	)
+
+
+static func floating_chunks_min_removed_m3() -> float:
+	return GameBalance.industry_float(
+		PackedStringArray(["floating_chunks", "min_removed_m3"]),
+		0.08
+	)
+
+
+static func floating_chunks_cooldown_ms() -> int:
+	return GameBalance.industry_int(
+		PackedStringArray(["floating_chunks", "cooldown_ms"]),
+		250
+	)
+
+
+static func floating_chunks_max_bodies() -> int:
+	return GameBalance.industry_int(
+		PackedStringArray(["floating_chunks", "max_bodies"]),
+		24
+	)
+
+
+static func floating_chunks_despawn_s() -> float:
+	return GameBalance.industry_float(
+		PackedStringArray(["floating_chunks", "despawn_s"]),
+		25.0
+	)
+
+
+static func floating_chunks_collision_layer() -> int:
+	return GameBalance.industry_int(
+		PackedStringArray(["floating_chunks", "collision_layer"]),
+		2
 	)
 
 

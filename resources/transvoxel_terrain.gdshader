@@ -5,63 +5,93 @@ shader_type spatial;
 #include "res://addons/zylann.voxel/shaders/triplanar.gdshaderinc"
 #include "res://addons/zylann.voxel/shaders/lod_fade.gdshaderinc"
 #include "res://resources/triplanar_normal.gdshaderinc"
+#include "res://resources/hex_tile.gdshaderinc"
 
-// Пошаговый debug PBR — включай по одному (1 = on):
-#define TERRAIN_FEAT_NORMAL      1 // ← сейчас: normal maps (strength 0.35, cap 0.45)
-#define TERRAIN_FEAT_ROUGHNESS   1
-#define TERRAIN_FEAT_AO          1
-#define TERRAIN_FEAT_MACRO       1
-#define TERRAIN_FEAT_ALBEDO_VAR  0 // OFF: procedural noise reads dated
-#define TERRAIN_FEAT_ALBEDO_LIFT 0 // OFF: портит базовые albedo
-#define TERRAIN_FEAT_UNDERSIDE   0 // OFF: затемняет низ/overhang, визуально неочевидно
-#define TERRAIN_FEAT_SPECULAR    1 // ← сейчас: specular от rock weight
+// Three frequency bands, one mechanism each — no stacked hacks:
+//   micro (0.1–5 m):  hex-tiled triplanar photo PBR, untouched histogram
+//   meso  (5–100 m):  same textures at far scale, distance cross-fade
+//   macro (100 m–km): baked equirect brightness map + one value fbm
+// Color grading happens exactly once, at the end (grade_lunar).
 
-// Full triplanar PBR with adaptive planar fast-path (same look on flats/walls).
+// Layer semantics (texture slots kept for .tres/bootstrap compatibility):
+//   u_rock_* — lunar base regolith (flats, highlands)
+//   u_dust_* — dark rough rock (steep walls, cave interiors)
+//   u_mare_* — cratered rock (crater floors, basins)
 
-const float PLANAR_THRESH = 0.93;
-const float LAYER_CULL = 0.012;
+const float PLANAR_THRESH = 0.92;
+const float LAYER_CULL = 0.02;
+const float BLEND_SHARPNESS = 6.0;
 
-uniform sampler2D u_rock_albedo : source_color, filter_linear_mipmap, repeat_enable;
-uniform sampler2D u_rock_normal : hint_normal, filter_linear_mipmap, repeat_enable;
-uniform sampler2D u_rock_ao : hint_default_white, filter_linear_mipmap, repeat_enable;
-uniform sampler2D u_rock_roughness : hint_default_white, filter_linear_mipmap, repeat_enable;
+uniform sampler2D u_rock_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D u_rock_normal : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D u_rock_ao : hint_default_white, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D u_rock_roughness : hint_default_white, filter_linear_mipmap_anisotropic, repeat_enable;
 
-uniform sampler2D u_dust_albedo : source_color, filter_linear_mipmap, repeat_enable;
-uniform sampler2D u_dust_normal : hint_normal, filter_linear_mipmap, repeat_enable;
-uniform sampler2D u_dust_ao : hint_default_white, filter_linear_mipmap, repeat_enable;
-uniform sampler2D u_dust_roughness : hint_default_white, filter_linear_mipmap, repeat_enable;
+uniform sampler2D u_dust_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D u_dust_normal : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D u_dust_ao : hint_default_white, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D u_dust_roughness : hint_default_white, filter_linear_mipmap_anisotropic, repeat_enable;
 
-uniform sampler2D u_mare_albedo : source_color, filter_linear_mipmap, repeat_enable;
-uniform sampler2D u_mare_normal : hint_normal, filter_linear_mipmap, repeat_enable;
-uniform sampler2D u_mare_ao : hint_default_white, filter_linear_mipmap, repeat_enable;
-uniform sampler2D u_mare_roughness : hint_default_white, filter_linear_mipmap, repeat_enable;
+uniform sampler2D u_mare_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D u_mare_normal : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D u_mare_ao : hint_default_white, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D u_mare_roughness : hint_default_white, filter_linear_mipmap_anisotropic, repeat_enable;
 
-uniform float u_detail_scale : hint_range(0.05, 2.0, 0.01) = 0.11;
-uniform float u_large_scale : hint_range(0.01, 0.5, 0.001) = 0.045;
-uniform float u_biome_scale : hint_range(0.005, 0.2, 0.001) = 0.018;
-uniform float u_macro_strength : hint_range(0.0, 1.0, 0.01) = 0.42;
-uniform float u_rock_normal_strength : hint_range(0.0, 1.0, 0.01) = 0.5;
-uniform float u_layer_normal_strength : hint_range(0.0, 1.0, 0.01) = 0.2;
-uniform float u_ao_strength : hint_range(0.0, 1.0, 0.01) = 0.5;
-uniform float u_mare_amount : hint_range(0.0, 1.0, 0.01) = 0.32;
-uniform float u_detail_fade_start : hint_range(10.0, 80.0, 0.5) = 30.0;
-uniform float u_detail_fade_end : hint_range(20.0, 160.0, 0.5) = 75.0;
-uniform float u_specular : hint_range(0.0, 0.5, 0.01) = 0.17;
+// Micro band: texture cycles per metre (0.15 → ~6.7 m period).
+uniform float u_detail_scale : hint_range(0.02, 2.0, 0.01) = 0.15;
+// Meso band: far scale = detail/ratio (12 → ~80 m period).
+uniform float u_far_ratio : hint_range(4.0, 32.0, 0.5) = 12.0;
+uniform float u_far_start : hint_range(20.0, 400.0, 5.0) = 60.0;
+uniform float u_far_end : hint_range(100.0, 1200.0, 10.0) = 280.0;
+uniform float u_mip_bias : hint_range(-1.5, 0.0, 0.05) = -0.5;
+uniform float u_normal_strength : hint_range(0.0, 1.5, 0.01) = 0.9;
+// Regolith is uniform matte powder: albedo variance stays LOW, detail is
+// carried by normals near and geometry far. 1.0 = raw photo contrast.
+uniform float u_albedo_variance : hint_range(0.0, 1.0, 0.01) = 0.42;
+// Extra flatten + normal damping for the meso band — a busy photo at 80 m
+// period reads as crumpled foil on distant slopes.
+uniform float u_far_variance : hint_range(0.0, 1.0, 0.01) = 0.45;
+uniform float u_far_normal : hint_range(0.0, 1.0, 0.01) = 0.35;
+// Hex-tile rotation jitter (fraction of a full turn). Small: the photos are
+// striated, full random rotation reads as a surreal swirl patchwork.
+uniform float u_hex_rotation : hint_range(0.0, 1.0, 0.01) = 0.12;
+// Pull dust/mare mean brightness toward the base layer: regolith is uniform,
+// layers should differ in texture, not value (macro value = brightness map).
+uniform float u_layer_equalize : hint_range(0.0, 1.0, 0.01) = 0.75;
+uniform float u_ao_strength : hint_range(0.0, 1.0, 0.01) = 0.35;
+// Height-proxy blend sharpening: rocks poke through dust at layer borders.
+uniform float u_height_blend : hint_range(0.0, 1.0, 0.01) = 0.4;
+// One breakup noise for layer borders, one value fbm for macro patchiness.
+uniform float u_biome_scale : hint_range(0.001, 0.2, 0.001) = 0.008;
+uniform float u_large_scale : hint_range(0.002, 0.5, 0.001) = 0.018;
+uniform float u_macro_strength : hint_range(0.0, 1.0, 0.01) = 0.5;
+uniform float u_mare_amount : hint_range(0.0, 1.0, 0.01) = 0.55;
+// Layer mix ceilings: lunar is THE base, the other two only blend into it.
+uniform float u_wall_mix : hint_range(0.0, 1.0, 0.01) = 0.5;
+uniform float u_mare_mix : hint_range(0.0, 1.0, 0.01) = 0.7;
+// Final grade — the only place albedo value/chroma is touched.
+uniform float u_exposure : hint_range(0.3, 1.5, 0.01) = 0.58;
+uniform float u_contrast : hint_range(0.5, 2.0, 0.01) = 1.0;
+uniform float u_chroma : hint_range(0.0, 1.0, 0.01) = 0.02;
+uniform float u_specular : hint_range(0.0, 0.5, 0.01) = 0.15;
 uniform float u_radial_up : hint_range(0.0, 1.0, 1.0) = 0.0;
-uniform float u_planet_radius : hint_range(0.0, 2000.0, 1.0) = 0.0;
+uniform float u_planet_radius : hint_range(0.0, 20000.0, 1.0) = 0.0;
+// Baked equirect albedo brightness (dark maria + fresh-crater ray systems),
+// value = texel * 1.5 (neutral 1/1.5). Set by bootstrap on the native path.
+uniform sampler2D u_moon_brightness : hint_default_white, filter_linear, repeat_enable;
+uniform float u_moon_brightness_on : hint_range(0.0, 1.0, 1.0) = 0.0;
+uniform float u_moon_brightness_strength : hint_range(0.0, 1.0, 0.01) = 0.85;
 
 varying vec3 v_world_pos;
 varying vec3 v_vertex_pos_model;
 
+// Integer-stable hash — sin-hash turns to mush at |p| ≳ 1e3 (Ø19 km crust).
 float hash21(vec2 p) {
-	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
-}
-
-vec2 hash22(vec2 p) {
-	return fract(sin(vec2(
-		dot(p, vec2(127.1, 311.7)),
-		dot(p, vec2(269.5, 183.3))
-	)) * 43758.5453);
+	uvec2 u = uvec2(ivec2(floor(p)));
+	uint n = u.x * 1597334677u + u.y * 3812015801u;
+	n ^= n >> 13u;
+	n *= 1274126177u;
+	return float(n) * (1.0 / 4294967296.0);
 }
 
 float value_noise(vec2 p) {
@@ -86,16 +116,129 @@ float fbm(vec2 p) {
 	return v;
 }
 
+// Pole-safe surface noise: triplanar fbm on meter coords (dir * R).
+float fbm_surface(vec3 meter_pos, vec3 dir, float scale) {
+	vec3 b = abs(dir);
+	b /= max(b.x + b.y + b.z, 1e-3);
+	return fbm(meter_pos.yz * scale) * b.x
+		+ fbm(meter_pos.xz * scale + vec2(19.1, -4.7)) * b.y
+		+ fbm(meter_pos.xy * scale + vec2(-11.3, 8.2)) * b.z;
+}
 
-// Лёгкий anti-tile без rotation — rotation ломал triplanar в полосы на склонах.
-vec3 detail_pos(vec3 world_pos, float scale) {
-	vec3 p = world_pos * scale;
-	p += vec3(
-		hash21(floor(p.yz * 0.11)) - 0.5,
-		hash21(floor(p.xz * 0.11)) - 0.5,
-		hash21(floor(p.xy * 0.11)) - 0.5
-	) * 0.65;
-	return p;
+// Meter-domain position for biome/macro. Flat yard keeps world XYZ.
+vec3 surface_meter_pos(vec3 wpos) {
+	if (u_radial_up > 0.5 && u_planet_radius > 1.0) {
+		return normalize(wpos) * u_planet_radius;
+	}
+	return wpos;
+}
+
+// Hex-tiled triplanar albedo. Per-plane seeds decorrelate the projections;
+// they must match hex_triplanar_normal's so albedo and normal stay aligned.
+vec3 hex_triplanar_rgb(
+	sampler2D tex, vec3 pos, vec3 ddx, vec3 ddy,
+	vec3 blending, int pmode, vec3 mean
+) {
+	if (pmode == 1) {
+		return hextile_rgb(tex, pos.xz, ddx.xz, ddy.xz, mean, 11u, u_hex_rotation);
+	}
+	if (pmode == 2) {
+		return hextile_rgb(tex, pos.yz, ddx.yz, ddy.yz, mean, 5u, u_hex_rotation);
+	}
+	if (pmode == 3) {
+		return hextile_rgb(tex, pos.xy, ddx.xy, ddy.xy, mean, 23u, u_hex_rotation);
+	}
+	return hextile_rgb(tex, pos.yz, ddx.yz, ddy.yz, mean, 5u, u_hex_rotation) * blending.x
+		+ hextile_rgb(tex, pos.xz, ddx.xz, ddy.xz, mean, 11u, u_hex_rotation) * blending.y
+		+ hextile_rgb(tex, pos.xy, ddx.xy, ddy.xy, mean, 23u, u_hex_rotation) * blending.z;
+}
+
+// Hex-tiled triplanar normal, whiteout blend (conventions from
+// triplanar_normal.gdshaderinc: mode 1 = Y plane, 2 = X, 3 = Z).
+vec3 hex_triplanar_normal(
+	sampler2D tex, vec3 pos, vec3 ddx, vec3 ddy,
+	vec3 wn, vec3 blending, int pmode
+) {
+	if (pmode == 1) {
+		vec3 tn = hextile_normal(tex, pos.xz, ddx.xz, ddy.xz, 11u, u_hex_rotation);
+		tn = vec3(tn.xy + wn.xz, abs(tn.z) * wn.y);
+		return normalize(tn.xzy);
+	}
+	if (pmode == 2) {
+		vec3 tn = hextile_normal(tex, pos.yz, ddx.yz, ddy.yz, 5u, u_hex_rotation);
+		tn = vec3(tn.xy + wn.zy, abs(tn.z) * wn.x);
+		return normalize(tn.zyx);
+	}
+	if (pmode == 3) {
+		vec3 tn = hextile_normal(tex, pos.xy, ddx.xy, ddy.xy, 23u, u_hex_rotation);
+		tn = vec3(tn.xy + wn.xy, abs(tn.z) * wn.z);
+		return normalize(tn.xyz);
+	}
+	vec3 nx = hextile_normal(tex, pos.yz, ddx.yz, ddy.yz, 5u, u_hex_rotation);
+	vec3 ny = hextile_normal(tex, pos.xz, ddx.xz, ddy.xz, 11u, u_hex_rotation);
+	vec3 nz = hextile_normal(tex, pos.xy, ddx.xy, ddy.xy, 23u, u_hex_rotation);
+	nx = vec3(nx.xy + wn.zy, abs(nx.z) * wn.x);
+	ny = vec3(ny.xy + wn.xz, abs(ny.z) * wn.y);
+	nz = vec3(nz.xy + wn.xy, abs(nz.z) * wn.z);
+	return normalize(
+		nx.zyx * blending.x + ny.xzy * blending.y + nz.xyz * blending.z
+	);
+}
+
+// One material layer: micro/meso cross-fade for albedo+normal, near-scale
+// triplanar for AO/roughness (their tiling is invisible; saves fetches).
+void sample_layer(
+	sampler2D t_alb, sampler2D t_nrm, sampler2D t_ao, sampler2D t_rough,
+	vec3 uv_off, vec3 wpos, vec3 dpx, vec3 dpy,
+	float far_w, vec3 blending, int pmode, vec3 wn,
+	out vec3 albedo, out vec3 nrm, out float ao, out float rough
+) {
+	// Top mip = texture mean, pivot for hex contrast restore.
+	vec3 mean = textureLod(t_alb, vec2(0.5), 12.0).rgb;
+	vec3 p = wpos + uv_off;
+	float far_scale = u_detail_scale / max(u_far_ratio, 1.0);
+
+	vec3 a_near = vec3(0.0);
+	vec3 a_far = vec3(0.0);
+	vec3 n_near = wn;
+	vec3 n_far = wn;
+	if (far_w < 1.0) {
+		vec3 pn = p * u_detail_scale;
+		vec3 gx = dpx * u_detail_scale;
+		vec3 gy = dpy * u_detail_scale;
+		a_near = hex_triplanar_rgb(t_alb, pn, gx, gy, blending, pmode, mean);
+		a_near = mix(mean, a_near, u_albedo_variance);
+		n_near = hex_triplanar_normal(t_nrm, pn, gx, gy, wn, blending, pmode);
+	}
+	if (far_w > 0.0) {
+		vec3 pf = p * far_scale;
+		vec3 gx = dpx * far_scale;
+		vec3 gy = dpy * far_scale;
+		a_far = hex_triplanar_rgb(t_alb, pf, gx, gy, blending, pmode, mean);
+		a_far = mix(mean, a_far, u_albedo_variance * u_far_variance);
+		n_far = hex_triplanar_normal(t_nrm, pf, gx, gy, wn, blending, pmode);
+		n_far = normalize(mix(wn, n_far, u_far_normal));
+	}
+	albedo = mix(a_near, a_far, far_w);
+	nrm = normalize(mix(n_near, n_far, far_w));
+
+	if (far_w < 1.0) {
+		vec3 pn = p * u_detail_scale;
+		ao = sample_planar_r(t_ao, pn, blending, pmode);
+		rough = sample_planar_r(t_rough, pn, blending, pmode);
+	} else {
+		ao = 1.0;
+		rough = 0.85;
+	}
+}
+
+// The only color grade in the pipeline: kill photo chroma (lunar crust is
+// near-grey), one contrast pivot, one exposure, done.
+vec3 grade_lunar(vec3 c) {
+	float l = dot(c, vec3(0.299, 0.587, 0.114));
+	c = mix(vec3(l), c, u_chroma);
+	c = vec3(0.32) + (c - vec3(0.32)) * u_contrast;
+	return clamp(c * u_exposure, vec3(0.02), vec3(0.95));
 }
 
 void vertex() {
@@ -115,54 +258,59 @@ void fragment() {
 	);
 	vec3 wpos = v_world_pos;
 	float view_dist = length(CAMERA_POSITION_WORLD - wpos);
-	float detail_fade = 1.0 - smoothstep(u_detail_fade_start, u_detail_fade_end, view_dist);
 
 	vec3 surface_up = u_radial_up > 0.5 ? normalize(wpos) : vec3(0.0, 1.0, 0.0);
-	float upness = dot(normal, surface_up);
-	float flatness = smoothstep(0.20, 0.88, upness);
-	float steep = 1.0 - flatness;
-	float tilt = length(normal - surface_up * upness);
+	float upness = clamp(dot(normal, surface_up), -1.0, 1.0);
+	float slope = clamp(1.0 - upness, 0.0, 1.0);
 
-	vec3 blending = get_triplanar_blend(normal, 6.0);
-	int pmode = planar_mode(blending, PLANAR_THRESH);
-	bool fetch_pbr = detail_fade > 0.04;
-
-	vec2 biome_uv = wpos.xz * u_biome_scale;
-	float mare_n = fbm(biome_uv * 0.85 + vec2(12.7, -4.2));
-	float ejecta_n = fbm(biome_uv * 1.65 + vec2(-31.0, 9.5));
-	float highland_n = fbm(biome_uv * 0.55 + vec2(3.3, 18.1));
-
-	// Mare — мягкие переходы, rock остаётся базой плато.
-	float mare_patch = smoothstep(0.68, 0.92, mare_n) * u_mare_amount;
-	float ejecta = smoothstep(0.58, 0.88, ejecta_n) * (1.0 - mare_patch) * 0.42;
-	float highland = smoothstep(0.45, 0.82, highland_n) * (1.0 - mare_patch);
-
-	float w_mare = mare_patch * flatness;
-	float w_dust = steep;
-	float w_rock = flatness * (1.0 - mare_patch);
-	float w_sum = max(w_dust + w_rock + w_mare, 1e-3);
-	w_dust /= w_sum;
-	w_rock /= w_sum;
-	w_mare /= w_sum;
-
-	// Микрорельеф плато: выступ над сферой + наклон (SDF-бугорки), не normal map.
-	float plateau = smoothstep(0.55, 0.94, upness);
+	// Height vs mean sphere — crater bowls sit below 0.
 	float h_signal = u_planet_radius > 0.0
 		? (length(wpos) - u_planet_radius)
 		: wpos.y;
 	float h_grad = length(vec2(dFdx(h_signal), dFdy(h_signal)));
-	float protrusion = max(h_signal, 0.0);
-	float crest = 0.0;
-	float bump_side = 0.0;
-	if (u_planet_radius > 0.0 || u_radial_up > 0.5) {
-		crest = plateau * smoothstep(0.06, 1.6, protrusion)
-			* (1.0 - smoothstep(0.015, 0.10, h_grad));
-		bump_side = plateau * smoothstep(0.010, 0.11, tilt)
-			* (1.0 - smoothstep(0.22, 0.40, tilt))
-			* smoothstep(0.008, 0.22, h_grad + protrusion * 0.25);
-	}
 
-	vec3 tex_pos = detail_pos(wpos, u_detail_scale);
+	vec3 blending = get_triplanar_blend(normal, BLEND_SHARPNESS);
+	int pmode = planar_mode(blending, PLANAR_THRESH);
+
+	vec3 meter_pos = surface_meter_pos(wpos);
+	vec3 surf_dir = u_radial_up > 0.5 ? surface_up : vec3(0.0, 1.0, 0.0);
+
+	// --- Layer masks: slope + height + ONE breakup noise -------------------
+	float steep = smoothstep(0.16, 0.34, slope);
+	float breakup = fbm_surface(meter_pos, surf_dir, u_biome_scale * 1.3);
+	// Breakup jitters the height contours — a clean isoline reads as a
+	// paint spill; the ragged edge reads as sediment.
+	float depth_n = h_signal + (breakup - 0.5) * 10.0;
+	// Crater floor core + slope run-outs easing into the floor.
+	float bowl = smoothstep(6.0, -12.0, depth_n);
+	float foot = smoothstep(0.30, 0.10, slope)
+		* smoothstep(14.0, 0.0, depth_n) * 0.6;
+	// Basin patches only in genuine depressions on near-flat ground —
+	// mid-slope splats read as vitiligo.
+	float basin = smoothstep(0.52, 0.72, breakup) * u_mare_amount
+		* smoothstep(2.0, -6.0, h_signal)
+		* (1.0 - smoothstep(0.06, 0.16, slope));
+	// Lunar is the base everywhere; the other two only mix in, never take over.
+	float w_mare = clamp(max(bowl, foot) + basin, 0.0, 1.0)
+		* (1.0 - steep) * u_mare_mix;
+	float w_dust = steep * u_wall_mix;
+	float w_rock = max(1.0 - w_dust - w_mare, 0.0);
+	float w_sum = max(w_rock + w_dust + w_mare, 1e-3);
+	w_rock /= w_sum;
+	w_dust /= w_sum;
+	w_mare /= w_sum;
+
+	// --- Micro/meso sampling ----------------------------------------------
+	float far_w = smoothstep(u_far_start, u_far_end, view_dist);
+	if (far_w <= 0.02) {
+		far_w = 0.0;
+	}
+	if (far_w >= 0.98) {
+		far_w = 1.0;
+	}
+	float grad_bias = exp2(u_mip_bias);
+	vec3 dpx = dFdx(wpos) * grad_bias;
+	vec3 dpy = dFdy(wpos) * grad_bias;
 
 	vec3 albedo_rock = vec3(0.0);
 	vec3 albedo_dust = vec3(0.0);
@@ -173,135 +321,94 @@ void fragment() {
 	float ao_rock = 1.0;
 	float ao_dust = 1.0;
 	float ao_mare = 1.0;
-	float rough_rock = 0.76;
+	float rough_rock = 0.80;
 	float rough_dust = 0.90;
 	float rough_mare = 0.85;
 
 	if (w_rock > LAYER_CULL) {
-		albedo_rock = sample_planar_rgb(u_rock_albedo, tex_pos, blending, pmode);
-#if TERRAIN_FEAT_NORMAL
-		if (fetch_pbr) {
-			n_rock = sample_planar_normal(u_rock_normal, tex_pos, normal, blending, pmode);
-		}
-#endif
-#if TERRAIN_FEAT_AO
-		if (fetch_pbr) {
-			ao_rock = sample_planar_r(u_rock_ao, tex_pos, blending, pmode);
-		}
-#endif
-#if TERRAIN_FEAT_ROUGHNESS
-		if (fetch_pbr) {
-			rough_rock = sample_planar_r(u_rock_roughness, tex_pos, blending, pmode);
-		}
-#endif
+		sample_layer(
+			u_rock_albedo, u_rock_normal, u_rock_ao, u_rock_roughness,
+			vec3(0.0), wpos, dpx, dpy, far_w, blending, pmode, normal,
+			albedo_rock, n_rock, ao_rock, rough_rock
+		);
 	}
-	if (w_dust > LAYER_CULL || bump_side > 0.02) {
-		albedo_dust = sample_planar_rgb(u_dust_albedo, tex_pos, blending, pmode);
-#if TERRAIN_FEAT_NORMAL
-		if (fetch_pbr && w_dust > LAYER_CULL) {
-			n_dust = sample_planar_normal(u_dust_normal, tex_pos, normal, blending, pmode);
-		}
-#endif
-#if TERRAIN_FEAT_AO
-		if (fetch_pbr && w_dust > LAYER_CULL) {
-			ao_dust = sample_planar_r(u_dust_ao, tex_pos, blending, pmode);
-		}
-#endif
-#if TERRAIN_FEAT_ROUGHNESS
-		if (fetch_pbr && w_dust > LAYER_CULL) {
-			rough_dust = sample_planar_r(u_dust_roughness, tex_pos, blending, pmode);
-		}
-#endif
+	if (w_dust > LAYER_CULL) {
+		sample_layer(
+			u_dust_albedo, u_dust_normal, u_dust_ao, u_dust_roughness,
+			vec3(17.0, -9.0, 5.0), wpos, dpx, dpy, far_w, blending, pmode, normal,
+			albedo_dust, n_dust, ao_dust, rough_dust
+		);
 	}
 	if (w_mare > LAYER_CULL) {
-		albedo_mare = sample_planar_rgb(u_mare_albedo, tex_pos, blending, pmode);
-#if TERRAIN_FEAT_NORMAL
-		if (fetch_pbr) {
-			n_mare = sample_planar_normal(u_mare_normal, tex_pos, normal, blending, pmode);
-		}
-#endif
-#if TERRAIN_FEAT_AO
-		if (fetch_pbr) {
-			ao_mare = sample_planar_r(u_mare_ao, tex_pos, blending, pmode);
-		}
-#endif
-#if TERRAIN_FEAT_ROUGHNESS
-		if (fetch_pbr) {
-			rough_mare = sample_planar_r(u_mare_roughness, tex_pos, blending, pmode);
-		}
-#endif
+		sample_layer(
+			u_mare_albedo, u_mare_normal, u_mare_ao, u_mare_roughness,
+			vec3(-11.0, 6.0, 13.0), wpos, dpx, dpy, far_w, blending, pmode, normal,
+			albedo_mare, n_mare, ao_mare, rough_mare
+		);
 	}
 
-#if TERRAIN_FEAT_ALBEDO_LIFT
-	albedo_rock = min(albedo_rock * 1.10, vec3(0.92));
-	albedo_dust = min(albedo_dust * 1.08, vec3(0.90));
-	albedo_mare = min(albedo_mare * 1.22 + vec3(0.035), vec3(0.72));
-#endif
+	// --- Layer tone equalization ------------------------------------------
+	// Everything is the same powder; value differences between layers come
+	// from the baked brightness map, not from the source photos' exposure.
+	float l_ref = dot(textureLod(u_rock_albedo, vec2(0.5), 12.0).rgb, vec3(0.299, 0.587, 0.114));
+	float l_dust = dot(textureLod(u_dust_albedo, vec2(0.5), 12.0).rgb, vec3(0.299, 0.587, 0.114));
+	float l_mare = dot(textureLod(u_mare_albedo, vec2(0.5), 12.0).rgb, vec3(0.299, 0.587, 0.114));
+	// Walls keep half their darkness (fresh rock under the dust reads well).
+	albedo_dust *= mix(1.0, l_ref / max(l_dust, 1e-3), u_layer_equalize * 0.5);
+	albedo_mare *= mix(1.0, l_ref / max(l_mare, 1e-3), u_layer_equalize);
 
-	vec3 tex_col = albedo_dust * w_dust + albedo_rock * w_rock + albedo_mare * w_mare;
-	tex_col *= mix(vec3(1.0), vec3(1.12), crest * 0.95);
-	tex_col = mix(tex_col, albedo_dust, bump_side * 0.40);
+	// --- Height-proxy blend sharpening ------------------------------------
+	// Albedo luminance stands in for a heightmap: brighter chunks win the
+	// border, so transitions read "rock pokes through dust", not a gradient.
+	const float BLEND_DELTA = 0.22;
+	float h_rock = dot(albedo_rock, vec3(0.333));
+	float h_dust = dot(albedo_dust, vec3(0.333));
+	float h_mare = dot(albedo_mare, vec3(0.333));
+	float a_rock = w_rock > LAYER_CULL ? w_rock + h_rock * u_height_blend : -1.0;
+	float a_dust = w_dust > LAYER_CULL ? w_dust + h_dust * u_height_blend : -1.0;
+	float a_mare = w_mare > LAYER_CULL ? w_mare + h_mare * u_height_blend : -1.0;
+	float a_max = max(a_rock, max(a_dust, a_mare));
+	float b_rock = max(a_rock - a_max + BLEND_DELTA, 0.0);
+	float b_dust = max(a_dust - a_max + BLEND_DELTA, 0.0);
+	float b_mare = max(a_mare - a_max + BLEND_DELTA, 0.0);
+	float b_sum = max(b_rock + b_dust + b_mare, 1e-3);
+	b_rock /= b_sum;
+	b_dust /= b_sum;
+	b_mare /= b_sum;
 
-#if TERRAIN_FEAT_ALBEDO_VAR
-	float var_n = fbm(wpos.xz * u_detail_scale * 0.28 + vec2(11.0, 4.7));
-	tex_col *= mix(0.94, 1.06, var_n);
-#endif
+	vec3 tex_col = albedo_rock * b_rock + albedo_dust * b_dust + albedo_mare * b_mare;
 
-#if TERRAIN_FEAT_MACRO
-	float large_n = fbm(wpos.xz * u_large_scale);
-	large_n = smoothstep(0.28, 0.72, large_n);
-	vec3 large_tint = mix(vec3(0.97, 0.965, 0.96), vec3(1.03, 1.015, 1.0), large_n);
-	tex_col *= mix(vec3(1.0), large_tint, u_macro_strength * 0.22);
+	// --- Macro band: one value fbm + baked brightness map -----------------
+	float macro_n = fbm_surface(meter_pos, surf_dir, u_large_scale);
+	tex_col *= mix(1.0, mix(0.93, 1.07, smoothstep(0.25, 0.75, macro_n)), u_macro_strength);
 
-	vec3 tint_highland = vec3(0.99, 0.995, 1.01);
-	vec3 tint_ejecta = vec3(1.03, 1.01, 0.99);
-	vec3 tint_mare = vec3(0.97, 0.98, 0.99);
-	vec3 macro_tint = vec3(1.01, 1.005, 1.0);
-	macro_tint = mix(macro_tint, tint_highland, highland * 0.32);
-	macro_tint = mix(macro_tint, tint_ejecta, ejecta * 0.38);
-	macro_tint = mix(macro_tint, tint_mare, mare_patch * flatness * 0.32);
-	tex_col *= mix(vec3(1.0), macro_tint, u_macro_strength);
-#endif
+	float ao = ao_rock * b_rock + ao_dust * b_dust + ao_mare * b_mare;
+	// AO fades with the micro band — at meso scale it would just shimmer.
+	tex_col *= mix(1.0, ao, u_ao_strength * (1.0 - far_w * 0.7));
 
-#if TERRAIN_FEAT_AO
-	float ao_raw = w_dust * ao_dust + w_rock * ao_rock + w_mare * ao_mare;
-	ao_raw = mix(0.90, 1.0, clamp(ao_raw, 0.0, 1.0));
-	float ao = mix(1.0, ao_raw, u_ao_strength * mix(0.7, 1.0, detail_fade));
-	tex_col *= ao;
-#endif
+	if (u_moon_brightness_on > 0.5 && u_radial_up > 0.5) {
+		// Equirect by radial dir; must mirror bake_brightness_panorama mapping.
+		vec2 buv = vec2(
+			0.5 - atan(surface_up.z, surface_up.x) / 6.28318530718,
+			acos(clamp(surface_up.y, -1.0, 1.0)) / 3.14159265359
+		);
+		float bright = texture(u_moon_brightness, buv).r * 1.5;
+		tex_col *= mix(1.0, bright, u_moon_brightness_strength);
+	}
 
-	ALBEDO = tex_col;
-#if TERRAIN_FEAT_ALBEDO_LIFT || TERRAIN_FEAT_AO || TERRAIN_FEAT_MACRO
-	ALBEDO = clamp(ALBEDO, vec3(0.04), vec3(0.84));
-#endif
+	ALBEDO = grade_lunar(tex_col);
 
-#if TERRAIN_FEAT_UNDERSIDE
-	ALBEDO = mix(ALBEDO, ALBEDO * 0.78, max(0.0, -normal.y) * 0.45);
-#endif
-
-#if TERRAIN_FEAT_NORMAL
-	float rock_nw = clamp(u_rock_normal_strength * detail_fade, 0.0, 0.55);
-	float layer_nw = clamp(u_layer_normal_strength * detail_fade, 0.0, 0.28);
 	vec3 normal_perturb =
-		(n_rock - normal) * w_rock * rock_nw
-		+ (n_dust - normal) * w_dust * layer_nw
-		+ (n_mare - normal) * w_mare * layer_nw;
-	vec3 final_normal = normalize(normal + normal_perturb);
+		(n_rock - normal) * b_rock
+		+ (n_dust - normal) * b_dust
+		+ (n_mare - normal) * b_mare;
+	vec3 final_normal = normalize(normal + normal_perturb * u_normal_strength);
 	NORMAL = normalize((VIEW_MATRIX * vec4(final_normal, 0.0)).xyz);
-#endif
 
-	float rough = w_dust * rough_dust + w_rock * rough_rock + w_mare * rough_mare;
+	float rough = rough_rock * b_rock + rough_dust * b_dust + rough_mare * b_mare;
+	ROUGHNESS = clamp(rough, 0.70, 0.97);
 	METALLIC = 0.0;
-#if TERRAIN_FEAT_ROUGHNESS
-	ROUGHNESS = clamp(rough, 0.68, 0.97);
-#else
-	ROUGHNESS = 0.88;
-#endif
-#if TERRAIN_FEAT_SPECULAR
-	SPECULAR = mix(u_specular * 0.7, u_specular * 1.05, w_rock);
-#else
-	SPECULAR = 0.1;
-#endif
+	SPECULAR = mix(u_specular * 0.7, u_specular * 1.05, b_rock);
 
 	if (get_lod_fade_discard(SCREEN_UV)) {
 		discard;

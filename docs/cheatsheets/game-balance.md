@@ -14,6 +14,7 @@
 | массу/объём предмета | `items.<item_id>` |
 | рецепт (время, мощность, I/O) | `recipes.<recipe_id>` |
 | stationary / hand drill carve | `industry.stationary_drill` / `industry.hand_drill` |
+| floating chunks после dig | `industry.floating_chunks` |
 | ёмкости store/buffer / player | `industry.*_capacity_l` |
 | power output / battery / idle | `electric.archetypes` / `electric.defaults` |
 | weld / dismantle / grinder refund | `construction` |

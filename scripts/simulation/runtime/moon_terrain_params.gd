@@ -14,7 +14,7 @@ extends RefCounted
 ## in SQLite carry faded far-LOD data and must not mix with unfaded.
 ## 30: material lens cells scale with surface radius (arc ≈ 70 m) — Ø19 km
 ## no longer stretches ore patches to ~1.4 km.
-const GENERATOR_VERSION := 30
+const GENERATOR_VERSION := 36
 const SEED := 0x4D004E
 ## Optional isolated stream for test scenes (no gen_v bump).
 static var _test_stream_label := ""

@@ -40,10 +40,14 @@ func rebuild_assembly(assembly_id: int) -> void:
 
 
 func _process(delta: float) -> void:
-	if _world == null or delta <= 0.0:
+	if _world == null or delta <= 0.0 or _physics_projection == null:
 		return
 	for assembly_id: int in _records_by_assembly.keys():
-		_sync_assembly(int(assembly_id), delta)
+		var aid := int(assembly_id)
+		# Skip frozen / non-driven locomotives — same gate as wheel physics.
+		if not _physics_projection._should_tick_wheels(aid):
+			continue
+		_sync_assembly(aid, delta)
 
 
 func _on_structural_event(event: Dictionary) -> void:

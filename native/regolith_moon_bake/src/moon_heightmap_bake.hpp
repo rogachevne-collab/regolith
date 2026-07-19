@@ -3,6 +3,7 @@
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include <godot_cpp/variant/packed_float32_array.hpp>
+#include <godot_cpp/variant/packed_vector3_array.hpp>
 #include <godot_cpp/variant/vector3.hpp>
 #include <godot_cpp/variant/vector3i.hpp>
 
@@ -69,6 +70,15 @@ public:
 			float encode_scale) const;
 
 	float height_clamp_voxels() const;
+
+	/// Equirect brightness panorama (R8, width*height bytes): dark maria +
+	/// crater ray systems. Display-only albedo multiplier (value = b*1.5).
+	/// Mapping: v = acos(ny)/pi, lon = (0.5-u)*2pi, dir=(r cos, ny, r sin).
+	godot::PackedByteArray bake_brightness_panorama(int width, int height) const;
+
+	/// Skylight-entrance centers of all cave features, voxel/world space
+	/// (moon-centered). Debug/teleport aid — caves are hard to find by eye.
+	godot::PackedVector3Array cave_entrances() const;
 
 	/// Analytic relief H(n) in meters — same as MoonNativeSdfGenerator shell.
 	float sample_height_meters(const godot::Vector3 &direction) const;

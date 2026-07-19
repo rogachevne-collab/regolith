@@ -1,0 +1,215 @@
+[gd_scene load_steps=26 format=3]
+
+[ext_resource type="Script" path="res://scripts/vfx/drill_impact_vfx.gd" id="1"]
+[ext_resource type="Texture2D" uid="uid://c6hh07rp8whwq" path="res://resources/vfx/cloud02_8x8.png" id="2"]
+[ext_resource type="Material" path="res://resources/props/lunar_boulder_material.tres" id="3"]
+[ext_resource type="ArrayMesh" path="res://resources/props/lunar_boulder_mesh_small_0.tres" id="4"]
+[ext_resource type="ArrayMesh" path="res://resources/props/lunar_boulder_mesh_small_1.tres" id="5"]
+[ext_resource type="ArrayMesh" path="res://resources/props/lunar_boulder_mesh_small_2.tres" id="6"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_dust"]
+transparency = 1
+cull_mode = 2
+albedo_texture = ExtResource("2")
+metallic_specular = 0.0
+roughness = 1.0
+billboard_mode = 3
+particles_anim_h_frames = 8
+particles_anim_v_frames = 8
+particles_anim_loop = true
+vertex_color_use_as_albedo = true
+disable_receive_shadows = true
+proximity_fade_enabled = true
+proximity_fade_distance = 0.25
+distance_fade_mode = 1
+distance_fade_min_distance = 0.12
+distance_fade_max_distance = 0.4
+
+[sub_resource type="QuadMesh" id="QuadMesh_dust"]
+material = SubResource("StandardMaterial3D_dust")
+size = Vector2(1, 1)
+
+[sub_resource type="Gradient" id="Gradient_plume_ramp"]
+offsets = PackedFloat32Array(0, 0.06, 0.45, 0.85, 1)
+colors = PackedColorArray(0.55, 0.52, 0.48, 0, 0.55, 0.52, 0.48, 0.55, 0.48, 0.46, 0.42, 0.38, 0.4, 0.38, 0.35, 0.14, 0.35, 0.33, 0.3, 0)
+
+[sub_resource type="GradientTexture1D" id="GradientTexture1D_plume_ramp"]
+gradient = SubResource("Gradient_plume_ramp")
+
+[sub_resource type="Curve" id="Curve_grow"]
+_data = [Vector2(0, 0.35), 0.0, 1.6, 0, 0, Vector2(0.55, 1.0), 0.15, 0.0, 0, 0, Vector2(1, 1.15), 0.05, 0.0, 0, 0]
+point_count = 3
+
+[sub_resource type="CurveTexture" id="CurveTexture_grow"]
+curve = SubResource("Curve_grow")
+
+[sub_resource type="ParticleProcessMaterial" id="ParticleProcessMaterial_plume"]
+lifetime_randomness = 0.45
+emission_shape = 1
+emission_sphere_radius = 0.28
+angle_min = -180.0
+angle_max = 180.0
+direction = Vector3(0, 0, 1)
+spread = 80.0
+initial_velocity_min = 0.25
+initial_velocity_max = 0.9
+angular_velocity_min = -25.0
+angular_velocity_max = 25.0
+gravity = Vector3(0, -1.62, 0)
+damping_min = 1.8
+damping_max = 3.2
+scale_min = 3.8
+scale_max = 7.2
+scale_curve = SubResource("CurveTexture_grow")
+color_ramp = SubResource("GradientTexture1D_plume_ramp")
+anim_speed_min = 0.7
+anim_speed_max = 1.3
+anim_offset_min = 0.0
+anim_offset_max = 1.0
+
+[sub_resource type="Gradient" id="Gradient_jet_ramp"]
+offsets = PackedFloat32Array(0, 0.08, 0.5, 1)
+colors = PackedColorArray(0.58, 0.55, 0.5, 0, 0.58, 0.55, 0.5, 0.62, 0.5, 0.48, 0.44, 0.28, 0.42, 0.4, 0.37, 0)
+
+[sub_resource type="GradientTexture1D" id="GradientTexture1D_jet_ramp"]
+gradient = SubResource("Gradient_jet_ramp")
+
+[sub_resource type="Curve" id="Curve_jet_grow"]
+_data = [Vector2(0, 0.45), 0.0, 1.8, 0, 0, Vector2(1, 1.0), 0.1, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="CurveTexture" id="CurveTexture_jet_grow"]
+curve = SubResource("Curve_jet_grow")
+
+[sub_resource type="ParticleProcessMaterial" id="ParticleProcessMaterial_jet"]
+lifetime_randomness = 0.35
+emission_shape = 1
+emission_sphere_radius = 0.1
+angle_min = -180.0
+angle_max = 180.0
+direction = Vector3(0, 0, 1)
+spread = 32.0
+initial_velocity_min = 1.0
+initial_velocity_max = 2.2
+gravity = Vector3(0, -1.62, 0)
+damping_min = 2.8
+damping_max = 4.5
+scale_min = 0.55
+scale_max = 1.1
+scale_curve = SubResource("CurveTexture_jet_grow")
+color_ramp = SubResource("GradientTexture1D_jet_ramp")
+anim_speed_min = 1.2
+anim_speed_max = 2.0
+anim_offset_min = 0.0
+anim_offset_max = 1.0
+
+[sub_resource type="Curve" id="Curve_chip_shrink"]
+_data = [Vector2(0, 1), 0.0, 0.0, 0, 0, Vector2(0.85, 1), 0.0, -0.5, 0, 0, Vector2(1, 0.05), -4.0, 0.0, 0, 0]
+point_count = 3
+
+[sub_resource type="CurveTexture" id="CurveTexture_chip_shrink"]
+curve = SubResource("Curve_chip_shrink")
+
+[sub_resource type="ParticleProcessMaterial" id="ParticleProcessMaterial_chips"]
+lifetime_randomness = 0.55
+emission_shape = 1
+emission_sphere_radius = 0.08
+use_rotation_3d = true
+rotation_3d_min = Vector3(-3.1416, -3.1416, -3.1416)
+rotation_3d_max = Vector3(3.1416, 3.1416, 3.1416)
+direction = Vector3(0, 0, 1)
+spread = 165.0
+flatness = 0.55
+initial_velocity_min = 1.8
+initial_velocity_max = 4.2
+radial_velocity_min = 0.6
+radial_velocity_max = 2.4
+use_rotation_velocity_3d = true
+rotation_velocity_3d_min = Vector3(-11, -11, -11)
+rotation_velocity_3d_max = Vector3(11, 11, 11)
+gravity = Vector3(0, -1.62, 0)
+damping_min = 0.15
+damping_max = 0.6
+use_scale_3d = true
+scale_3d_min = Vector3(0.025, 0.02, 0.025)
+scale_3d_max = Vector3(0.07, 0.055, 0.065)
+scale_curve = SubResource("CurveTexture_chip_shrink")
+
+[sub_resource type="Gradient" id="Gradient_spark_ramp"]
+offsets = PackedFloat32Array(0, 0.12, 0.5, 0.8, 1)
+colors = PackedColorArray(3.2, 3.0, 2.4, 1, 2.6, 1.9, 0.9, 1, 1.8, 0.75, 0.18, 0.9, 0.9, 0.22, 0.04, 0.5, 0.3, 0.05, 0.01, 0)
+
+[sub_resource type="GradientTexture1D" id="GradientTexture1D_spark_ramp"]
+gradient = SubResource("Gradient_spark_ramp")
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_spark"]
+transparency = 1
+blend_mode = 1
+shading_mode = 0
+vertex_color_use_as_albedo = true
+disable_receive_shadows = true
+
+[sub_resource type="QuadMesh" id="QuadMesh_spark"]
+material = SubResource("StandardMaterial3D_spark")
+size = Vector2(0.007, 0.07)
+
+[sub_resource type="ParticleProcessMaterial" id="ParticleProcessMaterial_sparks"]
+lifetime_randomness = 0.5
+emission_shape = 1
+emission_sphere_radius = 0.06
+direction = Vector3(0, 0, 1)
+spread = 75.0
+initial_velocity_min = 4.0
+initial_velocity_max = 9.0
+gravity = Vector3(0, -1.62, 0)
+color_ramp = SubResource("GradientTexture1D_spark_ramp")
+
+[node name="DrillImpactVfx" type="Node3D"]
+script = ExtResource("1")
+
+[node name="DustJet" type="GPUParticles3D" parent="."]
+cast_shadow = 0
+emitting = false
+amount = 32
+lifetime = 0.6
+fixed_fps = 60
+visibility_aabb = AABB(-6, -6, -6, 12, 12, 12)
+draw_order = 3
+process_material = SubResource("ParticleProcessMaterial_jet")
+draw_pass_1 = SubResource("QuadMesh_dust")
+
+[node name="DustPlume" type="GPUParticles3D" parent="."]
+cast_shadow = 0
+emitting = false
+amount = 42
+lifetime = 2.4
+fixed_fps = 60
+visibility_aabb = AABB(-10, -10, -10, 20, 20, 20)
+draw_order = 3
+process_material = SubResource("ParticleProcessMaterial_plume")
+draw_pass_1 = SubResource("QuadMesh_dust")
+
+[node name="Chips" type="GPUParticles3D" parent="."]
+material_override = ExtResource("3")
+cast_shadow = 0
+emitting = false
+amount = 22
+lifetime = 1.35
+fixed_fps = 60
+visibility_aabb = AABB(-8, -8, -8, 16, 16, 16)
+process_material = SubResource("ParticleProcessMaterial_chips")
+draw_passes = 3
+draw_pass_1 = ExtResource("4")
+draw_pass_2 = ExtResource("5")
+draw_pass_3 = ExtResource("6")
+
+[node name="Sparks" type="GPUParticles3D" parent="."]
+cast_shadow = 0
+emitting = false
+amount = 160
+lifetime = 0.4
+fixed_fps = 60
+visibility_aabb = AABB(-4, -4, -4, 8, 8, 8)
+transform_align = 3
+process_material = SubResource("ParticleProcessMaterial_sparks")
+draw_pass_1 = SubResource("QuadMesh_spark")

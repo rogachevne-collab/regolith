@@ -44,6 +44,23 @@ func is_native_ready() -> bool:
 	return _baker != null
 
 
+## Equirect albedo-brightness map (maria + crater rays); null if unavailable.
+func bake_brightness_map(width: int, height: int) -> Image:
+	if _baker == null or not _baker.has_method("bake_brightness_panorama"):
+		return null
+	var bytes: PackedByteArray = _baker.call("bake_brightness_panorama", width, height)
+	if bytes.size() != width * height:
+		return null
+	return Image.create_from_data(width, height, false, Image.FORMAT_L8, bytes)
+
+
+## World-space (moon-centered) skylight centers of generated caves.
+func cave_entrances() -> PackedVector3Array:
+	if _baker == null or not _baker.has_method("cave_entrances"):
+		return PackedVector3Array()
+	return _baker.call("cave_entrances")
+
+
 func describe() -> String:
 	if _baker == null:
 		return "native sampler unavailable"

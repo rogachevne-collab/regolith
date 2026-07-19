@@ -287,7 +287,7 @@ entries от carriage-контактов независимо от `machine_enab
 
 - **Ядро** (формулы `J`, subgrid-фильтр, sustained окно): headless
   `./tests/run_one.sh test_impact_destruction`.
-- **Геймплей / carriage / carve при scale 0.65** (R2, R7, R8): запущенная игра
+- **Геймплей / carriage / carve при scale 1.0** (R2, R7, R8): запущенная игра
   через playground — Beckett `play_scene` → `screenshot`, `game_logs`. Человек
   подтверждает feel. «Тест зелёный» не доказывает, что пистон реально режет грунт.
 

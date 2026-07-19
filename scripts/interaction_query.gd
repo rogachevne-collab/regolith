@@ -8,10 +8,10 @@ signal hit_updated(hit: InteractionHit)
 @export var tool_controller_path: NodePath = NodePath("../ToolController")
 @export var terrain_path: NodePath = NodePath("../../VoxelTerrain")
 @export var simulation_session_path: NodePath = NodePath("../../SimulationSession")
-@export var max_distance := 4.0
+@export var max_distance := 6.5
 @export var build_max_distance := 10.0
-## Layers 1 (terrain), 4 (interaction wire colliders), 8 (loot pickup only).
-@export_flags_3d_physics var collision_mask := 13
+## Layers 1 (terrain), 2 (floating debris), 4 (interaction), 8 (loot).
+@export_flags_3d_physics var collision_mask := 15
 
 var current_hit := InteractionHit.empty()
 
@@ -27,10 +27,24 @@ func _ready() -> void:
 	_player = get_node(player_path)
 	_camera = get_node(camera_path)
 	_tools = get_node_or_null(tool_controller_path) as ToolController
-	_terrain = get_node(terrain_path)
+	_terrain = get_node_or_null(terrain_path) as Node3D
 	_session = get_node_or_null(simulation_session_path) as SimulationSession
+	var scene := get_tree().current_scene
+	if scene != null:
+		if _terrain == null:
+			_terrain = scene.get_node_or_null("VoxelTerrain") as Node3D
+		if _session == null:
+			_session = scene.get_node_or_null(
+				"SimulationSession"
+			) as SimulationSession
 	_voxel_tool = TerrainCompat.get_voxel_tool(_terrain)
-	_voxel_tool.channel = VoxelBuffer.CHANNEL_SDF
+	if _voxel_tool != null:
+		_voxel_tool.channel = VoxelBuffer.CHANNEL_SDF
+	elif _terrain == null:
+		push_warning(
+			"InteractionQuery: VoxelTerrain not found (path=%s)"
+			% str(terrain_path)
+		)
 
 
 func _physics_process(_delta: float) -> void:
@@ -127,6 +141,8 @@ func _query_voxel(
 	direction: Vector3,
 	reach: float = -1.0
 ) -> InteractionHit:
+	if _voxel_tool == null or _terrain == null:
+		return InteractionHit.empty()
 	if reach <= 0.0:
 		reach = max_distance
 	var raw: VoxelRaycastResult = VoxelSpaceUtil.raycast_world(
@@ -169,6 +185,11 @@ func _target_kind(
 		return InteractionHit.KIND_WORLD_LOOT
 	if metadata.has("electric_link_id"):
 		return InteractionHit.KIND_ELECTRIC_CABLE
+	if (
+		collider is Node
+		and (collider as Node).is_in_group(&"terrain_floating_debris")
+	):
+		return InteractionHit.KIND_TERRAIN_DEBRIS
 	if TerrainCompat.is_terrain_collider(collider, _terrain):
 		return InteractionHit.KIND_VOXEL
 	if collider is Node and collider.is_in_group("placed_blocks"):
@@ -348,7 +369,10 @@ func _should_skip_body_for_build(kind: StringName) -> bool:
 	return (
 		_tools != null
 		and _tools.active_tool == &"build"
-		and kind == InteractionHit.KIND_BODY
+		and (
+			kind == InteractionHit.KIND_BODY
+			or kind == InteractionHit.KIND_TERRAIN_DEBRIS
+		)
 	)
 
 

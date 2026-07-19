@@ -3,55 +3,33 @@
 [ext_resource type="Script" uid="uid://c1pprtdrrt2lb" path="res://scripts/player_controller.gd" id="1"]
 [ext_resource type="Script" uid="uid://c3lkuwf6b81hx" path="res://scripts/mouse_look.gd" id="2"]
 [ext_resource type="Script" uid="uid://bw1oxm4kkusl8" path="res://scripts/drill.gd" id="3"]
-[ext_resource type="AudioStream" uid="uid://dfp2npjb02210" path="res://resources/drill_loop.wav" id="4"]
+[ext_resource type="AudioStream" uid="uid://dxeafr6i7ixyb" path="res://resources/audio/drill_idle.wav" id="4"]
 [ext_resource type="Script" uid="uid://dv8yni6em0fm1" path="res://scripts/support_frame.gd" id="6"]
 [ext_resource type="Script" uid="uid://jygcphnx675p" path="res://scripts/player_settings_overlay.gd" id="7"]
 [ext_resource type="PackedScene" uid="uid://b20u64sdjhmkg" path="res://resources/models/industrial_drill.glb" id="7_y4r1p"]
 [ext_resource type="Script" uid="uid://diyma885jcjsr" path="res://scripts/interaction_query.gd" id="8"]
 [ext_resource type="Script" uid="uid://b3mkkfnkg88fv" path="res://scripts/tool_controller.gd" id="9"]
-[ext_resource type="PackedScene" uid="uid://c8hudroot0ui01" path="res://scenes/ui/hud_root.tscn" id="10"]
-[ext_resource type="Script" path="res://scripts/construction_preview.gd" id="11"]
-[ext_resource type="Script" path="res://scripts/presentation/industry_port_presentation.gd" id="13"]
-[ext_resource type="Script" path="res://scripts/suit_state.gd" id="12"]
-[ext_resource type="Script" path="res://scripts/cable_routing_preview.gd" id="14"]
-[ext_resource type="Script" path="res://scripts/power_radius_preview.gd" id="15"]
+[ext_resource type="PackedScene" uid="uid://y8qf7sbclrb5" path="res://scenes/ui/hud_root.tscn" id="10"]
+[ext_resource type="Script" uid="uid://bl6viwxxgl6a1" path="res://scripts/construction_preview.gd" id="11"]
+[ext_resource type="Script" uid="uid://hpr31qknod7e" path="res://scripts/suit_state.gd" id="12"]
+[ext_resource type="Script" uid="uid://b085mi0tu1ihv" path="res://scripts/presentation/industry_port_presentation.gd" id="13"]
+[ext_resource type="Script" uid="uid://c2oxlpj7vm42u" path="res://scripts/cable_routing_preview.gd" id="14"]
+[ext_resource type="Script" uid="uid://scqyk47gad2l" path="res://scripts/power_radius_preview.gd" id="15"]
+[ext_resource type="PackedScene" path="res://scenes/vfx/drill_impact_vfx.tscn" id="16"]
+[ext_resource type="Script" uid="uid://li5ry5aytj42" path="res://scripts/player_footsteps.gd" id="17"]
+[ext_resource type="AudioStream" path="res://resources/audio/footsteps/gravel_run_randomizer.tres" id="18"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape_player"]
-height = 1.8
 radius = 0.3
+height = 1.8
 
-[sub_resource type="ParticleProcessMaterial" id="ParticleProcessMaterial_sparks"]
-emission_shape = 1
-emission_sphere_radius = 0.04
-direction = Vector3(0, 1, 0)
-spread = 48.0
-initial_velocity_min = 1.5
-initial_velocity_max = 4.5
-gravity = Vector3(0, -3, 0)
-scale_min = 0.04
-scale_max = 0.12
-color = Color(1, 0.78, 0.25, 1)
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_sparks"]
-transparency = 1
-shading_mode = 0
-vertex_color_use_as_albedo = true
-billboard_mode = 3
-particles_anim_h_frames = 1
-particles_anim_v_frames = 1
-particles_anim_loop = false
-
-[sub_resource type="QuadMesh" id="QuadMesh_sparks"]
-material = SubResource("StandardMaterial3D_sparks")
-size = Vector2(0.08, 0.08)
+[sub_resource type="BoxMesh" id="BoxMesh_welder_grip"]
+size = Vector3(0.05, 0.08, 0.14)
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_welder"]
 albedo_color = Color(0.28, 0.3, 0.34, 1)
 metallic = 0.72
 roughness = 0.38
-
-[sub_resource type="BoxMesh" id="BoxMesh_welder_grip"]
-size = Vector3(0.05, 0.08, 0.14)
 
 [sub_resource type="BoxMesh" id="BoxMesh_welder_nozzle"]
 size = Vector3(0.04, 0.04, 0.22)
@@ -66,7 +44,6 @@ albedo_color = Color(0.72, 0.78, 0.86, 1)
 [node name="Player" type="CharacterBody3D" unique_id=999750236]
 collision_layer = 4
 collision_mask = 3
-physics_interpolation_mode = 0
 script = ExtResource("1")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=1012594469]
@@ -80,19 +57,17 @@ script = ExtResource("8")
 
 [node name="ToolController" type="Node" parent="." unique_id=416839685]
 script = ExtResource("9")
-preview_path = NodePath("../ConstructionPreview")
 
-[node name="ConstructionPreview" type="Node3D" parent="."]
+[node name="ConstructionPreview" type="Node3D" parent="." unique_id=982821976]
 script = ExtResource("11")
-camera_path = NodePath("../Camera")
 
-[node name="CableRoutingPreview" type="Node3D" parent="."]
+[node name="CableRoutingPreview" type="Node3D" parent="." unique_id=1867769890]
 script = ExtResource("14")
 
-[node name="PowerRadiusPreview" type="Node3D" parent="."]
+[node name="PowerRadiusPreview" type="Node3D" parent="." unique_id=1587908718]
 script = ExtResource("15")
 
-[node name="IndustryPortPresentation" type="Node" parent="."]
+[node name="IndustryPortPresentation" type="Node" parent="." unique_id=763739879]
 script = ExtResource("13")
 
 [node name="Camera" type="Camera3D" parent="." unique_id=1923783900]
@@ -102,46 +77,36 @@ fov = 80.0
 far = 20000.0
 script = ExtResource("2")
 
-[node name="MiningLight" type="SpotLight3D" parent="Camera"]
+[node name="MiningLight" type="SpotLight3D" parent="Camera" unique_id=1608737082]
 light_color = Color(1, 0.93, 0.82, 1)
 light_energy = 3.2
-shadow_enabled = false
 spot_range = 12.0
 spot_attenuation = 0.8
 spot_angle = 42.0
 
-[node name="DrillAudio" type="AudioStreamPlayer3D" parent="Camera" unique_id=2129068512]
-stream = ExtResource("4")
-volume_db = -8.0
-unit_size = 2.0
-max_distance = 12.0
-
 [node name="DrillVisual" type="Node3D" parent="Camera" unique_id=352285946]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.28, -0.22, -0.45)
 
-[node name="Sparks" type="GPUParticles3D" parent="Camera/DrillVisual" unique_id=1911807031]
-amount = 24
-lifetime = 0.18
-explosiveness = 0.85
-process_material = SubResource("ParticleProcessMaterial_sparks")
-draw_pass_1 = SubResource("QuadMesh_sparks")
+[node name="ShakePivot" type="Node3D" parent="Camera/DrillVisual"]
 
-[node name="Mount" type="Node3D" parent="Camera/DrillVisual" unique_id=1333315461]
+[node name="Mount" type="Node3D" parent="Camera/DrillVisual/ShakePivot" unique_id=1333315461]
 transform = Transform3D(2.5, 0, 0, 0, 2.5, 0, 0, 0, 2.5, 0, 0, 0.08)
 
-[node name="Model" parent="Camera/DrillVisual/Mount" unique_id=2115948937 instance=ExtResource("7_y4r1p")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.13855156)
+[node name="Model" parent="Camera/DrillVisual/ShakePivot/Mount" unique_id=2115948937 instance=ExtResource("7_y4r1p")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0.011997536)
 
-[node name="WelderVisual" type="Node3D" parent="Camera"]
-visible = false
+[node name="ImpactVfx" parent="Camera" unique_id=1174185237 instance=ExtResource("16")]
+
+[node name="WelderVisual" type="Node3D" parent="Camera" unique_id=2107256983]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.28, -0.22, -0.45)
+visible = false
 
-[node name="Grip" type="MeshInstance3D" parent="Camera/WelderVisual"]
+[node name="Grip" type="MeshInstance3D" parent="Camera/WelderVisual" unique_id=428886301]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.02, -0.03, -0.08)
 mesh = SubResource("BoxMesh_welder_grip")
 surface_material_override/0 = SubResource("StandardMaterial3D_welder")
 
-[node name="Nozzle" type="MeshInstance3D" parent="Camera/WelderVisual"]
+[node name="Nozzle" type="MeshInstance3D" parent="Camera/WelderVisual" unique_id=1139861795]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.02, 0.01, -0.24)
 mesh = SubResource("BoxMesh_welder_nozzle")
 surface_material_override/0 = SubResource("StandardMaterial3D_welder")
@@ -149,10 +114,33 @@ surface_material_override/0 = SubResource("StandardMaterial3D_welder")
 [node name="Drill" type="Node" parent="." unique_id=1360361658]
 script = ExtResource("3")
 
-[node name="SuitState" type="Node" parent="."]
+[node name="DrillIdleAudio" type="AudioStreamPlayer" parent="Drill" unique_id=970184905]
+stream = ExtResource("4")
+volume_db = 2.0
+
+[node name="DrillMineAudioA" type="AudioStreamPlayer" parent="Drill" unique_id=42178554]
+volume_db = -80.0
+
+[node name="DrillMineAudioB" type="AudioStreamPlayer" parent="Drill" unique_id=485067310]
+volume_db = -80.0
+
+[node name="DrillDebrisAudioA" type="AudioStreamPlayer" parent="Drill" unique_id=993689189]
+volume_db = -80.0
+
+[node name="DrillDebrisAudioB" type="AudioStreamPlayer" parent="Drill" unique_id=687245136]
+volume_db = -80.0
+
+[node name="Footsteps" type="Node" parent="." unique_id=20275966]
+script = ExtResource("17")
+
+[node name="FootstepAudio" type="AudioStreamPlayer" parent="Footsteps" unique_id=1563975090]
+stream = ExtResource("18")
+volume_db = -8.0
+
+[node name="SuitState" type="Node" parent="." unique_id=103355255]
 script = ExtResource("12")
 
-[node name="HUDRoot" parent="." instance=ExtResource("10")]
+[node name="HUDRoot" parent="." unique_id=119939119 instance=ExtResource("10")]
 
 [node name="SettingsOverlay" type="CanvasLayer" parent="." unique_id=70838383]
 layer = 10
@@ -253,5 +241,3 @@ surface_material_override/0 = SubResource("StandardMaterial3D_body")
 
 [node name="VoxelViewer" type="VoxelViewer" parent="." unique_id=1175640371]
 view_distance = 2048
-requires_collisions = true
-requires_visuals = true

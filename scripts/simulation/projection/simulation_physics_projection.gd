@@ -21,9 +21,24 @@ const BodyGroupMotionUtilScript := preload(
 
 const ASSEMBLY_BOUNCE := 0.32
 const ASSEMBLY_FRICTION := 0.42
+## Locomotive chassis scrapes voxel meshes on bumps; bounce + CCD thrash the
+## Jolt solver (see rover bump FPS). Wheels are raycast-supported.
+const LOCOMOTIVE_BOUNCE := 0.0
+## Layer 1 = terrain (VoxelLodTerrain default). Layer 2 = assemblies.
+## Player is layer 4 / mask 3 (hits terrain + assemblies).
+const COLLISION_LAYER_TERRAIN := 1
+const COLLISION_LAYER_ASSEMBLY := 2
+const COLLISION_MASK_ASSEMBLY := (
+	COLLISION_LAYER_TERRAIN | COLLISION_LAYER_ASSEMBLY
+)
+## Wheel locomotives still collide with terrain: raycast wheels alone cannot
+## catch tip-over / bad seating (mask=assembly-only freefalls through crust).
+## FPS: CCD off, bounce 0, wheel/suspension solid colliders disabled.
+const COLLISION_MASK_WHEEL_LOCOMOTIVE := COLLISION_MASK_ASSEMBLY
 
 var _world: SimulationWorld
 var _assembly_physics_material: PhysicsMaterial
+var _locomotive_physics_material: PhysicsMaterial
 var _bodies: Dictionary = {}
 ## assembly_id -> consecutive settled physics frames under parking brake.
 var _park_settle_frames: Dictionary = {}
@@ -299,6 +314,7 @@ func _try_append_placed_element(
 		[element_id] as Array[int]
 	)
 	_refresh_single_body_mass_com(assembly_id, body as RigidBody3D, assembly)
+	_sync_wheel_loco_body_physics(assembly_id, body as RigidBody3D)
 	_projected_revision[assembly_id] = assembly.topology_revision
 	return true
 
@@ -472,6 +488,7 @@ func _try_remove_projected_element(
 	_element_records.erase(element_id)
 	WheelSimulationService.invalidate_park_anchors(_world, assembly_id)
 	_refresh_single_body_mass_com(assembly_id, body as RigidBody3D, assembly)
+	_sync_wheel_loco_body_physics(assembly_id, body as RigidBody3D)
 	_projected_revision[assembly_id] = assembly.topology_revision
 	return true
 
@@ -818,6 +835,8 @@ func _project_assembly_single(
 			"collider_local_cell",
 			record["collider_local_cell"]
 		)
+		if _should_disable_wheel_module_collider(assembly_id, element_id):
+			collider.disabled = true
 		body.add_child(collider)
 		if not colliders_by_element.has(element_id):
 			colliders_by_element[element_id] = []
@@ -888,6 +907,8 @@ func _project_assembly_single(
 		rigid.sleeping = motion.sleeping
 		if mounted != null:
 			rigid.freeze = false if motion_override != null else motion.frozen
+		else:
+			rigid.freeze = motion.frozen
 		if (
 			_impact_service != null
 			and mounted == null
@@ -897,6 +918,7 @@ func _project_assembly_single(
 				rigid,
 				ImpactResolverService.ImpactBodyMode.FULL
 			)
+		_apply_locomotive_rigid_tuning(assembly_id, rigid)
 	_bodies[assembly_id] = body
 	for element_id: int in colliders_by_element:
 		_element_records[element_id] = {
@@ -1034,6 +1056,7 @@ func _project_assembly_multibody(
 						else ImpactResolverService.ImpactBodyMode.FULL
 					)
 					_impact_service.configure_impact_body(rigid, impact_mode)
+				_apply_locomotive_rigid_tuning(assembly_id, rigid)
 		add_child(body)
 		_apply_collision_profile(assembly_id, body)
 		_apply_body_groups(assembly_id, body)
@@ -1312,8 +1335,8 @@ func _create_group_body(
 		assembly_id,
 		group_id,
 	]
-	body.collision_layer = 1
-	body.collision_mask = 1
+	body.collision_layer = COLLISION_LAYER_ASSEMBLY
+	body.collision_mask = COLLISION_MASK_ASSEMBLY
 	body.set_meta("assembly_id", assembly_id)
 	body.set_meta("body_group_id", group_id)
 	return body
@@ -1344,6 +1367,8 @@ func _attach_colliders_to_body(
 			"collider_local_cell",
 			record["collider_local_cell"]
 		)
+		if _should_disable_wheel_module_collider(assembly_id, element_id):
+			collider.disabled = true
 		body.add_child(collider)
 		if not colliders_by_element.has(element_id):
 			colliders_by_element[element_id] = []
@@ -1450,15 +1475,20 @@ func _should_tick_wheels(assembly_id: int) -> bool:
 		or not WheelSimulationService.is_locomotive_assembly(_world, assembly_id)
 	):
 		return false
+	var rigid: RigidBody3D = null
 	var body := get_physics_body(assembly_id)
 	if body is RigidBody3D:
-		return not (body as RigidBody3D).freeze
-	var groups: Variant = _assembly_group_bodies.get(assembly_id)
-	if groups is Dictionary:
-		for body_variant: Variant in (groups as Dictionary).values():
-			if body_variant is RigidBody3D:
-				return not (body_variant as RigidBody3D).freeze
-	return false
+		rigid = body as RigidBody3D
+	else:
+		var groups: Variant = _assembly_group_bodies.get(assembly_id)
+		if groups is Dictionary:
+			for body_variant: Variant in (groups as Dictionary).values():
+				if body_variant is RigidBody3D:
+					rigid = body_variant as RigidBody3D
+					break
+	# Wheel/suspension solid colliders are disabled — raycast springs are the
+	# only support until park-freeze. Never skip the tick for a free body.
+	return rigid != null and not rigid.freeze
 
 func _tick_wheel_pairs(delta: float) -> void:
 	if _world == null or delta <= 0.0:
@@ -2023,8 +2053,8 @@ func _create_body(
 		rigid.physics_material_override = _get_assembly_physics_material()
 		body = rigid
 	body.name = "%s%d" % [BODY_NAME_PREFIX, assembly_id]
-	body.collision_layer = 1
-	body.collision_mask = 1
+	body.collision_layer = COLLISION_LAYER_ASSEMBLY
+	body.collision_mask = COLLISION_MASK_ASSEMBLY
 	body.set_meta("assembly_id", assembly_id)
 	_apply_collision_profile(assembly_id, body)
 	return body
@@ -2044,6 +2074,74 @@ func _get_assembly_physics_material() -> PhysicsMaterial:
 		_assembly_physics_material.friction = ASSEMBLY_FRICTION
 		_assembly_physics_material.bounce = ASSEMBLY_BOUNCE
 	return _assembly_physics_material
+
+
+func _get_locomotive_physics_material() -> PhysicsMaterial:
+	if _locomotive_physics_material == null:
+		_locomotive_physics_material = PhysicsMaterial.new()
+		_locomotive_physics_material.friction = ASSEMBLY_FRICTION
+		_locomotive_physics_material.bounce = LOCOMOTIVE_BOUNCE
+	return _locomotive_physics_material
+
+
+## Soften locomotive↔terrain contact cost without removing the safety net:
+## no CCD, no bounce; wheel/suspension boxes disabled separately.
+func _apply_locomotive_rigid_tuning(
+	assembly_id: int,
+	rigid: RigidBody3D
+) -> void:
+	if (
+		rigid == null
+		or _world == null
+		or not WheelSimulationService.is_locomotive_assembly(
+			_world,
+			assembly_id
+		)
+	):
+		return
+	rigid.continuous_cd = false
+	rigid.physics_material_override = _get_locomotive_physics_material()
+	rigid.collision_layer = COLLISION_LAYER_ASSEMBLY
+	rigid.collision_mask = COLLISION_MASK_WHEEL_LOCOMOTIVE
+	rigid.set_meta("wheel_loco_terrain_exempt", true)
+
+
+func _should_disable_wheel_module_collider(
+	assembly_id: int,
+	element_id: int
+) -> bool:
+	if (
+		_world == null
+		or not WheelSimulationService.is_locomotive_assembly(
+			_world,
+			assembly_id
+		)
+	):
+		return false
+	var element := _world.get_element(element_id)
+	if element == null:
+		return false
+	return (
+		element.archetype_id == "drive_wheel"
+		or element.archetype_id == "wheel_suspension"
+	)
+
+
+func _sync_wheel_loco_body_physics(
+	assembly_id: int,
+	rigid: RigidBody3D
+) -> void:
+	if rigid == null:
+		return
+	if WheelSimulationService.is_locomotive_assembly(_world, assembly_id):
+		_apply_locomotive_rigid_tuning(assembly_id, rigid)
+		return
+	if not rigid.has_meta("wheel_loco_terrain_exempt"):
+		return
+	rigid.collision_layer = COLLISION_LAYER_ASSEMBLY
+	rigid.collision_mask = COLLISION_MASK_ASSEMBLY
+	rigid.physics_material_override = _get_assembly_physics_material()
+	rigid.remove_meta("wheel_loco_terrain_exempt")
 
 func _apply_body_groups(
 	assembly_id: int,

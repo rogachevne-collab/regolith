@@ -30,8 +30,9 @@
 
 ## Проектные инварианты (кратко)
 
-- **Voxel size:** uniform `scale` на `VoxelTerrain` (сейчас **0.65**); отдельного
-  `voxel_size` на узле нет — это официальный workaround плагина.
+- **Voxel size:** uniform `scale` на `VoxelTerrain` / `VoxelLodTerrain`
+  (сейчас **1.0** = 1 м; канон `MoonGeometry.VOXEL_SCALE`); отдельного
+  `voxel_size` на узле нет — при scale ≠ 1 это официальный workaround плагина.
 - **`VoxelTool.raycast`:** origin, direction, max_distance — **Godot world space**.
   Плагин сам учитывает transform terrain. World hit = `origin + dir * hit.distance`.
   **Не** делать ручной `world_to_local` для raycast при scale ≠ 1 — двойная
@@ -56,6 +57,7 @@
 | Raycast offset от integer origins | GitHub #136 (epsilon ~0.1) |
 | Collider отстаёт от SDF при edits | GitHub #677; aim — physics, edit — SDF local |
 | `max_view_distance` vs `VoxelViewer` | terrain должен поднять clamp, иначе блоки не грузятся |
+| Floating islands после dig | `VoxelToolLodTerrain.separate_floating_chunks` (~30³); обёртка `TerrainFloatingDebrisService` / INDUSTRY-V1 § Floating |
 
 ## Файлы проекта
 
@@ -65,6 +67,7 @@
 | Spawn / settle | `bootstrap.gd` |
 | Прицел / drill hit | `interaction_query.gd` |
 | Вырезка SDF | `terrain_excavation_service.gd`, `terrain_impact_carver.gd` |
+| Floating debris | `terrain_floating_debris_service.gd` ← gateway post-dig |
 | Yield по материалу | `terrain_material_source.gd` → канон `TERRAIN-MATERIALS-V1.md` |
 | Ground seat строительства | `world_command_gateway.gd` |
 | Bench scale | `bench_voxel_scale.gd`, `scenes/bench_voxel_scale.tscn` |

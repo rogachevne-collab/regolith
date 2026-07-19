@@ -1,4 +1,4 @@
-extends Camera3D
+﻿extends Camera3D
 
 @export var sensitivity := 0.25
 @export var min_pitch := -85.0
@@ -9,6 +9,9 @@ extends Camera3D
 @export var orbit_min_pitch := -20.0
 @export var orbit_max_pitch := 70.0
 @export var orbit_collision_mask := 3
+@export var shake_max_offset := 0.01
+@export var shake_max_forward := 0.016
+@export var shake_max_roll_deg := 0.25
 
 var _pitch := 0.0
 var _target: Node3D
@@ -18,6 +21,7 @@ var _orbit_yaw := 0.0
 var _orbit_pitch := 15.0
 ## Accumulated mouse delta for SE-like ship pitch/yaw (consumed by gateway).
 var _flight_look_delta := Vector2.ZERO
+var _shake_hold := 0.0
 
 const SETTINGS_PATH := "user://player_settings.cfg"
 const TELEPORT_SNAP_DISTANCE := 4.0
@@ -58,6 +62,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			_pitch = clampf(_pitch - motion.y * sensitivity, min_pitch, max_pitch)
 
 
+func set_camera_shake_hold(intensity: float) -> void:
+	_shake_hold = clampf(intensity, 0.0, 1.0)
+
+
 func _process(_delta: float) -> void:
 	if _target == null:
 		return
@@ -80,10 +88,13 @@ func _process(_delta: float) -> void:
 		reset_physics_interpolation()
 	_last_target_position = target_transform.origin
 	var target_basis := target_transform.basis.orthonormalized()
-	global_transform = _camera_transform(
+	var camera_xf := _camera_transform(
 		target_transform.origin,
 		target_basis
 	)
+	if _shake_hold > 0.001:
+		camera_xf = _apply_camera_shake(camera_xf, _shake_hold)
+	global_transform = camera_xf
 
 
 func view_angles() -> Vector2:
@@ -148,6 +159,7 @@ func movement_basis() -> Basis:
 
 
 func aim_transform() -> Transform3D:
+	## Stable aim without shake so dig raycasts do not jitter.
 	if _orbit_mode:
 		return global_transform
 	if _target == null:
@@ -157,6 +169,23 @@ func aim_transform() -> Transform3D:
 		target_transform.origin,
 		target_transform.basis.orthonormalized()
 	)
+
+
+func _apply_camera_shake(xf: Transform3D, intensity: float) -> Transform3D:
+	var amp := clampf(intensity, 0.0, 1.0)
+	var t := Time.get_ticks_msec() * 0.001
+	var ox := sin(t * 118.0) * shake_max_offset * amp
+	var oy := cos(t * 97.0) * shake_max_offset * amp
+	var oz := sin(t * 149.0) * shake_max_forward * amp
+	var roll := sin(t * 131.0) * deg_to_rad(shake_max_roll_deg) * amp
+	var origin := (
+		xf.origin
+		+ xf.basis.x * ox
+		+ xf.basis.y * oy
+		- xf.basis.z * oz
+	)
+	var basis := (xf.basis * Basis(Vector3.FORWARD, roll)).orthonormalized()
+	return Transform3D(basis, origin)
 
 
 func consume_yaw_delta() -> float:
