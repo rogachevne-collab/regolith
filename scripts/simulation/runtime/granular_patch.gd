@@ -56,6 +56,13 @@ const RIM_WIDTH_CELLS := 1.6
 ## an avalanche running past the point where the local slope alone would have
 ## stopped it, which is what makes it run out instead of just slumping.
 const FLOW_PERSISTENCE := 0.55
+## Bearing capacity of freshly dumped material: the ground pressure its
+## surface carries before a load starts sinking, and how fast that grows with
+## depth as the material around the load confines it. Loose spoil is far
+## weaker than undisturbed ground, which is why a rover bogs down in a fresh
+## dump and not on the plain.
+const DEFAULT_BEARING_BASE_PA := 300.0
+const DEFAULT_BEARING_GRADIENT_PA_PER_M := 4000.0
 
 var width: int = 0
 var depth: int = 0
@@ -67,6 +74,11 @@ var repose_tangent: float = tan(deg_to_rad(DEFAULT_REPOSE_DEG))
 var stability_tangent: float = tan(
 	deg_to_rad(DEFAULT_REPOSE_DEG + DEFAULT_STABILITY_MARGIN_DEG)
 )
+
+## Ground pressure the surface carries before anything sinks into it.
+var bearing_base_pa: float = DEFAULT_BEARING_BASE_PA
+## How much more pressure the material carries per metre of embedment.
+var bearing_gradient_pa_per_m: float = DEFAULT_BEARING_GRADIENT_PA_PER_M
 
 var _base: PackedFloat32Array = PackedFloat32Array()
 var _thickness: PackedFloat32Array = PackedFloat32Array()
@@ -181,6 +193,17 @@ func surface_height(x: int, z: int) -> float:
 	if _blocked[i] != 0:
 		return NAN
 	return _base[i] + _thickness[i]
+
+
+## How deep a load of the given ground pressure settles before the material
+## carries it. Zero while the surface alone is strong enough, then linear in
+## pressure: twice the load on the same footprint sinks roughly twice as far.
+func penetration_depth_m(pressure_pa: float) -> float:
+	if pressure_pa <= bearing_base_pa:
+		return 0.0
+	return (pressure_pa - bearing_base_pa) / maxf(
+		bearing_gradient_pa_per_m, 1.0
+	)
 
 
 ## Bilinear surface height at patch-local metres — what anything standing on

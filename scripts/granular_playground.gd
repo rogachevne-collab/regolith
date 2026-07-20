@@ -29,6 +29,15 @@ const MAX_ROCKS := 4000
 const GRAIN_AMPLITUDE_M := 0.02
 const MAX_CRATES := 12
 const CRATE_SIZE_M := 0.6
+const LIGHT_CRATE_KG := 40.0
+const HEAVY_CRATE_KG := 500.0
+## How fast a load settles into material that cannot carry it. Sinking is a
+## slow yield, not a fall: the collider floor is lowered under the body and
+## gravity does the rest.
+const SINK_SPEED_M_S := 0.35
+## Ground level around a body is sampled this far outside its footprint, so
+## the reading is undisturbed material rather than the body's own pit.
+const GROUND_SAMPLE_MARGIN_M := 0.45
 ## Below this an impact just presses; above it, it also shakes the slope loose.
 const IMPACT_SPEED_M_S := 1.5
 const IMPACT_SHAKE_M_PER_SPEED := 0.35
@@ -67,6 +76,7 @@ var _orbit_pitch := -0.35
 var _orbit_distance := 14.0
 var _dragging := false
 var _gravity := 1.62
+var _heavy_crate_material: Material
 
 
 func _ready() -> void:
@@ -85,7 +95,9 @@ func _ready() -> void:
 	_overlay.text = "\n".join([
 		"E — hold to pour (%.1f m3/s), sweep to lay a windrow" % POUR_RATE_M3_PER_S,
 		"T — tip a truck load (%.1f m3) away from the camera" % TRUCK_M3,
-		"Q — scoop   B — drop a crate   R — reset",
+		"Q — scoop   B — light crate (%.0f kg)   N — heavy crate (%.0f kg)"
+		% [LIGHT_CRATE_KG, HEAVY_CRATE_KG],
+		"R — reset",
 		"F — detail rocks   G — material   (piles hold steeper than they rest)",
 		"right mouse — orbit   wheel — zoom",
 	])
@@ -115,7 +127,7 @@ func _process(delta: float) -> void:
 
 ## Bodies displace material where they press into it. Runs on the physics
 ## tick because it reads settled contact poses, not interpolated ones.
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
 	_patch.clear_ceilings()
 	for crate: RigidBody3D in _crates:
 		if not is_instance_valid(crate):
@@ -151,10 +163,21 @@ func _physics_process(_delta: float) -> void:
 		# it. Without the lid it re-displaces the same spoil every tick and
 		# ratchets itself under.
 		_set_footprint_ceiling(position, bottom)
+		# Loose material carries only so much pressure. Below its bearing
+		# capacity a load rests on top; above it, the load settles in until
+		# the material confining it carries the rest — so a heavy crate beds
+		# itself in where a light one sits on the surface.
+		var pressure := crate.mass * _gravity / (CRATE_SIZE_M * CRATE_SIZE_M)
+		var target_depth := _patch.penetration_depth_m(pressure)
+		var ground := _ground_level_around(position)
+		var floor_height := bottom
+		if not is_nan(ground) and ground - bottom < target_depth:
+			floor_height = bottom - SINK_SPEED_M_S * delta
+			crate.sleeping = false
 		if crate.sleeping:
 			continue
 		var displaced := _patch.imprint_disc(
-			position.x, position.z, CRATE_SIZE_M * 0.5, bottom
+			position.x, position.z, CRATE_SIZE_M * 0.5, floor_height
 		)
 		if displaced <= 0.0:
 			continue
@@ -171,6 +194,29 @@ func _physics_process(_delta: float) -> void:
 					MAX_SHAKE_RADIUS_M
 				)
 			)
+
+
+## Undisturbed surface level around a body, sampled clear of the pit it has
+## dug for itself. Averaged over four directions so a body on a slope reads
+## the slope rather than one side of it.
+func _ground_level_around(position: Vector3) -> float:
+	var reach := CRATE_SIZE_M * 0.5 + GROUND_SAMPLE_MARGIN_M
+	var total := 0.0
+	var samples := 0
+	for offset: Vector3 in [
+		Vector3(reach, 0.0, 0.0),
+		Vector3(-reach, 0.0, 0.0),
+		Vector3(0.0, 0.0, reach),
+		Vector3(0.0, 0.0, -reach),
+	]:
+		var height := _patch.surface_height_at_m(
+			position.x + offset.x, position.z + offset.z
+		)
+		if is_nan(height):
+			continue
+		total += height
+		samples += 1
+	return NAN if samples == 0 else total / float(samples)
 
 
 func _set_footprint_ceiling(position: Vector3, bottom: float) -> void:
@@ -224,7 +270,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		KEY_T:
 			_dump_truck()
 		KEY_B:
-			_drop_crate()
+			_drop_crate(LIGHT_CRATE_KG)
+		KEY_N:
+			_drop_crate(HEAVY_CRATE_KG)
 		KEY_Q:
 			_scoop()
 		KEY_R:
@@ -276,9 +324,9 @@ func _dump_truck() -> void:
 ## a rim around it, so a drop leaves a crater with a raised lip and dragging
 ## one leaves a rut with berms. The material still does not push back — that
 ## is the next stage.
-func _drop_crate() -> void:
+func _drop_crate(mass_kg: float) -> void:
 	var crate := RigidBody3D.new()
-	crate.mass = 60.0
+	crate.mass = mass_kg
 	var shape := CollisionShape3D.new()
 	var box := BoxShape3D.new()
 	box.size = Vector3(CRATE_SIZE_M, CRATE_SIZE_M, CRATE_SIZE_M)
@@ -288,7 +336,9 @@ func _drop_crate() -> void:
 	var box_mesh := BoxMesh.new()
 	box_mesh.size = box.size
 	mesh.mesh = box_mesh
-	mesh.material_override = _rocks.material_override
+	mesh.material_override = (
+		_heavy_material() if mass_kg >= HEAVY_CRATE_KG else _rocks.material_override
+	)
 	crate.add_child(mesh)
 	crate.position = Vector3(
 		_aim.x, _sample_display_height(_aim.x, _aim.z) + 3.0, _aim.z
@@ -489,6 +539,15 @@ func _update_collider() -> void:
 			source[i] if is_nan(source[i]) else _display_heights[i]
 		) / CELL
 	shape.map_data = data
+
+
+func _heavy_material() -> Material:
+	if _heavy_crate_material == null:
+		var material := StandardMaterial3D.new()
+		material.albedo_color = Color(0.52, 0.44, 0.30)
+		material.roughness = 0.8
+		_heavy_crate_material = material
+	return _heavy_crate_material
 
 
 func _setup_rocks() -> void:

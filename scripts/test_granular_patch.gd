@@ -31,6 +31,7 @@ func _run_tests() -> void:
 		_test_avalanche_rests_at_repose_not_stability,
 		_test_surface_sampled_between_cells,
 		_test_ceiling_keeps_material_out_from_under_a_body,
+		_test_bearing_capacity_sinks_heavier_loads_deeper,
 		_test_imprint_displaces_into_a_rim,
 		_test_imprint_ignores_material_below_the_footprint,
 	]
@@ -368,6 +369,24 @@ func _test_ceiling_keeps_material_out_from_under_a_body() -> bool:
 	patch.relax(RELAX_CAP)
 	if patch.thickness_at(_center(), _center()) <= 1e-4:
 		return _fail("material did not return once the body left")
+	return true
+
+
+## Loose material carries a limited pressure: light loads rest on the surface,
+## heavier ones settle in until the material around them carries the rest.
+func _test_bearing_capacity_sinks_heavier_loads_deeper() -> bool:
+	var patch := _new_patch()
+	if patch.penetration_depth_m(patch.bearing_base_pa * 0.5) != 0.0:
+		return _fail("a load below bearing capacity must not sink")
+	var light := patch.penetration_depth_m(patch.bearing_base_pa + 1000.0)
+	var heavy := patch.penetration_depth_m(patch.bearing_base_pa + 4000.0)
+	if light <= 0.0:
+		return _fail("a load over capacity must sink: %f m" % light)
+	if heavy <= light * 3.5:
+		return _fail(
+			"four times the excess load must sink about four times as deep:"
+			+ " %f vs %f m" % [heavy, light]
+		)
 	return true
 
 
