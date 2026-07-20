@@ -34,7 +34,7 @@ const HEAVY_CRATE_KG := 500.0
 ## How fast a load settles into material that cannot carry it. Sinking is a
 ## slow yield, not a fall: the collider floor is lowered under the body and
 ## gravity does the rest.
-const SINK_SPEED_M_S := 0.35
+const SINK_SPEED_M_S := 0.5
 ## Ground level around a body is sampled this far outside its footprint. It
 ## has to clear the rim the body's own imprint threw up, or the reading is the
 ## body's own spoil and it decides it has already sunk far enough.
@@ -175,9 +175,15 @@ func _physics_process(delta: float) -> void:
 		var target_depth := _patch.penetration_depth_m(pressure)
 		var ground := _ground_level_around(position)
 		var floor_height := bottom
-		if not is_nan(ground) and ground - bottom < target_depth:
-			floor_height = bottom - SINK_SPEED_M_S * delta
-			crate.sleeping = false
+		if not is_nan(ground):
+			var remaining := target_depth - (ground - bottom)
+			if remaining > 0.0:
+				# Ease into the bearing depth instead of driving at it: the
+				# material carries more the deeper the load goes, so the last
+				# centimetres are slow. Driving at a constant rate and
+				# stopping dead reads as falling, not as settling.
+				floor_height = bottom - minf(remaining, 1.0) * SINK_SPEED_M_S * delta
+				crate.sleeping = false
 		if crate.sleeping:
 			continue
 		var displaced := _patch.imprint_disc(
@@ -223,12 +229,24 @@ func _ground_level_around(position: Vector3) -> float:
 	return NAN if samples == 0 else total / float(samples)
 
 
+## Lid exactly the body's footprint. Rounding it up to whole cells covered
+## 1.25 m under a 0.6 m crate, and the rim the imprint threw up landed under
+## that lid and was immediately shoved away — so a load bedding itself in left
+## no ring around it and read as simply falling through the ground.
 func _set_footprint_ceiling(position: Vector3, bottom: float) -> void:
-	var half_cells := int(ceil(CRATE_SIZE_M * 0.5 / CELL))
-	var center := _cell_at(position)
-	for dz in range(-half_cells, half_cells + 1):
-		for dx in range(-half_cells, half_cells + 1):
-			_patch.set_ceiling(center.x + dx, center.y + dz, bottom)
+	var radius_cells := CRATE_SIZE_M * 0.5 / CELL
+	var reach := int(ceil(radius_cells))
+	var center_x := position.x / CELL
+	var center_z := position.z / CELL
+	for dz in range(-reach, reach + 1):
+		for dx in range(-reach, reach + 1):
+			var x := int(round(center_x)) + dx
+			var z := int(round(center_z)) + dz
+			var offset_x := float(x) - center_x
+			var offset_z := float(z) - center_z
+			if offset_x * offset_x + offset_z * offset_z > radius_cells * radius_cells:
+				continue
+			_patch.set_ceiling(x, z, bottom)
 
 
 ## Hand a covered body over to the material: it stops being simulated rather
