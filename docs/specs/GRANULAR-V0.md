@@ -68,8 +68,9 @@ Swamp Works P–S (Mueller 2025).
 патча лучом — маршрутизация явная. `edge_pressure()` по-прежнему показывает
 объём, прижатый к краю.
 
-**Активные зёрна.** Только презентация: grit на меше поля + GPUParticles
-пыли при насыпании/просыпи (`granular_cascade`). На объём/откос/коллизию
+**Активные зёрна.** Только презентация: grit на меше поля + declarative
+stream VFX (`scenes/vfx/granular_stream_vfx.tscn`) — soft dust core +
+cloud haze (цвет кучи) при насыпании/просыпи. На объём/откос/коллизию
 не влияют.
 
 ## Вне scope v0

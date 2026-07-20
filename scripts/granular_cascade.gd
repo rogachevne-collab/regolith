@@ -20,6 +20,7 @@ const CATCH_RADIUS_CELLS := 1.8
 const GRAVITY := 1.62
 ## Presentation-only grit on the height field (metres). Not truth.
 const MESH_GRAIN_M := 0.015
+const STREAM_VFX := preload("res://scenes/vfx/granular_stream_vfx.tscn")
 
 @onready var _shelf_surface: MeshInstance3D = $Shelf/Surface
 @onready var _shelf_body: StaticBody3D = $Shelf/SurfaceBody
@@ -45,8 +46,8 @@ var _orbit_distance := 16.0
 var _dragging := false
 var _spilled_total := 0.0
 var _dump_seq := 0
-var _pour_dust: GPUParticles3D
-var _spill_dust: GPUParticles3D
+var _pour_stream: GranularStreamVfx
+var _spill_stream: GranularStreamVfx
 var _spill_emit_left := 0.0
 
 
@@ -66,10 +67,8 @@ func _ready() -> void:
 		$Floor/Grains.visible = false
 	if has_node("AirGrains"):
 		$AirGrains.visible = false
-	_pour_dust = _make_dust_particles("PourDust", 64, 0.7)
-	_spill_dust = _make_dust_particles("SpillDust", 120, 1.1)
-	add_child(_pour_dust)
-	add_child(_spill_dust)
+	_pour_stream = _spawn_stream(true)
+	_spill_stream = _spawn_stream(false)
 	_rebuild_surface(_shelf, _shelf_shown, _shelf_indices, _shelf_surface, _shelf_body)
 	_rebuild_surface(_floor, _floor_shown, _floor_indices, _floor_surface, _floor_body)
 	_update_camera()
@@ -78,7 +77,7 @@ func _ready() -> void:
 		"E — hold to pour on the shelf, near the far lip",
 		"R — reset   right mouse — orbit   wheel — zoom",
 		"Spoil spills off one open edge onto the floor and piles there.",
-		"Dust streaks are decoration — the height field is the real material.",
+		"Stream dust is decoration — the height field is the real material.",
 	])
 
 
@@ -92,8 +91,8 @@ func _process(delta: float) -> void:
 		_floor.advance(delta, GRAVITY)
 	_drain_spill(delta)
 	_spill_emit_left = maxf(_spill_emit_left - delta, 0.0)
-	if _spill_dust != null:
-		_spill_dust.emitting = _spill_emit_left > 0.0
+	if _spill_stream != null:
+		_spill_stream.set_active(_spill_emit_left > 0.0)
 	var shelf_moved := _chase_into(_shelf, true, delta)
 	var floor_moved := _chase_into(_floor, false, delta)
 	if shelf_moved:
@@ -233,71 +232,42 @@ func _deposit_catch_lobe(world: Vector3, volume_m3: float) -> void:
 		_floor.deposit(i % FLOOR_W, i / FLOOR_W, volume_m3 * weights[k] / total)
 
 
-func _make_dust_particles(node_name: String, amount: int, lifetime: float) -> GPUParticles3D:
-	var mat := StandardMaterial3D.new()
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.blend_mode = BaseMaterial3D.BLEND_MODE_MIX
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.vertex_color_use_as_albedo = true
-	mat.albedo_color = Color(0.58, 0.54, 0.48, 0.7)
-	mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
-	var quad := QuadMesh.new()
-	quad.size = Vector2(0.08, 0.08)
-	quad.material = mat
-	var process := ParticleProcessMaterial.new()
-	process.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
-	process.emission_sphere_radius = 0.12
-	process.direction = Vector3(0.0, -1.0, 0.0)
-	process.spread = 28.0
-	process.initial_velocity_min = 0.4
-	process.initial_velocity_max = 1.6
-	process.gravity = Vector3(0.0, -GRAVITY, 0.0)
-	process.damping_min = 0.2
-	process.damping_max = 0.8
-	process.scale_min = 0.4
-	process.scale_max = 1.4
-	process.color = Color(0.55, 0.52, 0.46, 0.75)
-	var particles := GPUParticles3D.new()
-	particles.name = node_name
-	particles.amount = amount
-	particles.lifetime = lifetime
-	particles.explosiveness = 0.15
-	particles.randomness = 0.7
-	particles.emitting = false
-	particles.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	particles.process_material = process
-	particles.draw_pass_1 = quad
-	return particles
+func _spawn_stream(pour: bool) -> GranularStreamVfx:
+	var stream := STREAM_VFX.instantiate() as GranularStreamVfx
+	stream.name = "PourStream" if pour else "SpillStream"
+	add_child(stream)
+	if pour:
+		# Short drop onto the shelf pile — same look, shorter life.
+		for child in stream.get_children():
+			var particles := child as GPUParticles3D
+			if particles == null:
+				continue
+			particles.lifetime = 0.7
+			particles.preprocess = 0.3
+			# Only densify the core stream; leave haze as authored.
+			if particles.name == "Core":
+				particles.amount = maxi(int(float(particles.amount) * 0.8), 96)
+	return stream
 
 
 func _update_pour_dust() -> void:
-	if _pour_dust == null:
+	if _pour_stream == null:
 		return
-	_pour_dust.emitting = _pouring
+	_pour_stream.set_active(_pouring)
 	if not _pouring:
 		return
-	_pour_dust.global_position = _marker.global_position
-	var process := _pour_dust.process_material as ParticleProcessMaterial
-	if process != null:
-		process.direction = Vector3(0.0, -1.0, 0.0)
-		process.spread = 40.0
-		process.initial_velocity_min = 0.15
-		process.initial_velocity_max = 0.7
+	_pour_stream.global_position = _marker.global_position + Vector3(0.0, 0.06, 0.0)
+	_pour_stream.aim(Vector3(0.0, -1.0, 0.0), 12.0, 0.35, 0.95, 0.05)
 
 
 func _emit_spill_dust(origin: Vector3, outward: Vector3, volume_m3: float) -> void:
-	if _spill_dust == null:
+	if _spill_stream == null:
 		return
-	_spill_dust.global_position = origin
-	var process := _spill_dust.process_material as ParticleProcessMaterial
-	if process != null:
-		var dir := (outward * 0.55 + Vector3(0.0, -1.0, 0.0)).normalized()
-		process.direction = dir
-		process.spread = 22.0
-		process.initial_velocity_min = 0.8
-		process.initial_velocity_max = 2.2
-		process.emission_sphere_radius = 0.08 + minf(volume_m3 * 4.0, 0.2)
-	_spill_emit_left = maxf(_spill_emit_left, 0.35)
+	_spill_stream.global_position = origin
+	var dir := (outward * 0.4 + Vector3(0.0, -1.0, 0.0)).normalized()
+	var radius := 0.055 + minf(volume_m3 * 2.5, 0.1)
+	_spill_stream.aim(dir, 10.0, 1.1, 2.2, radius)
+	_spill_emit_left = maxf(_spill_emit_left, 0.45)
 
 
 func _chase_into(patch: GranularPatch, shelf: bool, delta: float) -> bool:
@@ -451,10 +421,11 @@ func _reset() -> void:
 	_shelf_shown = _shelf.thickness_data()
 	_floor_shown = _floor.thickness_data()
 	_spilled_total = 0.0
-	if _pour_dust != null:
-		_pour_dust.emitting = false
-	if _spill_dust != null:
-		_spill_dust.emitting = false
+	_spill_emit_left = 0.0
+	if _pour_stream != null:
+		_pour_stream.set_active(false)
+	if _spill_stream != null:
+		_spill_stream.set_active(false)
 	_rebuild_surface(_shelf, _shelf_shown, _shelf_indices, _shelf_surface, _shelf_body)
 	_rebuild_surface(_floor, _floor_shown, _floor_indices, _floor_surface, _floor_body)
 
