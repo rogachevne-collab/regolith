@@ -19,15 +19,11 @@ size = Vector3(0.4, 0.4, 0.4)
 [sub_resource type="Resource" id="PistonDefinition"]
 script = ExtResource("4")
 head_archetype_id = "piston_head"
-head_offset_cells = 1
 default_speed_limit_mps = 0.1
 extend_velocity_mps = 0.15
 force_limit_n = 30000.0
 stiffness_n_per_m = 0.0
 damping_n_s_per_m = 4000.0
-angular_soft_limit_rad = 0.12
-angular_stiffness_nm_per_rad = 18000.0
-angular_damping_nm_s_per_rad = 600.0
 
 [sub_resource type="Resource" id="DrivePort"]
 script = ExtResource("3")

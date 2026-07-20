@@ -38,9 +38,8 @@ file_logging/enable_file_logging=true
 
 window/size/viewport_width=1280
 window/size/viewport_height=720
-window/size/window_width_override=2560.0
-window/size/window_height_override=1440.0
 window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
 window/vsync/vsync_mode=0
 
 [editor_plugins]
@@ -364,4 +363,5 @@ common/physics_interpolation=true
 
 [rendering]
 
+textures/default_filters/anisotropic_filtering_level=4
 environment/defaults/default_clear_color=Color(0.45, 0.62, 0.82, 1)
