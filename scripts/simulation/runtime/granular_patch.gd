@@ -44,6 +44,8 @@ const _NEIGHBOUR_COUNT := 8
 const FLOW_SPEED_COEFF := 4.0
 ## Cap on sweeps per advance, so a long frame cannot spiral.
 const MAX_SWEEPS_PER_ADVANCE := 8
+## How far outside a footprint its displaced material is piled.
+const RIM_WIDTH_CELLS := 1.6
 
 var width: int = 0
 var depth: int = 0
@@ -180,6 +182,67 @@ func take(x: int, z: int, radius_cells: int, volume_m3: float) -> float:
 		removed += amount
 	_is_settled = false
 	return removed * cell_area_m2()
+
+
+## Press a rigid footprint into the material. Everything inside the disc that
+## sits above `bottom_height_m` is cut away and piled in a rim just outside
+## it — displacement, not deletion, which is what makes a wheel throw a berm,
+## a boot leave a raised edge and a dropped crate leave a crater rather than a
+## clean hole. Returns the displaced volume; relaxation afterwards lets the
+## rim slump back to repose.
+##
+## Coordinates are patch-local metres. Conserves volume exactly: if there is
+## nowhere to put the spoil, nothing is cut.
+func imprint_disc(
+	center_x_m: float,
+	center_z_m: float,
+	radius_m: float,
+	bottom_height_m: float
+) -> float:
+	if radius_m <= 0.0:
+		return 0.0
+	var center_x := center_x_m / cell_size
+	var center_z := center_z_m / cell_size
+	var radius_cells := radius_m / cell_size
+	var rim_cells := radius_cells + RIM_WIDTH_CELLS
+	var reach := int(ceil(rim_cells)) + 1
+	var footprint := PackedInt32Array()
+	var cut := PackedFloat32Array()
+	var rim := PackedInt32Array()
+	var displaced_thickness := 0.0
+	for dz in range(-reach, reach + 1):
+		for dx in range(-reach, reach + 1):
+			var x := int(round(center_x)) + dx
+			var z := int(round(center_z)) + dz
+			if not in_bounds(x, z):
+				continue
+			var i := index(x, z)
+			if _blocked[i] != 0:
+				continue
+			var offset_x := float(x) - center_x
+			var offset_z := float(z) - center_z
+			var distance := sqrt(offset_x * offset_x + offset_z * offset_z)
+			if distance <= radius_cells:
+				var over := (_base[i] + _thickness[i]) - bottom_height_m
+				if over <= 0.0:
+					continue
+				var removed := minf(over, _thickness[i])
+				if removed <= EPSILON_M:
+					continue
+				footprint.append(i)
+				cut.append(removed)
+				displaced_thickness += removed
+			elif distance <= rim_cells:
+				rim.append(i)
+	if displaced_thickness <= EPSILON_M or rim.is_empty():
+		return 0.0
+	for k in footprint.size():
+		_thickness[footprint[k]] -= cut[k]
+	var share := displaced_thickness / float(rim.size())
+	for i: int in rim:
+		_thickness[i] += share
+	_is_settled = false
+	return displaced_thickness * cell_area_m2()
 
 
 ## Redistribute everything steeper than the angle of repose. Returns the

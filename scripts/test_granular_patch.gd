@@ -27,6 +27,8 @@ func _run_tests() -> void:
 		_test_height_map_holes,
 		_test_deterministic,
 		_test_take_never_exceeds_available,
+		_test_imprint_displaces_into_a_rim,
+		_test_imprint_ignores_material_below_the_footprint,
 	]
 	for test: Callable in tests:
 		if not bool(test.call()):
@@ -244,6 +246,50 @@ func _test_take_never_exceeds_available() -> bool:
 		return _fail("take returned more than the patch held: %f" % rest)
 	if patch.total_volume_m3() > 1e-4:
 		return _fail("patch not empty after a full scoop: %f" % patch.total_volume_m3())
+	return true
+
+
+## A body pressed into the material must displace it, not delete it: the rut
+## it leaves has to show up as a raised rim around the footprint.
+func _test_imprint_displaces_into_a_rim() -> bool:
+	var patch := _new_patch()
+	var middle := float(_center()) * CELL
+	# A flat 20 cm bed over the middle of the patch.
+	for z in range(_center() - 5, _center() + 6):
+		for x in range(_center() - 5, _center() + 6):
+			patch.deposit(x, z, 0.2 * patch.cell_area_m2())
+	var before := patch.total_volume_m3()
+	var displaced := patch.imprint_disc(middle, middle, 0.5, 0.05)
+	if displaced <= 0.0:
+		return _fail("imprint displaced nothing")
+	if absf(patch.total_volume_m3() - before) > 1e-4:
+		return _fail(
+			"imprint changed total volume: %f -> %f"
+			% [before, patch.total_volume_m3()]
+		)
+	if patch.thickness_at(_center(), _center()) > 0.051:
+		return _fail(
+			"footprint not pressed down: %f m"
+			% patch.thickness_at(_center(), _center())
+		)
+	var rim := patch.thickness_at(_center() + 3, _center())
+	if rim <= 0.2:
+		return _fail("no rim raised outside the footprint: %f m" % rim)
+	return true
+
+
+## Pressing above the surface must not scoop anything out from under it.
+func _test_imprint_ignores_material_below_the_footprint() -> bool:
+	var patch := _new_patch()
+	var middle := float(_center()) * CELL
+	for z in range(_center() - 4, _center() + 5):
+		for x in range(_center() - 4, _center() + 5):
+			patch.deposit(x, z, 0.1 * patch.cell_area_m2())
+	var before := patch.thickness_data()
+	if patch.imprint_disc(middle, middle, 0.5, 0.5) != 0.0:
+		return _fail("imprint above the surface still cut material")
+	if patch.thickness_data() != before:
+		return _fail("imprint above the surface changed the field")
 	return true
 
 

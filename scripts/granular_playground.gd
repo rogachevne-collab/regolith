@@ -28,6 +28,9 @@ const MAX_ROCKS := 4000
 ## Visual-only surface grain, metres. Not part of the field.
 const GRAIN_AMPLITUDE_M := 0.02
 const MAX_CRATES := 12
+const CRATE_SIZE_M := 0.6
+## Half-diagonal of a cube: its lowest corner while tumbling.
+const SQRT_3 := 1.7320508075688772
 
 const REPOSE_PRESETS: Array[Dictionary] = [
 	{"name": "regolith", "deg": 33.0},
@@ -104,6 +107,20 @@ func _process(delta: float) -> void:
 		_rebuild_rocks()
 	_settled = _patch.is_settled()
 	_update_status()
+
+
+## Bodies displace material where they press into it. Runs on the physics
+## tick because it reads settled contact poses, not interpolated ones.
+func _physics_process(_delta: float) -> void:
+	for crate: RigidBody3D in _crates:
+		if not is_instance_valid(crate) or crate.sleeping:
+			continue
+		var half := CRATE_SIZE_M * 0.5
+		# The bottom face of the box, whatever way it is tumbling.
+		var lowest := crate.global_position.y - half * SQRT_3
+		_patch.imprint_disc(
+			crate.global_position.x, crate.global_position.z, half, lowest
+		)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -186,16 +203,17 @@ func _dump_truck() -> void:
 	)
 
 
-## Drop a rigid crate to see what the height-field collider actually does.
-## The coupling is one-way and it shows: a crate rests on the pile, but
-## pouring under it lifts it by penetration resolution rather than by contact
-## forces, and the crate never displaces a single grain.
+## Drop a rigid crate. It lands on the height field and presses into it: the
+## footprint is cut down to the crate's lowest point and the spoil is piled in
+## a rim around it, so a drop leaves a crater with a raised lip and dragging
+## one leaves a rut with berms. The material still does not push back — that
+## is the next stage.
 func _drop_crate() -> void:
 	var crate := RigidBody3D.new()
 	crate.mass = 60.0
 	var shape := CollisionShape3D.new()
 	var box := BoxShape3D.new()
-	box.size = Vector3(0.6, 0.6, 0.6)
+	box.size = Vector3(CRATE_SIZE_M, CRATE_SIZE_M, CRATE_SIZE_M)
 	shape.shape = box
 	crate.add_child(shape)
 	var mesh := MeshInstance3D.new()
