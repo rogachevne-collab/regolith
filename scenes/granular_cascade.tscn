@@ -82,7 +82,7 @@ material_override = SubResource("Mat_surface")
 material_override = SubResource("Mat_grains")
 
 [node name="Shelf" type="Node3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.5, 2.4, 1.0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.0, 2.6, 0.5)
 
 [node name="Deck" type="MeshInstance3D" parent="Shelf"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.375, -0.08, 1.875)

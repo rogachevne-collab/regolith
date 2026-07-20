@@ -13,12 +13,16 @@ const FLOOR_D := 36
 const REPOSE_DEG := 33.0
 const POUR_RATE_M3_PER_S := 0.55
 const POUR_RADIUS_CELLS := 1.4
-const SPILL_RATE_M3_PER_S := 0.8
-const MAX_SURFACE_GRAINS := 1800
-const MAX_AIR_GRAINS := 400
-const GRAIN_MIN_FLOW := 0.008
-const AIR_GRAIN_VOLUME := 0.0025
+## Only the +Z lip hangs over the drop — one curtain, not four walls raining.
+const SHELF_OPEN_EDGES := GranularPatch.EDGE_POS_Z
+const SPILL_RATE_M3_PER_S := 0.45
+const CATCH_RADIUS_CELLS := 1.8
+const MAX_SURFACE_GRAINS := 500
+const MAX_AIR_GRAINS := 80
+const GRAIN_MIN_FLOW := 0.02
+const AIR_GRAIN_VOLUME := 0.012
 const GRAVITY := 1.62
+const AIR_SPAWN_CHANCE := 0.35
 
 @onready var _shelf_surface: MeshInstance3D = $Shelf/Surface
 @onready var _shelf_body: StaticBody3D = $Shelf/SurfaceBody
@@ -62,15 +66,18 @@ func _ready() -> void:
 	_setup_grain_multimesh(_shelf_grains, MAX_SURFACE_GRAINS)
 	_setup_grain_multimesh(_floor_grains, MAX_SURFACE_GRAINS)
 	_setup_grain_multimesh(_air_grains, MAX_AIR_GRAINS)
+	_shelf_grains.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_floor_grains.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_air_grains.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_rebuild_surface(_shelf, _shelf_shown, _shelf_indices, _shelf_surface, _shelf_body)
 	_rebuild_surface(_floor, _floor_shown, _floor_indices, _floor_surface, _floor_body)
 	_update_camera()
 	_update_aim(get_viewport().get_visible_rect().size * 0.5)
 	_overlay.text = "\n".join([
-		"E — hold to pour on the shelf (sweep to lay a windrow)",
+		"E — hold to pour on the shelf, near the far lip",
 		"R — reset   right mouse — orbit   wheel — zoom",
-		"Mobilised spoil spills off the lip onto the floor below.",
-		"Bright grains = presentation only; the field is still the truth.",
+		"Spoil spills off one open edge onto the floor and piles there.",
+		"Grains are decoration — the height field is the real material.",
 	])
 
 
@@ -94,7 +101,9 @@ func _process(delta: float) -> void:
 			_floor, _floor_shown, _floor_indices, _floor_surface, _floor_body
 		)
 	_rebuild_surface_grains(_shelf, _shelf_shown, _shelf_grains, $Shelf)
-	_rebuild_surface_grains(_floor, _floor_shown, _floor_grains, $Floor)
+	# Floor pile is the field mesh; skipping floor surface-grains avoids a
+	# second grid of cubes fighting the mound.
+	_floor_grains.multimesh.visible_instance_count = 0
 	_update_status()
 
 
@@ -169,7 +178,7 @@ func _pour(delta: float) -> void:
 
 
 func _drain_spill(delta: float) -> void:
-	var events := _shelf.spill_edge(SPILL_RATE_M3_PER_S * delta)
+	var events := _shelf.spill_edge(SPILL_RATE_M3_PER_S * delta, SHELF_OPEN_EDGES)
 	for event: Dictionary in events:
 		var volume: float = event["volume_m3"]
 		_spilled_total += volume
@@ -182,31 +191,69 @@ func _drain_spill(delta: float) -> void:
 			Vector3(float(event["x_m"]), lip_h, float(event["z_m"]))
 		)
 		# Nudge past the lip so the catch lands on the floor, not back on the shelf.
-		world.x += float(event["out_x"]) * CELL * 1.2
-		world.z += float(event["out_z"]) * CELL * 1.2
-		var floor_local: Vector3 = $Floor.to_local(world)
-		var fx := clampi(int(round(floor_local.x / CELL)), 0, FLOOR_W - 1)
-		var fz := clampi(int(round(floor_local.z / CELL)), 0, FLOOR_D - 1)
-		_floor.deposit(fx, fz, volume)
+		world.x += float(event["out_x"]) * CELL * 1.5
+		world.z += float(event["out_z"]) * CELL * 1.5
+		_deposit_catch_lobe(world, volume)
 		_spawn_air_grains(world, volume, Vector3(event["out_x"], 0.0, event["out_z"]))
 
 
+## Spread a spill into a small lobe so the floor grows a pile, not a spike.
+func _deposit_catch_lobe(world: Vector3, volume_m3: float) -> void:
+	var floor_local: Vector3 = $Floor.to_local(world)
+	var fx := floor_local.x / CELL
+	var fz := floor_local.z / CELL
+	var cx := int(round(fx))
+	var cz := int(round(fz))
+	var reach := int(ceil(CATCH_RADIUS_CELLS)) + 1
+	var cells := PackedInt32Array()
+	var weights := PackedFloat32Array()
+	var total := 0.0
+	for dz in range(-reach, reach + 1):
+		for dx in range(-reach, reach + 1):
+			var x := cx + dx
+			var z := cz + dz
+			if x < 0 or z < 0 or x >= FLOOR_W or z >= FLOOR_D:
+				continue
+			var ox := float(x) - fx
+			var oz := float(z) - fz
+			var dist := sqrt(ox * ox + oz * oz)
+			if dist > CATCH_RADIUS_CELLS:
+				continue
+			var w := 1.0 - dist / CATCH_RADIUS_CELLS
+			cells.append(z * FLOOR_W + x)
+			weights.append(w)
+			total += w
+	if total <= 0.0:
+		var x := clampi(cx, 0, FLOOR_W - 1)
+		var z := clampi(cz, 0, FLOOR_D - 1)
+		_floor.deposit(x, z, volume_m3)
+		return
+	for k in cells.size():
+		var i := cells[k]
+		_floor.deposit(i % FLOOR_W, i / FLOOR_W, volume_m3 * weights[k] / total)
+
+
 func _spawn_air_grains(origin: Vector3, volume_m3: float, outward: Vector3) -> void:
-	var count := mini(maxi(int(round(volume_m3 / AIR_GRAIN_VOLUME)), 1), 12)
+	if _hash2(_dump_seq + _air.size(), 91) > AIR_SPAWN_CHANCE:
+		return
+	var count := mini(maxi(int(round(volume_m3 / AIR_GRAIN_VOLUME)), 1), 3)
 	for _i in count:
 		if _air.size() >= MAX_AIR_GRAINS:
 			_air.pop_front()
-		var jitter := Vector3(
-			(_hash2(_air.size() + 3, _dump_seq) - 0.5) * 0.15,
-			0.05 + _hash2(_air.size() + 9, _dump_seq + 1) * 0.1,
-			(_hash2(_air.size() + 17, _dump_seq + 2) - 0.5) * 0.15
-		)
+		var side := (_hash2(_air.size() + 3, _dump_seq) - 0.5) * 0.55
+		var along := (_hash2(_air.size() + 11, _dump_seq + 2) - 0.5) * 0.35
+		var jitter := outward.cross(Vector3.UP).normalized() * side + outward * along
+		jitter.y = 0.02 + _hash2(_air.size() + 9, _dump_seq + 1) * 0.08
+		var speed := 0.35 + _hash2(_air.size(), 4) * 0.55
 		_air.append({
 			"pos": origin + jitter,
-			"vel": outward * (0.6 + _hash2(_air.size(), 4) * 0.8)
-				+ Vector3(0.0, 0.15, 0.0),
+			"vel": outward * speed + Vector3(
+				(_hash2(_air.size() + 5, 1) - 0.5) * 0.25,
+				-0.05,
+				(_hash2(_air.size() + 6, 2) - 0.5) * 0.25
+			),
 			"age": 0.0,
-			"size": 0.04 + _hash2(_air.size() + 21, 8) * 0.05,
+			"size": 0.05 + _hash2(_air.size() + 21, 8) * 0.06,
 		})
 
 
@@ -258,7 +305,9 @@ func _rebuild_surface_grains(
 			var flowing := patch.flowing_thickness_at(x, z)
 			if flowing < GRAIN_MIN_FLOW:
 				continue
-			var density := clampf(flowing / 0.08, 0.15, 1.0)
+			# Sparse: only a fraction of flowing cells, so it reads as grit
+			# on a moving face, not a second grid of cubes.
+			var density := clampf(flowing / 0.12, 0.05, 0.35)
 			if _hash2(x + 401, z + 17) > density:
 				continue
 			var jitter_x := (_hash2(x + 3, z) - 0.5) * CELL
@@ -339,13 +388,15 @@ func _rebuild_surface(
 			var i := z * w + x
 			var thickness := shown[i]
 			vertices[i] = Vector3(float(x) * CELL, thickness, float(z) * CELL)
-			var tint := clampf(thickness / 0.1, 0.0, 1.0)
+			# Keep alpha opaque: zero-alpha empty cells punched black holes in
+			# the floor where thin spill spikes met bare mesh.
+			var tint := clampf(thickness / 0.12, 0.0, 1.0)
 			colors[i] = (
-				Color(0.40, 0.39, 0.37)
-				.lerp(Color(0.58, 0.55, 0.50), tint)
+				Color(0.34, 0.33, 0.32)
+				.lerp(Color(0.58, 0.55, 0.48), tint)
 				.srgb_to_linear()
 			)
-			colors[i].a = tint
+			colors[i].a = 1.0
 	for z in d:
 		for x in w:
 			var i := z * w + x

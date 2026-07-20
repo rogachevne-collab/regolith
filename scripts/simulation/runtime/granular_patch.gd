@@ -639,41 +639,41 @@ func flowing_thickness_at(x: int, z: int) -> float:
 	return _flowing[index(x, z)] if in_bounds(x, z) else 0.0
 
 
-## Drain material across open edges. Removes volume from border cells and
-## returns spill events the caller must route downward (another patch, a
-## chute, the void). Each event:
-## `{ "x_m", "z_m", "volume_m3", "out_x", "out_z" }` in patch-local metres,
-## with `(out_x, out_z)` the outward direction on the XZ plane.
-##
-## Preferential take from cells that are already sliding — resting berms on
-## the lip do not teleport off the edge. Caps total volume so a long frame
-## cannot empty the shelf in one tick.
-func spill_edge(max_volume_m3: float) -> Array:
+## Open-edge bit mask for `spill_edge`: 1 = -X, 2 = +X, 4 = -Z, 8 = +Z.
+const EDGE_NEG_X := 1
+const EDGE_POS_X := 2
+const EDGE_NEG_Z := 4
+const EDGE_POS_Z := 8
+const EDGE_ALL := 15
+
+## Drain material across selected open edges. Removes volume from those lip
+## cells and returns spill events the caller must route downward. Each event:
+## `{ "x_m", "z_m", "volume_m3", "out_x", "out_z" }` in patch-local metres.
+## Closed edges stay walls. Caps total volume per call.
+func spill_edge(max_volume_m3: float, open_mask: int = EDGE_ALL) -> Array:
 	var events: Array = []
-	if max_volume_m3 <= EPSILON_M:
+	if max_volume_m3 <= EPSILON_M or open_mask == 0:
 		return events
 	var candidates: Array = []
 	var weight_total := 0.0
 	for z in depth:
 		for x in width:
-			if x != 0 and z != 0 and x != width - 1 and z != depth - 1:
+			var out_x := 0.0
+			var out_z := 0.0
+			if x == 0 and (open_mask & EDGE_NEG_X) != 0:
+				out_x -= 1.0
+			elif x == width - 1 and (open_mask & EDGE_POS_X) != 0:
+				out_x += 1.0
+			if z == 0 and (open_mask & EDGE_NEG_Z) != 0:
+				out_z -= 1.0
+			elif z == depth - 1 and (open_mask & EDGE_POS_Z) != 0:
+				out_z += 1.0
+			if out_x == 0.0 and out_z == 0.0:
 				continue
 			var i := index(x, z)
 			if _blocked[i] != 0 or _thickness[i] <= EPSILON_M:
 				continue
-			var out_x := 0.0
-			var out_z := 0.0
-			if x == 0:
-				out_x -= 1.0
-			elif x == width - 1:
-				out_x += 1.0
-			if z == 0:
-				out_z -= 1.0
-			elif z == depth - 1:
-				out_z += 1.0
 			var out_len := sqrt(out_x * out_x + out_z * out_z)
-			if out_len <= 0.0:
-				continue
 			out_x /= out_len
 			out_z /= out_len
 			# Sliding spoil leaves fast; a resting berm against the lip still
