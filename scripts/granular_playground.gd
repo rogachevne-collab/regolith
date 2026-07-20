@@ -20,8 +20,6 @@ const POUR_RADIUS_CELLS := 1.6
 const TRUCK_RADIUS_CELLS := 3.4
 ## A tipper drops its load away from itself, so the lobe comes out elongated.
 const TRUCK_ELONGATION := 1.9
-## Relax steps per frame: material visibly flows instead of teleporting.
-const RELAX_PER_FRAME := 2
 const ROCK_MIN_THICKNESS := 0.015
 ## Above this the surface is deep spoil; rocks belong on the thin fringe and
 ## the toe, where the silhouette actually needs breaking up.
@@ -60,10 +58,13 @@ var _orbit_yaw := 0.6
 var _orbit_pitch := -0.35
 var _orbit_distance := 14.0
 var _dragging := false
-var _last_relax_iterations := 0
+var _gravity := 1.62
 
 
 func _ready() -> void:
+	_gravity = float(
+		ProjectSettings.get_setting("physics/3d/default_gravity", 1.62)
+	)
 	_patch = GranularPatch.create(GRID, GRID, CELL, REPOSE_PRESETS[0]["deg"])
 	_build_indices()
 	_setup_collider()
@@ -90,14 +91,15 @@ func _process(delta: float) -> void:
 			Vector2.RIGHT,
 			1.0
 		)
-		_settled = false
-	if not _settled:
-		_last_relax_iterations = _patch.relax(RELAX_PER_FRAME)
-		_settled = _last_relax_iterations < RELAX_PER_FRAME
+	if not _patch.is_settled():
+		# Settling runs on wall-clock time under the project's gravity, so
+		# lunar material slumps at lunar speed instead of at frame rate.
+		_patch.advance(delta, _gravity)
 		_rebuild_surface()
 		# Rocks follow the surface every frame: rebuilding only once settled
 		# leaves them hanging where the slope used to be.
 		_rebuild_rocks()
+	_settled = _patch.is_settled()
 	_update_status()
 
 
@@ -179,7 +181,6 @@ func _dump_truck() -> void:
 	_deposit_lobe(
 		_aim, TRUCK_M3, TRUCK_RADIUS_CELLS, away.normalized(), TRUCK_ELONGATION
 	)
-	_settled = false
 
 
 ## Drop a rigid crate to see what the height-field collider actually does.
@@ -263,7 +264,6 @@ func _deposit_lobe(
 func _scoop() -> void:
 	var cell := _cell_at(_aim)
 	_patch.take(cell.x, cell.y, SCOOP_RADIUS_CELLS, BUCKET_M3)
-	_settled = false
 
 
 func _reset() -> void:

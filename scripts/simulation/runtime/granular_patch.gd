@@ -17,12 +17,33 @@ const DEFAULT_CELL_SIZE_M := 0.25
 const DEFAULT_REPOSE_DEG := 33.0
 const MAX_RELAX_ITERATIONS := 128
 const EPSILON_M := 1e-6
-## Total thickness moved in one sweep below which the patch counts as settled.
-const SETTLE_TOTAL_M := 1e-4
+## Largest single-cell change in a sweep below which the patch counts as
+## settled. Per cell, not summed over the patch: a discrete cone cannot sit
+## exactly on the grid, so a fraction of a millimetre keeps shuffling near the
+## crest forever, and a patch-wide sum never falls below any fixed threshold.
+const SETTLE_MAX_CELL_M := 1e-3
+## Damping on each transfer. Neighbours move in the same sweep, so handing over
+## the full computed share lets the correction overshoot and ring.
+const RELAX_DAMPING := 0.85
 
-## Four-neighbour offsets; diagonals would need a longer step and buy little.
-const _NEIGHBOUR_DX: Array[int] = [1, -1, 0, 0]
-const _NEIGHBOUR_DZ: Array[int] = [0, 0, 1, -1]
+## Eight neighbours, each with its own distance. A four-neighbour stencil
+## limits the step along the axes only, so the diagonal flank ends up about
+## 1.41x steeper and piles come out as visible diamonds instead of cones.
+const _NEIGHBOUR_DX: Array[int] = [1, -1, 0, 0, 1, 1, -1, -1]
+const _NEIGHBOUR_DZ: Array[int] = [0, 0, 1, -1, 1, -1, 1, -1]
+## GDScript has no SQRT2 constant and a const array needs literals.
+const _DIAGONAL := 1.4142135623730951
+const _NEIGHBOUR_DISTANCE: Array[float] = [
+	1.0, 1.0, 1.0, 1.0, _DIAGONAL, _DIAGONAL, _DIAGONAL, _DIAGONAL
+]
+const _NEIGHBOUR_COUNT := 8
+
+## Avalanche front speed scales with sqrt(g * cell): lunar slumping is
+## visibly slower than the same collapse on Earth, by the same factor a
+## pendulum is. Dimensionless tuning coefficient.
+const FLOW_SPEED_COEFF := 4.0
+## Cap on sweeps per advance, so a long frame cannot spiral.
+const MAX_SWEEPS_PER_ADVANCE := 8
 
 var width: int = 0
 var depth: int = 0
@@ -34,6 +55,8 @@ var _base: PackedFloat32Array = PackedFloat32Array()
 var _thickness: PackedFloat32Array = PackedFloat32Array()
 var _blocked: PackedByteArray = PackedByteArray()
 var _delta: PackedFloat32Array = PackedFloat32Array()
+var _sweep_debt: float = 0.0
+var _is_settled: bool = true
 
 
 static func create(
@@ -120,6 +143,7 @@ func deposit(x: int, z: int, volume_m3: float) -> float:
 	if _blocked[i] != 0:
 		return 0.0
 	_thickness[i] += volume_m3 / cell_area_m2()
+	_is_settled = false
 	return volume_m3
 
 
@@ -154,22 +178,24 @@ func take(x: int, z: int, radius_cells: int, volume_m3: float) -> float:
 		var amount := _thickness[i] * ratio
 		_thickness[i] -= amount
 		removed += amount
+	_is_settled = false
 	return removed * cell_area_m2()
 
 
 ## Redistribute everything steeper than the angle of repose. Returns the
 ## number of iterations spent; fewer than `max_iterations` means it settled.
 func relax(max_iterations: int = MAX_RELAX_ITERATIONS) -> int:
-	var max_step := repose_tangent * cell_size
+	var step_per_metre := repose_tangent * cell_size
 	var over := PackedFloat32Array()
-	over.resize(4)
+	over.resize(_NEIGHBOUR_COUNT)
 	var neighbour := PackedInt32Array()
-	neighbour.resize(4)
+	neighbour.resize(_NEIGHBOUR_COUNT)
 	var iterations := 0
 	while iterations < max_iterations:
+		_is_settled = false
 		iterations += 1
 		_delta.fill(0.0)
-		var moved := 0.0
+		var largest_move := 0.0
 		for z in depth:
 			for x in width:
 				var i := index(x, z)
@@ -181,7 +207,7 @@ func relax(max_iterations: int = MAX_RELAX_ITERATIONS) -> int:
 				var height := _base[i] + thickness
 				var over_total := 0.0
 				var lower_count := 0
-				for k in 4:
+				for k in _NEIGHBOUR_COUNT:
 					over[k] = 0.0
 					neighbour[k] = -1
 					var nx: int = x + _NEIGHBOUR_DX[k]
@@ -191,6 +217,8 @@ func relax(max_iterations: int = MAX_RELAX_ITERATIONS) -> int:
 					var ni := index(nx, nz)
 					if _blocked[ni] != 0:
 						continue
+					# Each neighbour holds its own slope over its own distance.
+					var max_step: float = step_per_metre * _NEIGHBOUR_DISTANCE[k]
 					var excess := (height - (_base[ni] + _thickness[ni])) - max_step
 					if excess <= 0.0:
 						continue
@@ -207,23 +235,56 @@ func relax(max_iterations: int = MAX_RELAX_ITERATIONS) -> int:
 				# and volume is conserved exactly.
 				var move_total := minf(
 					thickness,
-					over_total / float(lower_count + 1)
+					RELAX_DAMPING * over_total / float(lower_count + 1)
 				)
 				if move_total <= EPSILON_M:
 					continue
-				for k in 4:
+				for k in _NEIGHBOUR_COUNT:
 					if neighbour[k] < 0:
 						continue
 					var share := move_total * (over[k] / over_total)
 					_delta[i] -= share
 					_delta[neighbour[k]] += share
-				moved += move_total
+				# Tracked on the giving cell: the largest single-cell change
+				# in the sweep is what decides rest.
 		for i in _thickness.size():
-			if _delta[i] != 0.0:
-				_thickness[i] = maxf(_thickness[i] + _delta[i], 0.0)
-		if moved <= SETTLE_TOTAL_M:
+			var change := _delta[i]
+			if change == 0.0:
+				continue
+			_thickness[i] = maxf(_thickness[i] + change, 0.0)
+			largest_move = maxf(largest_move, absf(change))
+		if largest_move <= SETTLE_MAX_CELL_M:
+			_is_settled = true
 			break
 	return iterations
+
+
+## True once a relax sweep found nothing left to move. Deposits and scoops
+## clear it, so callers can drive settling until the patch reports rest.
+func is_settled() -> bool:
+	return _is_settled
+
+
+## Relaxation sweeps per second at a given gravity. The avalanche front
+## advances about one cell per sweep, so tying the rate to sqrt(g / cell)
+## makes lunar material slump ~2.5x slower than the same collapse on Earth
+## instead of at whatever the frame rate happens to be.
+func settle_rate_hz(gravity_m_s2: float) -> float:
+	return FLOW_SPEED_COEFF * sqrt(maxf(gravity_m_s2, 0.01) / cell_size)
+
+
+## Advance settling by wall-clock time under a gravity field. Returns the
+## sweeps actually run; leftover time is carried, so the same delta sequence
+## always produces the same result.
+func advance(delta_s: float, gravity_m_s2: float) -> int:
+	if delta_s <= 0.0:
+		return 0
+	_sweep_debt += delta_s * settle_rate_hz(gravity_m_s2)
+	var sweeps := mini(int(_sweep_debt), MAX_SWEEPS_PER_ADVANCE)
+	if sweeps <= 0:
+		return 0
+	_sweep_debt -= float(sweeps)
+	return relax(sweeps)
 
 
 ## Volume sitting on border cells: material that would spill out of the patch

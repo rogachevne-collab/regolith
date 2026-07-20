@@ -20,6 +20,8 @@ func _run_tests() -> void:
 	var tests: Array[Callable] = [
 		_test_volume_conserved,
 		_test_repose_angle,
+		_test_pile_is_not_a_diamond,
+		_test_settling_is_slower_under_lunar_gravity,
 		_test_steep_base_slides,
 		_test_blocked_cells_are_walls,
 		_test_height_map_holes,
@@ -57,7 +59,10 @@ func _test_volume_conserved() -> bool:
 
 func _test_repose_angle() -> bool:
 	var patch := _new_patch()
-	patch.deposit(_center(), _center(), 0.25)
+	# Enough volume for a flank several cells long: an eight-neighbour pile is
+	# a real cone rather than an L1 pyramid, so it spreads wider and sits
+	# lower than the same load did on a four-neighbour stencil.
+	patch.deposit(_center(), _center(), 0.6)
 	var iterations := patch.relax(RELAX_CAP)
 	if iterations >= RELAX_CAP:
 		return _fail("pile did not settle within %d iterations" % RELAX_CAP)
@@ -98,6 +103,62 @@ func _test_repose_angle() -> bool:
 		]
 	)
 	return true
+
+
+## A four-neighbour stencil limits the slope along the axes only, so the
+## diagonal flank runs ~30% short and the pile is a visible diamond.
+func _test_pile_is_not_a_diamond() -> bool:
+	var patch := _new_patch()
+	patch.deposit(_center(), _center(), 0.4)
+	patch.relax(RELAX_CAP)
+	var axis_reach := 0.0
+	for k in range(1, GRID - _center() - 1):
+		if patch.thickness_at(_center() + k, _center()) <= 0.02:
+			break
+		axis_reach = float(k) * CELL
+	var diagonal_reach := 0.0
+	for k in range(1, GRID - _center() - 1):
+		if patch.thickness_at(_center() + k, _center() + k) <= 0.02:
+			break
+		diagonal_reach = float(k) * CELL * sqrt(2.0)
+	if axis_reach <= 0.0 or diagonal_reach <= 0.0:
+		return _fail("pile too small to measure: %f / %f" % [axis_reach, diagonal_reach])
+	var ratio := diagonal_reach / axis_reach
+	if absf(ratio - 1.0) > 0.2:
+		return _fail(
+			"pile is anisotropic: diagonal/axis reach %f (%f m vs %f m)"
+			% [ratio, diagonal_reach, axis_reach]
+		)
+	return true
+
+
+## Flow rate must come from gravity, not from the frame rate: the same
+## collapse on the Moon takes sqrt(9.81 / 1.62) ~ 2.46x longer.
+func _test_settling_is_slower_under_lunar_gravity() -> bool:
+	var lunar := _settle_seconds(1.62)
+	var earth := _settle_seconds(9.81)
+	if lunar <= 0.0 or earth <= 0.0:
+		return _fail("pile settled instantly: %f / %f" % [lunar, earth])
+	var ratio := lunar / earth
+	var expected := sqrt(9.81 / 1.62)
+	if absf(ratio - expected) > expected * 0.2:
+		return _fail(
+			"lunar settling %f x earth, expected ~%f" % [ratio, expected]
+		)
+	return true
+
+
+func _settle_seconds(gravity: float) -> float:
+	var patch := _new_patch()
+	patch.deposit(_center(), _center(), 0.4)
+	var step := 1.0 / 60.0
+	var elapsed := 0.0
+	for _frame in 4000:
+		patch.advance(step, gravity)
+		elapsed += step
+		if patch.is_settled():
+			return elapsed
+	return 0.0
 
 
 func _test_steep_base_slides() -> bool:
