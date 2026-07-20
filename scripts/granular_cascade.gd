@@ -17,20 +17,14 @@ const POUR_RADIUS_CELLS := 1.4
 const SHELF_OPEN_EDGES := GranularPatch.EDGE_POS_Z
 const SPILL_RATE_M3_PER_S := 0.45
 const CATCH_RADIUS_CELLS := 1.8
-const MAX_SURFACE_GRAINS := 500
-const MAX_AIR_GRAINS := 80
-const GRAIN_MIN_FLOW := 0.02
-const AIR_GRAIN_VOLUME := 0.012
 const GRAVITY := 1.62
-const AIR_SPAWN_CHANCE := 0.35
+## Presentation-only grit on the height field (metres). Not truth.
+const MESH_GRAIN_M := 0.015
 
 @onready var _shelf_surface: MeshInstance3D = $Shelf/Surface
 @onready var _shelf_body: StaticBody3D = $Shelf/SurfaceBody
 @onready var _floor_surface: MeshInstance3D = $Floor/Surface
 @onready var _floor_body: StaticBody3D = $Floor/SurfaceBody
-@onready var _shelf_grains: MultiMeshInstance3D = $Shelf/Grains
-@onready var _floor_grains: MultiMeshInstance3D = $Floor/Grains
-@onready var _air_grains: MultiMeshInstance3D = $AirGrains
 @onready var _marker: MeshInstance3D = $AimMarker
 @onready var _camera: Camera3D = $CameraRig/Camera3D
 @onready var _rig: Node3D = $CameraRig
@@ -49,9 +43,11 @@ var _orbit_yaw := 0.55
 var _orbit_pitch := -0.4
 var _orbit_distance := 16.0
 var _dragging := false
-var _air: Array[Dictionary] = []
 var _spilled_total := 0.0
 var _dump_seq := 0
+var _pour_dust: GPUParticles3D
+var _spill_dust: GPUParticles3D
+var _spill_emit_left := 0.0
 
 
 func _ready() -> void:
@@ -63,12 +59,17 @@ func _ready() -> void:
 	_floor_indices = _build_indices(FLOOR_W, FLOOR_D)
 	_setup_collider(_shelf_body, SHELF_W, SHELF_D)
 	_setup_collider(_floor_body, FLOOR_W, FLOOR_D)
-	_setup_grain_multimesh(_shelf_grains, MAX_SURFACE_GRAINS)
-	_setup_grain_multimesh(_floor_grains, MAX_SURFACE_GRAINS)
-	_setup_grain_multimesh(_air_grains, MAX_AIR_GRAINS)
-	_shelf_grains.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	_floor_grains.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	_air_grains.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# Hide legacy box-grain nodes if the scene still has them.
+	if has_node("Shelf/Grains"):
+		$Shelf/Grains.visible = false
+	if has_node("Floor/Grains"):
+		$Floor/Grains.visible = false
+	if has_node("AirGrains"):
+		$AirGrains.visible = false
+	_pour_dust = _make_dust_particles("PourDust", 64, 0.7)
+	_spill_dust = _make_dust_particles("SpillDust", 120, 1.1)
+	add_child(_pour_dust)
+	add_child(_spill_dust)
 	_rebuild_surface(_shelf, _shelf_shown, _shelf_indices, _shelf_surface, _shelf_body)
 	_rebuild_surface(_floor, _floor_shown, _floor_indices, _floor_surface, _floor_body)
 	_update_camera()
@@ -77,19 +78,22 @@ func _ready() -> void:
 		"E — hold to pour on the shelf, near the far lip",
 		"R — reset   right mouse — orbit   wheel — zoom",
 		"Spoil spills off one open edge onto the floor and piles there.",
-		"Grains are decoration — the height field is the real material.",
+		"Dust streaks are decoration — the height field is the real material.",
 	])
 
 
 func _process(delta: float) -> void:
 	if _pouring:
 		_pour(delta)
+	_update_pour_dust()
 	if not _shelf.is_settled():
 		_shelf.advance(delta, GRAVITY)
 	if not _floor.is_settled():
 		_floor.advance(delta, GRAVITY)
 	_drain_spill(delta)
-	_integrate_air(delta)
+	_spill_emit_left = maxf(_spill_emit_left - delta, 0.0)
+	if _spill_dust != null:
+		_spill_dust.emitting = _spill_emit_left > 0.0
 	var shelf_moved := _chase_into(_shelf, true, delta)
 	var floor_moved := _chase_into(_floor, false, delta)
 	if shelf_moved:
@@ -100,10 +104,6 @@ func _process(delta: float) -> void:
 		_rebuild_surface(
 			_floor, _floor_shown, _floor_indices, _floor_surface, _floor_body
 		)
-	_rebuild_surface_grains(_shelf, _shelf_shown, _shelf_grains, $Shelf)
-	# Floor pile is the field mesh; skipping floor surface-grains avoids a
-	# second grid of cubes fighting the mound.
-	_floor_grains.multimesh.visible_instance_count = 0
 	_update_status()
 
 
@@ -194,7 +194,7 @@ func _drain_spill(delta: float) -> void:
 		world.x += float(event["out_x"]) * CELL * 1.5
 		world.z += float(event["out_z"]) * CELL * 1.5
 		_deposit_catch_lobe(world, volume)
-		_spawn_air_grains(world, volume, Vector3(event["out_x"], 0.0, event["out_z"]))
+		_emit_spill_dust(world, Vector3(event["out_x"], 0.0, event["out_z"]), volume)
 
 
 ## Spread a spill into a small lobe so the floor grows a pile, not a spike.
@@ -233,113 +233,71 @@ func _deposit_catch_lobe(world: Vector3, volume_m3: float) -> void:
 		_floor.deposit(i % FLOOR_W, i / FLOOR_W, volume_m3 * weights[k] / total)
 
 
-func _spawn_air_grains(origin: Vector3, volume_m3: float, outward: Vector3) -> void:
-	if _hash2(_dump_seq + _air.size(), 91) > AIR_SPAWN_CHANCE:
+func _make_dust_particles(node_name: String, amount: int, lifetime: float) -> GPUParticles3D:
+	var mat := StandardMaterial3D.new()
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.blend_mode = BaseMaterial3D.BLEND_MODE_MIX
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.vertex_color_use_as_albedo = true
+	mat.albedo_color = Color(0.58, 0.54, 0.48, 0.7)
+	mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	var quad := QuadMesh.new()
+	quad.size = Vector2(0.08, 0.08)
+	quad.material = mat
+	var process := ParticleProcessMaterial.new()
+	process.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+	process.emission_sphere_radius = 0.12
+	process.direction = Vector3(0.0, -1.0, 0.0)
+	process.spread = 28.0
+	process.initial_velocity_min = 0.4
+	process.initial_velocity_max = 1.6
+	process.gravity = Vector3(0.0, -GRAVITY, 0.0)
+	process.damping_min = 0.2
+	process.damping_max = 0.8
+	process.scale_min = 0.4
+	process.scale_max = 1.4
+	process.color = Color(0.55, 0.52, 0.46, 0.75)
+	var particles := GPUParticles3D.new()
+	particles.name = node_name
+	particles.amount = amount
+	particles.lifetime = lifetime
+	particles.explosiveness = 0.15
+	particles.randomness = 0.7
+	particles.emitting = false
+	particles.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	particles.process_material = process
+	particles.draw_pass_1 = quad
+	return particles
+
+
+func _update_pour_dust() -> void:
+	if _pour_dust == null:
 		return
-	var count := mini(maxi(int(round(volume_m3 / AIR_GRAIN_VOLUME)), 1), 3)
-	for _i in count:
-		if _air.size() >= MAX_AIR_GRAINS:
-			_air.pop_front()
-		var side := (_hash2(_air.size() + 3, _dump_seq) - 0.5) * 0.55
-		var along := (_hash2(_air.size() + 11, _dump_seq + 2) - 0.5) * 0.35
-		var jitter := outward.cross(Vector3.UP).normalized() * side + outward * along
-		jitter.y = 0.02 + _hash2(_air.size() + 9, _dump_seq + 1) * 0.08
-		var speed := 0.35 + _hash2(_air.size(), 4) * 0.55
-		_air.append({
-			"pos": origin + jitter,
-			"vel": outward * speed + Vector3(
-				(_hash2(_air.size() + 5, 1) - 0.5) * 0.25,
-				-0.05,
-				(_hash2(_air.size() + 6, 2) - 0.5) * 0.25
-			),
-			"age": 0.0,
-			"size": 0.05 + _hash2(_air.size() + 21, 8) * 0.06,
-		})
+	_pour_dust.emitting = _pouring
+	if not _pouring:
+		return
+	_pour_dust.global_position = _marker.global_position
+	var process := _pour_dust.process_material as ParticleProcessMaterial
+	if process != null:
+		process.direction = Vector3(0.0, -1.0, 0.0)
+		process.spread = 40.0
+		process.initial_velocity_min = 0.15
+		process.initial_velocity_max = 0.7
 
 
-func _integrate_air(delta: float) -> void:
-	var floor_y: float = $Floor.global_position.y
-	var alive: Array[Dictionary] = []
-	for grain: Dictionary in _air:
-		var vel: Vector3 = grain["vel"]
-		vel.y -= GRAVITY * delta
-		var pos: Vector3 = grain["pos"] + vel * delta
-		grain["vel"] = vel
-		grain["pos"] = pos
-		grain["age"] = float(grain["age"]) + delta
-		var local: Vector3 = $Floor.to_local(pos)
-		var surface := _floor.surface_height_at_m(local.x, local.z)
-		var hit_y: float = floor_y + (0.0 if is_nan(surface) else surface)
-		if pos.y <= hit_y + 0.02 or float(grain["age"]) > 4.0:
-			continue
-		alive.append(grain)
-	_air = alive
-	var multimesh := _air_grains.multimesh
-	var shown := mini(_air.size(), MAX_AIR_GRAINS)
-	multimesh.visible_instance_count = shown
-	for i in shown:
-		var grain: Dictionary = _air[i]
-		var size: float = grain["size"]
-		var basis := Basis.from_euler(
-			Vector3(grain["age"] * 4.0, grain["age"] * 2.3, 0.0)
-		).scaled(Vector3(size, size * 0.6, size * 0.8))
-		multimesh.set_instance_transform(
-			i, Transform3D(basis, grain["pos"])
-		)
-
-
-func _rebuild_surface_grains(
-	patch: GranularPatch,
-	shown: PackedFloat32Array,
-	node: MultiMeshInstance3D,
-	root: Node3D
-) -> void:
-	var multimesh := node.multimesh
-	var placed := 0
-	var w := patch.width
-	var d := patch.depth
-	for z in d:
-		for x in w:
-			if placed >= MAX_SURFACE_GRAINS:
-				break
-			var flowing := patch.flowing_thickness_at(x, z)
-			if flowing < GRAIN_MIN_FLOW:
-				continue
-			# Sparse: only a fraction of flowing cells, so it reads as grit
-			# on a moving face, not a second grid of cubes.
-			var density := clampf(flowing / 0.12, 0.05, 0.35)
-			if _hash2(x + 401, z + 17) > density:
-				continue
-			var jitter_x := (_hash2(x + 3, z) - 0.5) * CELL
-			var jitter_z := (_hash2(x, z + 11) - 0.5) * CELL
-			var local_x := float(x) * CELL + jitter_x
-			var local_z := float(z) * CELL + jitter_z
-			var height := shown[z * w + x]
-			var size := 0.035 + _hash2(x + 8, z + 2) * 0.05
-			var origin := root.to_global(Vector3(local_x, height + size * 0.2, local_z))
-			# Slide hint: bias downhill using a cheap neighbour drop.
-			var down := Vector3.ZERO
-			if x + 1 < w and shown[z * w + x + 1] < height:
-				down.x += 1.0
-			if x > 0 and shown[z * w + x - 1] < height:
-				down.x -= 1.0
-			if z + 1 < d and shown[(z + 1) * w + x] < height:
-				down.z += 1.0
-			if z > 0 and shown[(z - 1) * w + x] < height:
-				down.z -= 1.0
-			var slide := down.normalized() * (0.02 * density) if down.length_squared() > 0.0 else Vector3.ZERO
-			var basis := Basis.from_euler(
-				Vector3(
-					_hash2(x, z + 5) * TAU,
-					_hash2(x + 9, z) * TAU,
-					_hash2(x + 2, z + 7) * TAU
-				)
-			).scaled(Vector3(size, size * 0.55, size * 0.75))
-			multimesh.set_instance_transform(
-				placed, Transform3D(basis, origin + slide)
-			)
-			placed += 1
-	multimesh.visible_instance_count = placed
+func _emit_spill_dust(origin: Vector3, outward: Vector3, volume_m3: float) -> void:
+	if _spill_dust == null:
+		return
+	_spill_dust.global_position = origin
+	var process := _spill_dust.process_material as ParticleProcessMaterial
+	if process != null:
+		var dir := (outward * 0.55 + Vector3(0.0, -1.0, 0.0)).normalized()
+		process.direction = dir
+		process.spread = 22.0
+		process.initial_velocity_min = 0.8
+		process.initial_velocity_max = 2.2
+		process.emission_sphere_radius = 0.08 + minf(volume_m3 * 4.0, 0.2)
+	_spill_emit_left = maxf(_spill_emit_left, 0.35)
 
 
 func _chase_into(patch: GranularPatch, shelf: bool, delta: float) -> bool:
@@ -387,7 +345,11 @@ func _rebuild_surface(
 		for x in w:
 			var i := z * w + x
 			var thickness := shown[i]
-			vertices[i] = Vector3(float(x) * CELL, thickness, float(z) * CELL)
+			# Tiny deterministic grit so a clean field does not read as dough.
+			var grain := (_hash2(x + 2027, z + 911) - 0.5) * 2.0 * minf(
+				thickness * 0.35, MESH_GRAIN_M
+			)
+			vertices[i] = Vector3(float(x) * CELL, thickness + grain, float(z) * CELL)
 			# Keep alpha opaque: zero-alpha empty cells punched black holes in
 			# the floor where thin spill spikes met bare mesh.
 			var tint := clampf(thickness / 0.12, 0.0, 1.0)
@@ -443,17 +405,6 @@ func _update_collider_data(body: StaticBody3D, patch: GranularPatch) -> void:
 	shape.map_data = data
 
 
-func _setup_grain_multimesh(node: MultiMeshInstance3D, count: int) -> void:
-	var grain := BoxMesh.new()
-	grain.size = Vector3.ONE
-	var multimesh := MultiMesh.new()
-	multimesh.transform_format = MultiMesh.TRANSFORM_3D
-	multimesh.mesh = grain
-	multimesh.instance_count = count
-	multimesh.visible_instance_count = 0
-	node.multimesh = multimesh
-
-
 func _build_indices(w: int, d: int) -> PackedInt32Array:
 	var indices := PackedInt32Array()
 	for z in d - 1:
@@ -499,21 +450,22 @@ func _reset() -> void:
 	_floor = GranularPatch.create(FLOOR_W, FLOOR_D, CELL, REPOSE_DEG)
 	_shelf_shown = _shelf.thickness_data()
 	_floor_shown = _floor.thickness_data()
-	_air.clear()
 	_spilled_total = 0.0
-	_air_grains.multimesh.visible_instance_count = 0
+	if _pour_dust != null:
+		_pour_dust.emitting = false
+	if _spill_dust != null:
+		_spill_dust.emitting = false
 	_rebuild_surface(_shelf, _shelf_shown, _shelf_indices, _shelf_surface, _shelf_body)
 	_rebuild_surface(_floor, _floor_shown, _floor_indices, _floor_surface, _floor_body)
 
 
 func _update_status() -> void:
 	_status.text = (
-		"shelf %.2f m3   floor %.2f m3   spilled %.2f m3   air %d   %s/%s"
+		"shelf %.2f m3   floor %.2f m3   spilled %.2f m3   %s/%s"
 		% [
 			_shelf.total_volume_m3(),
 			_floor.total_volume_m3(),
 			_spilled_total,
-			_air.size(),
 			"shelf settled" if _shelf.is_settled() else "shelf sliding",
 			"floor settled" if _floor.is_settled() else "floor sliding",
 		]
