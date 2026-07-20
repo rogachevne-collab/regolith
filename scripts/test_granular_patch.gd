@@ -39,6 +39,12 @@ func _run_tests() -> void:
 		_test_imprint_heave_starts_outside_the_footprint,
 		_test_spill_edge_conserves_volume_to_another_patch,
 		_test_spill_edge_prefers_the_lip,
+		_test_anchor_round_trips_world_and_patch_metres,
+		_test_anchor_up_is_radial_on_a_planetoid,
+		_test_anchor_coverage_needs_room_for_the_spoil_ring,
+		_test_dig_spoil_conserves_the_removed_volume,
+		_test_dig_spoil_lands_around_the_cut_not_in_it,
+		_test_dig_spoil_off_grid_is_reported_as_undelivered,
 	]
 	for test: Callable in tests:
 		if not bool(test.call()):
@@ -566,6 +572,109 @@ func _test_spill_edge_prefers_the_lip() -> bool:
 			return _fail("spill event from interior cell %d,%d" % [x, z])
 	if patch.thickness_at(_center(), _center()) < before_center - 0.02:
 		return _fail("spill ate the interior crest")
+	return true
+
+
+## A patch is a tangent plane somewhere on a sphere, so every gameplay
+## coordinate crosses the anchor twice. It has to come back unchanged.
+func _test_anchor_round_trips_world_and_patch_metres() -> bool:
+	var center := Vector3(120.0, -3400.0, 87.0)
+	var anchor := GranularAnchor.create(center, center.normalized(), GRID, GRID, CELL)
+	for point: Vector3 in [
+		anchor.to_world(0.0, 0.0, 0.0),
+		anchor.to_world(1.75, 4.25, 0.6),
+		anchor.to_world(float(GRID - 1) * CELL, 0.5, -0.3),
+	]:
+		var local := anchor.to_patch(point)
+		var back := anchor.to_world(local.x, local.z, local.y)
+		if back.distance_to(point) > 1e-3:
+			return _fail("anchor round trip drifted %f m" % back.distance_to(point))
+	return true
+
+
+## Local up follows the radial, not global Y — otherwise material on the far
+## side of the moon slides sideways off its own patch.
+func _test_anchor_up_is_radial_on_a_planetoid() -> bool:
+	var center := Vector3(0.0, -9500.0, 0.0)
+	var up := center.normalized()
+	var anchor := GranularAnchor.create(center, up, GRID, GRID, CELL)
+	if anchor.up().dot(up) < 0.9999:
+		return _fail("anchor up is not the radial: %s" % str(anchor.up()))
+	if anchor.up().dot(Vector3.UP) > -0.9999:
+		return _fail("anchor up should point away from the centre, at the pole")
+	# The tangent axes must actually be tangent, or heights leak into the plane.
+	if absf(anchor.basis.x.dot(up)) > 1e-5 or absf(anchor.basis.z.dot(up)) > 1e-5:
+		return _fail("anchor tangent axes are not perpendicular to up")
+	var above := anchor.to_world(1.0, 1.0, 0.75)
+	if absf(anchor.height_above_plane(above) - 0.75) > 1e-4:
+		return _fail("height above the tangent plane does not survive the trip")
+	return true
+
+
+func _test_anchor_coverage_needs_room_for_the_spoil_ring() -> bool:
+	var anchor := GranularAnchor.create(Vector3.ZERO, Vector3.UP, GRID, GRID, CELL)
+	var span := float(GRID - 1) * CELL
+	if not anchor.covers(anchor.to_world(span * 0.5, span * 0.5, 0.0), 1.0):
+		return _fail("the centre of a patch must be covered")
+	if anchor.covers(anchor.to_world(0.1, span * 0.5, 0.0), 1.0):
+		return _fail("a cut on the lip must not claim a patch that cannot hold it")
+	# Coverage is about the grid only. A cut directly above or below the patch
+	# still projects onto it, and it is `height_above_plane` that tells the two
+	# apart — a shaft floor is not the surface it was sunk from.
+	var overhead := anchor.to_world(span * 0.5, span * 0.5, 40.0)
+	if not anchor.covers(overhead, 1.0):
+		return _fail("a point straight above the patch should project onto it")
+	if absf(anchor.height_above_plane(overhead) - 40.0) > 1e-3:
+		return _fail("height above the plane did not separate the two levels")
+	return true
+
+
+## The whole point of the layer: rock the SDF loses reappears as loose material.
+func _test_dig_spoil_conserves_the_removed_volume() -> bool:
+	var patch := _new_patch()
+	var removed := 0.18
+	var spoil := GranularSpoil.spoil_volume_m3(removed)
+	var accepted := GranularSpoil.deposit_ring(
+		patch, float(_center()) * CELL, float(_center()) * CELL, 0.35, spoil
+	)
+	if absf(accepted - spoil) > 1e-5:
+		return _fail("spoil ring accepted %f of %f m3" % [accepted, spoil])
+	if absf(patch.total_volume_m3() - spoil) > 1e-4:
+		return _fail("patch holds %f, dig produced %f" % [patch.total_volume_m3(), spoil])
+	patch.relax(RELAX_CAP)
+	if absf(patch.total_volume_m3() - spoil) > 1e-4:
+		return _fail("settling lost the spoil")
+	return true
+
+
+## Cuttings heap around the mouth. Dropped into the bore they would just fall
+## back down it, and the hole would refill itself as fast as it was dug.
+func _test_dig_spoil_lands_around_the_cut_not_in_it() -> bool:
+	var patch := _new_patch()
+	var cut_radius := 0.5
+	var center_m := float(_center()) * CELL
+	GranularSpoil.deposit_ring(patch, center_m, center_m, cut_radius, 0.2)
+	if patch.thickness_at(_center(), _center()) > 1e-6:
+		return _fail("spoil landed in the cut itself")
+	var ring_cell := _center() + int(round(cut_radius / CELL))
+	if patch.thickness_at(ring_cell, _center()) <= 1e-6:
+		return _fail("nothing landed on the rim of the cut")
+	if patch.is_settled():
+		return _fail("fresh cuttings must be mobilised, not laid at rest")
+	return true
+
+
+## Spoil that does not fit is volume the caller still owes. Reporting it as
+## delivered is exactly the silent loss this layer replaced.
+func _test_dig_spoil_off_grid_is_reported_as_undelivered() -> bool:
+	var patch := _new_patch()
+	var accepted := GranularSpoil.deposit_ring(
+		patch, -20.0, -20.0, 0.3, 0.2
+	)
+	if accepted != 0.0:
+		return _fail("a cut off the grid reported %f m3 delivered" % accepted)
+	if patch.total_volume_m3() > 1e-9:
+		return _fail("a cut off the grid still put material on the patch")
 	return true
 
 
