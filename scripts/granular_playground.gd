@@ -31,14 +31,6 @@ const MAX_CRATES := 12
 const CRATE_SIZE_M := 0.6
 const LIGHT_CRATE_KG := 40.0
 const HEAVY_CRATE_KG := 500.0
-## How fast a load settles into material that cannot carry it. Sinking is a
-## slow yield, not a fall: the collider floor is lowered under the body and
-## gravity does the rest.
-const SINK_SPEED_M_S := 0.5
-## Ground level around a body is sampled this far outside its footprint. It
-## has to clear the rim the body's own imprint threw up, or the reading is the
-## body's own spoil and it decides it has already sunk far enough.
-const GROUND_SAMPLE_MARGIN_M := 1.0
 ## Depth of the test bed laid by Y: deep enough for a heavy load to bed itself
 ## in, since nothing sinks further than the loose layer is thick.
 const TEST_BED_M := 0.7
@@ -163,33 +155,23 @@ func _physics_process(delta: float) -> void:
 			# buried — dig them out to get them back.
 			_bury(crate)
 			continue
-		# The body occupies this column, so material may not settle back into
-		# it. Without the lid it re-displaces the same spoil every tick and
-		# ratchets itself under.
-		_set_footprint_ceiling(position, bottom)
 		# Loose material carries only so much pressure. Below its bearing
-		# capacity a load rests on top; above it, the load settles in until
-		# the material confining it carries the rest — so a heavy crate beds
-		# itself in where a light one sits on the surface.
+		# capacity a load rests on top; above it the load beds in until the
+		# material confining it carries the rest. This also lids the column so
+		# spoil cannot slump back underneath.
 		var pressure := crate.mass * _gravity / (CRATE_SIZE_M * CRATE_SIZE_M)
-		var target_depth := _patch.penetration_depth_m(pressure)
-		var ground := _ground_level_around(position)
-		var floor_height := bottom
-		if not is_nan(ground):
-			var remaining := target_depth - (ground - bottom)
-			if remaining > 0.0:
-				# Ease into the bearing depth instead of driving at it: the
-				# material carries more the deeper the load goes, so the last
-				# centimetres are slow. Driving at a constant rate and
-				# stopping dead reads as falling, not as settling.
-				floor_height = bottom - minf(remaining, 1.0) * SINK_SPEED_M_S * delta
-				crate.sleeping = false
-		if crate.sleeping:
-			continue
-		var displaced := _patch.imprint_disc(
-			position.x, position.z, CRATE_SIZE_M * 0.5, floor_height
+		var floor_height := _patch.settle_load(
+			position.x, position.z, CRATE_SIZE_M * 0.5, bottom, pressure, delta
 		)
-		if displaced <= 0.0:
+		if floor_height < bottom - 1e-5:
+			# The material carries the load, so it rides the floor down rather
+			# than waiting for the solver to notice: the collider is built from
+			# the drawn surface and lags the field, and a body resting on that
+			# lag never falls into the hollow it just made.
+			crate.sleeping = false
+			crate.global_position.y = floor_height + half_height
+			crate.linear_velocity.y = minf(crate.linear_velocity.y, 0.0)
+		if crate.sleeping:
 			continue
 		# An impact shakes the slope around it loose: a metastable face that
 		# was standing on its own can let go when something lands on it. The
@@ -204,49 +186,6 @@ func _physics_process(delta: float) -> void:
 					MAX_SHAKE_RADIUS_M
 				)
 			)
-
-
-## Undisturbed surface level around a body, sampled clear of the pit it has
-## dug for itself. Averaged over four directions so a body on a slope reads
-## the slope rather than one side of it.
-func _ground_level_around(position: Vector3) -> float:
-	var reach := CRATE_SIZE_M * 0.5 + GROUND_SAMPLE_MARGIN_M
-	var total := 0.0
-	var samples := 0
-	for offset: Vector3 in [
-		Vector3(reach, 0.0, 0.0),
-		Vector3(-reach, 0.0, 0.0),
-		Vector3(0.0, 0.0, reach),
-		Vector3(0.0, 0.0, -reach),
-	]:
-		var height := _patch.surface_height_at_m(
-			position.x + offset.x, position.z + offset.z
-		)
-		if is_nan(height):
-			continue
-		total += height
-		samples += 1
-	return NAN if samples == 0 else total / float(samples)
-
-
-## Lid exactly the body's footprint. Rounding it up to whole cells covered
-## 1.25 m under a 0.6 m crate, and the rim the imprint threw up landed under
-## that lid and was immediately shoved away — so a load bedding itself in left
-## no ring around it and read as simply falling through the ground.
-func _set_footprint_ceiling(position: Vector3, bottom: float) -> void:
-	var radius_cells := CRATE_SIZE_M * 0.5 / CELL
-	var reach := int(ceil(radius_cells))
-	var center_x := position.x / CELL
-	var center_z := position.z / CELL
-	for dz in range(-reach, reach + 1):
-		for dx in range(-reach, reach + 1):
-			var x := int(round(center_x)) + dx
-			var z := int(round(center_z)) + dz
-			var offset_x := float(x) - center_x
-			var offset_z := float(z) - center_z
-			if offset_x * offset_x + offset_z * offset_z > radius_cells * radius_cells:
-				continue
-			_patch.set_ceiling(x, z, bottom)
 
 
 ## Hand a covered body over to the material: it stops being simulated rather
@@ -782,7 +721,9 @@ func _crate_report() -> String:
 	var crate: RigidBody3D = _crates[-1]
 	if not is_instance_valid(crate):
 		return ""
-	var ground := _ground_level_around(crate.global_position)
+	var ground := _patch.ground_level_around(
+		crate.global_position.x, crate.global_position.z, CRATE_SIZE_M * 0.5
+	)
 	if is_nan(ground):
 		return ""
 	var basis := crate.global_transform.basis

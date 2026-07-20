@@ -63,6 +63,12 @@ const FLOW_PERSISTENCE := 0.55
 ## dump and not on the plain.
 const DEFAULT_BEARING_BASE_PA := 300.0
 const DEFAULT_BEARING_GRADIENT_PA_PER_M := 4000.0
+## How fast a load settles into material that cannot carry it. Bedding in is a
+## slow yield, not a fall.
+const SINK_SPEED_M_S := 0.5
+## Ground level around a load is sampled this far beyond its own rim, or the
+## reading is the spoil it just threw up and it concludes it has already sunk.
+const GROUND_SAMPLE_MARGIN_CELLS := 2.0
 
 var width: int = 0
 var depth: int = 0
@@ -204,6 +210,88 @@ func penetration_depth_m(pressure_pa: float) -> float:
 	return (pressure_pa - bearing_base_pa) / maxf(
 		bearing_gradient_pa_per_m, 1.0
 	)
+
+
+## Settle a load for one tick and return the height its underside now rests
+## at. Material that cannot carry the pressure yields under it: the floor is
+## lowered, the displaced spoil goes to the rim, and the column is lidded so
+## it cannot slump back underneath. Everything that stands on loose material —
+## a crate, a wheel, a landing pad — beds in through here.
+func settle_load(
+	center_x_m: float,
+	center_z_m: float,
+	radius_m: float,
+	bottom_m: float,
+	pressure_pa: float,
+	delta_s: float
+) -> float:
+	var floor_height := bottom_m
+	var ground := ground_level_around(center_x_m, center_z_m, radius_m)
+	if not is_nan(ground):
+		var remaining := penetration_depth_m(pressure_pa) - (ground - bottom_m)
+		if remaining > 0.0:
+			# Ease in: the material carries more the deeper the load goes, so
+			# the last centimetres are slow. A constant rate that stops dead
+			# reads as falling rather than as settling.
+			floor_height -= minf(remaining, 1.0) * SINK_SPEED_M_S * delta_s
+	imprint_disc(center_x_m, center_z_m, radius_m, floor_height)
+	_lid_disc(center_x_m, center_z_m, radius_m, floor_height)
+	return floor_height
+
+
+## Undisturbed surface level around a load, sampled clear of its own rim and
+## averaged over four directions so a load on a slope reads the slope rather
+## than one side of it. NAN if nothing valid is in reach.
+func ground_level_around(
+	center_x_m: float,
+	center_z_m: float,
+	radius_m: float
+) -> float:
+	var reach := (
+		radius_m
+		+ (RIM_WIDTH_CELLS + GROUND_SAMPLE_MARGIN_CELLS) * cell_size
+	)
+	var total := 0.0
+	var samples := 0
+	for offset: Vector2 in [
+		Vector2(reach, 0.0),
+		Vector2(-reach, 0.0),
+		Vector2(0.0, reach),
+		Vector2(0.0, -reach),
+	]:
+		var height := surface_height_at_m(
+			center_x_m + offset.x, center_z_m + offset.y
+		)
+		if is_nan(height):
+			continue
+		total += height
+		samples += 1
+	return NAN if samples == 0 else total / float(samples)
+
+
+## Lid exactly the load's footprint. Rounding it up to whole cells puts the
+## rim the imprint just threw up under the lid, and the next sweep shoves it
+## away — so a load bedding in leaves no ring and reads as falling through
+## flat ground.
+func _lid_disc(
+	center_x_m: float,
+	center_z_m: float,
+	radius_m: float,
+	height_m: float
+) -> void:
+	var center_x := center_x_m / cell_size
+	var center_z := center_z_m / cell_size
+	var radius_cells := radius_m / cell_size
+	var reach := int(ceil(radius_cells))
+	for dz in range(-reach, reach + 1):
+		for dx in range(-reach, reach + 1):
+			var x := int(round(center_x)) + dx
+			var z := int(round(center_z)) + dz
+			var offset_x := float(x) - center_x
+			var offset_z := float(z) - center_z
+			if offset_x * offset_x + offset_z * offset_z > radius_cells * radius_cells:
+				continue
+			set_ceiling(x, z, height_m)
 
 
 ## Bilinear surface height at patch-local metres — what anything standing on

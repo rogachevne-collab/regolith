@@ -32,6 +32,7 @@ func _run_tests() -> void:
 		_test_surface_sampled_between_cells,
 		_test_ceiling_keeps_material_out_from_under_a_body,
 		_test_bearing_capacity_sinks_heavier_loads_deeper,
+		_test_load_settles_to_its_bearing_depth,
 		_test_imprint_displaces_into_a_rim,
 		_test_imprint_ignores_material_below_the_footprint,
 	]
@@ -387,6 +388,41 @@ func _test_bearing_capacity_sinks_heavier_loads_deeper() -> bool:
 			"four times the excess load must sink about four times as deep:"
 			+ " %f vs %f m" % [heavy, light]
 		)
+	return true
+
+
+## Drive the whole bedding-in loop the way a body does, with no physics
+## engine involved: a heavy load must reach the depth its pressure allows and
+## a light one must stay on the surface.
+func _settle_depth(pressure_pa: float) -> float:
+	var patch := _new_patch()
+	var middle := float(_center()) * CELL
+	for z in GRID:
+		for x in GRID:
+			patch.deposit(x, z, 0.7 * patch.cell_area_m2())
+	patch.relax(RELAX_CAP)
+	var bottom := patch.surface_height_at_m(middle, middle)
+	for _tick in 400:
+		patch.clear_ceilings()
+		bottom = patch.settle_load(
+			middle, middle, 0.3, bottom, pressure_pa, 1.0 / 60.0
+		)
+		patch.relax(2)
+	return patch.ground_level_around(middle, middle, 0.3) - bottom
+
+
+func _test_load_settles_to_its_bearing_depth() -> bool:
+	var reference := _new_patch()
+	var heavy_pressure := 2250.0
+	var expected := reference.penetration_depth_m(heavy_pressure)
+	var heavy := _settle_depth(heavy_pressure)
+	if absf(heavy - expected) > expected * 0.2:
+		return _fail(
+			"heavy load bedded in %f m, expected ~%f" % [heavy, expected]
+		)
+	var light := _settle_depth(reference.bearing_base_pa * 0.5)
+	if light > 0.02:
+		return _fail("load under bearing capacity sank %f m" % light)
 	return true
 
 
