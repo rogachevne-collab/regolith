@@ -30,6 +30,9 @@ const ROCK_REBUILD_INTERVAL_FRAMES := 4
 const GRAIN_AMPLITUDE_M := 0.02
 const MAX_CRATES := 12
 const CRATE_SIZE_M := 0.6
+## Radius that actually covers a square footprint: half the side leaves the
+## corners outside, standing on the very rim the imprint throws up.
+const CRATE_RADIUS_M := 0.4243
 const LIGHT_CRATE_KG := 40.0
 const HEAVY_CRATE_KG := 500.0
 ## Depth of the test bed laid by Y: deep enough for a heavy load to bed itself
@@ -171,14 +174,18 @@ func _physics_process(delta: float) -> void:
 		# spoil cannot slump back underneath.
 		var pressure := crate.mass * _gravity / (CRATE_SIZE_M * CRATE_SIZE_M)
 		var floor_height := _patch.settle_load(
-			position.x, position.z, CRATE_SIZE_M * 0.5, bottom, pressure, delta
+			position.x, position.z, CRATE_RADIUS_M, bottom, pressure, delta
 		)
 		if floor_height < bottom - GranularPatch.SETTLE_MAX_CELL_M:
-			# Wake it and let gravity take it into the hollow it just made.
-			# Writing its position here instead fought the solver: the crate
-			# juddered, and every judder cut the field again, so the patch
-			# never settled and the whole surface rebuilt every frame.
+			# Deforming a static collider does not wake the bodies resting on
+			# it, so a load that has settled sleeps through its own bedding in
+			# and never falls into the hollow the material yields under it.
+			# Keep it awake for as long as it is still going down; writing its
+			# position instead fought the solver and made it judder.
+			crate.can_sleep = false
 			crate.sleeping = false
+		elif not crate.can_sleep:
+			crate.can_sleep = true
 		if crate.sleeping:
 			continue
 		# An impact shakes the slope around it loose: a metastable face that
@@ -190,7 +197,7 @@ func _physics_process(delta: float) -> void:
 				position.x,
 				position.z,
 				minf(
-					CRATE_SIZE_M * 0.5 + speed * IMPACT_SHAKE_M_PER_SPEED,
+					CRATE_RADIUS_M + speed * IMPACT_SHAKE_M_PER_SPEED,
 					MAX_SHAKE_RADIUS_M
 				)
 			)
@@ -717,8 +724,25 @@ func _update_status() -> void:
 			if _settled
 			else "sliding %.2f m3" % _patch.flowing_volume_m3()
 		),
-		_crate_report(),
+		_crate_report() + _collider_report(),
 	]
+
+
+## Where the collider actually is under the aim, against where the field says
+## the surface is. Bodies rest on the collider, so if these two disagree
+## nothing a load does to the material can affect it.
+func _collider_report() -> String:
+	var field := _patch.surface_height_at_m(_aim.x, _aim.z)
+	if is_nan(field):
+		return ""
+	var query := PhysicsRayQueryParameters3D.create(
+		Vector3(_aim.x, field + 5.0, _aim.z), Vector3(_aim.x, field - 5.0, _aim.z)
+	)
+	query.collide_with_areas = false
+	var hit := get_world_3d().direct_space_state.intersect_ray(query)
+	if hit.is_empty():
+		return "   collider MISSING (field %.2f)" % field
+	return "   collider %.2f / field %.2f" % [(hit["position"] as Vector3).y, field]
 
 
 ## Embedment of the newest crate, so the difference between a light and a
@@ -730,7 +754,7 @@ func _crate_report() -> String:
 	if not is_instance_valid(crate):
 		return ""
 	var ground := _patch.ground_level_around(
-		crate.global_position.x, crate.global_position.z, CRATE_SIZE_M * 0.5
+		crate.global_position.x, crate.global_position.z, CRATE_RADIUS_M
 	)
 	if is_nan(ground):
 		return ""
