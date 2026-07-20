@@ -53,6 +53,7 @@ var _crates: Array[RigidBody3D] = []
 var _pouring := false
 var _dump_seq := 0
 var _display_heights := PackedFloat32Array()
+var _shown_thickness := PackedFloat32Array()
 var _aim := Vector3.ZERO
 var _orbit_yaw := 0.6
 var _orbit_pitch := -0.35
@@ -66,6 +67,7 @@ func _ready() -> void:
 		ProjectSettings.get_setting("physics/3d/default_gravity", 1.62)
 	)
 	_patch = GranularPatch.create(GRID, GRID, CELL, REPOSE_PRESETS[0]["deg"])
+	_shown_thickness = _patch.thickness_data()
 	_build_indices()
 	_setup_collider()
 	_setup_rocks()
@@ -95,6 +97,7 @@ func _process(delta: float) -> void:
 		# Settling runs on wall-clock time under the project's gravity, so
 		# lunar material slumps at lunar speed instead of at frame rate.
 		_patch.advance(delta, _gravity)
+	if _advance_shown(delta):
 		_rebuild_surface()
 		# Rocks follow the surface every frame: rebuilding only once settled
 		# leaves them hanging where the slope used to be.
@@ -271,6 +274,7 @@ func _reset() -> void:
 		GRID, GRID, CELL, REPOSE_PRESETS[_preset]["deg"]
 	)
 	_settled = true
+	_shown_thickness = _patch.thickness_data()
 	for crate: RigidBody3D in _crates:
 		if is_instance_valid(crate):
 			crate.queue_free()
@@ -293,7 +297,7 @@ func _cycle_material() -> void:
 			if value > 0.0:
 				next.deposit(x, z, value * next.cell_area_m2())
 	_patch = next
-	_settled = false
+	_shown_thickness = _patch.thickness_data()
 
 
 func _build_indices() -> void:
@@ -323,7 +327,7 @@ func _rebuild_surface() -> void:
 	for z in GRID:
 		for x in GRID:
 			var i := z * GRID + x
-			var thickness := _patch.thickness_at(x, z)
+			var thickness := _shown_thickness[i]
 			# Presentation-only grain: a mathematically clean surface reads as
 			# dough. The jitter never touches the field, so volume, repose and
 			# determinism of the simulation stay exact.
@@ -392,8 +396,12 @@ func _update_collider() -> void:
 	if data.size() != source.size():
 		data.resize(source.size())
 	for i in source.size():
+		# Collide against what is drawn, not against the field one sweep
+		# ahead of it, or crates hover above the surface while it catches up.
 		# NAN survives the divide and stays a hole in the collider.
-		data[i] = source[i] / CELL
+		data[i] = (
+			source[i] if is_nan(source[i]) else _display_heights[i]
+		) / CELL
 	shape.map_data = data
 
 
@@ -499,6 +507,32 @@ func _capture_after_frames(path: String, frames: int) -> void:
 		push_error("granular shot failed: %d" % error)
 	print("granular shot: %s" % path)
 	get_tree().quit(0 if error == OK else 1)
+
+
+## The field steps at the settle rate — about 10 Hz under lunar gravity —
+## while the screen runs at 60, so drawing the raw field looks like 10 fps of
+## material inside a 60 fps game. Chase it with a critically damped filter
+## whose time constant is one sweep: the simulation stays authoritative and
+## the presentation is continuous, the same split the engine makes for
+## physics interpolation. Returns true when anything moved.
+func _advance_shown(delta: float) -> bool:
+	var target := _patch.thickness_data()
+	if _shown_thickness.size() != target.size():
+		_shown_thickness = target
+		return true
+	var tau := 1.0 / maxf(_patch.settle_rate_hz(_gravity), 0.01)
+	var blend := 1.0 - exp(-delta / tau)
+	var moved := false
+	for i in target.size():
+		var difference := target[i] - _shown_thickness[i]
+		if absf(difference) < 1e-5:
+			if _shown_thickness[i] != target[i]:
+				_shown_thickness[i] = target[i]
+				moved = true
+			continue
+		_shown_thickness[i] += difference * blend
+		moved = true
+	return moved
 
 
 ## Bilinear surface height at an arbitrary point of the patch, using the
