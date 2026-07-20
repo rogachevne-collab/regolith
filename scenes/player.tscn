@@ -93,7 +93,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.28, -0.22, -0.45)
 transform = Transform3D(2.5, 0, 0, 0, 2.5, 0, 0, 0, 2.5, 0, 0, 0.08)
 
 [node name="Model" parent="Camera/DrillVisual/ShakePivot/Mount" unique_id=2115948937 instance=ExtResource("7_y4r1p")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.02067247)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.010454011691147083, -0.009499677287958364, 0.004693398857281261)
 
 [node name="ImpactVfx" parent="Camera" unique_id=1174185237 instance=ExtResource("16")]
 
