@@ -229,7 +229,10 @@ func settle_load(
 	var ground := ground_level_around(center_x_m, center_z_m, radius_m)
 	if not is_nan(ground):
 		var remaining := penetration_depth_m(pressure_pa) - (ground - bottom_m)
-		if remaining > 0.0:
+		# Deadband: chasing the last fraction of a millimetre keeps cutting the
+		# field every tick, so the patch never reports rest and everything
+		# downstream of it rebuilds forever.
+		if remaining > SETTLE_MAX_CELL_M:
 			# Ease in: the material carries more the deeper the load goes, so
 			# the last centimetres are slow. A constant rate that stops dead
 			# reads as falling rather than as settling.

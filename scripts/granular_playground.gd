@@ -25,6 +25,7 @@ const ROCK_MIN_THICKNESS := 0.015
 ## the toe, where the silhouette actually needs breaking up.
 const ROCK_PEAK_THICKNESS := 0.12
 const MAX_ROCKS := 4000
+const ROCK_REBUILD_INTERVAL_FRAMES := 4
 ## Visual-only surface grain, metres. Not part of the field.
 const GRAIN_AMPLITUDE_M := 0.02
 const MAX_CRATES := 12
@@ -60,6 +61,7 @@ var _patch: GranularPatch
 var _preset := 0
 var _settled := true
 var _rocks_visible := true
+var _rock_rebuild_countdown := 0
 var _indices := PackedInt32Array()
 var _crates: Array[RigidBody3D] = []
 var _pouring := false
@@ -114,9 +116,17 @@ func _process(delta: float) -> void:
 		_patch.advance(delta, _gravity)
 	if _advance_shown(delta):
 		_rebuild_surface()
-		# Rocks follow the surface every frame: rebuilding only once settled
-		# leaves them hanging where the slope used to be.
+		# Rocks follow the surface, but scanning every cell and rewriting every
+		# instance transform each frame costs more than the surface itself.
+		# Every few frames is indistinguishable while material is moving.
+		_rock_rebuild_countdown -= 1
+		if _rock_rebuild_countdown <= 0:
+			_rebuild_rocks()
+			_rock_rebuild_countdown = ROCK_REBUILD_INTERVAL_FRAMES
+	elif _rock_rebuild_countdown < ROCK_REBUILD_INTERVAL_FRAMES:
+		# Settled: make sure the last state is the one on screen.
 		_rebuild_rocks()
+		_rock_rebuild_countdown = ROCK_REBUILD_INTERVAL_FRAMES
 	_settled = _patch.is_settled()
 	_update_status()
 
@@ -163,14 +173,12 @@ func _physics_process(delta: float) -> void:
 		var floor_height := _patch.settle_load(
 			position.x, position.z, CRATE_SIZE_M * 0.5, bottom, pressure, delta
 		)
-		if floor_height < bottom - 1e-5:
-			# The material carries the load, so it rides the floor down rather
-			# than waiting for the solver to notice: the collider is built from
-			# the drawn surface and lags the field, and a body resting on that
-			# lag never falls into the hollow it just made.
+		if floor_height < bottom - GranularPatch.SETTLE_MAX_CELL_M:
+			# Wake it and let gravity take it into the hollow it just made.
+			# Writing its position here instead fought the solver: the crate
+			# juddered, and every judder cut the field again, so the patch
+			# never settled and the whole surface rebuilt every frame.
 			crate.sleeping = false
-			crate.global_position.y = floor_height + half_height
-			crate.linear_velocity.y = minf(crate.linear_velocity.y, 0.0)
 		if crate.sleeping:
 			continue
 		# An impact shakes the slope around it loose: a metastable face that
@@ -499,12 +507,12 @@ func _update_collider() -> void:
 	if data.size() != source.size():
 		data.resize(source.size())
 	for i in source.size():
-		# Collide against what is drawn, not against the field one sweep
-		# ahead of it, or crates hover above the surface while it catches up.
+		# Collide against the field itself, not the smoothed surface drawn
+		# from it. The drawn one lags by a sweep, and a body resting on that
+		# lag never falls into the hollow it has just yielded — it hangs there
+		# while the material keeps yielding under it.
 		# NAN survives the divide and stays a hole in the collider.
-		data[i] = (
-			source[i] if is_nan(source[i]) else _display_heights[i]
-		) / CELL
+		data[i] = source[i] / CELL
 	shape.map_data = data
 
 
