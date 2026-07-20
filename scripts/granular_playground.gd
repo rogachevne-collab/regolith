@@ -33,6 +33,8 @@ const CRATE_SIZE_M := 0.6
 const IMPACT_SPEED_M_S := 1.5
 const IMPACT_SHAKE_M_PER_SPEED := 0.35
 const MAX_SHAKE_RADIUS_M := 3.0
+## How far below a buried body the surface must drop before it is let go.
+const UNBURY_CLEARANCE_M := 0.05
 
 const REPOSE_PRESETS: Array[Dictionary] = [
 	{"name": "regolith", "deg": 33.0},
@@ -114,6 +116,7 @@ func _process(delta: float) -> void:
 ## Bodies displace material where they press into it. Runs on the physics
 ## tick because it reads settled contact poses, not interpolated ones.
 func _physics_process(_delta: float) -> void:
+	_patch.clear_ceilings()
 	for crate: RigidBody3D in _crates:
 		if not is_instance_valid(crate):
 			continue
@@ -130,6 +133,13 @@ func _physics_process(_delta: float) -> void:
 		) * CRATE_SIZE_M * 0.5
 		var bottom := position.y - half_height
 		var top := position.y + half_height
+		if crate.freeze:
+			# Freed only once the material is dug out from under it, not the
+			# moment its lid is uncovered: waking a body that still overlaps
+			# the height field makes the solver fling it clear.
+			if surface <= bottom + UNBURY_CLEARANCE_M:
+				crate.freeze = false
+			continue
 		if top <= surface:
 			# Fully covered. A height field is a surface, not a volume: it has
 			# no inside, so a body under it gets pushed in whatever direction
@@ -137,9 +147,10 @@ func _physics_process(_delta: float) -> void:
 			# buried — dig them out to get them back.
 			_bury(crate)
 			continue
-		if crate.freeze:
-			# The material over it is gone, so it is free again.
-			crate.freeze = false
+		# The body occupies this column, so material may not settle back into
+		# it. Without the lid it re-displaces the same spoil every tick and
+		# ratchets itself under.
+		_set_footprint_ceiling(position, bottom)
 		if crate.sleeping:
 			continue
 		var displaced := _patch.imprint_disc(
@@ -160,6 +171,14 @@ func _physics_process(_delta: float) -> void:
 					MAX_SHAKE_RADIUS_M
 				)
 			)
+
+
+func _set_footprint_ceiling(position: Vector3, bottom: float) -> void:
+	var half_cells := int(ceil(CRATE_SIZE_M * 0.5 / CELL))
+	var center := _cell_at(position)
+	for dz in range(-half_cells, half_cells + 1):
+		for dx in range(-half_cells, half_cells + 1):
+			_patch.set_ceiling(center.x + dx, center.y + dz, bottom)
 
 
 ## Hand a covered body over to the material: it stops being simulated rather

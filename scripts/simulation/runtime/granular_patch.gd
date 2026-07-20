@@ -71,6 +71,9 @@ var stability_tangent: float = tan(
 var _base: PackedFloat32Array = PackedFloat32Array()
 var _thickness: PackedFloat32Array = PackedFloat32Array()
 var _blocked: PackedByteArray = PackedByteArray()
+## Per-cell lid: material may not flow in above this height because a body is
+## standing there. INF where nothing is in the way.
+var _ceiling: PackedFloat32Array = PackedFloat32Array()
 var _delta: PackedFloat32Array = PackedFloat32Array()
 ## Thickness currently mobilised per cell: material that is already sliding
 ## and therefore yields at the lower repose angle rather than the stability
@@ -101,6 +104,8 @@ static func create(
 	patch._base.resize(count)
 	patch._thickness.resize(count)
 	patch._blocked.resize(count)
+	patch._ceiling.resize(count)
+	patch._ceiling.fill(INF)
 	patch._delta.resize(count)
 	patch._flowing.resize(count)
 	patch._flow_delta.resize(count)
@@ -137,6 +142,27 @@ func set_blocked(x: int, z: int, blocked: bool) -> void:
 		# Rock cannot hold loose material; drop it rather than leak volume
 		# silently on the next relax.
 		_thickness[i] = 0.0
+
+
+## Cap how high material may stand in a cell, because a body occupies the
+## space above it. Without this a body sitting in the material keeps
+## displacing the same spoil that keeps slumping back underneath it, and
+## ratchets itself down until it is buried.
+func set_ceiling(x: int, z: int, height_m: float) -> void:
+	if not in_bounds(x, z):
+		return
+	var i := index(x, z)
+	_ceiling[i] = minf(_ceiling[i], height_m)
+	if _base[i] + _thickness[i] > _ceiling[i]:
+		# Material is standing where the body now is; it has to get out.
+		_is_settled = false
+
+
+## Lift every lid. Bodies move, so occupancy is rebuilt each tick. Does not
+## wake the patch on its own — a settled patch under a body that never moved
+## would otherwise sweep forever.
+func clear_ceilings() -> void:
+	_ceiling.fill(INF)
 
 
 func is_blocked(x: int, z: int) -> bool:
@@ -383,6 +409,10 @@ func relax(max_iterations: int = MAX_RELAX_ITERATIONS) -> int:
 						continue
 					var ni := index(nx, nz)
 					if _blocked[ni] != 0:
+						continue
+					# A cell already filled to its lid cannot take any more:
+					# this is what stops spoil from flowing back under a body.
+					if _base[ni] + _thickness[ni] >= _ceiling[ni]:
 						continue
 					# Each neighbour holds its own slope over its own distance.
 					var max_step: float = step_per_metre * _NEIGHBOUR_DISTANCE[k]

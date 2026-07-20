@@ -30,6 +30,7 @@ func _run_tests() -> void:
 		_test_metastable_slope_holds_until_disturbed,
 		_test_avalanche_rests_at_repose_not_stability,
 		_test_surface_sampled_between_cells,
+		_test_ceiling_keeps_material_out_from_under_a_body,
 		_test_imprint_displaces_into_a_rim,
 		_test_imprint_ignores_material_below_the_footprint,
 	]
@@ -345,6 +346,28 @@ func _test_surface_sampled_between_cells() -> bool:
 	patch.set_blocked(5, 4, true)
 	if not is_nan(patch.surface_height_at_m(4.5 * CELL, 4.0 * CELL)):
 		return _fail("sample touching rock must be NAN")
+	return true
+
+
+## A body occupies its column, so spoil may not slump back underneath it.
+## Without the lid a body sitting in the material re-displaces the same spoil
+## every tick and ratchets itself under.
+func _test_ceiling_keeps_material_out_from_under_a_body() -> bool:
+	var patch := _new_patch()
+	# A pile next to a cell that a body is standing in, at ground level.
+	patch.deposit(_center() - 1, _center(), 1.0)
+	patch.set_ceiling(_center(), _center(), 0.0)
+	patch.relax(RELAX_CAP)
+	var under_body := patch.thickness_at(_center(), _center())
+	if under_body > 1e-4:
+		return _fail("material flowed under the body: %f m" % under_body)
+	if absf(patch.total_volume_m3() - 1.0) > 1e-4:
+		return _fail("the lid ate volume: %f m3" % patch.total_volume_m3())
+	# Lift the body and the pile is free to spread again.
+	patch.clear_ceilings()
+	patch.relax(RELAX_CAP)
+	if patch.thickness_at(_center(), _center()) <= 1e-4:
+		return _fail("material did not return once the body left")
 	return true
 
 
