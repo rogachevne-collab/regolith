@@ -1,4 +1,4 @@
-[gd_scene load_steps=8 format=3]
+[gd_scene load_steps=10 format=3]
 
 [ext_resource type="Script" path="res://scripts/granular_playground.gd" id="1_play"]
 
@@ -31,6 +31,8 @@ specular_mode = 1
 size = Vector2(80, 80)
 material = SubResource("Mat_ground")
 
+[sub_resource type="WorldBoundaryShape3D" id="Boundary_ground"]
+
 [sub_resource type="SphereMesh" id="Sphere_marker"]
 radius = 0.12
 height = 0.24
@@ -59,6 +61,11 @@ directional_shadow_max_distance = 60.0
 [node name="Ground" type="MeshInstance3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7.875, -0.005, 7.875)
 mesh = SubResource("Plane_ground")
+
+[node name="GroundBody" type="StaticBody3D" parent="."]
+
+[node name="Shape" type="CollisionShape3D" parent="GroundBody"]
+shape = SubResource("Boundary_ground")
 
 [node name="Surface" type="MeshInstance3D" parent="."]
 material_override = SubResource("Mat_surface")

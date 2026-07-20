@@ -13,6 +13,13 @@ const CELL := 0.25
 const BUCKET_M3 := 0.3
 const TRUCK_M3 := 2.0
 const SCOOP_RADIUS_CELLS := 3
+## Held-pour rate: sweeping the aim while pouring lays a windrow, the way a
+## moving tipper does, instead of stacking one symmetric cone.
+const POUR_RATE_M3_PER_S := 0.7
+const POUR_RADIUS_CELLS := 1.6
+const TRUCK_RADIUS_CELLS := 3.4
+## A tipper drops its load away from itself, so the lobe comes out elongated.
+const TRUCK_ELONGATION := 1.9
 ## Relax steps per frame: material visibly flows instead of teleporting.
 const RELAX_PER_FRAME := 2
 const ROCK_MIN_THICKNESS := 0.015
@@ -22,6 +29,7 @@ const ROCK_PEAK_THICKNESS := 0.12
 const MAX_ROCKS := 4000
 ## Visual-only surface grain, metres. Not part of the field.
 const GRAIN_AMPLITUDE_M := 0.02
+const MAX_CRATES := 12
 
 const REPOSE_PRESETS: Array[Dictionary] = [
 	{"name": "regolith", "deg": 33.0},
@@ -43,6 +51,9 @@ var _preset := 0
 var _settled := true
 var _rocks_visible := true
 var _indices := PackedInt32Array()
+var _crates: Array[RigidBody3D] = []
+var _pouring := false
+var _dump_seq := 0
 var _display_heights := PackedFloat32Array()
 var _aim := Vector3.ZERO
 var _orbit_yaw := 0.6
@@ -62,13 +73,24 @@ func _ready() -> void:
 	_update_aim(get_viewport().get_visible_rect().size * 0.5)
 	_maybe_start_scripted_shot()
 	_overlay.text = "\n".join([
-		"E — bucket (%.1f m3)   T — truck load (%.1f m3)" % [BUCKET_M3, TRUCK_M3],
-		"Q — scoop   R — reset   F — detail rocks   G — material",
+		"E — hold to pour (%.1f m3/s), sweep to lay a windrow" % POUR_RATE_M3_PER_S,
+		"T — tip a truck load (%.1f m3) away from the camera" % TRUCK_M3,
+		"Q — scoop   B — drop a crate   R — reset",
+		"F — detail rocks   G — material",
 		"right mouse — orbit   wheel — zoom",
 	])
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	if _pouring:
+		_deposit_lobe(
+			_aim,
+			POUR_RATE_M3_PER_S * delta,
+			POUR_RADIUS_CELLS,
+			Vector2.RIGHT,
+			1.0
+		)
+		_settled = false
 	if not _settled:
 		_last_relax_iterations = _patch.relax(RELAX_PER_FRAME)
 		_settled = _last_relax_iterations < RELAX_PER_FRAME
@@ -101,13 +123,18 @@ func _unhandled_input(event: InputEvent) -> void:
 			_update_aim(motion.position)
 		return
 	var key := event as InputEventKey
-	if key == null or not key.pressed or key.echo:
+	if key == null or key.echo:
+		return
+	if key.keycode == KEY_E:
+		_pouring = key.pressed
+		return
+	if not key.pressed:
 		return
 	match key.keycode:
-		KEY_E:
-			_dump(BUCKET_M3)
 		KEY_T:
-			_dump(TRUCK_M3)
+			_dump_truck()
+		KEY_B:
+			_drop_crate()
 		KEY_Q:
 			_scoop()
 		KEY_R:
@@ -144,10 +171,93 @@ func _cell_at(world_position: Vector3) -> Vector2i:
 	)
 
 
-func _dump(volume_m3: float) -> void:
-	var cell := _cell_at(_aim)
-	_patch.deposit(cell.x, cell.y, volume_m3)
+func _dump_truck() -> void:
+	# Away from the camera, like a bed tipping backwards.
+	var away := Vector2(_aim.x - _camera.global_position.x, _aim.z - _camera.global_position.z)
+	if away.length_squared() < 1e-4:
+		away = Vector2.RIGHT
+	_deposit_lobe(
+		_aim, TRUCK_M3, TRUCK_RADIUS_CELLS, away.normalized(), TRUCK_ELONGATION
+	)
 	_settled = false
+
+
+## Drop a rigid crate to see what the height-field collider actually does.
+## The coupling is one-way and it shows: a crate rests on the pile, but
+## pouring under it lifts it by penetration resolution rather than by contact
+## forces, and the crate never displaces a single grain.
+func _drop_crate() -> void:
+	var crate := RigidBody3D.new()
+	crate.mass = 60.0
+	var shape := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(0.6, 0.6, 0.6)
+	shape.shape = box
+	crate.add_child(shape)
+	var mesh := MeshInstance3D.new()
+	var box_mesh := BoxMesh.new()
+	box_mesh.size = box.size
+	mesh.mesh = box_mesh
+	mesh.material_override = _rocks.material_override
+	crate.add_child(mesh)
+	crate.position = Vector3(
+		_aim.x, _sample_display_height(_aim.x, _aim.z) + 3.0, _aim.z
+	)
+	add_child(crate)
+	_crates.append(crate)
+	while _crates.size() > MAX_CRATES:
+		var oldest: RigidBody3D = _crates.pop_front()
+		if is_instance_valid(oldest):
+			oldest.queue_free()
+
+
+## Spread a load over a lobe instead of a single cell. One cell makes a spike
+## that always collapses into the same symmetric cone; a real bucket covers
+## about a metre, and the per-load jitter keeps two identical dumps from
+## producing identical piles.
+func _deposit_lobe(
+	center: Vector3,
+	volume_m3: float,
+	radius_cells: float,
+	direction: Vector2,
+	elongation: float
+) -> void:
+	if volume_m3 <= 0.0:
+		return
+	_dump_seq += 1
+	var fx := center.x / CELL
+	var fz := center.z / CELL
+	var across := Vector2(-direction.y, direction.x)
+	var reach := int(ceil(radius_cells * maxf(elongation, 1.0))) + 1
+	var cells := PackedInt32Array()
+	var weights := PackedFloat32Array()
+	var total := 0.0
+	for dz in range(-reach, reach + 1):
+		for dx in range(-reach, reach + 1):
+			var x := int(round(fx)) + dx
+			var z := int(round(fz)) + dz
+			if not _patch.in_bounds(x, z):
+				continue
+			var offset := Vector2(float(x) - fx, float(z) - fz)
+			var along := offset.dot(direction) / elongation
+			var side := offset.dot(across)
+			var distance_sq := along * along + side * side
+			var radius_sq := radius_cells * radius_cells
+			if distance_sq > radius_sq:
+				continue
+			var weight := 1.0 - distance_sq / radius_sq
+			weight *= 0.65 + _hash2(x * 7 + _dump_seq, z * 13 + _dump_seq) * 0.7
+			if weight <= 0.0:
+				continue
+			cells.append(_patch.index(x, z))
+			weights.append(weight)
+			total += weight
+	if total <= 0.0:
+		_patch.deposit(int(round(fx)), int(round(fz)), volume_m3)
+		return
+	for k in cells.size():
+		var i := cells[k]
+		_patch.deposit(i % GRID, i / GRID, volume_m3 * weights[k] / total)
 
 
 func _scoop() -> void:
@@ -161,6 +271,10 @@ func _reset() -> void:
 		GRID, GRID, CELL, REPOSE_PRESETS[_preset]["deg"]
 	)
 	_settled = true
+	for crate: RigidBody3D in _crates:
+		if is_instance_valid(crate):
+			crate.queue_free()
+	_crates.clear()
 	_rebuild_surface()
 	_rebuild_rocks()
 
@@ -363,8 +477,9 @@ func _run_scripted_shot(path: String) -> void:
 		Vector3(11.8, 0.0, 10.2),
 	]
 	for point: Vector3 in loads:
-		var cell := _cell_at(point)
-		_patch.deposit(cell.x, cell.y, TRUCK_M3)
+		_deposit_lobe(
+			point, TRUCK_M3, TRUCK_RADIUS_CELLS, Vector2.RIGHT, TRUCK_ELONGATION
+		)
 	_patch.relax(400)
 	_rebuild_surface()
 	_rebuild_rocks()
