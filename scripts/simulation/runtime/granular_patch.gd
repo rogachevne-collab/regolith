@@ -52,17 +52,20 @@ const FLOW_SPEED_COEFF := 4.0
 const MAX_SWEEPS_PER_ADVANCE := 8
 ## How far outside a footprint its displaced material is piled.
 const RIM_WIDTH_CELLS := 1.6
+## Gap between the cut disc and the heave annulus. Without it, spoil lands on
+## the first cell outside the footprint — exactly where a square load's
+## corners rest — and the load perches on the rim it just threw up.
+const HEAVE_GAP_CELLS := 0.5
 ## Fraction of a cell's mobilised material still moving one sweep later. Keeps
 ## an avalanche running past the point where the local slope alone would have
 ## stopped it, which is what makes it run out instead of just slumping.
 const FLOW_PERSISTENCE := 0.55
-## Bearing capacity of freshly dumped material: the ground pressure its
-## surface carries before a load starts sinking, and how fast that grows with
-## depth as the material around the load confines it. Loose spoil is far
-## weaker than undisturbed ground, which is why a rover bogs down in a fresh
-## dump and not on the plain.
-const DEFAULT_BEARING_BASE_PA := 300.0
-const DEFAULT_BEARING_GRADIENT_PA_PER_M := 4000.0
+## Bearing of freshly dumped spoil: pressure the surface carries before a load
+## starts sinking, and stiffness with embedment. Tuned for readable game feel
+## (a heavy crate beds in decimetres, not Apollo centimetres and not a
+## half-metre shaft). Real lunar anchors are the sanity bounds, not targets.
+const DEFAULT_BEARING_BASE_PA := 250.0
+const DEFAULT_BEARING_GRADIENT_PA_PER_M := 12000.0
 ## How fast a load settles into material that cannot carry it. Bedding in is a
 ## slow yield, not a fall.
 const SINK_SPEED_M_S := 0.5
@@ -85,6 +88,9 @@ var stability_tangent: float = tan(
 var bearing_base_pa: float = DEFAULT_BEARING_BASE_PA
 ## How much more pressure the material carries per metre of embedment.
 var bearing_gradient_pa_per_m: float = DEFAULT_BEARING_GRADIENT_PA_PER_M
+## Relative compactness: scales bearing stiffness. Fresh dump ~1, fines softer,
+## blocky spoil stiffer. Cheap stand-in for bulk density.
+var density_scale: float = 1.0
 
 var _base: PackedFloat32Array = PackedFloat32Array()
 var _thickness: PackedFloat32Array = PackedFloat32Array()
@@ -204,12 +210,12 @@ func surface_height(x: int, z: int) -> float:
 ## How deep a load of the given ground pressure settles before the material
 ## carries it. Zero while the surface alone is strong enough, then linear in
 ## pressure: twice the load on the same footprint sinks roughly twice as far.
+## `density_scale` stiffens the column the way denser spoil does.
 func penetration_depth_m(pressure_pa: float) -> float:
 	if pressure_pa <= bearing_base_pa:
 		return 0.0
-	return (pressure_pa - bearing_base_pa) / maxf(
-		bearing_gradient_pa_per_m, 1.0
-	)
+	var stiff := bearing_gradient_pa_per_m * maxf(density_scale, 0.05)
+	return (pressure_pa - bearing_base_pa) / maxf(stiff, 1.0)
 
 
 ## Settle a load for one tick and return the height its underside now rests
@@ -252,7 +258,8 @@ func ground_level_around(
 ) -> float:
 	var reach := (
 		radius_m
-		+ (RIM_WIDTH_CELLS + GROUND_SAMPLE_MARGIN_CELLS) * cell_size
+		+ (RIM_WIDTH_CELLS + HEAVE_GAP_CELLS + GROUND_SAMPLE_MARGIN_CELLS)
+		* cell_size
 	)
 	var total := 0.0
 	var samples := 0
@@ -384,14 +391,13 @@ func take(x: int, z: int, radius_cells: int, volume_m3: float) -> float:
 
 
 ## Press a rigid footprint into the material. Everything inside the disc that
-## sits above `bottom_height_m` is cut away and piled in a rim just outside
-## it — displacement, not deletion, which is what makes a wheel throw a berm,
-## a boot leave a raised edge and a dropped crate leave a crater rather than a
-## clean hole. Returns the displaced volume; relaxation afterwards lets the
-## rim slump back to repose.
+## sits above `bottom_height_m` is cut away and piled in a rim outside it —
+## displacement, not deletion. The heave starts past a small gap so a square
+## load's corners do not sit on the spoil ring. Spoil is weighted toward the
+## outer flank of the annulus (a cheap stand-in for a broad heave). Conserves
+## volume exactly: if there is nowhere to put the spoil, nothing is cut.
 ##
-## Coordinates are patch-local metres. Conserves volume exactly: if there is
-## nowhere to put the spoil, nothing is cut.
+## Coordinates are patch-local metres.
 func imprint_disc(
 	center_x_m: float,
 	center_z_m: float,
@@ -403,11 +409,14 @@ func imprint_disc(
 	var center_x := center_x_m / cell_size
 	var center_z := center_z_m / cell_size
 	var radius_cells := radius_m / cell_size
-	var rim_cells := radius_cells + RIM_WIDTH_CELLS
-	var reach := int(ceil(rim_cells)) + 1
+	var rim_inner := radius_cells + HEAVE_GAP_CELLS
+	var rim_outer := rim_inner + RIM_WIDTH_CELLS
+	var reach := int(ceil(rim_outer)) + 1
 	var footprint := PackedInt32Array()
 	var cut := PackedFloat32Array()
 	var rim := PackedInt32Array()
+	var rim_weight := PackedFloat32Array()
+	var weight_total := 0.0
 	var displaced_thickness := 0.0
 	for dz in range(-reach, reach + 1):
 		for dx in range(-reach, reach + 1):
@@ -431,15 +440,20 @@ func imprint_disc(
 				footprint.append(i)
 				cut.append(removed)
 				displaced_thickness += removed
-			elif distance <= rim_cells:
+			elif distance > rim_inner and distance <= rim_outer:
+				# Prefer the outer flank so the berm reads as heave, not a
+				# knife-edge ring pressed against the footprint.
+				var weight := (distance - rim_inner) + 0.25
 				rim.append(i)
-	if displaced_thickness <= EPSILON_M or rim.is_empty():
+				rim_weight.append(weight)
+				weight_total += weight
+	if displaced_thickness <= EPSILON_M or rim.is_empty() or weight_total <= 0.0:
 		return 0.0
 	for k in footprint.size():
 		_thickness[footprint[k]] -= cut[k]
-	var share := displaced_thickness / float(rim.size())
-	for i: int in rim:
-		_thickness[i] += share
+	for k in rim.size():
+		var i: int = rim[k]
+		_thickness[i] += displaced_thickness * (rim_weight[k] / weight_total)
 		# Spoil thrown out of a footprint lands loose, not compacted.
 		_flowing[i] = _thickness[i]
 	_is_settled = false

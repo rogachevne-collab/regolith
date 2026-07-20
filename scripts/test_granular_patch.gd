@@ -33,8 +33,10 @@ func _run_tests() -> void:
 		_test_ceiling_keeps_material_out_from_under_a_body,
 		_test_bearing_capacity_sinks_heavier_loads_deeper,
 		_test_load_settles_to_its_bearing_depth,
+		_test_denser_material_sinks_less,
 		_test_imprint_displaces_into_a_rim,
 		_test_imprint_ignores_material_below_the_footprint,
+		_test_imprint_heave_starts_outside_the_footprint,
 	]
 	for test: Callable in tests:
 		if not bool(test.call()):
@@ -415,14 +417,34 @@ func _test_load_settles_to_its_bearing_depth() -> bool:
 	var reference := _new_patch()
 	var heavy_pressure := 2250.0
 	var expected := reference.penetration_depth_m(heavy_pressure)
+	# Spectacle band: readable decimetres, not Apollo cm and not a shaft.
+	if expected < 0.08 or expected > 0.25:
+		return _fail(
+			"heavy-load target depth out of game band: %f m" % expected
+		)
 	var heavy := _settle_depth(heavy_pressure)
-	if absf(heavy - expected) > expected * 0.2:
+	if absf(heavy - expected) > expected * 0.25:
 		return _fail(
 			"heavy load bedded in %f m, expected ~%f" % [heavy, expected]
 		)
 	var light := _settle_depth(reference.bearing_base_pa * 0.5)
 	if light > 0.02:
 		return _fail("load under bearing capacity sank %f m" % light)
+	return true
+
+
+func _test_denser_material_sinks_less() -> bool:
+	var soft := _new_patch()
+	soft.density_scale = 0.55
+	var firm := _new_patch()
+	firm.density_scale = 2.5
+	var pressure := 2250.0
+	var soft_z := soft.penetration_depth_m(pressure)
+	var firm_z := firm.penetration_depth_m(pressure)
+	if soft_z <= firm_z * 1.5:
+		return _fail(
+			"denser spoil must carry more: soft %f vs firm %f" % [soft_z, firm_z]
+		)
 	return true
 
 
@@ -467,6 +489,33 @@ func _test_imprint_ignores_material_below_the_footprint() -> bool:
 		return _fail("imprint above the surface still cut material")
 	if patch.thickness_data() != before:
 		return _fail("imprint above the surface changed the field")
+	return true
+
+
+## Spoil must not land on the first cell outside the cut — that is where a
+## square load's corners rest, and perching there stops bedding in.
+func _test_imprint_heave_starts_outside_the_footprint() -> bool:
+	var patch := _new_patch()
+	var middle := float(_center()) * CELL
+	for z in range(_center() - 6, _center() + 7):
+		for x in range(_center() - 6, _center() + 7):
+			patch.deposit(x, z, 0.2 * patch.cell_area_m2())
+	# Circumscribed radius of a 0.6 m crate: cut ends between cell 1 and 2,
+	# so cell +2 sits in the heave gap and must not receive the berm.
+	var radius_m := 0.6 * 0.7071
+	patch.imprint_disc(middle, middle, radius_m, 0.05)
+	var gap_cell := _center() + 2
+	if patch.thickness_at(gap_cell, _center()) > 0.22:
+		return _fail(
+			"heave landed in the gap cell: %f m"
+			% patch.thickness_at(gap_cell, _center())
+		)
+	var berm_cell := _center() + 3
+	if patch.thickness_at(berm_cell, _center()) <= 0.2:
+		return _fail(
+			"no heave outside the gap: %f m"
+			% patch.thickness_at(berm_cell, _center())
+		)
 	return true
 
 

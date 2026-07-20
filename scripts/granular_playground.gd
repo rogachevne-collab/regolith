@@ -30,11 +30,9 @@ const ROCK_REBUILD_INTERVAL_FRAMES := 4
 const GRAIN_AMPLITUDE_M := 0.02
 const MAX_CRATES := 12
 const CRATE_SIZE_M := 0.6
-## The excavation has to contain the whole footprint with room to spare. Half
-## the side leaves the corners outside it, and even the exact circumscribed
-## radius leaves them on the boundary where the rim begins — the crate perches
-## there and stops after a centimetre. Half a cell of margin clears it.
-const CRATE_RADIUS_M := CRATE_SIZE_M * 0.7071 + CELL * 0.5
+## Circumscribed radius of the square footprint. Spoil is piled past a heave
+## gap inside the patch, so corners do not sit on the rim without overcutting.
+const CRATE_RADIUS_M := CRATE_SIZE_M * 0.7071
 const LIGHT_CRATE_KG := 40.0
 const HEAVY_CRATE_KG := 500.0
 ## Depth of the test bed laid by Y: deep enough for a heavy load to bed itself
@@ -46,11 +44,19 @@ const IMPACT_SHAKE_M_PER_SPEED := 0.35
 const MAX_SHAKE_RADIUS_M := 3.0
 ## How far below a buried body the surface must drop before it is let go.
 const UNBURY_CLEARANCE_M := 0.05
+## Contact area never shrinks below a cell — the plastic-redistribution stand-in
+## for a cube corner that would otherwise claim infinite pressure.
+const MIN_CONTACT_AREA_M2 := CELL * CELL
+## Dynamic pressure from a hard landing, clamped so a drop is spectacular but
+## does not dig a shaft.
+const DYN_PRESSURE_PER_MS := 800.0
+const DYN_MAX_RATIO := 1.8
+const MAX_CONTACT_PRESSURE_PA := 4500.0
 
 const REPOSE_PRESETS: Array[Dictionary] = [
-	{"name": "regolith", "deg": 33.0},
-	{"name": "fines", "deg": 25.0},
-	{"name": "blocky spoil", "deg": 45.0},
+	{"name": "regolith", "deg": 33.0, "density": 1.0},
+	{"name": "fines", "deg": 25.0, "density": 0.55},
+	{"name": "blocky spoil", "deg": 45.0, "density": 2.5},
 ]
 
 @onready var _surface: MeshInstance3D = $Surface
@@ -87,7 +93,7 @@ func _ready() -> void:
 	_gravity = float(
 		ProjectSettings.get_setting("physics/3d/default_gravity", 1.62)
 	)
-	_patch = GranularPatch.create(GRID, GRID, CELL, REPOSE_PRESETS[0]["deg"])
+	_patch = _make_patch()
 	_shown_thickness = _patch.thickness_data()
 	_build_indices()
 	_setup_collider()
@@ -102,7 +108,7 @@ func _ready() -> void:
 		"Q — scoop   B — light crate (%.0f kg)   N — heavy crate (%.0f kg)"
 		% [LIGHT_CRATE_KG, HEAVY_CRATE_KG],
 		"Y — lay a %.1f m test bed   R — reset" % TEST_BED_M,
-		"F — detail rocks   G — material   (piles hold steeper than they rest)",
+		"F — detail rocks   G — material (repose + density / bearing)",
 		"right mouse — orbit   wheel — zoom",
 	])
 
@@ -171,11 +177,10 @@ func _physics_process(delta: float) -> void:
 			# buried — dig them out to get them back.
 			_bury(crate)
 			continue
-		# Loose material carries only so much pressure. Below its bearing
-		# capacity a load rests on top; above it the load beds in until the
-		# material confining it carries the rest. This also lids the column so
-		# spoil cannot slump back underneath.
-		var pressure := crate.mass * _gravity / (CRATE_SIZE_M * CRATE_SIZE_M)
+		# Loose material carries only so much pressure. Static weight, a
+		# clamped impact spike, and material density decide how far it beds
+		# in; the column is lidded so spoil cannot slump back underneath.
+		var pressure := _contact_pressure(crate)
 		var floor_height := _patch.settle_load(
 			position.x, position.z, CRATE_RADIUS_M, bottom, pressure, delta
 		)
@@ -397,9 +402,7 @@ func _scoop() -> void:
 
 
 func _reset() -> void:
-	_patch = GranularPatch.create(
-		GRID, GRID, CELL, REPOSE_PRESETS[_preset]["deg"]
-	)
+	_patch = _make_patch()
 	_settled = true
 	_shown_thickness = _patch.thickness_data()
 	for crate: RigidBody3D in _crates:
@@ -410,14 +413,32 @@ func _reset() -> void:
 	_rebuild_rocks()
 
 
+func _make_patch() -> GranularPatch:
+	var patch := GranularPatch.create(
+		GRID, GRID, CELL, REPOSE_PRESETS[_preset]["deg"]
+	)
+	patch.density_scale = float(REPOSE_PRESETS[_preset]["density"])
+	return patch
+
+
+## Ground pressure under a crate: mg over a clamped contact area, plus a
+## capped spike from downward speed so a hard drop digs more than a soft set.
+func _contact_pressure(crate: RigidBody3D) -> float:
+	var upright := absf(crate.global_transform.basis.y.y)
+	var area := CRATE_SIZE_M * CRATE_SIZE_M * clampf(upright, 0.25, 1.0)
+	area = maxf(area, MIN_CONTACT_AREA_M2)
+	var p_static := crate.mass * _gravity / area
+	var v_down := maxf(-crate.linear_velocity.y, 0.0)
+	var p_dyn := minf(v_down * DYN_PRESSURE_PER_MS, p_static * DYN_MAX_RATIO)
+	return minf(p_static + p_dyn, MAX_CONTACT_PRESSURE_PA)
+
+
 func _cycle_material() -> void:
 	_preset = (_preset + 1) % REPOSE_PRESETS.size()
 	# Keep the material already on the ground and let it re-settle to the new
-	# angle: the difference between 25 and 45 degrees is the whole point.
+	# angle and density: fines slump and bog, blocky spoil stands and carries.
 	var thickness := _patch.thickness_data()
-	var next := GranularPatch.create(
-		GRID, GRID, CELL, REPOSE_PRESETS[_preset]["deg"]
-	)
+	var next := _make_patch()
 	for z in GRID:
 		for x in GRID:
 			var value := thickness[z * GRID + x]
@@ -723,10 +744,10 @@ func _update_camera() -> void:
 
 
 func _update_status() -> void:
-	_status.text = "%s (rests %.0f, holds to %.0f deg)   %.2f m3   %s%s" % [
+	_status.text = "%s (rests %.0f, dens %.2f)   %.2f m3   %s%s" % [
 		REPOSE_PRESETS[_preset]["name"],
 		REPOSE_PRESETS[_preset]["deg"],
-		rad_to_deg(atan(_patch.stability_tangent)),
+		REPOSE_PRESETS[_preset]["density"],
 		_patch.total_volume_m3(),
 		(
 			"settled"
@@ -771,7 +792,7 @@ func _crate_report() -> String:
 	var half_height := (
 		absf(basis.x.y) + absf(basis.y.y) + absf(basis.z.y)
 	) * CRATE_SIZE_M * 0.5
-	var pressure := crate.mass * _gravity / (CRATE_SIZE_M * CRATE_SIZE_M)
+	var pressure := _contact_pressure(crate)
 	return "   crate %.0f kg: %.0f Pa, %.2f m in (limit %.2f)" % [
 		crate.mass,
 		pressure,
