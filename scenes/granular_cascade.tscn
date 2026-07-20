@@ -1,0 +1,136 @@
+[gd_scene load_steps=12 format=3]
+
+[ext_resource type="Script" path="res://scripts/granular_cascade.gd" id="1_cascade"]
+
+[sub_resource type="Environment" id="Env_1"]
+background_mode = 1
+background_color = Color(0.02, 0.02, 0.025, 1)
+ambient_light_source = 1
+ambient_light_color = Color(0.16, 0.17, 0.2, 1)
+ambient_light_energy = 0.14
+tonemap_mode = 3
+
+[sub_resource type="StandardMaterial3D" id="Mat_surface"]
+cull_mode = 2
+albedo_color = Color(1, 1, 1, 1)
+roughness = 1.0
+specular_mode = 1
+vertex_color_use_as_albedo = true
+
+[sub_resource type="StandardMaterial3D" id="Mat_deck"]
+albedo_color = Color(0.28, 0.28, 0.3, 1)
+roughness = 0.9
+specular_mode = 1
+
+[sub_resource type="StandardMaterial3D" id="Mat_grains"]
+albedo_color = Color(0.62, 0.56, 0.48, 1)
+roughness = 1.0
+specular_mode = 1
+
+[sub_resource type="StandardMaterial3D" id="Mat_air"]
+albedo_color = Color(0.72, 0.66, 0.55, 1)
+roughness = 1.0
+specular_mode = 1
+
+[sub_resource type="BoxMesh" id="Box_shelf_deck"]
+size = Vector3(5.2, 0.12, 4.2)
+
+[sub_resource type="BoxMesh" id="Box_floor_deck"]
+size = Vector3(9.2, 0.12, 9.2)
+
+[sub_resource type="SphereMesh" id="Sphere_marker"]
+radius = 0.1
+height = 0.2
+radial_segments = 10
+rings = 5
+
+[sub_resource type="StandardMaterial3D" id="Mat_marker"]
+albedo_color = Color(1, 0.75, 0.2, 1)
+emission_enabled = true
+emission = Color(1, 0.6, 0.1, 1)
+emission_energy_multiplier = 2.0
+shading_mode = 0
+
+[node name="GranularCascade" type="Node3D"]
+script = ExtResource("1_cascade")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Env_1")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.766, -0.116, 0.632, 0, 0.984, 0.181, -0.643, -0.139, 0.753, 0, 14, 0)
+light_energy = 2.2
+shadow_enabled = true
+directional_shadow_max_distance = 50.0
+
+[node name="Floor" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+
+[node name="Deck" type="MeshInstance3D" parent="Floor"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4.375, -0.06, 4.375)
+mesh = SubResource("Box_floor_deck")
+material_override = SubResource("Mat_deck")
+
+[node name="Surface" type="MeshInstance3D" parent="Floor"]
+material_override = SubResource("Mat_surface")
+
+[node name="SurfaceBody" type="StaticBody3D" parent="Floor"]
+
+[node name="Shape" type="CollisionShape3D" parent="Floor/SurfaceBody"]
+
+[node name="Grains" type="MultiMeshInstance3D" parent="Floor"]
+material_override = SubResource("Mat_grains")
+
+[node name="Shelf" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.5, 2.4, 1.0)
+
+[node name="Deck" type="MeshInstance3D" parent="Shelf"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.375, -0.08, 1.875)
+mesh = SubResource("Box_shelf_deck")
+material_override = SubResource("Mat_deck")
+
+[node name="Surface" type="MeshInstance3D" parent="Shelf"]
+material_override = SubResource("Mat_surface")
+
+[node name="SurfaceBody" type="StaticBody3D" parent="Shelf"]
+
+[node name="Shape" type="CollisionShape3D" parent="Shelf/SurfaceBody"]
+
+[node name="Grains" type="MultiMeshInstance3D" parent="Shelf"]
+material_override = SubResource("Mat_grains")
+
+[node name="AirGrains" type="MultiMeshInstance3D" parent="."]
+material_override = SubResource("Mat_air")
+
+[node name="AimMarker" type="MeshInstance3D" parent="."]
+mesh = SubResource("Sphere_marker")
+material_override = SubResource("Mat_marker")
+
+[node name="CameraRig" type="Node3D" parent="."]
+
+[node name="Camera3D" type="Camera3D" parent="CameraRig"]
+far = 200.0
+
+[node name="CanvasLayer" type="CanvasLayer" parent="."]
+
+[node name="Overlay" type="Label" parent="CanvasLayer"]
+offset_left = 16.0
+offset_top = 12.0
+offset_right = 720.0
+offset_bottom = 110.0
+theme_override_colors/font_color = Color(0.85, 0.87, 0.9, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 4
+
+[node name="Status" type="Label" parent="CanvasLayer"]
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 16.0
+offset_top = -40.0
+offset_right = 900.0
+offset_bottom = -14.0
+grow_vertical = 0
+theme_override_colors/font_color = Color(1, 0.9, 0.6, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 4

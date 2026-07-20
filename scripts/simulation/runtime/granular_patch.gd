@@ -622,9 +622,8 @@ func advance(delta_s: float, gravity_m_s2: float) -> int:
 	return relax(sweeps)
 
 
-## Volume sitting on border cells: material that would spill out of the patch
-## if spill-down existed. Non-zero means the patch is too small (Granular v0
-## treats borders as walls).
+## Volume sitting on border cells: material pressed against the walls when
+## spill is not drained. Useful as a diagnostic that the patch is too small.
 func edge_pressure_m3() -> float:
 	var sum := 0.0
 	for z in depth:
@@ -633,6 +632,90 @@ func edge_pressure_m3() -> float:
 				continue
 			sum += _thickness[index(x, z)]
 	return sum * cell_area_m2()
+
+
+## How much of a cell is currently mobilised (sliding), metres of thickness.
+func flowing_thickness_at(x: int, z: int) -> float:
+	return _flowing[index(x, z)] if in_bounds(x, z) else 0.0
+
+
+## Drain material across open edges. Removes volume from border cells and
+## returns spill events the caller must route downward (another patch, a
+## chute, the void). Each event:
+## `{ "x_m", "z_m", "volume_m3", "out_x", "out_z" }` in patch-local metres,
+## with `(out_x, out_z)` the outward direction on the XZ plane.
+##
+## Preferential take from cells that are already sliding — resting berms on
+## the lip do not teleport off the edge. Caps total volume so a long frame
+## cannot empty the shelf in one tick.
+func spill_edge(max_volume_m3: float) -> Array:
+	var events: Array = []
+	if max_volume_m3 <= EPSILON_M:
+		return events
+	var candidates: Array = []
+	var weight_total := 0.0
+	for z in depth:
+		for x in width:
+			if x != 0 and z != 0 and x != width - 1 and z != depth - 1:
+				continue
+			var i := index(x, z)
+			if _blocked[i] != 0 or _thickness[i] <= EPSILON_M:
+				continue
+			var out_x := 0.0
+			var out_z := 0.0
+			if x == 0:
+				out_x -= 1.0
+			elif x == width - 1:
+				out_x += 1.0
+			if z == 0:
+				out_z -= 1.0
+			elif z == depth - 1:
+				out_z += 1.0
+			var out_len := sqrt(out_x * out_x + out_z * out_z)
+			if out_len <= 0.0:
+				continue
+			out_x /= out_len
+			out_z /= out_len
+			# Sliding spoil leaves fast; a resting berm against the lip still
+			# bleeds slowly, or a cone pressed to the wall would never leave.
+			var weight := _flowing[i] * 3.0 + _thickness[i] * 0.2
+			if weight <= EPSILON_M:
+				continue
+			candidates.append({
+				"i": i,
+				"x": x,
+				"z": z,
+				"out_x": out_x,
+				"out_z": out_z,
+				"weight": weight,
+			})
+			weight_total += weight
+	if candidates.is_empty() or weight_total <= 0.0:
+		return events
+	var budget_thickness := max_volume_m3 / cell_area_m2()
+	var removed_thickness := 0.0
+	for entry: Dictionary in candidates:
+		if removed_thickness >= budget_thickness:
+			break
+		var i: int = entry["i"]
+		var share := budget_thickness * (float(entry["weight"]) / weight_total)
+		var take_th := minf(_thickness[i], share)
+		if take_th <= EPSILON_M:
+			continue
+		_thickness[i] -= take_th
+		_flowing[i] = maxf(_flowing[i] - take_th, 0.0)
+		removed_thickness += take_th
+		var volume := take_th * cell_area_m2()
+		events.append({
+			"x_m": float(entry["x"]) * cell_size,
+			"z_m": float(entry["z"]) * cell_size,
+			"volume_m3": volume,
+			"out_x": float(entry["out_x"]),
+			"out_z": float(entry["out_z"]),
+		})
+	if removed_thickness > EPSILON_M:
+		_is_settled = false
+	return events
 
 
 ## Height field for `HeightMapShape3D.map_data`. Blocked cells become NAN,

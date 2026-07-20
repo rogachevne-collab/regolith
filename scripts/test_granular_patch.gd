@@ -37,6 +37,8 @@ func _run_tests() -> void:
 		_test_imprint_displaces_into_a_rim,
 		_test_imprint_ignores_material_below_the_footprint,
 		_test_imprint_heave_starts_outside_the_footprint,
+		_test_spill_edge_conserves_volume_to_another_patch,
+		_test_spill_edge_prefers_the_lip,
 	]
 	for test: Callable in tests:
 		if not bool(test.call()):
@@ -521,6 +523,49 @@ func _test_imprint_heave_starts_outside_the_footprint() -> bool:
 			"no heave outside the gap: %f m"
 			% patch.thickness_at(berm_cell, _center())
 		)
+	return true
+
+
+## Spill removes volume from the source and the caller can deposit it on a
+## catch patch — total mass across both is conserved.
+func _test_spill_edge_conserves_volume_to_another_patch() -> bool:
+	var shelf := GranularPatch.create(8, 8, CELL, REPOSE_DEG)
+	var floor := GranularPatch.create(8, 8, CELL, REPOSE_DEG)
+	# Load the lip so there is something to drain.
+	for z in 8:
+		shelf.deposit(7, z, 0.15 * shelf.cell_area_m2())
+	var before := shelf.total_volume_m3() + floor.total_volume_m3()
+	var spilled := 0.0
+	for _tick in 40:
+		var events := shelf.spill_edge(0.05)
+		for event: Dictionary in events:
+			var volume: float = event["volume_m3"]
+			spilled += volume
+			floor.deposit(0, clampi(int(event["z_m"] / CELL), 0, 7), volume)
+	var after := shelf.total_volume_m3() + floor.total_volume_m3()
+	if absf(after - before) > 1e-4:
+		return _fail("spill changed total volume: %f -> %f" % [before, after])
+	if spilled <= 0.02:
+		return _fail("spill moved almost nothing: %f m3" % spilled)
+	if floor.total_volume_m3() + 1e-4 < spilled:
+		return _fail("catch patch missing spilled volume")
+	return true
+
+
+## Interior cells must not spill — only the open lip.
+func _test_spill_edge_prefers_the_lip() -> bool:
+	var patch := _new_patch()
+	patch.deposit(_center(), _center(), 0.4)
+	patch.relax(RELAX_CAP)
+	var before_center := patch.thickness_at(_center(), _center())
+	var events := patch.spill_edge(1.0)
+	for event: Dictionary in events:
+		var x := int(round(float(event["x_m"]) / CELL))
+		var z := int(round(float(event["z_m"]) / CELL))
+		if x > 0 and z > 0 and x < GRID - 1 and z < GRID - 1:
+			return _fail("spill event from interior cell %d,%d" % [x, z])
+	if patch.thickness_at(_center(), _center()) < before_center - 0.02:
+		return _fail("spill ate the interior crest")
 	return true
 
 
