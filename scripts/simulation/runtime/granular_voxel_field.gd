@@ -76,6 +76,18 @@ var cell_size := DEFAULT_CELL_SIZE_M
 
 var _mass: PackedFloat32Array = PackedFloat32Array()
 var _solid: PackedByteArray = PackedByteArray()
+## Which `_solid` entries have actually been established. Rock in the world is
+## a voxel field of its own with hundreds of thousands of cells under a patch
+## this size, far too many to ask about up front — but only the handful of
+## cells material is currently touching ever matter. So `solid_query` is asked
+## on first use and the answer memoised here, and carving invalidates a box of
+## it rather than the whole field.
+var _solid_known: PackedByteArray = PackedByteArray()
+## Answers "is this cell rock?" in field coordinates. Left null the field is
+## self-contained and only `set_solid` decides, which is what the demos and
+## tests use. A pure function of the cell, so caching it changes nothing about
+## determinism.
+var solid_query: Callable = Callable()
 ## Cells worth visiting next sweep. Everything at rest costs nothing, which is
 ## what makes a field of millions of cells affordable: only the handful that
 ## are still moving are ever touched.
@@ -109,6 +121,7 @@ static func create(
 	field._solid.resize(count)
 	field._queued.resize(count)
 	field._dirty_flag.resize(count)
+	field._solid_known.resize(count)
 	return field
 
 
@@ -129,12 +142,53 @@ func cell_volume_m3() -> float:
 
 
 func set_solid(x: int, y: int, z: int, solid: bool) -> void:
-	if in_bounds(x, y, z):
-		_solid[index(x, y, z)] = 1 if solid else 0
+	if not in_bounds(x, y, z):
+		return
+	var i := index(x, y, z)
+	_solid[i] = 1 if solid else 0
+	# Stated explicitly, so it is not overwritten by a later lazy query.
+	_solid_known[i] = 1
 
 
 func is_solid(x: int, y: int, z: int) -> bool:
-	return in_bounds(x, y, z) and _solid[index(x, y, z)] != 0
+	return in_bounds(x, y, z) and _solid_at(index(x, y, z))
+
+
+## Rock at a cell, asking `solid_query` the first time and remembering the
+## answer. Everything in the stepping rules goes through here.
+func _solid_at(i: int) -> bool:
+	if _solid_known[i] == 0:
+		_solid_known[i] = 1
+		_solid[i] = 0
+		if solid_query.is_valid():
+			var y := i / (size.x * size.z)
+			var z := (i / size.x) % size.z
+			var x := i % size.x
+			if bool(solid_query.call(Vector3i(x, y, z))):
+				_solid[i] = 1
+	return _solid[i] != 0
+
+
+## Forget what was known about rock in a box of cells and wake anything lying
+## there. This is what a carve calls: dig out from under a heap and the heap
+## has to discover it is no longer supported, which is exactly the case that
+## used to leave material standing in the air.
+func invalidate_solid(from_cell: Vector3i, to_cell: Vector3i) -> void:
+	var lo := Vector3i(
+		maxi(mini(from_cell.x, to_cell.x), 0),
+		maxi(mini(from_cell.y, to_cell.y), 0),
+		maxi(mini(from_cell.z, to_cell.z), 0)
+	)
+	var hi := Vector3i(
+		mini(maxi(from_cell.x, to_cell.x), size.x - 1),
+		mini(maxi(from_cell.y, to_cell.y), size.y - 1),
+		mini(maxi(from_cell.z, to_cell.z), size.z - 1)
+	)
+	for y in range(lo.y, hi.y + 1):
+		for z in range(lo.z, hi.z + 1):
+			for x in range(lo.x, hi.x + 1):
+				_solid_known[index(x, y, z)] = 0
+				_wake(x, y, z)
 
 
 func mass_at(x: int, y: int, z: int) -> float:
@@ -166,7 +220,7 @@ func deposit(x: int, y: int, z: int, volume_m3: float) -> float:
 	if volume_m3 <= 0.0 or not in_bounds(x, y, z):
 		return 0.0
 	var i := index(x, y, z)
-	if _solid[i] != 0:
+	if _solid_at(i):
 		return 0.0
 	var room := FULL - _mass[i]
 	if room <= 0.0:
@@ -300,7 +354,7 @@ func _step_cell(i: int) -> void:
 	# Straight down first: nothing spreads sideways while it can still fall.
 	if y > 0:
 		var below := index(x, y - 1, z)
-		if _solid[below] == 0:
+		if not _solid_at(below):
 			var room := FULL - _mass[below]
 			if room > 0.0:
 				var movable: float = minf(mass, room)
@@ -368,7 +422,7 @@ func _spread(
 		if not in_bounds(nx, to_y, nz):
 			continue
 		var ni := index(nx, to_y, nz)
-		if _solid[ni] != 0:
+		if _solid_at(ni):
 			continue
 		var difference := mass - _mass[ni]
 		if difference <= min_difference:

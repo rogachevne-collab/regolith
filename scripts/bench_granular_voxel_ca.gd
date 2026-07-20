@@ -117,8 +117,81 @@ func _run() -> void:
 		return
 	if not _test_a_tight_budget_does_not_strand_material():
 		return
+	if not _test_undermining_rock_drops_the_heap_on_it():
+		return
 	print("%s: PASS" % LABEL)
 	get_tree().quit(0)
+
+
+## Rock comes from the world's own voxel field, so the granular field learns it
+## by asking and remembering. Carving under a heap has to invalidate what was
+## remembered and wake the heap — otherwise the material goes on resting on
+## rock that is no longer there, which is exactly the "pile left hanging in the
+## air over my excavation" the height-field version could never fix.
+func _test_undermining_rock_drops_the_heap_on_it() -> bool:
+	var pillar_top := 20
+	# A lambda captures a local by *value* in GDScript, so a plain bool here
+	# would freeze at `false` and the carve would never reach the query. An
+	# array is a reference, so the closure sees the change.
+	var carved := [false]
+	var field := GranularVoxelField.create(Vector3i(32, 48, 32), CELL)
+	# Rock is a floor plus a pillar, answered on demand rather than stored.
+	field.solid_query = func(cell: Vector3i) -> bool:
+		if cell.y < 2:
+			return true
+		if bool(carved[0]):
+			return false
+		return (
+			cell.y < pillar_top
+			and absi(cell.x - 16) <= 2
+			and absi(cell.z - 16) <= 2
+		)
+	var poured := 0.0
+	for dz in range(-2, 3):
+		for dx in range(-2, 3):
+			for dy in range(0, 6):
+				poured += field.deposit(16 + dx, pillar_top + dy, 16 + dz, 1.0)
+	var sweeps := 0
+	while not field.is_settled() and sweeps < 20000:
+		field.step()
+		sweeps += 1
+	var resting := 0.0
+	for y in range(pillar_top - 2, 48):
+		for z in 32:
+			for x in 32:
+				resting += field.mass_at(x, y, z)
+	if resting <= 0.0:
+		_fail("the heap never came to rest on the pillar")
+		return false
+
+	# Take the pillar away and tell the field the rock there changed.
+	carved[0] = true
+	field.invalidate_solid(Vector3i(10, 2, 10), Vector3i(22, pillar_top, 22))
+	sweeps = 0
+	while not field.is_settled() and sweeps < 40000:
+		field.step()
+		sweeps += 1
+	if sweeps >= 40000:
+		_fail("the undermined heap never came to rest")
+		return false
+	if absf(field.total_volume_m3() - poured) > 1e-4:
+		_fail("undermining lost volume")
+		return false
+	var left_high := 0.0
+	for y in range(pillar_top - 2, 48):
+		for z in 32:
+			for x in 32:
+				left_high += field.mass_at(x, y, z)
+	if left_high > 0.0:
+		_fail(
+			"%.3f cells still standing where the pillar used to be" % left_high
+		)
+		return false
+	print(
+		"%s: undermined heap fell %d cells to the floor, volume intact"
+		% [LABEL, pillar_top]
+	)
+	return true
 
 
 ## Nothing may be left hanging in the air because the per-sweep budget never
