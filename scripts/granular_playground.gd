@@ -33,8 +33,6 @@ const CRATE_SIZE_M := 0.6
 const IMPACT_SPEED_M_S := 1.5
 const IMPACT_SHAKE_M_PER_SPEED := 0.35
 const MAX_SHAKE_RADIUS_M := 3.0
-## Half-diagonal of a cube: its lowest corner while tumbling.
-const SQRT_3 := 1.7320508075688772
 
 const REPOSE_PRESETS: Array[Dictionary] = [
 	{"name": "regolith", "deg": 33.0},
@@ -117,13 +115,35 @@ func _process(delta: float) -> void:
 ## tick because it reads settled contact poses, not interpolated ones.
 func _physics_process(_delta: float) -> void:
 	for crate: RigidBody3D in _crates:
-		if not is_instance_valid(crate) or crate.sleeping:
+		if not is_instance_valid(crate):
 			continue
-		var half := CRATE_SIZE_M * 0.5
-		# The bottom face of the box, whatever way it is tumbling.
-		var lowest := crate.global_position.y - half * SQRT_3
+		var position := crate.global_position
+		var surface := _patch.surface_height_at_m(position.x, position.z)
+		if is_nan(surface):
+			continue
+		# Exact half-extent along Y for the box at its current orientation:
+		# taking the corner-to-corner radius instead made every crate dig a
+		# hole 22 cm deeper than itself while lying flat.
+		var basis := crate.global_transform.basis
+		var half_height := (
+			absf(basis.x.y) + absf(basis.y.y) + absf(basis.z.y)
+		) * CRATE_SIZE_M * 0.5
+		var bottom := position.y - half_height
+		var top := position.y + half_height
+		if top <= surface:
+			# Fully covered. A height field is a surface, not a volume: it has
+			# no inside, so a body under it gets pushed in whatever direction
+			# the solver picks and thrashes its way out. Buried things stay
+			# buried — dig them out to get them back.
+			_bury(crate)
+			continue
+		if crate.freeze:
+			# The material over it is gone, so it is free again.
+			crate.freeze = false
+		if crate.sleeping:
+			continue
 		var displaced := _patch.imprint_disc(
-			crate.global_position.x, crate.global_position.z, half, lowest
+			position.x, position.z, CRATE_SIZE_M * 0.5, bottom
 		)
 		if displaced <= 0.0:
 			continue
@@ -133,10 +153,23 @@ func _physics_process(_delta: float) -> void:
 		var speed := crate.linear_velocity.length()
 		if speed > IMPACT_SPEED_M_S:
 			_patch.mobilize(
-				crate.global_position.x,
-				crate.global_position.z,
-				minf(half + speed * IMPACT_SHAKE_M_PER_SPEED, MAX_SHAKE_RADIUS_M)
+				position.x,
+				position.z,
+				minf(
+					CRATE_SIZE_M * 0.5 + speed * IMPACT_SHAKE_M_PER_SPEED,
+					MAX_SHAKE_RADIUS_M
+				)
 			)
+
+
+## Hand a covered body over to the material: it stops being simulated rather
+## than fighting a collider that cannot represent being inside it.
+func _bury(crate: RigidBody3D) -> void:
+	if crate.freeze:
+		return
+	crate.linear_velocity = Vector3.ZERO
+	crate.angular_velocity = Vector3.ZERO
+	crate.freeze = true
 
 
 func _unhandled_input(event: InputEvent) -> void:

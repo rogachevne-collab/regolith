@@ -157,6 +157,38 @@ func surface_height(x: int, z: int) -> float:
 	return _base[i] + _thickness[i]
 
 
+## Bilinear surface height at patch-local metres — what anything standing on
+## the material actually rests on, between cell centres. NAN if the sample
+## falls on rock or outside the patch.
+func surface_height_at_m(x_m: float, z_m: float) -> float:
+	var fx := x_m / cell_size
+	var fz := z_m / cell_size
+	if fx < 0.0 or fz < 0.0 or fx > float(width - 1) or fz > float(depth - 1):
+		return NAN
+	var x0 := int(fx)
+	var z0 := int(fz)
+	var x1 := mini(x0 + 1, width - 1)
+	var z1 := mini(z0 + 1, depth - 1)
+	var tx := fx - float(x0)
+	var tz := fz - float(z0)
+	var top_left := surface_height(x0, z0)
+	var top_right := surface_height(x1, z0)
+	var bottom_left := surface_height(x0, z1)
+	var bottom_right := surface_height(x1, z1)
+	if (
+		is_nan(top_left)
+		or is_nan(top_right)
+		or is_nan(bottom_left)
+		or is_nan(bottom_right)
+	):
+		return NAN
+	return lerpf(
+		lerpf(top_left, top_right, tx),
+		lerpf(bottom_left, bottom_right, tx),
+		tz
+	)
+
+
 func total_volume_m3() -> float:
 	var sum := 0.0
 	for i in _thickness.size():

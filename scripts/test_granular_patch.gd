@@ -29,6 +29,7 @@ func _run_tests() -> void:
 		_test_take_never_exceeds_available,
 		_test_metastable_slope_holds_until_disturbed,
 		_test_avalanche_rests_at_repose_not_stability,
+		_test_surface_sampled_between_cells,
 		_test_imprint_displaces_into_a_rim,
 		_test_imprint_ignores_material_below_the_footprint,
 	]
@@ -325,6 +326,25 @@ func _test_avalanche_rests_at_repose_not_stability() -> bool:
 		return _fail(
 			"pile rested flatter than repose: %f vs %f" % [step, repose_step]
 		)
+	return true
+
+
+## Anything standing on the material rests between cell centres, so the
+## sampled height has to interpolate rather than snap to a cell.
+func _test_surface_sampled_between_cells() -> bool:
+	var patch := _new_patch()
+	patch.deposit(4, 4, 0.4 * patch.cell_area_m2())
+	patch.deposit(5, 4, 0.8 * patch.cell_area_m2())
+	var midpoint := patch.surface_height_at_m(4.5 * CELL, 4.0 * CELL)
+	if absf(midpoint - 0.6) > 1e-4:
+		return _fail("midpoint height %f, expected 0.6" % midpoint)
+	if absf(patch.surface_height_at_m(4.0 * CELL, 4.0 * CELL) - 0.4) > 1e-4:
+		return _fail("sample on a cell centre must equal that cell")
+	if not is_nan(patch.surface_height_at_m(-1.0, 0.0)):
+		return _fail("sample outside the patch must be NAN")
+	patch.set_blocked(5, 4, true)
+	if not is_nan(patch.surface_height_at_m(4.5 * CELL, 4.0 * CELL)):
+		return _fail("sample touching rock must be NAN")
 	return true
 
 
