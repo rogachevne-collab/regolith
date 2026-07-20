@@ -20,14 +20,10 @@ const POUR_RADIUS_CELLS := 1.6
 const TRUCK_RADIUS_CELLS := 3.4
 ## A tipper drops its load away from itself, so the lobe comes out elongated.
 const TRUCK_ELONGATION := 1.9
-const ROCK_MIN_THICKNESS := 0.015
-## Above this the surface is deep spoil; rocks belong on the thin fringe and
-## the toe, where the silhouette actually needs breaking up.
-const ROCK_PEAK_THICKNESS := 0.12
-const MAX_ROCKS := 4000
-const ROCK_REBUILD_INTERVAL_FRAMES := 4
 ## Visual-only surface grain, metres. Not part of the field.
 const GRAIN_AMPLITUDE_M := 0.02
+## World metres per albedo/normal tile on the spoil mesh.
+const SURFACE_UV_METRES := 2.5
 const MAX_CRATES := 12
 const CRATE_SIZE_M := 0.6
 ## Cut disc must cover the whole square footprint plus half a cell: the
@@ -64,7 +60,6 @@ const REPOSE_PRESETS: Array[Dictionary] = [
 
 @onready var _surface: MeshInstance3D = $Surface
 @onready var _collider: CollisionShape3D = $SurfaceBody/Shape
-@onready var _rocks: MultiMeshInstance3D = $Rocks
 @onready var _marker: MeshInstance3D = $AimMarker
 @onready var _camera: Camera3D = $CameraRig/Camera3D
 @onready var _rig: Node3D = $CameraRig
@@ -74,8 +69,6 @@ const REPOSE_PRESETS: Array[Dictionary] = [
 var _patch: GranularPatch
 var _preset := 0
 var _settled := true
-var _rocks_visible := true
-var _rock_rebuild_countdown := 0
 var _indices := PackedInt32Array()
 var _crates: Array[RigidBody3D] = []
 var _pouring := false
@@ -89,6 +82,7 @@ var _orbit_distance := 14.0
 var _dragging := false
 var _gravity := 1.62
 var _heavy_crate_material: Material
+var _light_crate_material: Material
 var _debug_load := ""
 
 
@@ -100,7 +94,6 @@ func _ready() -> void:
 	_shown_thickness = _patch.thickness_data()
 	_build_indices()
 	_setup_collider()
-	_setup_rocks()
 	_rebuild_surface()
 	_update_camera()
 	_update_aim(get_viewport().get_visible_rect().size * 0.5)
@@ -111,7 +104,7 @@ func _ready() -> void:
 		"Q — scoop   B — light crate (%.0f kg)   N — heavy crate (%.0f kg)"
 		% [LIGHT_CRATE_KG, HEAVY_CRATE_KG],
 		"Y — lay a %.1f m test bed   R — reset" % TEST_BED_M,
-		"F — detail rocks   G — material (repose + density / bearing)",
+		"G — material (repose + density / bearing)",
 		"right mouse — orbit   wheel — zoom",
 	])
 
@@ -131,17 +124,6 @@ func _process(delta: float) -> void:
 		_patch.advance(delta, _gravity)
 	if _advance_shown(delta):
 		_rebuild_surface()
-		# Rocks follow the surface, but scanning every cell and rewriting every
-		# instance transform each frame costs more than the surface itself.
-		# Every few frames is indistinguishable while material is moving.
-		_rock_rebuild_countdown -= 1
-		if _rock_rebuild_countdown <= 0:
-			_rebuild_rocks()
-			_rock_rebuild_countdown = ROCK_REBUILD_INTERVAL_FRAMES
-	elif _rock_rebuild_countdown < ROCK_REBUILD_INTERVAL_FRAMES:
-		# Settled: make sure the last state is the one on screen.
-		_rebuild_rocks()
-		_rock_rebuild_countdown = ROCK_REBUILD_INTERVAL_FRAMES
 	_settled = _patch.is_settled()
 	_update_status()
 
@@ -272,9 +254,6 @@ func _unhandled_input(event: InputEvent) -> void:
 			_scoop()
 		KEY_R:
 			_reset()
-		KEY_F:
-			_rocks_visible = not _rocks_visible
-			_rocks.visible = _rocks_visible
 		KEY_G:
 			_cycle_material()
 
@@ -336,7 +315,7 @@ func _drop_crate(mass_kg: float) -> void:
 	box_mesh.size = box.size
 	mesh.mesh = box_mesh
 	mesh.material_override = (
-		_heavy_material() if mass_kg >= HEAVY_CRATE_KG else _rocks.material_override
+		_heavy_material() if mass_kg >= HEAVY_CRATE_KG else _light_material()
 	)
 	crate.add_child(mesh)
 	crate.position = Vector3(
@@ -413,7 +392,6 @@ func _reset() -> void:
 			crate.queue_free()
 	_crates.clear()
 	_rebuild_surface()
-	_rebuild_rocks()
 
 
 func _make_patch() -> GranularPatch:
@@ -470,10 +448,12 @@ func _rebuild_surface() -> void:
 	var vertices := PackedVector3Array()
 	var normals := PackedVector3Array()
 	var colors := PackedColorArray()
+	var uvs := PackedVector2Array()
 	var count := GRID * GRID
 	vertices.resize(count)
 	normals.resize(count)
 	colors.resize(count)
+	uvs.resize(count)
 	_display_heights.resize(count)
 	for z in GRID:
 		for x in GRID:
@@ -486,17 +466,17 @@ func _rebuild_surface() -> void:
 				thickness * 0.4, GRAIN_AMPLITUDE_M
 			)
 			_display_heights[i] = thickness + grain
-			var tint := clampf(thickness / 0.08, 0.0, 1.0)
-			# Fresh spoil is only slightly lighter than undisturbed ground; the
-			# contrast comes from the low sun, not from albedo. Vertex colours
-			# are linear while `albedo_color` is sRGB, so convert here or the
-			# surface blows out white next to sRGB-authored materials.
-			colors[i] = (
-				Color(0.40, 0.39, 0.37)
-				.lerp(Color(0.55, 0.53, 0.50), tint)
-				.srgb_to_linear()
+			uvs[i] = Vector2(
+				float(x) * CELL / SURFACE_UV_METRES,
+				float(z) * CELL / SURFACE_UV_METRES
 			)
-			colors[i].a = tint
+			# Texture carries the look; vertex colour only fades empty cells and
+			# slightly lifts thick fresh spoil. Keep values in sRGB — the
+			# albedo texture path expects that when multiplied.
+			var cover := clampf(thickness / 0.035, 0.0, 1.0)
+			var fresh := clampf(thickness / 0.14, 0.0, 1.0)
+			colors[i] = Color(0.9, 0.88, 0.84).lerp(Color(1.0, 0.98, 0.94), fresh)
+			colors[i].a = cover
 	for z in GRID:
 		for x in GRID:
 			var i := z * GRID + x
@@ -515,6 +495,7 @@ func _rebuild_surface() -> void:
 	arrays[Mesh.ARRAY_VERTEX] = vertices
 	arrays[Mesh.ARRAY_NORMAL] = normals
 	arrays[Mesh.ARRAY_COLOR] = colors
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
 	arrays[Mesh.ARRAY_INDEX] = _indices
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
@@ -576,63 +557,13 @@ func _heavy_material() -> Material:
 	return _heavy_crate_material
 
 
-func _setup_rocks() -> void:
-	# Boxes at random angles read as broken clasts; spheres read as beads.
-	# Their own material: the surface one turns vertex colours into albedo and
-	# a MultiMesh has none, so rocks came out white.
-	var rock := BoxMesh.new()
-	rock.size = Vector3.ONE
-	var multimesh := MultiMesh.new()
-	multimesh.transform_format = MultiMesh.TRANSFORM_3D
-	multimesh.mesh = rock
-	multimesh.instance_count = MAX_ROCKS
-	multimesh.visible_instance_count = 0
-	_rocks.multimesh = multimesh
-
-
-## Detail rocks are decoration driven by the field, not simulated bodies:
-## dense on the thin fringe and the toe where they break the silhouette,
-## sparse on deep spoil where nothing shows anyway.
-func _rebuild_rocks() -> void:
-	var multimesh := _rocks.multimesh
-	var placed := 0
-	for z in GRID:
-		for x in GRID:
-			if placed >= MAX_ROCKS:
-				break
-			var thickness := _patch.thickness_at(x, z)
-			if thickness < ROCK_MIN_THICKNESS:
-				continue
-			var hash_value := _hash2(x, z)
-			var density := 1.0 - clampf(thickness / ROCK_PEAK_THICKNESS, 0.0, 0.85)
-			if hash_value > density:
-				continue
-			var jitter_x := (_hash2(x + 977, z) - 0.5) * CELL
-			var jitter_z := (_hash2(x, z + 613) - 0.5) * CELL
-			var size := 0.07 + _hash2(x + 31, z + 17) * 0.16
-			var world_x := float(x) * CELL + jitter_x
-			var world_z := float(z) * CELL + jitter_z
-			var origin := Vector3(
-				world_x,
-				# Sample where the rock actually stands, not at the cell
-				# centre: half a cell downslope is 16 cm lower at repose, and
-				# that is what left them hanging in the air. Bury over half so
-				# they sit in the material instead of on it.
-				_sample_display_height(world_x, world_z) - size * 0.3,
-				world_z
-			)
-			var basis := Basis.from_euler(
-				Vector3(
-					_hash2(x + 5, z + 91) * TAU,
-					_hash2(x + 71, z + 3) * TAU,
-					_hash2(x + 13, z + 47) * TAU
-				)
-			).scaled(
-				Vector3(size, size * 0.55, size * 0.8)
-			)
-			multimesh.set_instance_transform(placed, Transform3D(basis, origin))
-			placed += 1
-	multimesh.visible_instance_count = placed
+func _light_material() -> Material:
+	if _light_crate_material == null:
+		var material := StandardMaterial3D.new()
+		material.albedo_color = Color(0.33, 0.32, 0.30)
+		material.roughness = 1.0
+		_light_crate_material = material
+	return _light_crate_material
 
 
 ## `run.sh res://scenes/granular_playground.tscn -- --shot <png>` pours a fixed
@@ -661,7 +592,6 @@ func _run_scripted_shot(path: String) -> void:
 		)
 	_patch.relax(400)
 	_rebuild_surface()
-	_rebuild_rocks()
 	_settled = true
 	_orbit_pitch = -0.28
 	_orbit_distance = 17.0
