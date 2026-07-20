@@ -30,9 +30,11 @@ const ROCK_REBUILD_INTERVAL_FRAMES := 4
 const GRAIN_AMPLITUDE_M := 0.02
 const MAX_CRATES := 12
 const CRATE_SIZE_M := 0.6
-## Radius that actually covers a square footprint: half the side leaves the
-## corners outside, standing on the very rim the imprint throws up.
-const CRATE_RADIUS_M := 0.4243
+## The excavation has to contain the whole footprint with room to spare. Half
+## the side leaves the corners outside it, and even the exact circumscribed
+## radius leaves them on the boundary where the rim begins — the crate perches
+## there and stops after a centimetre. Half a cell of margin clears it.
+const CRATE_RADIUS_M := CRATE_SIZE_M * 0.7071 + CELL * 0.5
 const LIGHT_CRATE_KG := 40.0
 const HEAVY_CRATE_KG := 500.0
 ## Depth of the test bed laid by Y: deep enough for a heavy load to bed itself
@@ -78,6 +80,7 @@ var _orbit_distance := 14.0
 var _dragging := false
 var _gravity := 1.62
 var _heavy_crate_material: Material
+var _debug_load := ""
 
 
 func _ready() -> void:
@@ -176,6 +179,12 @@ func _physics_process(delta: float) -> void:
 		var floor_height := _patch.settle_load(
 			position.x, position.z, CRATE_RADIUS_M, bottom, pressure, delta
 		)
+		_debug_load = "  [bottom %.3f surf %.3f floor %.3f gnd %.3f]" % [
+			bottom,
+			surface,
+			floor_height,
+			_patch.ground_level_around(position.x, position.z, CRATE_RADIUS_M),
+		]
 		if floor_height < bottom - GranularPatch.SETTLE_MAX_CELL_M:
 			# Deforming a static collider does not wake the bodies resting on
 			# it, so a load that has settled sleeps through its own bedding in
@@ -724,7 +733,7 @@ func _update_status() -> void:
 			if _settled
 			else "sliding %.2f m3" % _patch.flowing_volume_m3()
 		),
-		_crate_report() + _collider_report(),
+		_crate_report() + _collider_report() + _debug_load,
 	]
 
 
