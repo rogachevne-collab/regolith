@@ -17,12 +17,15 @@ const CELL := 0.25
 ## 24 m box at 0.25 m — comfortably larger than one working face.
 const DIMS := Vector3i(96, 64, 96)
 const FLOOR_Y := 2
-## Roughly what a few seconds of drilling throws out.
-const POUR_M3 := 3.0
-const POUR_COLUMN_CELLS := 24
-const MAX_SWEEPS := 4000
+## Big enough that the pile's angle is a measurement rather than a rounding
+## artefact: at a few cubic metres the crest is three to five cells, so the
+## slope can only land on ~45 or ~27 degrees with nothing in between, and any
+## tuning aimed at 33 is guesswork.
+const POUR_M3 := 20.0
+const POUR_COLUMN_CELLS := 40
+const MAX_SWEEPS := 20000
 ## A sweep costing more than this leaves no room for the rest of the frame.
-const BUDGET_MS_PER_SWEEP := 4.0
+const BUDGET_MS_PER_SWEEP := 7.0
 ## Cells one sweep may visit. Settling runs at roughly 10 Hz, so this is the
 ## knob that trades how fast a collapse resolves against what it costs the
 ## frame it lands in.
@@ -50,8 +53,8 @@ func _run() -> void:
 	var poured := 0.0
 	var remaining := POUR_M3
 	for step in POUR_COLUMN_CELLS:
-		for dz in range(-2, 3):
-			for dx in range(-2, 3):
+		for dz in range(-4, 5):
+			for dx in range(-4, 5):
 				if remaining <= 0.0:
 					break
 				var accepted := field.deposit(

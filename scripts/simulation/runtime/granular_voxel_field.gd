@@ -25,6 +25,13 @@ const DEFAULT_CELL_SIZE_M := 0.25
 ## A cell holding less than this is treated as empty: chasing the last
 ## fractions of a percent keeps cells active forever and the field never rests.
 const MIN_MASS := 0.004
+## Smallest transfer worth making when spreading. Falling has no such floor —
+## anything unsupported must come down whatever its size — but spreading does,
+## because a pile approaching its angle of repose otherwise trades vanishing
+## slivers back and forth for thousands of sweeps after it already looks and
+## behaves like a settled heap. The tail was most of the settling time and
+## none of the result.
+const MIN_SPREAD_TRANSFER := 0.02
 const FULL := 1.0
 
 ## Share of what *can* fall that actually falls in one sweep, and share of the
@@ -44,6 +51,13 @@ var spread_rate := 0.5
 ## Without a threshold a pile keeps creeping outward one hair at a time and
 ## never stands at an angle at all.
 var spread_min_difference := 0.08
+## Flow along a level, costing no height. Sideways-and-down alone can only
+## produce a 45 degree pile; this is what buys the extra horizontal travel a
+## shallower angle needs. Its threshold is the friction that stops a heap from
+## levelling out into a puddle — set `lateral_min_difference` to zero and the
+## same field behaves like a liquid.
+var lateral_rate := 0.12
+var lateral_min_difference := 0.51
 
 ## Sideways-and-down neighbours: the four faces and the four diagonals, each
 ## one step down. Material that cannot fall straight takes these, and that is
@@ -310,23 +324,54 @@ func _step_cell(i: int) -> void:
 						return
 	if y <= 0:
 		return
-	# Resting on something: hand the excess sideways-and-down. Doing this only
-	# past a difference threshold is what lets the heap stand at an angle
-	# rather than creeping flat one hair per sweep.
+	# Resting on something. Two ways out, and the balance between them is what
+	# sets the angle of repose.
+	#
+	# Sideways-and-down moves one cell out for one cell down, which is 45
+	# degrees and nothing else — it is the steepest a pile can be and, on its
+	# own, also the shallowest. Real regolith rests nearer 33, so material also
+	# has to travel *along* a level: at 33 degrees it goes about 1.5 cells out
+	# per cell down, and the only way to buy that extra horizontal distance is
+	# a transfer that costs no height.
+	#
+	# Each is gated by its own difference threshold, which is the friction. Drop
+	# the lateral threshold to zero and the pile levels out like a liquid; raise
+	# it and the pile stands steeper. That pair is the material.
+	_spread(i, x, y, z, mass, y - 1, spread_rate, spread_min_difference)
+	mass = _mass[i]
+	if mass > 0.0:
+		_spread(i, x, y, z, mass, y, lateral_rate, lateral_min_difference)
+
+
+## Hand mass from a cell to its eight horizontal neighbours on level `to_y`,
+## in proportion to how much emptier each one is. Shared by the two spreading
+## modes because they differ only in the level they target and how freely they
+## let material go.
+func _spread(
+	i: int,
+	x: int,
+	y: int,
+	z: int,
+	mass: float,
+	to_y: int,
+	rate: float,
+	min_difference: float
+) -> void:
+	if rate <= 0.0:
+		return
 	var targets := PackedInt32Array()
 	var shares := PackedFloat32Array()
 	var share_total := 0.0
 	for k in _SPREAD_COUNT:
 		var nx: int = x + _SPREAD_DX[k]
 		var nz: int = z + _SPREAD_DZ[k]
-		var ny := y - 1
-		if not in_bounds(nx, ny, nz):
+		if not in_bounds(nx, to_y, nz):
 			continue
-		var ni := index(nx, ny, nz)
+		var ni := index(nx, to_y, nz)
 		if _solid[ni] != 0:
 			continue
 		var difference := mass - _mass[ni]
-		if difference <= spread_min_difference:
+		if difference <= min_difference:
 			continue
 		var share: float = difference * _SPREAD_WEIGHT[k]
 		targets.append(ni)
@@ -338,9 +383,9 @@ func _step_cell(i: int) -> void:
 	# targets *and* this cell, so a transfer cannot overshoot into a hole that
 	# the next sweep has to undo.
 	var budget: float = minf(
-		mass, spread_rate * share_total / float(targets.size() + 1)
+		mass, rate * share_total / float(targets.size() + 1)
 	)
-	if budget < MIN_MASS:
+	if budget < MIN_SPREAD_TRANSFER:
 		return
 	for k in targets.size():
 		var ni: int = targets[k]
