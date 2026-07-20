@@ -30,9 +30,12 @@ const ROCK_REBUILD_INTERVAL_FRAMES := 4
 const GRAIN_AMPLITUDE_M := 0.02
 const MAX_CRATES := 12
 const CRATE_SIZE_M := 0.6
-## Circumscribed radius of the square footprint. Spoil is piled past a heave
-## gap inside the patch, so corners do not sit on the rim without overcutting.
-const CRATE_RADIUS_M := CRATE_SIZE_M * 0.7071
+## Cut disc must cover the whole square footprint plus half a cell: the
+## heightfield interpolates up to the first uncut neighbour, and a disc that
+## only circumscribes the box leaves a high collar under the faces — the crate
+## sits on that slope at 0 cm in. Spoil still starts past HEAVE_GAP, so the
+## margin is support flat, not a berm to perch on.
+const CRATE_RADIUS_M := CRATE_SIZE_M * 0.7071 + CELL * 0.5
 const LIGHT_CRATE_KG := 40.0
 const HEAVY_CRATE_KG := 500.0
 ## Depth of the test bed laid by Y: deep enough for a heavy load to bed itself

@@ -53,9 +53,9 @@ const MAX_SWEEPS_PER_ADVANCE := 8
 ## How far outside a footprint its displaced material is piled.
 const RIM_WIDTH_CELLS := 1.6
 ## Gap between the cut disc and the heave annulus. Without it, spoil lands on
-## the first cell outside the footprint — exactly where a square load's
-## corners rest — and the load perches on the rim it just threw up.
-const HEAVE_GAP_CELLS := 0.5
+## the first cell outside the cut — and with a tight cut that is where a
+## square load's corners rest, so the load perches on its own berm.
+const HEAVE_GAP_CELLS := 1.0
 ## Fraction of a cell's mobilised material still moving one sweep later. Keeps
 ## an avalanche running past the point where the local slope alone would have
 ## stopped it, which is what makes it run out instead of just slumping.

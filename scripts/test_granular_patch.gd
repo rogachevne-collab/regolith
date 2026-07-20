@@ -500,17 +500,22 @@ func _test_imprint_heave_starts_outside_the_footprint() -> bool:
 	for z in range(_center() - 6, _center() + 7):
 		for x in range(_center() - 6, _center() + 7):
 			patch.deposit(x, z, 0.2 * patch.cell_area_m2())
-	# Circumscribed radius of a 0.6 m crate: cut ends between cell 1 and 2,
-	# so cell +2 sits in the heave gap and must not receive the berm.
-	var radius_m := 0.6 * 0.7071
+	# Playground cut radius (circumscribed + half cell): cut reaches cell +2,
+	# one-cell heave gap leaves cell +3 clean, berm lands on cell +4.
+	var radius_m := 0.6 * 0.7071 + CELL * 0.5
 	patch.imprint_disc(middle, middle, radius_m, 0.05)
-	var gap_cell := _center() + 2
+	if patch.thickness_at(_center() + 2, _center()) > 0.06:
+		return _fail(
+			"support cut too shallow: %f m"
+			% patch.thickness_at(_center() + 2, _center())
+		)
+	var gap_cell := _center() + 3
 	if patch.thickness_at(gap_cell, _center()) > 0.22:
 		return _fail(
 			"heave landed in the gap cell: %f m"
 			% patch.thickness_at(gap_cell, _center())
 		)
-	var berm_cell := _center() + 3
+	var berm_cell := _center() + 4
 	if patch.thickness_at(berm_cell, _center()) <= 0.2:
 		return _fail(
 			"no heave outside the gap: %f m"
