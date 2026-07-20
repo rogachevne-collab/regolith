@@ -27,6 +27,8 @@ func _run_tests() -> void:
 		_test_height_map_holes,
 		_test_deterministic,
 		_test_take_never_exceeds_available,
+		_test_metastable_slope_holds_until_disturbed,
+		_test_avalanche_rests_at_repose_not_stability,
 		_test_imprint_displaces_into_a_rim,
 		_test_imprint_ignores_material_below_the_footprint,
 	]
@@ -246,6 +248,83 @@ func _test_take_never_exceeds_available() -> bool:
 		return _fail("take returned more than the patch held: %f" % rest)
 	if patch.total_volume_m3() > 1e-4:
 		return _fail("patch not empty after a full scoop: %f" % patch.total_volume_m3())
+	return true
+
+
+## Granular material is hysteretic: an undisturbed slope stands steeper than
+## the angle it comes to rest at, and lets go all at once when disturbed.
+## Without that, a slope can never sit metastable and a cave-in cannot be an
+## event — it would just be continuous slumping.
+func _test_metastable_slope_holds_until_disturbed() -> bool:
+	var patch := GranularPatch.create(GRID, GRID, CELL, REPOSE_DEG, 6.0)
+	# A bed lying on a base tilted between the two angles: steeper than
+	# repose (33), gentler than stability (39).
+	var slope := tan(deg_to_rad(36.0)) * CELL
+	for z in GRID:
+		for x in GRID:
+			patch.set_base_height(x, z, -float(x) * slope)
+			patch.deposit(x, z, 0.15 * patch.cell_area_m2())
+	patch.relax(RELAX_CAP)
+	var resting := patch.thickness_data()
+	var held := patch.thickness_at(_center(), _center())
+	if held < 0.14:
+		return _fail("metastable slope let go on its own: %f m left" % held)
+	# Control: left alone it keeps standing however long it is relaxed.
+	patch.relax(RELAX_CAP)
+	var undisturbed := _transported(resting, patch.thickness_data())
+	if undisturbed > 1e-3:
+		return _fail("undisturbed slope crept: %f m moved" % undisturbed)
+	patch.mobilize(float(_center()) * CELL, float(_center()) * CELL, 1.5)
+	patch.relax(RELAX_CAP)
+	var slid := _transported(resting, patch.thickness_data())
+	if slid < 0.05:
+		return _fail("disturbed slope barely moved: %f m" % slid)
+	# Material flows *through* the middle of a uniform slide at a steady rate,
+	# so its thickness barely changes there. The signature is the scarp at the
+	# head of the disturbed zone and the accumulation below its toe.
+	var scarp := patch.thickness_at(_center() - 5, _center())
+	var toe := patch.thickness_at(_center() + 5, _center())
+	if scarp >= held:
+		return _fail("no scarp at the head of the slide: %f m" % scarp)
+	if toe <= held:
+		return _fail("nothing piled up below the slide: %f m" % toe)
+	return true
+
+
+## Total thickness that changed hands between two states, in metres.
+func _transported(before: PackedFloat32Array, after: PackedFloat32Array) -> float:
+	var sum := 0.0
+	for i in before.size():
+		sum += absf(after[i] - before[i])
+	return sum * 0.5
+
+
+## Once moving, material must run out to the repose angle rather than
+## stopping at the steeper angle that first let it go.
+func _test_avalanche_rests_at_repose_not_stability() -> bool:
+	var patch := GranularPatch.create(GRID, GRID, CELL, REPOSE_DEG, 6.0)
+	patch.deposit(_center(), _center(), 0.6)
+	patch.relax(RELAX_CAP)
+	if patch.flowing_volume_m3() > 1e-3:
+		return _fail(
+			"material still sliding after settling: %f m3"
+			% patch.flowing_volume_m3()
+		)
+	var step := (
+		patch.thickness_at(_center() + 1, _center())
+		- patch.thickness_at(_center() + 2, _center())
+	)
+	var repose_step := tan(deg_to_rad(REPOSE_DEG)) * CELL
+	var stability_step := tan(deg_to_rad(REPOSE_DEG + 6.0)) * CELL
+	if step > (repose_step + stability_step) * 0.5:
+		return _fail(
+			"pile rested at the stability angle (%f), not repose (%f): %f"
+			% [stability_step, repose_step, step]
+		)
+	if step < repose_step * 0.85:
+		return _fail(
+			"pile rested flatter than repose: %f vs %f" % [step, repose_step]
+		)
 	return true
 
 

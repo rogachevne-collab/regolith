@@ -14,7 +14,13 @@ extends RefCounted
 const _SCRIPT := preload("res://scripts/simulation/runtime/granular_patch.gd")
 
 const DEFAULT_CELL_SIZE_M := 0.25
+## Where poured material comes to rest (the drained angle of repose).
 const DEFAULT_REPOSE_DEG := 33.0
+## How much steeper an undisturbed slope can stand before it lets go. Granular
+## material is hysteretic: it yields at the angle of maximum stability and
+## stops at the lower angle of repose, which is why a slope can sit metastable
+## for a while and then collapse all at once.
+const DEFAULT_STABILITY_MARGIN_DEG := 4.0
 const MAX_RELAX_ITERATIONS := 128
 const EPSILON_M := 1e-6
 ## Largest single-cell change in a sweep below which the patch counts as
@@ -46,17 +52,31 @@ const FLOW_SPEED_COEFF := 4.0
 const MAX_SWEEPS_PER_ADVANCE := 8
 ## How far outside a footprint its displaced material is piled.
 const RIM_WIDTH_CELLS := 1.6
+## Fraction of a cell's mobilised material still moving one sweep later. Keeps
+## an avalanche running past the point where the local slope alone would have
+## stopped it, which is what makes it run out instead of just slumping.
+const FLOW_PERSISTENCE := 0.55
 
 var width: int = 0
 var depth: int = 0
 var cell_size: float = DEFAULT_CELL_SIZE_M
-## tan(angle of repose): the steepest surface step the material holds.
+## tan(angle of repose): where moving material comes to rest.
 var repose_tangent: float = tan(deg_to_rad(DEFAULT_REPOSE_DEG))
+## tan(angle of maximum stability): where resting material lets go. Always
+## >= `repose_tangent`; the gap is what a slope can hold in reserve.
+var stability_tangent: float = tan(
+	deg_to_rad(DEFAULT_REPOSE_DEG + DEFAULT_STABILITY_MARGIN_DEG)
+)
 
 var _base: PackedFloat32Array = PackedFloat32Array()
 var _thickness: PackedFloat32Array = PackedFloat32Array()
 var _blocked: PackedByteArray = PackedByteArray()
 var _delta: PackedFloat32Array = PackedFloat32Array()
+## Thickness currently mobilised per cell: material that is already sliding
+## and therefore yields at the lower repose angle rather than the stability
+## angle.
+var _flowing: PackedFloat32Array = PackedFloat32Array()
+var _flow_delta: PackedFloat32Array = PackedFloat32Array()
 var _sweep_debt: float = 0.0
 var _is_settled: bool = true
 
@@ -65,18 +85,25 @@ static func create(
 	new_width: int,
 	new_depth: int,
 	new_cell_size: float = DEFAULT_CELL_SIZE_M,
-	repose_deg: float = DEFAULT_REPOSE_DEG
+	repose_deg: float = DEFAULT_REPOSE_DEG,
+	stability_margin_deg: float = DEFAULT_STABILITY_MARGIN_DEG
 ) -> GranularPatch:
 	var patch: GranularPatch = _SCRIPT.new()
 	patch.width = maxi(new_width, 1)
 	patch.depth = maxi(new_depth, 1)
 	patch.cell_size = maxf(new_cell_size, 0.01)
-	patch.repose_tangent = tan(deg_to_rad(clampf(repose_deg, 1.0, 85.0)))
+	var repose := clampf(repose_deg, 1.0, 85.0)
+	patch.repose_tangent = tan(deg_to_rad(repose))
+	patch.stability_tangent = tan(
+		deg_to_rad(clampf(repose + maxf(stability_margin_deg, 0.0), 1.0, 88.0))
+	)
 	var count := patch.width * patch.depth
 	patch._base.resize(count)
 	patch._thickness.resize(count)
 	patch._blocked.resize(count)
 	patch._delta.resize(count)
+	patch._flowing.resize(count)
+	patch._flow_delta.resize(count)
 	return patch
 
 
@@ -241,14 +268,52 @@ func imprint_disc(
 	var share := displaced_thickness / float(rim.size())
 	for i: int in rim:
 		_thickness[i] += share
+		# Spoil thrown out of a footprint lands loose, not compacted.
+		_flowing[i] = _thickness[i]
 	_is_settled = false
 	return displaced_thickness * cell_area_m2()
+
+
+## Disturb an area: mobilised material yields at the repose angle instead of
+## the higher stability angle, so a slope that was standing metastable lets go.
+## This is the hook for blasting, impacts, drilling and a collapsing roof.
+func mobilize(center_x_m: float, center_z_m: float, radius_m: float) -> void:
+	if radius_m <= 0.0:
+		return
+	var center_x := center_x_m / cell_size
+	var center_z := center_z_m / cell_size
+	var radius_cells := radius_m / cell_size
+	var reach := int(ceil(radius_cells)) + 1
+	for dz in range(-reach, reach + 1):
+		for dx in range(-reach, reach + 1):
+			var x := int(round(center_x)) + dx
+			var z := int(round(center_z)) + dz
+			if not in_bounds(x, z):
+				continue
+			var offset_x := float(x) - center_x
+			var offset_z := float(z) - center_z
+			if offset_x * offset_x + offset_z * offset_z > radius_cells * radius_cells:
+				continue
+			var i := index(x, z)
+			if _blocked[i] != 0 or _thickness[i] <= EPSILON_M:
+				continue
+			_flowing[i] = _thickness[i]
+			_is_settled = false
+
+
+## How much material is currently sliding, in cubic metres.
+func flowing_volume_m3() -> float:
+	var sum := 0.0
+	for i in _flowing.size():
+		sum += _flowing[i]
+	return sum * cell_area_m2()
 
 
 ## Redistribute everything steeper than the angle of repose. Returns the
 ## number of iterations spent; fewer than `max_iterations` means it settled.
 func relax(max_iterations: int = MAX_RELAX_ITERATIONS) -> int:
-	var step_per_metre := repose_tangent * cell_size
+	var resting_step := repose_tangent * cell_size
+	var yield_step := stability_tangent * cell_size
 	var over := PackedFloat32Array()
 	over.resize(_NEIGHBOUR_COUNT)
 	var neighbour := PackedInt32Array()
@@ -258,6 +323,7 @@ func relax(max_iterations: int = MAX_RELAX_ITERATIONS) -> int:
 		_is_settled = false
 		iterations += 1
 		_delta.fill(0.0)
+		_flow_delta.fill(0.0)
 		var largest_move := 0.0
 		for z in depth:
 			for x in width:
@@ -268,6 +334,12 @@ func relax(max_iterations: int = MAX_RELAX_ITERATIONS) -> int:
 				if thickness <= EPSILON_M:
 					continue
 				var height := _base[i] + thickness
+				# Material already sliding keeps going down to the repose
+				# angle; material at rest has to be pushed past the higher
+				# stability angle before it lets go at all.
+				var step_per_metre := (
+					resting_step if _flowing[i] > EPSILON_M else yield_step
+				)
 				var over_total := 0.0
 				var lower_count := 0
 				for k in _NEIGHBOUR_COUNT:
@@ -308,15 +380,25 @@ func relax(max_iterations: int = MAX_RELAX_ITERATIONS) -> int:
 					var share := move_total * (over[k] / over_total)
 					_delta[i] -= share
 					_delta[neighbour[k]] += share
-				# Tracked on the giving cell: the largest single-cell change
-				# in the sweep is what decides rest.
+					# Both ends are moving now, so both stay mobilised.
+					_flow_delta[i] += share
+					_flow_delta[neighbour[k]] += share
 		for i in _thickness.size():
 			var change := _delta[i]
-			if change == 0.0:
-				continue
-			_thickness[i] = maxf(_thickness[i] + change, 0.0)
-			largest_move = maxf(largest_move, absf(change))
+			if change != 0.0:
+				# The largest single-cell change in the sweep decides rest.
+				_thickness[i] = maxf(_thickness[i] + change, 0.0)
+				largest_move = maxf(largest_move, absf(change))
+			# Mobilisation fades unless it was fed again this sweep.
+			_flowing[i] = minf(
+				_flowing[i] * FLOW_PERSISTENCE + _flow_delta[i], _thickness[i]
+			)
 		if largest_move <= SETTLE_MAX_CELL_M:
+			# Material that has come to rest regains its static strength, so
+			# the pile now stands until something disturbs it again. Without
+			# this a settled heap keeps a trace of mobilisation forever and
+			# can never be metastable a second time.
+			_flowing.fill(0.0)
 			_is_settled = true
 			break
 	return iterations

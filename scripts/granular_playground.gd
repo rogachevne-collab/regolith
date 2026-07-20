@@ -29,6 +29,10 @@ const MAX_ROCKS := 4000
 const GRAIN_AMPLITUDE_M := 0.02
 const MAX_CRATES := 12
 const CRATE_SIZE_M := 0.6
+## Below this an impact just presses; above it, it also shakes the slope loose.
+const IMPACT_SPEED_M_S := 1.5
+const IMPACT_SHAKE_M_PER_SPEED := 0.35
+const MAX_SHAKE_RADIUS_M := 3.0
 ## Half-diagonal of a cube: its lowest corner while tumbling.
 const SQRT_3 := 1.7320508075688772
 
@@ -82,7 +86,7 @@ func _ready() -> void:
 		"E — hold to pour (%.1f m3/s), sweep to lay a windrow" % POUR_RATE_M3_PER_S,
 		"T — tip a truck load (%.1f m3) away from the camera" % TRUCK_M3,
 		"Q — scoop   B — drop a crate   R — reset",
-		"F — detail rocks   G — material",
+		"F — detail rocks   G — material   (piles hold steeper than they rest)",
 		"right mouse — orbit   wheel — zoom",
 	])
 
@@ -118,9 +122,21 @@ func _physics_process(_delta: float) -> void:
 		var half := CRATE_SIZE_M * 0.5
 		# The bottom face of the box, whatever way it is tumbling.
 		var lowest := crate.global_position.y - half * SQRT_3
-		_patch.imprint_disc(
+		var displaced := _patch.imprint_disc(
 			crate.global_position.x, crate.global_position.z, half, lowest
 		)
+		if displaced <= 0.0:
+			continue
+		# An impact shakes the slope around it loose: a metastable face that
+		# was standing on its own can let go when something lands on it. The
+		# radius scales with how hard the hit was.
+		var speed := crate.linear_velocity.length()
+		if speed > IMPACT_SPEED_M_S:
+			_patch.mobilize(
+				crate.global_position.x,
+				crate.global_position.z,
+				minf(half + speed * IMPACT_SHAKE_M_PER_SPEED, MAX_SHAKE_RADIUS_M)
+			)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -594,10 +610,15 @@ func _update_camera() -> void:
 
 
 func _update_status() -> void:
-	_status.text = "%s (%.0f deg)   %.2f m3   %s   rocks %d" % [
+	_status.text = "%s (rests %.0f, holds to %.0f deg)   %.2f m3   %s   rocks %d" % [
 		REPOSE_PRESETS[_preset]["name"],
 		REPOSE_PRESETS[_preset]["deg"],
+		rad_to_deg(atan(_patch.stability_tangent)),
 		_patch.total_volume_m3(),
-		"settled" if _settled else "flowing",
+		(
+			"settled"
+			if _settled
+			else "sliding %.2f m3" % _patch.flowing_volume_m3()
+		),
 		_rocks.multimesh.visible_instance_count,
 	]
