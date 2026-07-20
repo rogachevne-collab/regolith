@@ -28,6 +28,7 @@ KERNEL=(
 	test_suit_state
 	test_connected_block_visual
 	test_impact_destruction
+	test_granular_patch
 )
 
 # Physics/gameplay/UI integration scenes. Not part of the gate: the running
