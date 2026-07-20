@@ -1,0 +1,224 @@
+extends Node
+## Spike: is a flowing 0.25 m voxel field affordable in GDScript?
+##
+## Two questions decide whether loose material can be its own voxel volume
+## instead of a height field draped on the terrain:
+##   1. does the active set stay small, or does the whole box stay awake?
+##   2. does a pour settle into a cone that conserves its volume?
+## Everything else (a second VoxelTerrain for meshing and collision, chunking,
+## radial down) only matters if these two pass.
+
+const _HeadlessTestHarness := preload(
+	"res://scripts/testing/headless_test_harness.gd"
+)
+
+const LABEL := "GRANULAR-VOXEL-CA"
+const CELL := 0.25
+## 24 m box at 0.25 m — comfortably larger than one working face.
+const DIMS := Vector3i(96, 64, 96)
+const FLOOR_Y := 2
+## Roughly what a few seconds of drilling throws out.
+const POUR_M3 := 3.0
+const POUR_COLUMN_CELLS := 24
+const MAX_SWEEPS := 4000
+## A sweep costing more than this leaves no room for the rest of the frame.
+const BUDGET_MS_PER_SWEEP := 4.0
+## Cells one sweep may visit. Settling runs at roughly 10 Hz, so this is the
+## knob that trades how fast a collapse resolves against what it costs the
+## frame it lands in.
+## Matches what `granular_voxel_playground` actually runs, so the measurement
+## is of the shipping configuration rather than of a number chosen here.
+const CELL_BUDGET_PER_SWEEP := 128
+
+
+func _ready() -> void:
+	call_deferred("_run")
+
+
+func _run() -> void:
+	_HeadlessTestHarness.arm_watchdog(self, LABEL)
+	var field := GranularVoxelField.create(DIMS, CELL)
+	var cells_total := DIMS.x * DIMS.y * DIMS.z
+	for z in DIMS.z:
+		for x in DIMS.x:
+			for y in FLOOR_Y:
+				field.set_solid(x, y, z, true)
+	var centre_x := DIMS.x / 2
+	var centre_z := DIMS.z / 2
+	# One cell holds only cell_size^3, so a few cubic metres needs a column
+	# with real footprint. Fill it bottom-up until the volume is delivered.
+	var poured := 0.0
+	var remaining := POUR_M3
+	for step in POUR_COLUMN_CELLS:
+		for dz in range(-2, 3):
+			for dx in range(-2, 3):
+				if remaining <= 0.0:
+					break
+				var accepted := field.deposit(
+					centre_x + dx,
+					FLOOR_Y + step,
+					centre_z + dz,
+					remaining
+				)
+				poured += accepted
+				remaining -= accepted
+	print(
+		"%s: box %d cells (%.1f m3 of grid), poured %.3f m3"
+		% [LABEL, cells_total, cells_total * field.cell_volume_m3(), poured]
+	)
+
+	var sweeps := 0
+	var visited_total := 0
+	var peak_active := 0
+	var worst_sweep_ms := 0.0
+	var started_us := Time.get_ticks_usec()
+	while not field.is_settled() and sweeps < MAX_SWEEPS:
+		var sweep_started := Time.get_ticks_usec()
+		var visited := field.step(CELL_BUDGET_PER_SWEEP)
+		var sweep_ms := float(Time.get_ticks_usec() - sweep_started) / 1000.0
+		worst_sweep_ms = maxf(worst_sweep_ms, sweep_ms)
+		peak_active = maxi(peak_active, visited)
+		visited_total += visited
+		sweeps += 1
+	var elapsed_ms := float(Time.get_ticks_usec() - started_us) / 1000.0
+
+	var settled := field.total_volume_m3()
+	var lost := absf(settled - poured)
+	print(
+		"%s: settled in %d sweeps, %.1f ms total, worst sweep %.2f ms"
+		% [LABEL, sweeps, elapsed_ms, worst_sweep_ms]
+	)
+	print(
+		"%s: cells visited %d (peak active %d, %.4f%% of the box)"
+		% [
+			LABEL,
+			visited_total,
+			peak_active,
+			100.0 * float(peak_active) / float(cells_total),
+		]
+	)
+	print("%s: volume %.4f -> %.4f m3 (drift %.6f)" % [LABEL, poured, settled, lost])
+	_report_shape(field, centre_x, centre_z)
+
+	if lost > 0.001:
+		_fail("volume drifted by %.6f m3" % lost)
+		return
+	if sweeps >= MAX_SWEEPS:
+		_fail("never came to rest in %d sweeps" % MAX_SWEEPS)
+		return
+	if worst_sweep_ms > BUDGET_MS_PER_SWEEP:
+		_fail(
+			"worst sweep %.2f ms over the %.1f ms budget"
+			% [worst_sweep_ms, BUDGET_MS_PER_SWEEP]
+		)
+		return
+	if not _test_a_tight_budget_does_not_strand_material():
+		return
+	print("%s: PASS" % LABEL)
+	get_tree().quit(0)
+
+
+## Nothing may be left hanging in the air because the per-sweep budget never
+## reached it. Cell indices are y-major, so taking the first N of a sorted
+## active list always means the lowest cells: with a backlog larger than the
+## budget the top of a falling column was never visited at all and simply
+## stayed floating. The budget window has to rotate.
+func _test_a_tight_budget_does_not_strand_material() -> bool:
+	var field := GranularVoxelField.create(Vector3i(24, 64, 24), CELL)
+	for z in 24:
+		for x in 24:
+			field.set_solid(x, 0, z, true)
+	# A tall column, and a budget far smaller than the cells it wakes.
+	var poured := 0.0
+	for y in range(20, 60):
+		for dz in range(-1, 2):
+			for dx in range(-1, 2):
+				poured += field.deposit(12 + dx, y, 12 + dz, 1.0)
+	var sweeps := 0
+	while not field.is_settled() and sweeps < 20000:
+		field.step(16)
+		sweeps += 1
+	if sweeps >= 20000:
+		_fail("a tight budget never let the column come to rest")
+		return false
+	if absf(field.total_volume_m3() - poured) > 1e-4:
+		_fail("a tight budget lost volume")
+		return false
+	# Everything must have reached the floor: nothing left up where it started.
+	var stranded := 0.0
+	for y in range(20, 64):
+		for z in 24:
+			for x in 24:
+				stranded += field.mass_at(x, y, z)
+	if stranded > 0.0:
+		# Say where it is and what is under it, or "stranded" is just a number.
+		var report := PackedStringArray()
+		for y in range(63, 19, -1):
+			var layer := 0.0
+			for z in 24:
+				for x in 24:
+					layer += field.mass_at(x, y, z)
+			if layer <= 0.0:
+				continue
+			var supported := 0
+			var floating := 0
+			for z in 24:
+				for x in 24:
+					if field.mass_at(x, y, z) <= 0.0:
+						continue
+					if (
+						field.is_solid(x, y - 1, z)
+						or field.mass_at(x, y - 1, z) >= 1.0
+					):
+						supported += 1
+					else:
+						floating += 1
+			report.append(
+				"y=%d mass %.3f (%d supported, %d floating)"
+				% [y, layer, supported, floating]
+			)
+			if report.size() >= 8:
+				break
+		print("%s: stranded layers — %s" % [LABEL, "; ".join(report)])
+		_fail(
+			"%.3f cells of material stranded in mid-air after %d sweeps"
+			% [stranded, sweeps]
+		)
+		return false
+	print(
+		"%s: tight budget (16 cells/sweep) drained the column in %d sweeps, nothing stranded"
+		% [LABEL, sweeps]
+	)
+	return true
+
+
+## Height at the crest against how far the skirt reaches, which is the pile's
+## angle. A cone means the rules produced granular behaviour; a puddle or a
+## tower means they did not.
+func _report_shape(
+	field: GranularVoxelField,
+	centre_x: int,
+	centre_z: int
+) -> void:
+	var crest := 0
+	for y in range(DIMS.y - 1, FLOOR_Y - 1, -1):
+		if field.mass_at(centre_x, y, centre_z) >= 0.5:
+			crest = y - FLOOR_Y + 1
+			break
+	var radius := 0
+	for dx in range(0, DIMS.x / 2):
+		if field.mass_at(centre_x + dx, FLOOR_Y, centre_z) >= 0.5:
+			radius = dx + 1
+	var angle_deg := (
+		rad_to_deg(atan2(float(crest), float(radius))) if radius > 0 else 90.0
+	)
+	print(
+		"%s: pile crest %d cells (%.2f m), radius %d cells (%.2f m), slope %.1f deg"
+		% [LABEL, crest, crest * CELL, radius, radius * CELL, angle_deg]
+	)
+
+
+func _fail(message: String) -> void:
+	push_error(message)
+	print("%s: FAIL - %s" % [LABEL, message])
+	get_tree().quit(1)

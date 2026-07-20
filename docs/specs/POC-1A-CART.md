@@ -6,8 +6,8 @@
 
 ## Проект
 
-- Корень: `/Users/yaroslav/Desktop/voxel-drill-demo` (Godot 4.6, GDExtension
-  Voxel Tools в `addons/zylann.voxel/`, физика Jolt).
+- Корень: `/Users/yaroslav/Desktop/voxel-drill-demo` (Godot 4.8, GDExtension
+  Voxel Tools в `addons/zylann.voxel/`, Jolt 5.6).
 - Запуск: `./run.sh` из корня (использует стоковый Godot из `/Applications` или
   `$GODOT`). Аргументы пробрасываются в godot, т.е.
   `./run.sh --headless res://scenes/test_cart_flat.tscn` запустит конкретную сцену.

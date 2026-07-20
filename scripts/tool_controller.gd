@@ -805,6 +805,7 @@ func _hit_accepts_action(
 	if action == &"tool_primary" and active_tool == &"drill":
 		return (
 			hit.target_kind == InteractionHit.KIND_VOXEL
+			or hit.target_kind == InteractionHit.KIND_GRANULAR
 			or hit.target_kind == InteractionHit.KIND_TERRAIN_DEBRIS
 			or hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
 		)

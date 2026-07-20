@@ -166,7 +166,7 @@ saturation-окне, до перехода в STOP).
 
 ## Impact bodies: custom integrator ЗАПРЕЩЁН
 
-Семантика встроенного Jolt-модуля Godot 4.5 (проверено по
+Семантика встроенного Jolt 5.6 в Godot 4.8 (проверено по
 `modules/jolt_physics/objects/jolt_body_3d.cpp` и `scene/3d/physics/rigid_body_3d.cpp`):
 
 - при `custom_integrator = true` Jolt **молча дропает**

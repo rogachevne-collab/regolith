@@ -129,6 +129,15 @@ func rebuild() -> void:
 			var back := _display_heights[x + maxi(z - 1, 0) * width]
 			var front := _display_heights[x + mini(z + 1, depth - 1) * width]
 			normals[i] = Vector3(left - right, 2.0 * cell, back - front).normalized()
+	# Which quads exist depends on where material currently is, so the index
+	# buffer is rebuilt with the surface rather than once at setup.
+	_build_indices()
+	if _indices.is_empty():
+		# Nothing on the patch yet. An empty ArrayMesh surface is invalid, so
+		# clear the mesh instead of handing the renderer a degenerate one.
+		_mesh_instance.mesh = null
+		_update_collider()
+		return
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = vertices
@@ -155,11 +164,19 @@ func _build_indices() -> void:
 			# fixed at patch creation (GranularWorld never blocks a cell that
 			# once had a floor), so a one-time skip here stays correct for the
 			# life of the patch.
-			if (
-				patch.is_blocked(x, z)
-				or patch.is_blocked(x + 1, z)
-				or patch.is_blocked(x, z + 1)
-				or patch.is_blocked(x + 1, z + 1)
+			# Draw exactly the holes the collider has. A quad with no material
+			# on any corner is not a thin surface lying on the rock — it is a
+			# surface that should not exist at all. Left in, those quads shadow
+			# the ground everywhere the patch reaches: they occlude the drill's
+			# own spark and dust VFX, and on a steep face two adjacent cells sit
+			# metres apart in height, so the quad between them renders as a
+			# near-vertical translucent wall you cannot walk through. Skipping
+			# them is what keeps the layer local to the material.
+			if not (
+				patch.has_presence(x, z)
+				or patch.has_presence(x + 1, z)
+				or patch.has_presence(x, z + 1)
+				or patch.has_presence(x + 1, z + 1)
 			):
 				continue
 			# Godot treats clockwise winding as front-facing; the other order
@@ -179,7 +196,7 @@ func _build_nodes() -> void:
 	_mesh_instance = MeshInstance3D.new()
 	_mesh_instance.material_override = _shared_surface_material()
 	add_child(_mesh_instance)
-	var body := StaticBody3D.new()
+	var body := GranularSpoilBody.new()
 	add_child(body)
 	_collision = CollisionShape3D.new()
 	var shape := HeightMapShape3D.new()

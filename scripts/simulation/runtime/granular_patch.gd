@@ -84,6 +84,18 @@ var stability_tangent: float = tan(
 	deg_to_rad(DEFAULT_REPOSE_DEG + DEFAULT_STABILITY_MARGIN_DEG)
 )
 
+## Thickness below which a cell carries no surface at all: `height_map_data`
+## reports it as a hole, exactly like blocked rock. Zero (the default) keeps
+## the historical behaviour — a patch that *is* the ground, as in the
+## playground and cascade demos, where the field spans a floor it owns.
+##
+## A patch laid over existing terrain needs the opposite: it is a second
+## surface on top of a first one, and a cell holding a millimetre of dust has
+## no business owning a collider or a mesh quad coincident with the rock
+## underneath. Empty cells must be absent, not flat — otherwise the layer
+## shadows the ground everywhere it reaches, blocks aim, and z-fights.
+var min_presence_m: float = 0.0
+
 ## Ground pressure the surface carries before anything sinks into it.
 var bearing_base_pa: float = DEFAULT_BEARING_BASE_PA
 ## How much more pressure the material carries per metre of embedment.
@@ -724,8 +736,22 @@ func height_map_data() -> PackedFloat32Array:
 	var data := PackedFloat32Array()
 	data.resize(_thickness.size())
 	for i in _thickness.size():
-		data[i] = NAN if _blocked[i] != 0 else _base[i] + _thickness[i]
+		data[i] = (
+			NAN
+			if _blocked[i] != 0 or _thickness[i] < min_presence_m
+			else _base[i] + _thickness[i]
+		)
 	return data
+
+
+## Whether a cell carries enough material to be a surface — the same test
+## `height_map_data` uses, so a mesh built from the field can leave exactly the
+## holes the collider has.
+func has_presence(x: int, z: int) -> bool:
+	if not in_bounds(x, z):
+		return false
+	var i := index(x, z)
+	return _blocked[i] == 0 and _thickness[i] >= min_presence_m
 
 
 ## Raw thickness copy, for tests and snapshot serialization.

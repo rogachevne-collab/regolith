@@ -1,0 +1,50 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/granular_voxel_playground.gd" id="1_play"]
+
+[sub_resource type="Environment" id="Env_1"]
+background_mode = 1
+background_color = Color(0.02, 0.02, 0.025, 1)
+ambient_light_source = 1
+ambient_light_color = Color(0.30, 0.32, 0.38, 1)
+ambient_light_energy = 0.55
+tonemap_mode = 3
+
+[node name="GranularVoxelPlayground" type="Node3D"]
+script = ExtResource("1_play")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Env_1")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.766, -0.116, 0.632, 0, 0.984, 0.181, -0.643, -0.139, 0.753, 0, 14, 0)
+light_energy = 2.4
+shadow_enabled = true
+directional_shadow_max_distance = 80.0
+
+[node name="FillLight" type="DirectionalLight3D" parent="."]
+transform = Transform3D(-0.6, 0, -0.8, -0.35, 0.9, 0.26, 0.72, 0.44, -0.54, 0, 10, 0)
+light_energy = 0.7
+
+[node name="CameraRig" type="Node3D" parent="."]
+
+[node name="Camera3D" type="Camera3D" parent="CameraRig"]
+far = 400.0
+
+[node name="CanvasLayer" type="CanvasLayer" parent="."]
+
+[node name="Overlay" type="Label" parent="CanvasLayer"]
+offset_left = 16.0
+offset_top = 12.0
+offset_right = 900.0
+offset_bottom = 110.0
+
+[node name="Status" type="Label" parent="CanvasLayer"]
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 16.0
+offset_top = -40.0
+offset_right = 1400.0
+offset_bottom = -12.0
+grow_vertical = 0

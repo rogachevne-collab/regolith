@@ -5,8 +5,8 @@
 
 ## Проект
 
-- Корень: `/Users/yaroslav/Desktop/voxel-drill-demo` (Godot 4.7, GDExtension
-  Voxel Tools, физика Jolt, гравитация мира 1.62 м/с²).
+- Корень: `/Users/yaroslav/Desktop/voxel-drill-demo` (Godot 4.8, GDExtension
+  Voxel Tools, Jolt 5.6, гравитация мира 1.62 м/с²).
 - Запуск: `./run.sh`; аргументы пробрасываются в godot:
   `./run.sh --headless res://scenes/test_passenger.tscn`.
 - Warnings в GDScript = errors: типизировать всё явно.

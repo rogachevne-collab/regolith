@@ -4,7 +4,7 @@
 (headless Linux без GPU/звука). Локально на macOS — не нужно.
 
 Среда (движок + Voxel-бинарники) ставится update-скриптом на старте VM. `godot`
-уже в `PATH` (`/usr/local/bin/godot`, stock 4.6), поэтому `run.sh` находит его сам.
+уже в `PATH` (`/usr/local/bin/godot`, stock 4.8), поэтому `run.sh` находит его сам.
 
 - **Первый запуск в сессии:** `.godot/` (кэш импорта) и `addons/zylann.voxel/bin/`
   в `.gitignore`. Update-скрипт восстанавливает Voxel-бинарники, но кэш импорта —

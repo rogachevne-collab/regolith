@@ -12,7 +12,7 @@ legacy flat yard (стройка, физика, шарниры, колёса, б
 
 ## Проект
 
-- Godot 4.5+, Voxel Tools 1.6x (`addons/zylann.voxel/`), физика Jolt
+- Godot 4.8, Voxel Tools 1.6x (`addons/zylann.voxel/`), Jolt 5.6
   (встроенный модуль, не legacy `godot-jolt`).
 - Гравитация PoC: **1.62 m/s²** (`Field`, не `gravity_scale` на телах).
 - Запуск: `./run.sh` или `./run.sh res://scenes/main.tscn` (default run-scene).

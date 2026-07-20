@@ -97,7 +97,7 @@ script = ExtResource("10")
 
 [node name="GranularWorld" type="Node3D" parent="." unique_id=1408627731]
 script = ExtResource("18")
-enabled = true
+enabled = false
 
 [node name="SimulationSession" parent="." unique_id=1580499463 instance=ExtResource("11")]
 gateway_path = NodePath("../WorldCommandGateway")

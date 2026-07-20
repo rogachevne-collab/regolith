@@ -30,16 +30,16 @@ pick_godot() {
 			return
 		fi
 	done
-	# Windows (native / Git Bash / MSYS): stock Y:\Godot 4.7.1
+	# Windows (native / Git Bash / MSYS): stock Y:\Godot 4.8
 	for candidate in \
-		"/y/Godot/Godot_v4.7.1-stable_win64_console.exe" \
-		"/Y/Godot/Godot_v4.7.1-stable_win64_console.exe" \
-		"Y:/Godot/Godot_v4.7.1-stable_win64_console.exe" \
-		"Y:\\Godot\\Godot_v4.7.1-stable_win64_console.exe" \
-		"/y/Godot/Godot_v4.7.1-stable_win64.exe" \
-		"/Y/Godot/Godot_v4.7.1-stable_win64.exe" \
-		"Y:/Godot/Godot_v4.7.1-stable_win64.exe" \
-		"Y:\\Godot\\Godot_v4.7.1-stable_win64.exe"
+		"/y/Godot/Godot_v4.8-stable_win64_console.exe" \
+		"/Y/Godot/Godot_v4.8-stable_win64_console.exe" \
+		"Y:/Godot/Godot_v4.8-stable_win64_console.exe" \
+		"Y:\\Godot\\Godot_v4.8-stable_win64_console.exe" \
+		"/y/Godot/Godot_v4.8-stable_win64.exe" \
+		"/Y/Godot/Godot_v4.8-stable_win64.exe" \
+		"Y:/Godot/Godot_v4.8-stable_win64.exe" \
+		"Y:\\Godot\\Godot_v4.8-stable_win64.exe"
 	do
 		if [[ -x "$candidate" || -f "$candidate" ]]; then
 			echo "$candidate"

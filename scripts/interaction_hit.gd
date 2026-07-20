@@ -10,6 +10,11 @@ const KIND_SIMULATION_ELEMENT := &"simulation_element"
 const KIND_WORLD_LOOT := &"world_loot"
 const KIND_ELECTRIC_CABLE := &"electric_cable"
 const KIND_TERRAIN_DEBRIS := &"terrain_debris"
+## Loose material lying on the ground (`GranularPatch`). A separate kind from
+## KIND_VOXEL because it is not the SDF: digging it moves thickness on a patch
+## rather than carving rock, and it is the one target the drill can clear
+## faster than stone.
+const KIND_GRANULAR := &"granular"
 
 var valid := false
 var point := Vector3.ZERO

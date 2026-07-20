@@ -192,7 +192,10 @@ func _remove_voxel(
 	command: Dictionary,
 	target: Dictionary
 ) -> Dictionary:
-	if StringName(target["target_kind"]) != InteractionHit.KIND_VOXEL:
+	var target_kind := StringName(target["target_kind"])
+	if target_kind == InteractionHit.KIND_GRANULAR:
+		return _remove_granular(command, target)
+	if target_kind != InteractionHit.KIND_VOXEL:
 		return _result(&"invalid_target")
 	var parameters: Dictionary = command.get("parameters", {})
 	var radius := clampf(
@@ -284,6 +287,48 @@ func _remove_voxel(
 			"point": target["point"],
 			"removed_volume_m3": removed_m3,
 		}
+	)
+
+
+## Drill a heap of loose material. Digging spoil moves thickness on a
+## `GranularPatch` instead of carving the SDF — the rock underneath is
+## untouched — but it yields the same regolith, so clearing your own spoil is
+## a way to recover it rather than a dead end.
+func _remove_granular(
+	command: Dictionary,
+	target: Dictionary
+) -> Dictionary:
+	var granular := get_tree().get_first_node_in_group(
+		&"granular_world"
+	) as GranularWorld
+	if granular == null:
+		return _result(&"not_ready")
+	var parameters: Dictionary = command.get("parameters", {})
+	var radius := clampf(
+		float(
+			parameters.get(
+				"radius",
+				IndustryArchetypeProfile.hand_drill_carve_radius_m()
+			)
+		),
+		0.05,
+		4.0
+	)
+	var contact_point := Vector3(target["point"])
+	var removed_m3 := granular.dig_spoil(contact_point, radius)
+	if removed_m3 <= 0.000001:
+		return _result(&"no_target", {"point": contact_point})
+	var material_id := _material_field.material_id_at_world(
+		contact_point,
+		_hand_drill_spawn_world
+	)
+	_route_hand_drill_yield(
+		contact_point,
+		_material_source.yield_for_excavation(removed_m3, {material_id: 1.0})
+	)
+	return _result(
+		&"ok",
+		{"point": contact_point, "removed_volume_m3": removed_m3}
 	)
 
 

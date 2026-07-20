@@ -45,6 +45,8 @@ func _run_tests() -> void:
 		_test_dig_spoil_conserves_the_removed_volume,
 		_test_dig_spoil_lands_around_the_cut_not_in_it,
 		_test_dig_spoil_off_grid_is_reported_as_undelivered,
+		_test_empty_cells_are_holes_when_the_patch_lies_on_terrain,
+		_test_dropped_spoil_builds_a_heap_not_a_sheet,
 	]
 	for test: Callable in tests:
 		if not bool(test.call()):
@@ -675,6 +677,63 @@ func _test_dig_spoil_off_grid_is_reported_as_undelivered() -> bool:
 		return _fail("a cut off the grid reported %f m3 delivered" % accepted)
 	if patch.total_volume_m3() > 1e-9:
 		return _fail("a cut off the grid still put material on the patch")
+	return true
+
+
+## A patch laid over existing terrain is a second surface on top of a first
+## one. Where it holds no material it must be absent, not flat — a flat empty
+## cell shadows the rock underneath, and that is what put a translucent sheet
+## over the whole dig site and a vertical curtain down every slope.
+func _test_empty_cells_are_holes_when_the_patch_lies_on_terrain() -> bool:
+	var patch := _new_patch()
+	patch.min_presence_m = 0.02
+	# Ground that falls away steeply, the shape that produced the curtains.
+	for z in GRID:
+		for x in GRID:
+			patch.set_base_height(x, z, -float(x) * 0.5)
+	if patch.has_presence(_center(), _center()):
+		return _fail("an empty cell claims to be a surface")
+	var empty_map := patch.height_map_data()
+	for i in empty_map.size():
+		if not is_nan(empty_map[i]):
+			return _fail("an empty patch still produced a collider surface")
+	patch.deposit(_center(), _center(), 0.3 * patch.cell_area_m2())
+	if not patch.has_presence(_center(), _center()):
+		return _fail("a cell holding real material is not a surface")
+	# The default stays as the demos rely on it: a patch that *is* the ground
+	# collides everywhere, empty or not.
+	var owns_ground := _new_patch()
+	owns_ground.set_base_height(0, 0, 1.0)
+	if is_nan(owns_ground.height_map_data()[0]):
+		return _fail("a patch that owns its ground lost its empty cells")
+	return true
+
+
+## Repeated drops on one spot must grow a cone standing well above its own
+## skirt, not creep outward as a flat sheet. This is the difference between
+## loose material and a decal: a sheet is already at rest when it lands, so no
+## amount of settling can turn it back into a pile.
+func _test_dropped_spoil_builds_a_heap_not_a_sheet() -> bool:
+	var patch := _new_patch()
+	var center_m := float(_center()) * CELL
+	var poured := 0.0
+	for _drop in 24:
+		poured += GranularSpoil.deposit_heap(patch, center_m, center_m, 0.05)
+		patch.advance(0.1, 1.62)
+	if absf(patch.total_volume_m3() - poured) > 1e-4:
+		return _fail(
+			"heap lost volume: %f vs %f" % [patch.total_volume_m3(), poured]
+		)
+	patch.relax(RELAX_CAP)
+	var crest := patch.thickness_at(_center(), _center())
+	if crest <= 0.15:
+		return _fail("heap never rose: crest %.3f m" % crest)
+	# A cone, not a plate: two metres out it must have thinned right down.
+	var skirt := patch.thickness_at(_center() + int(2.0 / CELL), _center())
+	if skirt >= crest * 0.5:
+		return _fail(
+			"spoil spread as a sheet: crest %.3f m, skirt %.3f m" % [crest, skirt]
+		)
 	return true
 
 

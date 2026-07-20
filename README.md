@@ -1,6 +1,6 @@
 # Regolith
 
-First-person lunar engineering sandbox on **stock Godot 4.5+** + [Voxel Tools 1.6 GDExtension](https://github.com/Zylann/godot_voxel/releases/tag/v1.6x) + **Jolt Physics** (gravity 1.62 m/s²).
+First-person lunar engineering sandbox on **Godot 4.8** + [Voxel Tools 1.6 GDExtension](https://github.com/Zylann/godot_voxel/releases/tag/v1.6x) + **Jolt 5.6** (gravity 1.62 m/s²).
 
 Бурить SDF-реголит, собирать роверы из модулей, перестраивать их на ходу, ездить стоя на платформе. PoC 1–3 закрыты headless-тестами.
 
@@ -30,8 +30,8 @@ cd Y:\regolith
 
 `run.sh` ищет stock Godot в `/Applications/Godot.app`, `$GODOT` или `PATH`.
 `run.ps1` (Windows) — сначала **custom double** (`Y:\godot-engine\bin\godot.windows.editor.double.x86_64.exe`),
-затем stock **`Y:\Godot\Godot_v4.7.1-stable_win64*.exe`**, затем `$GODOT` / `PATH`.
-Проект ожидает **Godot 4.7+** (`project.godot` → `config/features`).
+затем stock **`Y:\Godot\Godot_v4.8-stable_win64*.exe`**, затем `$GODOT` / `PATH`.
+Проект ожидает **Godot 4.8** (`project.godot` → `config/features`).
 
 ### Large world / double precision (Windows)
 
