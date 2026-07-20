@@ -35,9 +35,13 @@ const HEAVY_CRATE_KG := 500.0
 ## slow yield, not a fall: the collider floor is lowered under the body and
 ## gravity does the rest.
 const SINK_SPEED_M_S := 0.35
-## Ground level around a body is sampled this far outside its footprint, so
-## the reading is undisturbed material rather than the body's own pit.
-const GROUND_SAMPLE_MARGIN_M := 0.45
+## Ground level around a body is sampled this far outside its footprint. It
+## has to clear the rim the body's own imprint threw up, or the reading is the
+## body's own spoil and it decides it has already sunk far enough.
+const GROUND_SAMPLE_MARGIN_M := 1.0
+## Depth of the test bed laid by Y: deep enough for a heavy load to bed itself
+## in, since nothing sinks further than the loose layer is thick.
+const TEST_BED_M := 0.7
 ## Below this an impact just presses; above it, it also shakes the slope loose.
 const IMPACT_SPEED_M_S := 1.5
 const IMPACT_SHAKE_M_PER_SPEED := 0.35
@@ -97,7 +101,7 @@ func _ready() -> void:
 		"T — tip a truck load (%.1f m3) away from the camera" % TRUCK_M3,
 		"Q — scoop   B — light crate (%.0f kg)   N — heavy crate (%.0f kg)"
 		% [LIGHT_CRATE_KG, HEAVY_CRATE_KG],
-		"R — reset",
+		"Y — lay a %.1f m test bed   R — reset" % TEST_BED_M,
 		"F — detail rocks   G — material   (piles hold steeper than they rest)",
 		"right mouse — orbit   wheel — zoom",
 	])
@@ -273,6 +277,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			_drop_crate(LIGHT_CRATE_KG)
 		KEY_N:
 			_drop_crate(HEAVY_CRATE_KG)
+		KEY_Y:
+			_lay_test_bed()
 		KEY_Q:
 			_scoop()
 		KEY_R:
@@ -327,6 +333,10 @@ func _dump_truck() -> void:
 func _drop_crate(mass_kg: float) -> void:
 	var crate := RigidBody3D.new()
 	crate.mass = mass_kg
+	# Lunar gravity makes a crate dropped from head height tumble away before
+	# it ever settles; damp it so it lands where it was aimed.
+	crate.linear_damp = 0.6
+	crate.angular_damp = 2.0
 	var shape := CollisionShape3D.new()
 	var box := BoxShape3D.new()
 	box.size = Vector3(CRATE_SIZE_M, CRATE_SIZE_M, CRATE_SIZE_M)
@@ -341,7 +351,7 @@ func _drop_crate(mass_kg: float) -> void:
 	)
 	crate.add_child(mesh)
 	crate.position = Vector3(
-		_aim.x, _sample_display_height(_aim.x, _aim.z) + 3.0, _aim.z
+		_aim.x, _sample_display_height(_aim.x, _aim.z) + 1.2, _aim.z
 	)
 	add_child(crate)
 	_crates.append(crate)
@@ -541,6 +551,17 @@ func _update_collider() -> void:
 	shape.map_data = data
 
 
+## Flood the patch with an even bed of loose material. A load can never sink
+## deeper than the loose layer is thick, so bearing capacity is invisible on a
+## thin scatter over bedrock.
+func _lay_test_bed() -> void:
+	for z in GRID:
+		for x in GRID:
+			var missing := TEST_BED_M - _patch.thickness_at(x, z)
+			if missing > 0.0:
+				_patch.deposit(x, z, missing * _patch.cell_area_m2())
+
+
 func _heavy_material() -> Material:
 	if _heavy_crate_material == null:
 		var material := StandardMaterial3D.new()
@@ -721,7 +742,7 @@ func _update_camera() -> void:
 
 
 func _update_status() -> void:
-	_status.text = "%s (rests %.0f, holds to %.0f deg)   %.2f m3   %s   rocks %d" % [
+	_status.text = "%s (rests %.0f, holds to %.0f deg)   %.2f m3   %s%s" % [
 		REPOSE_PRESETS[_preset]["name"],
 		REPOSE_PRESETS[_preset]["deg"],
 		rad_to_deg(atan(_patch.stability_tangent)),
@@ -731,5 +752,29 @@ func _update_status() -> void:
 			if _settled
 			else "sliding %.2f m3" % _patch.flowing_volume_m3()
 		),
-		_rocks.multimesh.visible_instance_count,
+		_crate_report(),
+	]
+
+
+## Embedment of the newest crate, so the difference between a light and a
+## heavy load is a number and not a matter of opinion.
+func _crate_report() -> String:
+	if _crates.is_empty():
+		return ""
+	var crate: RigidBody3D = _crates[-1]
+	if not is_instance_valid(crate):
+		return ""
+	var ground := _ground_level_around(crate.global_position)
+	if is_nan(ground):
+		return ""
+	var basis := crate.global_transform.basis
+	var half_height := (
+		absf(basis.x.y) + absf(basis.y.y) + absf(basis.z.y)
+	) * CRATE_SIZE_M * 0.5
+	var pressure := crate.mass * _gravity / (CRATE_SIZE_M * CRATE_SIZE_M)
+	return "   crate %.0f kg: %.0f Pa, %.2f m in (limit %.2f)" % [
+		crate.mass,
+		pressure,
+		maxf(ground - (crate.global_position.y - half_height), 0.0),
+		_patch.penetration_depth_m(pressure),
 	]
