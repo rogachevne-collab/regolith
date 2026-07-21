@@ -146,6 +146,24 @@ static func hand_drill_interval_s() -> float:
 	)
 
 
+## Excavation-mode cadence (ПКМ). Faster than the mining tick — this mode is
+## about clearing rock, not collecting it, so the bites come more often.
+static func hand_drill_extract_interval_s() -> float:
+	return GameBalance.industry_float(
+		PackedStringArray(["hand_drill", "extract_interval_s"]),
+		0.09
+	)
+
+
+## Excavation-mode carve radius (ПКМ). A touch wider than the mining bite so
+## clearing overburden feels more active than picking at ore.
+static func hand_drill_extract_carve_radius_m() -> float:
+	return GameBalance.industry_float(
+		PackedStringArray(["hand_drill", "extract_carve_radius_m"]),
+		1.35
+	)
+
+
 static func hand_drill_path_max_span_m() -> float:
 	return GameBalance.industry_float(
 		PackedStringArray(["hand_drill", "path_max_span_m"]),

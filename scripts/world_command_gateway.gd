@@ -291,7 +291,9 @@ func _remove_voxel(
 	else:
 		_hand_drill_last_bite_center = null
 	var removed_m3 := total_removed_m3
-	if removed_m3 > 0.000001:
+	# Excavation mode discards the yield: rock is cleared but nothing is mined.
+	var discard_yield := bool(parameters.get("discard_yield", false))
+	if removed_m3 > 0.000001 and not discard_yield:
 		var material_id := _material_field.material_id_at_world(
 			contact_point,
 			_hand_drill_spawn_world
@@ -341,14 +343,16 @@ func _remove_granular(
 	var removed_m3 := float(granular.call(&"dig_spoil", contact_point, radius))
 	if removed_m3 <= 0.000001:
 		return _result(&"no_target", {"point": contact_point})
-	var material_id := _material_field.material_id_at_world(
-		contact_point,
-		_hand_drill_spawn_world
-	)
-	_route_hand_drill_yield(
-		contact_point,
-		_material_source.yield_for_excavation(removed_m3, {material_id: 1.0})
-	)
+	# Excavation mode discards the yield: spoil is cleared but nothing is mined.
+	if not bool(parameters.get("discard_yield", false)):
+		var material_id := _material_field.material_id_at_world(
+			contact_point,
+			_hand_drill_spawn_world
+		)
+		_route_hand_drill_yield(
+			contact_point,
+			_material_source.yield_for_excavation(removed_m3, {material_id: 1.0})
+		)
 	return _result(
 		&"ok",
 		{"point": contact_point, "removed_volume_m3": removed_m3}

@@ -324,6 +324,14 @@ func _physics_process(delta: float) -> void:
 		profile = profile.duplicate()
 		profile["interval"] = IndustryArchetypeProfile.hand_drill_interval_s()
 		profile["max_range"] = IndustryArchetypeProfile.hand_drill_reach_m()
+	elif active_action == &"tool_secondary" and active_tool == &"drill":
+		# Excavation mode: reuse the drill's reach, carve on a faster cadence,
+		# and stay continuous while the button is held.
+		profile = profile.duplicate()
+		profile["command"] = &"voxel_remove"
+		profile["interval"] = IndustryArchetypeProfile.hand_drill_extract_interval_s()
+		profile["max_range"] = IndustryArchetypeProfile.hand_drill_reach_m()
+		profile["continuous"] = true
 	elif active_action == &"tool_primary" and active_tool == &"weld":
 		profile = ACTIONS[&"tool_weld"].duplicate()
 	elif active_tool == &"scoop" and (
@@ -489,6 +497,22 @@ func _emit_command_for_action(
 			"parameters": parameters,
 		})
 		return
+	# Drill excavation mode (ПКМ): carve rock like voxel_remove but discard the
+	# yield — nothing is credited to the player, this only clears material.
+	if active_tool == &"drill" and action == &"tool_secondary":
+		var extract_parameters := {"discard_yield": true}
+		var extract_radius := (
+			IndustryArchetypeProfile.hand_drill_extract_carve_radius_m()
+		)
+		if extract_radius > 0.0:
+			extract_parameters["radius"] = extract_radius
+		command_requested.emit({
+			"kind": &"voxel_remove",
+			"source": get_parent(),
+			"target": hit.snapshot(),
+			"parameters": extract_parameters,
+		})
+		return
 	if (
 		_construction_mode == &"place"
 		and _preview != null
@@ -558,10 +582,12 @@ func _pressed_action() -> StringName:
 	if (
 		not in_vehicle
 		and Input.is_action_pressed(&"tool_secondary")
-		# The scoop is the one tool whose right button does something of its
-		# own: tipping the load out. Everything else treats a held right button
-		# as "no action", and that would leave a full scoop with no way to empty.
+		# The scoop tips its load out and the drill carves in excavation mode;
+		# both do something of their own on the right button. Everything else
+		# treats a held right button as "no action", and for the scoop that
+		# would leave a full load with no way to empty.
 		and active_tool != &"scoop"
+		and active_tool != &"drill"
 	):
 		return StringName()
 	for action: StringName in ACTIONS:
@@ -842,6 +868,9 @@ func _action_hit(action: StringName, _profile: Dictionary) -> InteractionHit:
 
 
 func _tracks_live_target_while_holding(action: StringName) -> bool:
+	# Excavation (drill ПКМ) sweeps through rock, so it tracks live aim too.
+	if action == &"tool_secondary" and active_tool == &"drill":
+		return true
 	return (
 		action == &"tool_primary"
 		and (
@@ -891,6 +920,13 @@ func _hit_accepts_action(
 			or hit.target_kind == InteractionHit.KIND_GRANULAR
 			or hit.target_kind == InteractionHit.KIND_TERRAIN_DEBRIS
 			or hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
+		)
+	if action == &"tool_secondary" and active_tool == &"drill":
+		# Excavation only carves terrain — solid rock or its own loose spoil.
+		# It never damages built elements; that stays a болгарка/бур primary job.
+		return (
+			hit.target_kind == InteractionHit.KIND_VOXEL
+			or hit.target_kind == InteractionHit.KIND_GRANULAR
 		)
 	return true
 
