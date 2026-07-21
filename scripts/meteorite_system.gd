@@ -24,7 +24,7 @@ const _IMPACT_VFX := preload("res://scenes/vfx/kinetic_impact_burst.tscn")
 
 @export_group("Debug")
 @export var debug_spawn_enabled := true
-@export var show_debug_button := true
+@export var show_debug_button := false
 @export_range(4.0, 80.0, 0.5, "or_greater") var debug_offset_m := 18.0
 @export_range(15.0, 200.0, 1.0, "or_greater") var debug_spawn_height_m := 48.0
 

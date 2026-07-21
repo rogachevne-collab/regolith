@@ -12,7 +12,8 @@ static var _test_diameter_m := 0.0
 ## 1.0 = native VT unit; avoids the old 0.65 scale tax (~3.6× voxels/m³).
 const VOXEL_SCALE := 1.0
 ## Bounds margin over surface radius in local voxel units.
-## Must stay above coarsest LodTerrain block (16 * 2^(lod_count-1)).
+## Must stay above coarsest LodTerrain block
+## (mesh_block_size * 2^(lod_count-1)).
 const BOUNDS_MARGIN := 1.25
 ## Sky hold offset above the surface while SDF/collider streams in.
 const SPAWN_SKY_OFFSET_M := 80.0
@@ -23,23 +24,36 @@ const GRAVITY_M_S2 := 1.62
 ## Area shell beyond surface so near-surface bodies stay inside override.
 const GRAVITY_AREA_RADIUS_FACTOR := 1.35
 ## Streaming budget for VoxelLodTerrain / VoxelViewer (voxels, local).
-## World metres ≈ value * VOXEL_SCALE. Floor covers near-surface streaming;
-## ceiling grows with altitude (bootstrap). Ø19 km needs a higher ceiling
-## so the far limb stays inside the load sphere.
+## World metres ≈ value * VOXEL_SCALE.
+##
+## Surface floor = spawn-focus (512). On Ø19 km, raw `|cam|+R` ≈ 22k voxels on
+## foot — the streamer never finishes LOD0 under the viewer (only coarser LODs
+## win the queue). `collision_lod_count>1` then masks the hole with LOD1/2
+## colliders; dig fails because edits need LOD0. Ceiling grows with altitude
+## so the far limb LODs instead of unloading.
 ## Do NOT push Camera.far to orbital scales — Godot's light culler breaks
 ## (create_frustum_points) when near/far ratio is extreme.
-const MIN_VIEW_DISTANCE_VOXELS := 2_048
+const MIN_VIEW_DISTANCE_VOXELS := 512
 const MAX_VIEW_DISTANCE_VOXELS := 80_000
 ## Initial / editor fallback (= surface floor).
 const DEFAULT_VIEW_DISTANCE_VOXELS := MIN_VIEW_DISTANCE_VOXELS
 ## Extra radius so the far limb stays inside the load sphere.
 const VIEW_DISTANCE_RADIUS_MARGIN := 1.15
-## Coarsest mesh block = 16 * 2^(lod_count-1). For Ø19 km at scale 1.0
-## (bounds ~±11875): lod_count 11 → block 16384 > bounds → cubic cuts;
-## 10 → block 8192 ≤ half-extent, fits.
+## Altitude (m above crust) at which view_distance reaches the full far-limb
+## sphere. Below this, blend toward the surface floor so near-field LOD0 wins.
+const VIEW_DISTANCE_ALTITUDE_BLEND_M := 2_000.0
+## LOD0 mesh chunk size (VT: 16 or 32). VT default 16; 32 = fewer bodies.
+const DEFAULT_MESH_BLOCK_SIZE := 16
+## Coarsest mesh block = mesh_block_size * 2^(lod_count-1). For Ø19 km at
+## scale 1.0 (bounds ~±11875): mesh 16 + lod_count 10 → block 8192 fits;
+## mesh 32 + lod_count 10 → 16384 > bounds → cubic cuts / broken LOD0.
 const DEFAULT_LOD_COUNT := 10
-## Keep denser near-field mesh — 56 m made mid-range crust read as soap.
-const DEFAULT_LOD_DISTANCE := 88.0
+## How far LOD0 extends (and, on LEGACY_OCTREE, the step for coarser rings).
+## VT default is 48. We had 88 for denser near crust, but once the surface
+## view_distance fix lets LOD0 actually finish, 88³ is a heavy shell of
+## full-res mesh+collider underfoot — dig only needs reach (~6 m). Stay on
+## the VT default; raise only with a measured FPS budget.
+const DEFAULT_LOD_DISTANCE := 48.0
 ## Beyond this distance from planet center, show a camera-relative impostor.
 ## Parked far out for Ø19 km: billboard was baked for the Ø1 km moon and
 ## would lie at this scale. Stay below ~5–6 km altitude until scaled-space.
@@ -82,10 +96,20 @@ static func terrain_shader_uv_scale() -> float:
 
 
 static func view_distance_voxels_for_camera_distance(distance_from_center_m: float) -> int:
-	## Farthest crust point from the camera ≈ |cam| + R; convert to voxels.
-	var reach_m: float = (
-		maxf(distance_from_center_m, 0.0) + active_surface_radius_m()
-	) * VIEW_DISTANCE_RADIUS_MARGIN
+	var radius_m := active_surface_radius_m()
+	var cam_m := maxf(distance_from_center_m, 0.0)
+	var altitude_m := maxf(cam_m - radius_m, 0.0)
+	## Surface: modest near-field shell (same order as the old Ø1 km floor).
+	## Climb: blend toward the far-limb sphere `|cam|+R` so distant crust LODs
+	## instead of popping into cubic scraps.
+	var surface_reach_m := float(MIN_VIEW_DISTANCE_VOXELS) * VOXEL_SCALE
+	var far_limb_reach_m := (cam_m + radius_m) * VIEW_DISTANCE_RADIUS_MARGIN
+	var blend := clampf(
+		altitude_m / VIEW_DISTANCE_ALTITUDE_BLEND_M,
+		0.0,
+		1.0
+	)
+	var reach_m := lerpf(surface_reach_m, far_limb_reach_m, blend)
 	var needed := int(ceili(reach_m / VOXEL_SCALE))
 	return clampi(needed, MIN_VIEW_DISTANCE_VOXELS, MAX_VIEW_DISTANCE_VOXELS)
 

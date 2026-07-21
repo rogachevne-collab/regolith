@@ -233,9 +233,10 @@ func _configure_terrain() -> void:
 		lod.view_distance = MoonGeometry.DEFAULT_VIEW_DISTANCE_VOXELS
 		lod.generate_collisions = true
 		lod.collision_lod_count = SPAWN_COLLISION_LOD_COUNT
-		## 8x fewer mesh blocks / collider bodies per LOD ring update — the
-		## run-vs-stand FPS gap is ring rebuild + trimesh cooking churn.
-		lod.mesh_block_size = 32
+		## mesh_block_size + lod_count from MoonGeometry: coarsest block must
+		## fit inside voxel_bounds (see DEFAULT_LOD_COUNT). Wrong pair
+		## (32 + 10) → cubic cuts and LOD0 never subdivides past spawn.
+		lod.mesh_block_size = MoonGeometry.DEFAULT_MESH_BLOCK_SIZE
 		lod.lod_count = MoonGeometry.DEFAULT_LOD_COUNT
 		lod.lod_distance = MoonGeometry.DEFAULT_LOD_DISTANCE
 		lod.lod_fade_duration = TERRAIN_LOD_FADE_DURATION_S
@@ -393,13 +394,10 @@ func _configure_dig_stream() -> void:
 	## Fresh gen_v dir (no partial LOD scraps). Generator fills crust; digs persist.
 	var stream := VoxelStreamSQLite.new()
 	stream.database_path = MoonTerrainParams.stream_database_path()
-	## Do NOT persist generator output: writing every streamed crust block to
-	## SQLite during generation adds heavy I/O on the critical path, so the first
-	## build of the map is slower than pure in-memory gen (and during dev the
-	## cache is wiped on every GENERATOR_VERSION bump, so the "fast relaunch" it
-	## bought rarely materialises). Player digs are modified blocks — they still
-	## persist regardless of this flag.
-	stream.save_generator_output = false
+	## Persist generated crust too: Ø19 km analytic gen is heavy; relaunch should
+	## read SQLite instead of re-deriving the shell. GENERATOR_VERSION bump →
+	## fresh DB. Digs are modified blocks and persist either way.
+	stream.save_generator_output = true
 	_voxel_stream = stream
 	var lod := _terrain as VoxelLodTerrain
 	lod.stream = stream
@@ -606,6 +604,7 @@ func _begin_fresh_world(player_position: Vector3) -> void:
 
 
 func _finish_world_entry(player_position: Vector3) -> void:
+	_align_sun_day_at(player_position)
 	_player.call("begin_spawn_settle", player_position)
 	_loading.text = "Посадка..."
 	var settle_frames := 0
@@ -645,6 +644,7 @@ func _finish_world_entry(player_position: Vector3) -> void:
 
 
 func _finish_loaded_world_entry(spawn_position: Vector3) -> void:
+	_align_sun_day_at(spawn_position)
 	_player.call("set_spawn_ready", spawn_position)
 	_resync_player_camera()
 	_loading.visible = false
@@ -659,6 +659,16 @@ func _finish_loaded_world_entry(spawn_position: Vector3) -> void:
 	)
 	_session.get_industry_simulation().bind_world(_session.world)
 	_apply_playtest_cargo_if_enabled()
+
+
+func _align_sun_day_at(world_position: Vector3) -> void:
+	var cycle := get_node_or_null("DayNightCycle") as DayNightCycle
+	if cycle == null:
+		return
+	var up := world_position
+	if up.length_squared() <= 0.000001:
+		up = Vector3.UP
+	cycle.align_noon_above(up)
 
 
 func _apply_playtest_cargo_if_enabled() -> void:
@@ -1058,9 +1068,11 @@ func _find_voxel_viewer() -> VoxelViewer:
 
 
 func _update_streaming_budget() -> void:
-	## Surface: modest VD so the mesher finishes the whole Ø1 km shell.
-	## Altitude: grow with |cam|+R so the planet LODs instead of unloading.
-	## A fixed 50k on foot was the "moon ends / cubic scraps" failure mode.
+	## Surface: keep the near-field shell small enough that LOD0 under the
+	## viewer can finish. Altitude: blend toward |cam|+R so the planet LODs
+	## instead of unloading. On Ø19 km, raw |cam|+R on foot was ~22k voxels —
+	## the streamer never completed LOD0 outside the spawn-focus bake, so
+	## collision_lod_count>1 was the only thing holding the player up.
 	if not _world_ready:
 		return
 	if not (_terrain is VoxelLodTerrain):

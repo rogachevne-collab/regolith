@@ -114,6 +114,7 @@ func _begin_fresh_world(player_position: Vector3) -> void:
 
 
 func _finish_world_entry(player_position: Vector3) -> void:
+	_align_sun_day()
 	_player.call("begin_spawn_settle", player_position)
 	_loading.text = "Посадка..."
 	var settle_frames := 0
@@ -138,12 +139,21 @@ func _finish_world_entry(player_position: Vector3) -> void:
 
 
 func _finish_loaded_world_entry(spawn_position: Vector3) -> void:
+	_align_sun_day()
 	_player.call("set_spawn_ready", spawn_position)
 	_resync_player_camera()
 	_loading.visible = false
 	_world_ready = true
 	_session.get_industry_simulation().bind_world(_session.world)
 	_apply_playtest_cargo_if_enabled()
+
+
+func _align_sun_day() -> void:
+	var cycle := get_node_or_null("DayNightCycle") as DayNightCycle
+	if cycle == null:
+		return
+	## Flat yard: +Y is up — put the sun high in the sky.
+	cycle.align_noon_above(Vector3.UP)
 
 
 func _apply_playtest_cargo_if_enabled() -> void:

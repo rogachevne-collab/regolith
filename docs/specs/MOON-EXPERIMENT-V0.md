@@ -37,7 +37,7 @@ legacy flat yard (стройка, физика, шарниры, колёса, б
 | Радиус поверхности (целевой) | 9500 м |
 | Voxel node scale | **1.0** (1 м / воксель; `MoonGeometry.VOXEL_SCALE`) |
 | Радиус в local voxel | 9500 / 1.0 = **9500** voxel |
-| Bounds (local, с запасом) | ≈ ± radius_voxels × 1.25 (~±11875); `lod_count=10` |
+| Bounds (local, с запасом) | ≈ ± radius_voxels × 1.25 (~±11875); `mesh_block_size=16`, `lod_count=10` |
 | Центр луны | world origin `(0,0,0)` на v0 (без origin shifting) |
 
 ## Официальные опоры (сверять, не угадывать)
@@ -158,13 +158,14 @@ Legacy flat yard: `scenes/flat_moon.tscn` + `scripts/flat_moon_bootstrap.gd`.
 - Collisions: on; streaming вокруг viewer (**не** `full_load` с SQLite —
   плагин отвергает).
 - **Дальняя видимость (планета):** конечные `voxel_bounds` +
-  `lod_count=10` (`MoonGeometry.DEFAULT_LOD_COUNT`; coarsest block 8192 ≤
-  bounds ~±11875 at scale 1.0; **не** 11 — block 16384 > bounds → cubic cuts).
-  `view_distance` **динамический**
-  (`MoonGeometry.view_distance_voxels_for_camera_distance`): на поверхности
-  ≥2048 вокселей, с высотой растёт. `VoxelViewer` синхронизируется в
-  bootstrap. Орбита — camera-relative impostor (не раздувать `Camera.far`:
-  ломает light culler / `create_frustum_points`). Туман выключен (вакуум).
+  `mesh_block_size=16` + `lod_count=10` (`MoonGeometry`; coarsest block
+  `16*2^9=8192` ≤ bounds ~±11875; **не** `32+lod_count=10` — block 16384
+  > bounds → cubic cuts / LOD0 не subdivides). `view_distance`
+  **динамический** (`MoonGeometry.view_distance_voxels_for_camera_distance`):
+  на коре floor =512 (LOD0 под viewer; dig/`is_area_editable`); с высотой
+  blend к `|cam|+R`. `lod_distance` =48 (VT default). На Ø19 km сырой
+  `|cam|+R` ~22k — LOD0 не завершался, ходьба маскировалась LOD1/2. Орбита —
+  impostor (не раздувать `Camera.far`). Туман выключен (вакуум).
 - Spawn: SDF gate → short physics probe (~1.5s) → temp landing pad if
   collider lag; pad retires when voxel floor appears. Spawn-focus
   `view_distance` (512) + `collision_lod_count=2` until world_ready.

@@ -7,7 +7,7 @@
 
 ## Зачем
 
-Сцены держали статичный `DirectionalLight3D` + `FillLight` + starfield +
+Сцены держали статичный `DirectionalLight3D` + soft fill + starfield +
 `LunarSkyDecor` (Земля). Не было диска Солнца и движения терминатора.
 
 ## Контракт
@@ -15,18 +15,23 @@
 | Параметр | Значение |
 |---|---|
 | Длительность цикла (default) | **600 s** полный оборот (`cycle_duration_sec`) |
+| Старт | bootstrap зовёт `align_noon_above(spawn)` → локальный полдень |
 | Контроллер | `DayNightCycle` (`scripts/day_night_cycle.gd`) |
-| Диск Солнца | `SolarSkyDecor` (`scenes/solar_sky_decor.tscn`) |
+| Диск Солнца | sky shader `lunar_starfield.gdshader` via `LIGHT0_DIRECTION` |
 | Угловой размер диска | ~2° (читаемость; реальный ~0.5°) |
-| Направление на Солнце | `DirectionalLight3D.basis.z` (emit = −Z) |
+| Направление на Солнце | Godot `+basis.z` (= scene L = sky `LIGHT0_DIRECTION`) |
+| Mesh fallback | `SolarSkyDecor` disabled in play scenes (kept for cinematics) |
 | Сцены | `main.tscn`, `flat_moon.tscn`, `granular_corridor_test.tscn` |
 
 ### Что модулируется
 
-- Ориентация `DirectionalLight3D` (parallel rays; `-basis.z` = направление на Солнце, как в `LunarSkyDecor`).
+- Ориентация `DirectionalLight3D` (parallel rays; `+basis.z` = направление на Солнце = sky `LIGHT0`).
 - Energy солнца: на **flat** — fade у горизонта; на **planetoid (radial)** — постоянная (ночь геометрическая на тёмной стороне).
-- `FillLight` — держится напротив солнца; ночью на flat усиливается earthshine.
-- `Environment.ambient_light_energy` — чуть ниже ночью на flat.
+- Soft lift: **sky ambient** (`Environment.ambient_light_source = SKY`) + dim
+  **`Earthshine`** directional from `LunarSkyDecor.earth_direction` (no shadows,
+  low specular). Not an anti-sun fill — that inverted crater relief in shadow.
+- `Environment.ambient_light_energy` — чуть ниже ночью на flat; на planetoid
+  держит базовую читаемость тёмной стороны.
 
 ### Что не трогаем (v0)
 

@@ -61,7 +61,11 @@ func _process(delta: float) -> void:
 		return
 	_result_left = maxf(_result_left - delta, 0.0)
 	_result.visible = _result_left > 0.0
-	_prompt.text = _prompt_for(_query.current_hit)
+	_prompt.text = (
+		""
+		if HudTokens.modal_window_open(self)
+		else _prompt_for(_query.current_hit)
+	)
 	_prompt.visible = not _prompt.text.is_empty()
 
 
@@ -201,8 +205,11 @@ func _on_command_completed(
 		_result_left = 0.35
 		return
 	_result.text = _reason_text(reason, data)
-	_result.add_theme_color_override("font_color", HudTokens.COL_CRITICAL)
-	_result_left = 1.2
+	_result.add_theme_color_override(
+		"font_color",
+		HudTokens.COL_WARNING if reason == &"terrain_unavailable" else HudTokens.COL_CRITICAL
+	)
+	_result_left = 1.2 if reason != &"terrain_unavailable" else 0.7
 
 
 func _on_connect_rejected(reason: StringName) -> void:
@@ -313,5 +320,7 @@ func _reason_text(reason: StringName, data: Dictionary = {}) -> String:
 			return "Очередь пуста"
 		&"not_ready":
 			return "Симуляция не готова"
+		&"terrain_unavailable":
+			return "Грунт ещё загружается"
 		_:
 			return "Действие недоступно"

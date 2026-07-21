@@ -23,8 +23,8 @@ background_mode = 2
 sky = SubResource("Sky_env")
 ambient_light_source = 2
 ambient_light_color = Color(0.16, 0.18, 0.26, 1)
-ambient_light_sky_contribution = 0.55
-ambient_light_energy = 0.32
+ambient_light_sky_contribution = 0.7
+ambient_light_energy = 0.42
 tonemap_mode = 2
 tonemap_exposure = 0.92
 ssao_enabled = true
@@ -50,14 +50,24 @@ transform = Transform3D(0.866025, -0.25, 0.433013, 0, 0.866025, 0.5, -0.5, -0.43
 light_color = Color(0.98, 0.99, 1, 1)
 light_energy = 1.55
 shadow_enabled = true
-directional_shadow_mode = 1
-directional_shadow_blend_splits = true
-directional_shadow_max_distance = 256.0
+shadow_bias = 0.05
+shadow_normal_bias = 2.5
+shadow_blur = 1.25
+directional_shadow_mode = 2
+## blend_splits + large max_distance → moving stripe shimmer on near casters.
+directional_shadow_blend_splits = false
+directional_shadow_max_distance = 1536.0
+## Pack resolution toward the camera (fractions of max_distance).
+directional_shadow_split_1 = 0.04
+directional_shadow_split_2 = 0.12
+directional_shadow_split_3 = 0.35
+directional_shadow_pancake_size = 20.0
 
-[node name="FillLight" type="DirectionalLight3D" parent="." unique_id=666809088]
+[node name="Earthshine" type="DirectionalLight3D" parent="." unique_id=666809088]
 transform = Transform3D(-0.866025, 0.25, -0.433013, 0, 0.866025, 0.5, 0.5, 0.433013, -0.75, 0, 400, 0)
 light_color = Color(0.55, 0.62, 0.82, 1)
-light_energy = 0.28
+light_energy = 0.12
+light_specular = 0.0
 
 [node name="LunarSkyDecor" parent="." unique_id=845958376 instance=ExtResource("14")]
 angular_diameter_deg = 5.8
@@ -65,13 +75,15 @@ distance_m = 12000.0
 sun_light_path = NodePath("../DirectionalLight3D")
 
 [node name="SolarSkyDecor" parent="." instance=ExtResource("19")]
+enabled = false
 sun_light_path = NodePath("../DirectionalLight3D")
 distance_m = 12000.0
 
 [node name="DayNightCycle" type="Node" parent="."]
 script = ExtResource("20")
 sun_light_path = NodePath("../DirectionalLight3D")
-fill_light_path = NodePath("../FillLight")
+earthshine_light_path = NodePath("../Earthshine")
+lunar_sky_decor_path = NodePath("../LunarSkyDecor")
 world_environment_path = NodePath("../WorldEnvironment")
 
 [node name="GravityField" type="Node" parent="." unique_id=1255160184]
@@ -94,7 +106,7 @@ shape = SubResource("SphereShape_gravity")
 [node name="VoxelTerrain" type="VoxelLodTerrain" parent="." unique_id=1233454214]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
 mesher = SubResource("VoxelMesherTransvoxel_moon")
-view_distance = 2048
+view_distance = 512
 material = ExtResource("4")
 
 [node name="VoxelInstancer" type="VoxelInstancer" parent="VoxelTerrain" unique_id=1790512269]
