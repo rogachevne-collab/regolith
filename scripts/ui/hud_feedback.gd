@@ -252,6 +252,12 @@ func _reason_text(reason: StringName, data: Dictionary = {}) -> String:
 			if StringName(data.get("detail", &"")) == &"not_locomotive":
 				return "Ровер не готов — нужны колёса и подвеска"
 			return "Действие заблокировано"
+		&"structure_overlap":
+			return "Пересекает другую конструкцию"
+		&"terrain_overlap":
+			return "Нельзя ставить в грунт"
+		&"player_blocked":
+			return "Освободи место — ты стоишь здесь"
 		&"insufficient_material":
 			var resource_id := str(data.get("resource_id", ""))
 			if not resource_id.is_empty():
