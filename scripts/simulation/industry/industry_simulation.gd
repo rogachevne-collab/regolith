@@ -38,9 +38,10 @@ func set_drill_carve_stub(stub: Callable) -> void:
 
 func set_drill_terrain_hooks(
 	contact_probe: Callable,
-	carve: Callable
+	carve: Callable,
+	carve_point: Callable = Callable()
 ) -> void:
-	_drill_service.set_drill_terrain_hooks(contact_probe, carve)
+	_drill_service.set_drill_terrain_hooks(contact_probe, carve, carve_point)
 
 
 func tick(world_or_dt: Variant, delta_s: float = -1.0) -> void:
