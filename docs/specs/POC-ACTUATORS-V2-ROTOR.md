@@ -234,10 +234,10 @@ consumer по правилам Piston v1: demand = `power_draw_w`, пока moto
 ### Motor
 
 Torque-limited velocity tracker вокруг свободной оси (модель ротора SE:
-signed velocity, без пружины). Канал — `RigidBody3D.apply_torque` (world
-space); joint `angular_motor_*` не используется. Jolt владеет интеграцией
-позы/ω; `custom_integrator` на actuator bodies запрещён (иначе torque
-молча дропается).
+signed velocity, без пружины). Канал — Jolt `Generic6DOFJoint3D`
+`angular_motor` на joint Y; sim velocity — правый винт, в Godot API
+пишется с минусом (CW convention движка). Jolt владеет интеграцией
+позы/ω; `custom_integrator` на actuator bodies запрещён.
 
 ```text
 desired_velocity = по mode (velocity/position/stop), рад/с

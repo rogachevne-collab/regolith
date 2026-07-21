@@ -233,12 +233,14 @@ enabled и mode ≠ stop; `no_power` даёт момент 0, constraint и уп
 
 - все три linear DOF заблокированы;
 - angular Y/Z заблокированы;
-- angular X ограничен motor limits, **сдвинутыми на `angle_offset`**:
-  Jolt считает twist от relative pose на момент create constraint, а
-  motor `observed_angle` — home-relative. Поэтому
-  `jolt_limit = motor_limit - measured_angle_at_create`. Offset хранится
-  в projection record на lifetime constraint; при recreate
-  (snapshot restore / topology rebuild на согнутом hinge) пересчитывается.
+- angular X ограничен motor limits, **сдвинутыми на `angle_offset`** и
+  записанными в Godot CW API: sim/motor angles — правый винт (CCW), а
+  `Generic6DOFJoint3D` angular limits/motor — CW (движок снова flip'ает
+  в Jolt CCW). Поэтому в joint пишется
+  `godot_limit = (−(rh_upper−offset), −(rh_lower−offset))`, а
+  `angular_motor` target velocity = `−rh_velocity`. Offset — RH measured
+  angle at create; хранится в projection record на lifetime constraint;
+  при recreate (snapshot restore / bent reproject) пересчитывается.
   На тике обновляются только twist lower/upper (не полный reset DOF);
 - soft stop params на twist (`softness` / `damping`) — fixture против
   solver explosion при упоре; статус `joint_limit` сохраняется;
@@ -248,12 +250,13 @@ enabled и mode ≠ stop; `no_power` даёт момент 0, constraint и уп
 
 ### Motor
 
-Torque-limited velocity tracker Rotor v2 (`compute_motor_torque_scalar`)
-с near-limit taper для non-continuous angular motors: в `LIMIT_TAPER_RAD`
-к упору в направлении команды момент плавно гасится до 0, чтобы не
-драться с жёстким Jolt-stop на полном `torque_limit`. Канал —
-`RigidBody3D.apply_torque` (world space), Jolt владеет интеграцией
-позы/ω, `custom_integrator` запрещён. Position mode использует
+Torque-limited velocity tracker через Jolt `Generic6DOFJoint3D`
+`angular_motor` на twist (local X). Для non-continuous hinge
+`RotorProjectionUtil.solver_angular_drive` применяет near-limit taper:
+в `LIMIT_TAPER_RAD` к упору в направлении команды `force_limit` мотора
+плавно гасится до 0 (и target velocity обнуляется на самом упоре), чтобы
+не драться с жёстким Jolt-stop на полном `torque_limit`. Taper считает
+home-relative measured angle текущего тика. Position mode использует
 некруговой position_error (clamp, не wrap). Гравитационная компенсация
 не применяется: несбалансированный груз честно провисает в пределах
 torque limit и упоров.
