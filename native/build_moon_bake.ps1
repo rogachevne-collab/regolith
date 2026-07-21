@@ -1,13 +1,21 @@
-# Build regolith_moon_bake GDExtension for Windows (MSVC + Erebus godot-cpp).
+# Build regolith_moon_bake GDExtension for Windows (MSVC + godot-cpp).
+#
+# The project runs a `precision=double` Godot (tools/build_godot_double.ps1),
+# so the extension has to match: a single-precision library loaded into a
+# double engine is an ABI mismatch. `native\godot-cpp` carries the double
+# bindings, and the single-precision ones are not there to link against at all.
+param([ValidateSet("double", "single")][string]$Precision = "double")
+
 $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent $PSScriptRoot
 $ErebusCpp = if ($env:EREBUS_CPP) { $env:EREBUS_CPP } else { "Y:\Erebus\thirdparty\godot-cpp" }
 $GodotCppLink = Join-Path $Root "native\godot-cpp"
-$Lib = Join-Path $ErebusCpp "bin\libgodot-cpp.windows.template_debug.x86_64.lib"
+$LibSuffix = if ($Precision -eq "double") { "double.x86_64" } else { "x86_64" }
+$Lib = Join-Path $GodotCppLink "bin\libgodot-cpp.windows.template_debug.$LibSuffix.lib"
 
 if (-not (Test-Path $Lib)) {
-	Write-Error "Missing Erebus godot-cpp at $ErebusCpp (expected $Lib)"
+	Write-Error "Missing godot-cpp bindings for precision=$Precision (expected $Lib)"
 }
 
 if (-not (Test-Path $GodotCppLink)) {
@@ -30,15 +38,17 @@ if (-not (Test-Path $VcVars)) {
 
 $Jobs = [Environment]::ProcessorCount
 $BakeDir = Join-Path $Root "native\regolith_moon_bake"
+$PrecisionArg = if ($Precision -eq "double") { "precision=double" } else { "" }
 $Cmd = @"
-call "$VcVars" >nul && cd /d "$BakeDir" && python -m SCons platform=windows target=template_debug arch=x86_64 build_library=no generate_bindings=no -j$Jobs
+call "$VcVars" >nul && cd /d "$BakeDir" && python -m SCons platform=windows target=template_debug arch=x86_64 $PrecisionArg build_library=no generate_bindings=no -j$Jobs
 "@
 
-Write-Host "Building with MSVC from $VsPath ..."
+Write-Host "Building with MSVC from $VsPath (precision=$Precision) ..."
 cmd /c $Cmd
 if ($LASTEXITCODE -ne 0) {
 	exit $LASTEXITCODE
 }
 
-$Out = Join-Path $Root "addons\regolith_moon_bake\bin\libregolith_moon_bake.windows.template_debug.x86_64.dll"
+$OutSuffix = if ($Precision -eq "double") { "double.x86_64" } else { "x86_64" }
+$Out = Join-Path $Root "addons\regolith_moon_bake\bin\libregolith_moon_bake.windows.template_debug.$OutSuffix.dll"
 Write-Host "Built: $Out"

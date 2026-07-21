@@ -1,5 +1,6 @@
 #include "register_types.h"
 
+#include "granular_voxel_field.hpp"
 #include "moon_heightmap_bake.hpp"
 
 #include <godot_cpp/core/class_db.hpp>
@@ -13,6 +14,7 @@ void initialize_regolith_moon_bake_module(ModuleInitializationLevel p_level) {
 		return;
 	}
 	ClassDB::register_class<MoonHeightmapBake>();
+	ClassDB::register_class<GranularVoxelField>();
 }
 
 void uninitialize_regolith_moon_bake_module(ModuleInitializationLevel p_level) {

@@ -12,5 +12,13 @@ macos.release = "./bin/libregolith_moon_bake.macos.template_release.universal.dy
 linux.debug.x86_64 = "./bin/libregolith_moon_bake.linux.template_debug.x86_64.so"
 linux.release.x86_64 = "./bin/libregolith_moon_bake.linux.template_release.x86_64.so"
 
+; Double-precision entries come first, so a large-world build matches them
+; before the plain ones. This project runs a `precision=double` Godot (see
+; tools/build_godot_double.ps1); without these it quietly loaded the
+; single-precision library instead, which is an ABI mismatch that survives
+; only until something in the interface actually touches `real_t`.
+windows.debug.double.x86_64 = "./bin/libregolith_moon_bake.windows.template_debug.double.x86_64.dll"
+windows.release.double.x86_64 = "./bin/libregolith_moon_bake.windows.template_debug.double.x86_64.dll"
+
 windows.debug.x86_64 = "./bin/libregolith_moon_bake.windows.template_debug.x86_64.dll"
 windows.release.x86_64 = "./bin/libregolith_moon_bake.windows.template_release.x86_64.dll"
