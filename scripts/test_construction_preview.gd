@@ -63,6 +63,8 @@ func _run() -> void:
 		return
 	if not _test_gateway_voxel_place_spawns_visual():
 		return
+	if not _test_world_loot_projection_renders_new_pile():
+		return
 	print("CONSTRUCTION-V1: PASS")
 	get_tree().quit(0)
 
@@ -1735,6 +1737,41 @@ func _test_gateway_voxel_place_spawns_visual() -> bool:
 		return _fail("moon-like place has no element visual meshes on body")
 	_free_gateway_fixture(fixture)
 	return true
+
+
+## A hand-drill overflow drop lands as a WorldLootPile after bind(). The
+## projection used to render only what existed at startup, so a fresh drop
+## stayed invisible ("вырубал пещеры, а дропа не было визуально"). Guard that a
+## pile added post-bind gets a rendered body on the next physics tick.
+func _test_world_loot_projection_renders_new_pile() -> bool:
+	var fixture := _new_gateway_fixture()
+	var world: SimulationWorld = fixture["world"]
+	var session: SimulationSession = fixture["session"]
+	var loot := session.world_loot
+	if loot == null:
+		return _fail("world loot projection missing from session")
+	if _loot_body_count(loot) != 0:
+		return _fail("loot projection should start with no pile bodies")
+	var pile := world.add_world_loot_pile(
+		Vector3(0.0, 520.0, 0.0),
+		"ore_mare_regolith",
+		4.0
+	)
+	if pile == null:
+		return _fail("add_world_loot_pile returned null")
+	loot._physics_process(0.016)
+	if _loot_body_count(loot) <= 0:
+		return _fail("pile added after bind never got a rendered body")
+	_free_gateway_fixture(fixture)
+	return true
+
+
+func _loot_body_count(loot: WorldLootProjection) -> int:
+	var count := 0
+	for child_node: Node in loot.get_children():
+		if child_node is RigidBody3D:
+			count += 1
+	return count
 
 
 func _free_gateway_fixture(fixture: Dictionary) -> void:
