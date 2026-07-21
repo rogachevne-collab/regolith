@@ -385,10 +385,13 @@ func _configure_dig_stream() -> void:
 	## Fresh gen_v dir (no partial LOD scraps). Generator fills crust; digs persist.
 	var stream := VoxelStreamSQLite.new()
 	stream.database_path = MoonTerrainParams.stream_database_path()
-	## Persist generated blocks too: Ø19 km analytic gen is heavy enough that
-	## re-deriving the whole shell every launch costs ~30 s; second launch
-	## reads SQLite instead. GENERATOR_VERSION bump → fresh DB, no staleness.
-	stream.save_generator_output = true
+	## Do NOT persist generator output: writing every streamed crust block to
+	## SQLite during generation adds heavy I/O on the critical path, so the first
+	## build of the map is slower than pure in-memory gen (and during dev the
+	## cache is wiped on every GENERATOR_VERSION bump, so the "fast relaunch" it
+	## bought rarely materialises). Player digs are modified blocks — they still
+	## persist regardless of this flag.
+	stream.save_generator_output = false
 	_voxel_stream = stream
 	var lod := _terrain as VoxelLodTerrain
 	lod.stream = stream
