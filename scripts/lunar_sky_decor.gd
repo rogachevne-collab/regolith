@@ -138,7 +138,8 @@ func _apply_scale() -> void:
 func _update_materials_sun() -> void:
 	var sun_dir := Vector3(0.5, 0.75, 0.35).normalized()
 	if _sun_light != null and is_instance_valid(_sun_light):
-		sun_dir = (-_sun_light.global_transform.basis.z).normalized()
+		# DirectionalLight emits along -Z; sun source is +Z (see DayNightCycle).
+		sun_dir = _sun_light.global_transform.basis.z.normalized()
 	var mat := _atmosphere.material_override as ShaderMaterial
 	if mat == null:
 		mat = _atmosphere.get_active_material(0) as ShaderMaterial
