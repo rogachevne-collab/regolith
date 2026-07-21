@@ -97,6 +97,57 @@ static func drill_requires_power() -> bool:
 	)
 
 
+## Radius the mounted dozer blade sweeps loose material over, for both the scoop
+## it loads and the shove-aside it does when full.
+static func dozer_blade_push_radius_m() -> float:
+	return GameBalance.industry_float(
+		PackedStringArray(["dozer_blade", "push_radius_m"]),
+		1.5
+	)
+
+
+## Fraction of the material under the blade a plow-aside pass moves per tick when
+## the buffer is full (the rest stays put). Passed straight to `push_at`.
+static func dozer_blade_push_share() -> float:
+	return GameBalance.industry_float(
+		PackedStringArray(["dozer_blade", "push_share"]),
+		0.5
+	)
+
+
+## How far in front of the blade's working face loose material still counts as
+## in contact.
+static func dozer_blade_contact_reach_m() -> float:
+	return GameBalance.industry_float(
+		PackedStringArray(["dozer_blade", "contact_reach_m"]),
+		1.6
+	)
+
+
+## Offset from the blade footprint pivot to its working edge, along local +X.
+static func dozer_blade_head_offset_m() -> float:
+	return GameBalance.industry_float(
+		PackedStringArray(["dozer_blade", "head_offset_m"]),
+		1.1
+	)
+
+
+## Ceiling on how much loose material one tick may load into the buffer. Keeps
+## the blade a bulk mover that never out-collects a drill per unit time.
+static func dozer_blade_tick_volume_budget_m3() -> float:
+	return GameBalance.industry_float(
+		PackedStringArray(["dozer_blade", "tick_volume_budget_m3"]),
+		0.05
+	)
+
+
+static func dozer_blade_requires_power() -> bool:
+	return GameBalance.industry_bool(
+		PackedStringArray(["dozer_blade", "requires_power"]),
+		true
+	)
+
+
 static func hand_drill_carve_radius_m() -> float:
 	return GameBalance.industry_float(
 		PackedStringArray(["hand_drill", "carve_radius_m"]),

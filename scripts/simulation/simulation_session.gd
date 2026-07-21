@@ -103,6 +103,12 @@ func _bind_stationary_drill_gateway() -> void:
 		gateway.carve_stationary_drill,
 		gateway.stationary_drill_carve_point
 	)
+	_industry_simulation.set_dozer_blade_hooks(
+		gateway.dozer_blade_has_terrain_contact,
+		gateway.dozer_blade_load,
+		gateway.dozer_blade_plow,
+		gateway.dozer_blade_contact_point
+	)
 
 
 func spawn_blueprint(

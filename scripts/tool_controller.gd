@@ -73,6 +73,7 @@ const CONSTRUCTION_ARCHETYPES: PackedStringArray = [
 	"power_distributor",
 	"power_battery",
 	"stationary_drill",
+	"dozer_blade",
 	"cargo_store",
 	"cargo_pipe",
 	"processor",
@@ -135,7 +136,7 @@ const TOOLBAR_PAGES: Array = [
 		{"type": &"block", "archetype_id": "power_battery"},
 		{"type": &"block", "archetype_id": "frame_basalt"},
 		{"type": &"block", "archetype_id": "large_frame"},
-		{"type": &"block", "archetype_id": "frame_beam"},
+		{"type": &"block", "archetype_id": "dozer_blade"},
 		{"type": &"scoop"},
 	],
 	[

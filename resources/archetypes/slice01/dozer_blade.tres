@@ -1,0 +1,58 @@
+[gd_resource type="Resource" script_class="ElementArchetype" format=3 uid="uid://d0zerbladeslc01"]
+
+[ext_resource type="Script" uid="uid://c2p36g85wqkru" path="res://scripts/simulation/resources/build_requirement.gd" id="1_20tgf"]
+[ext_resource type="Script" uid="uid://b6d2jhfw581hb" path="res://scripts/simulation/resources/collider_definition.gd" id="2_hlghb"]
+[ext_resource type="Script" uid="uid://c4hgnuqnf2up8" path="res://scripts/simulation/resources/port_definition.gd" id="3_in4ho"]
+[ext_resource type="Script" uid="uid://bxidpb3tep3ih" path="res://scripts/simulation/resources/element_archetype.gd" id="4_rwnby"]
+[ext_resource type="Script" uid="uid://bfuxth8e6lccw" path="res://scripts/simulation/resources/structural_mount_pad.gd" id="5_pad"]
+
+[sub_resource type="Resource" id="Resource_mech"]
+script = ExtResource("1_20tgf")
+resource_id = "mechanism"
+amount = 6.0
+
+[sub_resource type="Resource" id="Resource_body"]
+script = ExtResource("2_hlghb")
+size = Vector3(0.5, 0.4, 1.0)
+offset_in_cell = Vector3(0.25, 0.2, 0.5)
+
+[sub_resource type="Resource" id="Resource_power_in"]
+script = ExtResource("3_in4ho")
+port_id = "power_in"
+kind = 1
+local_face = 5
+compatibility_tags = PackedStringArray("electric")
+
+[sub_resource type="Resource" id="Resource_cargo_out"]
+script = ExtResource("3_in4ho")
+port_id = "cargo_out"
+kind = 7
+local_cell = Vector3i(0, 0, 1)
+local_face = 4
+compatibility_tags = PackedStringArray("cargo")
+
+[sub_resource type="Resource" id="Mount_ny0"]
+script = ExtResource("5_pad")
+local_face = 3
+
+[sub_resource type="Resource" id="Mount_ny1"]
+script = ExtResource("5_pad")
+local_cell = Vector3i(0, 0, 1)
+local_face = 3
+
+[sub_resource type="Resource" id="Mount_nz"]
+script = ExtResource("5_pad")
+local_face = 5
+
+[resource]
+script = ExtResource("4_rwnby")
+archetype_id = "dozer_blade"
+display_name = "Отвал"
+roles = PackedStringArray("Tool")
+mass_kg = 120.0
+footprint_cells = Array[Vector3i]([Vector3i(0, 0, 0), Vector3i(0, 0, 1)])
+colliders = Array[ExtResource("2_hlghb")]([SubResource("Resource_body")])
+ports = Array[ExtResource("3_in4ho")]([SubResource("Resource_power_in"), SubResource("Resource_cargo_out")])
+structural_surface_policy = 2
+structural_mount_pads = Array[ExtResource("5_pad")]([SubResource("Mount_ny0"), SubResource("Mount_ny1"), SubResource("Mount_nz")])
+build_requirements = Array[ExtResource("1_20tgf")]([SubResource("Resource_mech")])

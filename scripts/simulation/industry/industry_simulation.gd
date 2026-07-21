@@ -8,6 +8,7 @@ var _cargo_graph := CargoGraph.new()
 var _transfer_service := CargoTransferService.new()
 var _recipe_runner := RecipeRunnerService.new()
 var _drill_service := StationaryDrillService.new()
+var _dozer_service := DozerBladeService.new()
 var _tick_accumulator := 0.0
 var _event_bound := false
 
@@ -42,6 +43,24 @@ func set_drill_terrain_hooks(
 	carve_point: Callable = Callable()
 ) -> void:
 	_drill_service.set_drill_terrain_hooks(contact_probe, carve, carve_point)
+
+
+func set_dozer_blade_load_stub(stub: Callable) -> void:
+	_dozer_service.set_dozer_blade_load_stub(stub)
+
+
+func set_dozer_blade_hooks(
+	contact_probe: Callable,
+	load_hook: Callable,
+	plow_hook: Callable,
+	contact_point: Callable = Callable()
+) -> void:
+	_dozer_service.set_dozer_blade_hooks(
+		contact_probe,
+		load_hook,
+		plow_hook,
+		contact_point
+	)
 
 
 func tick(world_or_dt: Variant, delta_s: float = -1.0) -> void:
@@ -83,6 +102,11 @@ func apply_set_machine_enabled(command: SetMachineEnabledCommand) -> Dictionary:
 		or element.archetype_id.begins_with("test_stationary_drill")
 	):
 		return _drill_service.apply_set_machine_enabled(_world, command)
+	if element != null and (
+		element.archetype_id == "dozer_blade"
+		or element.archetype_id.begins_with("test_dozer_blade")
+	):
+		return _dozer_service.apply_set_machine_enabled(_world, command)
 	_cargo_graph = _world.ensure_cargo_graph_current()
 	return _recipe_runner.apply_set_machine_enabled(
 		_world,
@@ -127,6 +151,12 @@ func _tick_once(world: SimulationWorld, tick_interval: float) -> void:
 		tick_interval
 	)
 	_drill_service.tick(
+		world,
+		_cargo_graph,
+		_transfer_service,
+		tick_interval
+	)
+	_dozer_service.tick(
 		world,
 		_cargo_graph,
 		_transfer_service,

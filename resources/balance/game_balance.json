@@ -496,6 +496,7 @@
     },
     "internal_buffer_capacity_l": {
       "stationary_drill": 200.0,
+      "dozer_blade": 150.0,
       "processor": 100.0,
       "fabricator": 100.0,
       "electrolyzer": 80.0
@@ -511,6 +512,14 @@
       "head_offset_m": 1.45,
       "contact_reach_m": 1.4,
       "carve_center_offset_factor": 0.2,
+      "requires_power": true
+    },
+    "dozer_blade": {
+      "push_radius_m": 1.5,
+      "push_share": 0.5,
+      "contact_reach_m": 1.6,
+      "head_offset_m": 1.1,
+      "tick_volume_budget_m3": 0.05,
       "requires_power": true
     },
     "hand_drill": {
@@ -577,6 +586,10 @@
       "stationary_drill": {
         "is_consumer": true,
         "idle_w": 80.0
+      },
+      "dozer_blade": {
+        "is_consumer": true,
+        "idle_w": 60.0
       },
       "piston_base": {
         "is_consumer": true,
