@@ -64,9 +64,14 @@ func apply_enqueue_recipe(
 		return _failed(&"invalid_target")
 	var runtime := world.ensure_industry_element_runtime(element.element_id)
 	var machine := runtime.ensure_machine_state()
-	if machine.queue_depth() >= IndustryArchetypeProfile.queue_max_depth():
+	var max_depth := IndustryArchetypeProfile.queue_max_depth()
+	var free_slots := max_depth - machine.queue_depth()
+	if free_slots <= 0:
 		return _failed(&"queue_full")
-	machine.queue.append(command.recipe_id)
+	var wanted := maxi(1, command.count)
+	var to_add := mini(wanted, free_slots)
+	for _i: int in range(to_add):
+		machine.queue.append(command.recipe_id)
 	element.bump_state_revision()
 	_kick_idle_machine(
 		world,
@@ -92,7 +97,11 @@ func apply_dequeue_recipe(
 	var machine := runtime.ensure_machine_state()
 	if machine.queue.is_empty():
 		return _failed(&"no_effect")
-	machine.queue.remove_at(0)
+	var start := clampi(command.index, 0, machine.queue.size() - 1)
+	var removable := machine.queue.size() - start
+	var to_remove := clampi(command.count, 1, removable)
+	for _i: int in range(to_remove):
+		machine.queue.remove_at(start)
 	element.bump_state_revision()
 	_kick_idle_machine(
 		world,
@@ -254,10 +263,16 @@ func _try_start_job(
 		):
 			return
 		return
-	var attempts := machine.queue.size()
-	for _attempt: int in range(attempts):
-		var recipe_id := machine.queue[0]
-		machine.queue.remove_at(0)
+	# Try each queued recipe in FIFO order, starting the first whose inputs are
+	# available and removing only that entry (queue order stays stable for the
+	# visual queue). Distinct recipe ids are attempted at most once per tick so a
+	# long run of identical blocked jobs does not re-run the reserve probe N times.
+	var tried := {}
+	for queue_index: int in range(machine.queue.size()):
+		var recipe_id := str(machine.queue[queue_index])
+		if tried.has(recipe_id):
+			continue
+		tried[recipe_id] = true
 		if _try_start_recipe(
 			world,
 			cargo_graph,
@@ -267,8 +282,8 @@ func _try_start_job(
 			machine,
 			recipe_id
 		):
+			machine.queue.remove_at(queue_index)
 			return
-		machine.queue.append(recipe_id)
 
 
 func _try_start_recipe(

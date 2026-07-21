@@ -15,6 +15,9 @@ var _snapshot: Dictionary = {}
 var _column_width := 248.0
 var _slot_size := HudTokens.SLOT_SIZE
 var _max_grid_height := 0.0
+## When false, the inline machine block (status/queue/recipes) is suppressed —
+## the factory window renders those via dedicated catalog/queue widgets instead.
+var _machine_controls_visible := true
 
 var _title_label: Label
 var _volume_row: HBoxContainer
@@ -60,6 +63,11 @@ func configure_layout(ctx: Dictionary) -> void:
 	_apply_panel_width()
 	if _grid != null:
 		_grid.configure_layout(_column_width, _slot_size, _max_grid_height)
+
+
+func set_machine_controls_visible(visible_flag: bool) -> void:
+	_machine_controls_visible = visible_flag
+	_refresh_machine_block()
 
 
 func set_peer_store_id(peer_store_id: String) -> void:
@@ -240,7 +248,9 @@ func _refresh_machine_block() -> void:
 	if _machine_block == null:
 		return
 	var is_machine := bool(_snapshot.get("is_machine", false))
-	_machine_block.visible = is_machine and _element_id > 0
+	_machine_block.visible = (
+		_machine_controls_visible and is_machine and _element_id > 0
+	)
 	if not _machine_block.visible:
 		return
 	var machine: Dictionary = _snapshot.get("machine", {})

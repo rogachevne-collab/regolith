@@ -490,7 +490,7 @@
   },
   "industry": {
     "player_carry_capacity_l": 100.0,
-    "queue_max_depth": 4,
+    "queue_max_depth": 200,
     "keyed_store_capacity_l": {
       "cargo_store": 2000.0
     },
