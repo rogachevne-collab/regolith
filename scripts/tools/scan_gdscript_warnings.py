@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scan scripts/ for common Godot 4.7 GDScript analyzer warning patterns."""
+"""Scan scripts/ for common Godot 4.8 GDScript analyzer warning patterns."""
 
 from __future__ import annotations
 

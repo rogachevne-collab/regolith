@@ -16,8 +16,8 @@ function Pick-Godot {
 		if (Test-Path $c) { return $c }
 	}
 	$candidates = @(
-		"Y:\Godot\Godot_v4.7.1-stable_win64_console.exe",
-		"Y:\Godot\Godot_v4.7.1-stable_win64.exe"
+		"Y:\Godot\Godot_v4.8-stable_win64_console.exe",
+		"Y:\Godot\Godot_v4.8-stable_win64.exe"
 	)
 	foreach ($c in $candidates) {
 		if (Test-Path $c) { return $c }
@@ -29,7 +29,7 @@ function Pick-Godot {
 
 $GodotBin = Pick-Godot
 if (-not $GodotBin) {
-	Write-Error "Godot 4.7.1 not found. Put it in Y:\Godot\ or set GODOT=C:\path\to\Godot.exe"
+	Write-Error "Godot 4.8 not found. Put it in Y:\Godot\ or set GODOT=C:\path\to\Godot.exe"
 }
 
 $VoxelExt = Join-Path $Root "addons\zylann.voxel\voxel.gdextension"

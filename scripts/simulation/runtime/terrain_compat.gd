@@ -37,6 +37,24 @@ static func is_terrain_collider(
 const RAYCAST_BINARY_SEARCH_ITERATIONS := 8
 
 
+## The material a terrain draws its surface with. The two classes spell it
+## differently — `VoxelLodTerrain` calls it `material`, `VoxelTerrain` calls it
+## `material_override` — and loose material has to read it off whichever one the
+## world happens to use, so that a heap is shaded by the very same thing as the
+## ground it is lying on.
+##
+## Deliberately the live instance and not a copy: the planet's shader gets
+## `u_radial_up`, `u_planet_radius` and the baked brightness map set on it at
+## runtime by the bootstrap, and a copy taken at region-creation time would
+## quietly drift from whatever the ground is actually using.
+static func get_surface_material(terrain: Node) -> Material:
+	if terrain is VoxelLodTerrain:
+		return (terrain as VoxelLodTerrain).material
+	if terrain is VoxelTerrain:
+		return (terrain as VoxelTerrain).material_override
+	return null
+
+
 static func get_voxel_tool(terrain: Node) -> VoxelTool:
 	if terrain == null or not terrain.has_method("get_voxel_tool"):
 		return null

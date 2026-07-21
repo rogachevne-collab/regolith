@@ -1,0 +1,111 @@
+[gd_scene load_steps=11 format=3]
+
+[ext_resource type="Script" path="res://scripts/granular_playground.gd" id="1_play"]
+[ext_resource type="Texture2D" uid="uid://d1kdl5qe4hyto" path="res://resources/moon_regolith_albedo.jpg" id="2_alb"]
+[ext_resource type="Texture2D" uid="uid://b8dg1pfjea3sm" path="res://resources/moon_regolith_normal.jpg" id="3_nrm"]
+
+[sub_resource type="Environment" id="Env_1"]
+background_mode = 1
+background_color = Color(0.02, 0.02, 0.025, 1)
+ambient_light_source = 1
+ambient_light_color = Color(0.16, 0.17, 0.2, 1)
+ambient_light_energy = 0.12
+tonemap_mode = 3
+
+[sub_resource type="StandardMaterial3D" id="Mat_surface"]
+transparency = 1
+cull_mode = 2
+albedo_color = Color(0.88, 0.85, 0.78, 1)
+albedo_texture = ExtResource("2_alb")
+roughness = 0.95
+specular_mode = 1
+normal_enabled = true
+normal_scale = 1.35
+normal_texture = ExtResource("3_nrm")
+vertex_color_use_as_albedo = true
+texture_filter = 2
+
+[sub_resource type="StandardMaterial3D" id="Mat_ground"]
+albedo_color = Color(0.36, 0.35, 0.34, 1)
+roughness = 1.0
+specular_mode = 1
+
+[sub_resource type="PlaneMesh" id="Plane_ground"]
+size = Vector2(80, 80)
+material = SubResource("Mat_ground")
+
+[sub_resource type="WorldBoundaryShape3D" id="Boundary_ground"]
+
+[sub_resource type="SphereMesh" id="Sphere_marker"]
+radius = 0.12
+height = 0.24
+radial_segments = 10
+rings = 5
+
+[sub_resource type="StandardMaterial3D" id="Mat_marker"]
+albedo_color = Color(1, 0.75, 0.2, 1)
+emission_enabled = true
+emission = Color(1, 0.6, 0.1, 1)
+emission_energy_multiplier = 2.0
+shading_mode = 0
+
+[node name="GranularPlayground" type="Node3D"]
+script = ExtResource("1_play")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Env_1")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.766, -0.116, 0.632, 0, 0.984, 0.181, -0.643, -0.139, 0.753, 0, 12, 0)
+light_energy = 2.2
+shadow_enabled = true
+directional_shadow_max_distance = 60.0
+
+[node name="Ground" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7.875, -0.005, 7.875)
+mesh = SubResource("Plane_ground")
+
+[node name="GroundBody" type="StaticBody3D" parent="."]
+
+[node name="Shape" type="CollisionShape3D" parent="GroundBody"]
+shape = SubResource("Boundary_ground")
+
+[node name="Surface" type="MeshInstance3D" parent="."]
+material_override = SubResource("Mat_surface")
+
+[node name="SurfaceBody" type="StaticBody3D" parent="."]
+
+[node name="Shape" type="CollisionShape3D" parent="SurfaceBody"]
+
+[node name="AimMarker" type="MeshInstance3D" parent="."]
+mesh = SubResource("Sphere_marker")
+material_override = SubResource("Mat_marker")
+
+[node name="CameraRig" type="Node3D" parent="."]
+
+[node name="Camera3D" type="Camera3D" parent="CameraRig"]
+far = 300.0
+
+[node name="CanvasLayer" type="CanvasLayer" parent="."]
+
+[node name="Overlay" type="Label" parent="CanvasLayer"]
+offset_left = 16.0
+offset_top = 12.0
+offset_right = 620.0
+offset_bottom = 90.0
+theme_override_colors/font_color = Color(0.85, 0.87, 0.9, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 4
+
+[node name="Status" type="Label" parent="CanvasLayer"]
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 16.0
+offset_top = -40.0
+offset_right = 620.0
+offset_bottom = -14.0
+grow_vertical = 0
+theme_override_colors/font_color = Color(1, 0.9, 0.6, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 4

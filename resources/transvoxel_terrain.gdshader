@@ -45,9 +45,20 @@ uniform float u_far_start : hint_range(20.0, 400.0, 5.0) = 60.0;
 uniform float u_far_end : hint_range(100.0, 1200.0, 10.0) = 280.0;
 uniform float u_mip_bias : hint_range(-1.5, 0.0, 0.05) = -0.5;
 uniform float u_normal_strength : hint_range(0.0, 1.5, 0.01) = 0.9;
-// Regolith is uniform matte powder: albedo variance stays LOW, detail is
-// carried by normals near and geometry far. 1.0 = raw photo contrast.
+// Regolith is uniform matte powder: at mid range albedo variance stays LOW
+// (a busy photo reads as steel wool), but up close the photo contrast IS the
+// detail — flattening it everywhere is what made the ground look soapy.
 uniform float u_albedo_variance : hint_range(0.0, 1.0, 0.01) = 0.42;
+uniform float u_albedo_variance_near : hint_range(0.0, 1.0, 0.01) = 0.55;
+uniform float u_variance_near_end : hint_range(5.0, 120.0, 1.0) = 45.0;
+// Micro band. The base band is ~0.65 cm/texel, so within a few metres the
+// photo is magnified past its own resolution — pure bilinear mush. This adds
+// a much finer sample of the base texture as grain modulation (not base
+// color), so it cannot reintroduce visible repetition.
+uniform float u_micro_ratio : hint_range(2.0, 16.0, 0.5) = 7.0;
+uniform float u_micro_start : hint_range(2.0, 40.0, 0.5) = 14.0;
+uniform float u_micro_strength : hint_range(0.0, 1.0, 0.01) = 0.28;
+uniform float u_micro_normal : hint_range(0.0, 1.5, 0.01) = 0.55;
 // Extra flatten + normal damping for the meso band — a busy photo at 80 m
 // period reads as crumpled foil on distant slopes.
 uniform float u_far_variance : hint_range(0.0, 1.0, 0.01) = 0.45;
@@ -69,6 +80,15 @@ uniform float u_mare_amount : hint_range(0.0, 1.0, 0.01) = 0.55;
 // Layer mix ceilings: lunar is THE base, the other two only blend into it.
 uniform float u_wall_mix : hint_range(0.0, 1.0, 0.01) = 0.5;
 uniform float u_mare_mix : hint_range(0.0, 1.0, 0.01) = 0.7;
+// Wall subtlety: breakup frays the steep mask; albedo/detail split lets a
+// second pack (e.g. Ground103) add grit without replacing base albedo.
+// Defaults 0 / 1 / 1 / 0 / 0 keep legacy "full dust layer on steep" behaviour.
+// When albedo_start/end > 0, dust albedo only on near-vertical scarps.
+uniform float u_wall_breakup : hint_range(0.0, 1.0, 0.01) = 0.0;
+uniform float u_wall_albedo_mix : hint_range(0.0, 1.0, 0.01) = 1.0;
+uniform float u_wall_detail : hint_range(0.0, 1.0, 0.01) = 1.0;
+uniform float u_wall_albedo_start : hint_range(0.0, 1.0, 0.01) = 0.0;
+uniform float u_wall_albedo_end : hint_range(0.0, 1.0, 0.01) = 0.0;
 // Final grade — the only place albedo value/chroma is touched.
 uniform float u_exposure : hint_range(0.3, 1.5, 0.01) = 0.58;
 uniform float u_contrast : hint_range(0.5, 2.0, 0.01) = 1.0;
@@ -185,12 +205,73 @@ vec3 hex_triplanar_normal(
 	);
 }
 
+// Plain (non-hex) planar samplers taking explicit gradients. Implicit
+// derivatives are unusable here for the same precision reason as above.
+vec3 planar_rgb_grad(sampler2D tex, vec3 pos, vec3 gx, vec3 gy, vec3 blend, int mode) {
+	if (mode == 1) {
+		return textureGrad(tex, pos.xz, gx.xz, gy.xz).rgb;
+	}
+	if (mode == 2) {
+		return textureGrad(tex, pos.yz, gx.yz, gy.yz).rgb;
+	}
+	if (mode == 3) {
+		return textureGrad(tex, pos.xy, gx.xy, gy.xy).rgb;
+	}
+	return textureGrad(tex, pos.yz, gx.yz, gy.yz).rgb * blend.x
+		+ textureGrad(tex, pos.xz, gx.xz, gy.xz).rgb * blend.y
+		+ textureGrad(tex, pos.xy, gx.xy, gy.xy).rgb * blend.z;
+}
+
+float planar_r_grad(sampler2D tex, vec3 pos, vec3 gx, vec3 gy, vec3 blend, int mode) {
+	if (mode == 1) {
+		return textureGrad(tex, pos.xz, gx.xz, gy.xz).r;
+	}
+	if (mode == 2) {
+		return textureGrad(tex, pos.yz, gx.yz, gy.yz).r;
+	}
+	if (mode == 3) {
+		return textureGrad(tex, pos.xy, gx.xy, gy.xy).r;
+	}
+	return textureGrad(tex, pos.yz, gx.yz, gy.yz).r * blend.x
+		+ textureGrad(tex, pos.xz, gx.xz, gy.xz).r * blend.y
+		+ textureGrad(tex, pos.xy, gx.xy, gy.xy).r * blend.z;
+}
+
+// Whiteout-blended planar normal with explicit gradients (plane conventions
+// match triplanar_normal.gdshaderinc: mode 1 = Y, 2 = X, 3 = Z).
+vec3 planar_normal_grad(
+	sampler2D tex, vec3 pos, vec3 gx, vec3 gy, vec3 wn, vec3 blend, int mode
+) {
+	if (mode == 1) {
+		vec3 tn = textureGrad(tex, pos.xz, gx.xz, gy.xz).xyz * 2.0 - 1.0;
+		tn = vec3(tn.xy + wn.xz, abs(tn.z) * wn.y);
+		return normalize(tn.xzy);
+	}
+	if (mode == 2) {
+		vec3 tn = textureGrad(tex, pos.yz, gx.yz, gy.yz).xyz * 2.0 - 1.0;
+		tn = vec3(tn.xy + wn.zy, abs(tn.z) * wn.x);
+		return normalize(tn.zyx);
+	}
+	if (mode == 3) {
+		vec3 tn = textureGrad(tex, pos.xy, gx.xy, gy.xy).xyz * 2.0 - 1.0;
+		tn = vec3(tn.xy + wn.xy, abs(tn.z) * wn.z);
+		return normalize(tn.xyz);
+	}
+	vec3 nx = textureGrad(tex, pos.yz, gx.yz, gy.yz).xyz * 2.0 - 1.0;
+	vec3 ny = textureGrad(tex, pos.xz, gx.xz, gy.xz).xyz * 2.0 - 1.0;
+	vec3 nz = textureGrad(tex, pos.xy, gx.xy, gy.xy).xyz * 2.0 - 1.0;
+	nx = vec3(nx.xy + wn.zy, abs(nx.z) * wn.x);
+	ny = vec3(ny.xy + wn.xz, abs(ny.z) * wn.y);
+	nz = vec3(nz.xy + wn.xy, abs(nz.z) * wn.z);
+	return normalize(nx.zyx * blend.x + ny.xzy * blend.y + nz.xyz * blend.z);
+}
+
 // One material layer: micro/meso cross-fade for albedo+normal, near-scale
 // triplanar for AO/roughness (their tiling is invisible; saves fetches).
 void sample_layer(
 	sampler2D t_alb, sampler2D t_nrm, sampler2D t_ao, sampler2D t_rough,
 	vec3 uv_off, vec3 wpos, vec3 dpx, vec3 dpy,
-	float far_w, vec3 blending, int pmode, vec3 wn,
+	float far_w, float near_variance, vec3 blending, int pmode, vec3 wn,
 	out vec3 albedo, out vec3 nrm, out float ao, out float rough
 ) {
 	// Top mip = texture mean, pivot for hex contrast restore.
@@ -207,7 +288,7 @@ void sample_layer(
 		vec3 gx = dpx * u_detail_scale;
 		vec3 gy = dpy * u_detail_scale;
 		a_near = hex_triplanar_rgb(t_alb, pn, gx, gy, blending, pmode, mean);
-		a_near = mix(mean, a_near, u_albedo_variance);
+		a_near = mix(mean, a_near, near_variance);
 		n_near = hex_triplanar_normal(t_nrm, pn, gx, gy, wn, blending, pmode);
 	}
 	if (far_w > 0.0) {
@@ -224,8 +305,10 @@ void sample_layer(
 
 	if (far_w < 1.0) {
 		vec3 pn = p * u_detail_scale;
-		ao = sample_planar_r(t_ao, pn, blending, pmode);
-		rough = sample_planar_r(t_rough, pn, blending, pmode);
+		vec3 gx = dpx * u_detail_scale;
+		vec3 gy = dpy * u_detail_scale;
+		ao = planar_r_grad(t_ao, pn, gx, gy, blending, pmode);
+		rough = planar_r_grad(t_rough, pn, gx, gy, blending, pmode);
 	} else {
 		ao = 1.0;
 		rough = 0.85;
@@ -257,17 +340,26 @@ void fragment() {
 		(INV_VIEW_MATRIX * vec4(geometry_normal_view, 0.0)).xyz
 	);
 	vec3 wpos = v_world_pos;
-	float view_dist = length(CAMERA_POSITION_WORLD - wpos);
+	// In the fragment stage VERTEX is already the view-space position, so its
+	// length IS the camera distance. Do NOT use CAMERA_POSITION_WORLD here:
+	// measured in this build it does not agree with v_world_pos (equal radii,
+	// ~19 km apart), which pinned view_dist at ~19000 m — every fragment,
+	// including ground underfoot, was then drawn with the far band (80 m
+	// texture period, flattened contrast, damped normals, AO/roughness
+	// skipped). That was the "soapy up close" bug.
+	float view_dist = length(VERTEX);
 
 	vec3 surface_up = u_radial_up > 0.5 ? normalize(wpos) : vec3(0.0, 1.0, 0.0);
 	float upness = clamp(dot(normal, surface_up), -1.0, 1.0);
 	float slope = clamp(1.0 - upness, 0.0, 1.0);
+	// How close the face is to vertical (floor/ceiling → 0, wall → 1).
+	// Sphere-carve "walls" are rarely true vertical; this still reads them.
+	float wallness = clamp(1.0 - abs(upness), 0.0, 1.0);
 
 	// Height vs mean sphere — crater bowls sit below 0.
 	float h_signal = u_planet_radius > 0.0
 		? (length(wpos) - u_planet_radius)
 		: wpos.y;
-	float h_grad = length(vec2(dFdx(h_signal), dFdy(h_signal)));
 
 	vec3 blending = get_triplanar_blend(normal, BLEND_SHARPNESS);
 	int pmode = planar_mode(blending, PLANAR_THRESH);
@@ -293,7 +385,13 @@ void fragment() {
 	// Lunar is the base everywhere; the other two only mix in, never take over.
 	float w_mare = clamp(max(bowl, foot) + basin, 0.0, 1.0)
 		* (1.0 - steep) * u_mare_mix;
-	float w_dust = steep * u_wall_mix;
+	// Optional ragged edge so wall packs don't paint continuous iso-bands.
+	float wall_m = steep;
+	if (u_wall_breakup > 0.001) {
+		float ragged = smoothstep(0.30, 0.62, breakup);
+		wall_m *= mix(1.0, ragged, u_wall_breakup);
+	}
+	float w_dust = wall_m * u_wall_mix;
 	float w_rock = max(1.0 - w_dust - w_mare, 0.0);
 	float w_sum = max(w_rock + w_dust + w_mare, 1e-3);
 	w_rock /= w_sum;
@@ -309,8 +407,18 @@ void fragment() {
 		far_w = 1.0;
 	}
 	float grad_bias = exp2(u_mip_bias);
-	vec3 dpx = dFdx(wpos) * grad_bias;
-	vec3 dpy = dFdy(wpos) * grad_bias;
+	// Derivatives MUST come from model space. v_world_pos carries the planet
+	// radius (~9500 m), where float32 steps are ~1 mm; a screen pixel close
+	// to the camera spans ~2.5 mm, so dFdx(v_world_pos) is ~40 % quantization
+	// noise and textureGrad then picks mips far too coarse — that is what
+	// made the ground look soapy underfoot. Chunk-local coords are small, so
+	// their derivatives are exact; the basis maps them back to world scale.
+	mat3 model_basis = mat3(MODEL_MATRIX);
+	vec3 dpx = model_basis * dFdx(v_vertex_pos_model) * grad_bias;
+	vec3 dpy = model_basis * dFdy(v_vertex_pos_model) * grad_bias;
+	// Close up the photo's own contrast is the detail; mid-range it is noise.
+	float near_w = 1.0 - smoothstep(0.0, u_variance_near_end, view_dist);
+	float near_variance = mix(u_albedo_variance, u_albedo_variance_near, near_w);
 
 	vec3 albedo_rock = vec3(0.0);
 	vec3 albedo_dust = vec3(0.0);
@@ -328,21 +436,23 @@ void fragment() {
 	if (w_rock > LAYER_CULL) {
 		sample_layer(
 			u_rock_albedo, u_rock_normal, u_rock_ao, u_rock_roughness,
-			vec3(0.0), wpos, dpx, dpy, far_w, blending, pmode, normal,
+			vec3(0.0), wpos, dpx, dpy, far_w, near_variance, blending, pmode, normal,
 			albedo_rock, n_rock, ao_rock, rough_rock
 		);
 	}
 	if (w_dust > LAYER_CULL) {
 		sample_layer(
 			u_dust_albedo, u_dust_normal, u_dust_ao, u_dust_roughness,
-			vec3(17.0, -9.0, 5.0), wpos, dpx, dpy, far_w, blending, pmode, normal,
+			vec3(17.0, -9.0, 5.0), wpos, dpx, dpy, far_w, near_variance,
+			blending, pmode, normal,
 			albedo_dust, n_dust, ao_dust, rough_dust
 		);
 	}
 	if (w_mare > LAYER_CULL) {
 		sample_layer(
 			u_mare_albedo, u_mare_normal, u_mare_ao, u_mare_roughness,
-			vec3(-11.0, 6.0, 13.0), wpos, dpx, dpy, far_w, blending, pmode, normal,
+			vec3(-11.0, 6.0, 13.0), wpos, dpx, dpy, far_w, near_variance,
+			blending, pmode, normal,
 			albedo_mare, n_mare, ao_mare, rough_mare
 		);
 	}
@@ -376,14 +486,61 @@ void fragment() {
 	b_dust /= b_sum;
 	b_mare /= b_sum;
 
-	vec3 tex_col = albedo_rock * b_rock + albedo_dust * b_dust + albedo_mare * b_mare;
+	// Split wall albedo vs detail so a grit pack can ride normals without
+	// painting a second photo tone over the refined base. Optional gate uses
+	// wallness (not slope): slope treats ceilings as steep, wallness only
+	// true side-walls — matches dig adits / scarps.
+	float albedo_gate = 1.0;
+	if (u_wall_albedo_end > 0.001) {
+		albedo_gate = smoothstep(u_wall_albedo_start, u_wall_albedo_end, wallness);
+	}
+	float albedo_w = u_wall_albedo_mix * albedo_gate;
+	float ab_dust = b_dust * albedo_w;
+	float ab_rock = b_rock + b_dust * (1.0 - albedo_w);
+	float ab_mare = b_mare;
+	float ab_sum = max(ab_rock + ab_dust + ab_mare, 1e-3);
+	ab_rock /= ab_sum;
+	ab_dust /= ab_sum;
+	ab_mare /= ab_sum;
+
+	float db_dust = b_dust * u_wall_detail;
+	float db_rock = b_rock + b_dust * (1.0 - u_wall_detail);
+	float db_mare = b_mare;
+	float db_sum = max(db_rock + db_dust + db_mare, 1e-3);
+	db_rock /= db_sum;
+	db_dust /= db_sum;
+	db_mare /= db_sum;
+
+	vec3 tex_col = albedo_rock * ab_rock + albedo_dust * ab_dust + albedo_mare * ab_mare;
+
+	// --- Micro band: grain that survives magnification ---------------------
+	// Base texels are ~0.65 cm, so a few metres out the photo is stretched
+	// past its own resolution. Add the base texture again at u_micro_ratio
+	// times the frequency, as a value modulation plus normal detail. It is
+	// modulation (not base color) and dies by ~14 m, so plain repeat is safe
+	// and the planar fast path keeps it at one or three fetches.
+	float micro_w = 1.0 - smoothstep(0.0, u_micro_start, view_dist);
+	vec3 micro_normal_add = vec3(0.0);
+	if (micro_w > 0.01) {
+		float ms = u_detail_scale * u_micro_ratio;
+		vec3 pm = wpos * ms;
+		vec3 gx = dpx * ms;
+		vec3 gy = dpy * ms;
+		vec3 d = planar_rgb_grad(u_rock_albedo, pm, gx, gy, blending, pmode);
+		float d_l = dot(d, vec3(0.333));
+		float d_mean = dot(textureLod(u_rock_albedo, vec2(0.5), 12.0).rgb, vec3(0.333));
+		float grain = d_l / max(d_mean, 1e-3);
+		tex_col *= mix(1.0, grain, micro_w * u_micro_strength);
+		vec3 nm = planar_normal_grad(u_rock_normal, pm, gx, gy, normal, blending, pmode);
+		micro_normal_add = (nm - normal) * micro_w * u_micro_normal;
+	}
 
 	// --- Macro band: one value fbm + baked brightness map -----------------
 	float macro_n = fbm_surface(meter_pos, surf_dir, u_large_scale);
 	tex_col *= mix(1.0, mix(0.93, 1.07, smoothstep(0.25, 0.75, macro_n)), u_macro_strength);
 
-	float ao = ao_rock * b_rock + ao_dust * b_dust + ao_mare * b_mare;
-	// AO fades with the micro band — at meso scale it would just shimmer.
+	float ao = ao_rock * db_rock + ao_dust * db_dust + ao_mare * db_mare;
+	// AO fades with distance — at meso scale it would just shimmer.
 	tex_col *= mix(1.0, ao, u_ao_strength * (1.0 - far_w * 0.7));
 
 	if (u_moon_brightness_on > 0.5 && u_radial_up > 0.5) {
@@ -399,16 +556,18 @@ void fragment() {
 	ALBEDO = grade_lunar(tex_col);
 
 	vec3 normal_perturb =
-		(n_rock - normal) * b_rock
-		+ (n_dust - normal) * b_dust
-		+ (n_mare - normal) * b_mare;
-	vec3 final_normal = normalize(normal + normal_perturb * u_normal_strength);
+		(n_rock - normal) * db_rock
+		+ (n_dust - normal) * db_dust
+		+ (n_mare - normal) * db_mare;
+	vec3 final_normal = normalize(
+		normal + normal_perturb * u_normal_strength + micro_normal_add
+	);
 	NORMAL = normalize((VIEW_MATRIX * vec4(final_normal, 0.0)).xyz);
 
-	float rough = rough_rock * b_rock + rough_dust * b_dust + rough_mare * b_mare;
+	float rough = rough_rock * db_rock + rough_dust * db_dust + rough_mare * db_mare;
 	ROUGHNESS = clamp(rough, 0.70, 0.97);
 	METALLIC = 0.0;
-	SPECULAR = mix(u_specular * 0.7, u_specular * 1.05, b_rock);
+	SPECULAR = mix(u_specular * 0.7, u_specular * 1.05, db_rock);
 
 	if (get_lod_fade_discard(SCREEN_UV)) {
 		discard;

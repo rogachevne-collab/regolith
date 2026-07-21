@@ -155,6 +155,12 @@ func _ready() -> void:
 		_player_spawn_hint = early_saved.normalized()
 	if _base_spawn != null:
 		_base_spawn.global_position = MoonGeometry.surface_point(_player_spawn_hint)
+	## Publish the landing site once the hint is final. The starting ore lenses
+	## are placed relative to it, and until this was set the drill resolved them
+	## as absent while the map drew them around the player.
+	MoonMaterialField.set_spawn_world(
+		MoonGeometry.surface_point(_player_spawn_hint)
+	)
 	if _player.has_method("set_spawn_locked"):
 		_player.set_spawn_locked(true)
 	_player.global_position = MoonGeometry.spawn_hold_point(_player_spawn_hint)
@@ -550,7 +556,8 @@ func _persist_digs_durable() -> void:
 func _on_terrain_modified(
 	_removed_volume_m3: float,
 	_dig_center: Vector3,
-	_dig_radius_m: float
+	_dig_radius_m: float,
+	_dig_direction: Vector3
 ) -> void:
 	_digs_dirty = true
 	_dig_persist_cooldown_s = DIG_PERSIST_DEBOUNCE_S

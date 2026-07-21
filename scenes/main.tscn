@@ -2,7 +2,7 @@
 
 [ext_resource type="Script" uid="uid://cwcj1wnwdhyvt" path="res://scripts/bootstrap.gd" id="1"]
 [ext_resource type="PackedScene" uid="uid://player001" path="res://scenes/player.tscn" id="2"]
-[ext_resource type="Material" path="res://resources/terrain_material_smooth.tres" id="4"]
+[ext_resource type="Material" path="res://resources/terrain_material_moon_test.tres" id="4"]
 [ext_resource type="Script" uid="uid://q1onpmc4txha" path="res://scripts/placed_blocks.gd" id="6"]
 [ext_resource type="Script" uid="uid://dy6xqaqoolp22" path="res://scripts/world_command_gateway.gd" id="10"]
 [ext_resource type="PackedScene" path="res://scenes/simulation_session.tscn" id="11"]
@@ -11,6 +11,9 @@
 [ext_resource type="Material" path="res://resources/sky/lunar_starfield_sky_material.tres" id="15"]
 [ext_resource type="VoxelInstanceLibrary" path="res://resources/moon_boulder_instance_library.tres" id="16"]
 [ext_resource type="Script" path="res://scripts/meteorite_system.gd" id="17"]
+[ext_resource type="Script" path="res://scripts/granular_voxel_world.gd" id="18"]
+[ext_resource type="PackedScene" uid="uid://solarskydecor001" path="res://scenes/solar_sky_decor.tscn" id="19"]
+[ext_resource type="Script" path="res://scripts/day_night_cycle.gd" id="20"]
 
 [sub_resource type="Sky" id="Sky_env"]
 sky_material = ExtResource("15")
@@ -61,6 +64,16 @@ angular_diameter_deg = 5.8
 distance_m = 12000.0
 sun_light_path = NodePath("../DirectionalLight3D")
 
+[node name="SolarSkyDecor" parent="." instance=ExtResource("19")]
+sun_light_path = NodePath("../DirectionalLight3D")
+distance_m = 12000.0
+
+[node name="DayNightCycle" type="Node" parent="."]
+script = ExtResource("20")
+sun_light_path = NodePath("../DirectionalLight3D")
+fill_light_path = NodePath("../FillLight")
+world_environment_path = NodePath("../WorldEnvironment")
+
 [node name="GravityField" type="Node" parent="." unique_id=1255160184]
 script = ExtResource("12")
 mode = 1
@@ -93,6 +106,10 @@ script = ExtResource("6")
 
 [node name="WorldCommandGateway" type="Node" parent="." unique_id=278946686]
 script = ExtResource("10")
+
+[node name="GranularVoxelWorld" type="Node3D" parent="." unique_id=1408627731]
+script = ExtResource("18")
+enabled = true
 
 [node name="SimulationSession" parent="." unique_id=1580499463 instance=ExtResource("11")]
 gateway_path = NodePath("../WorldCommandGateway")
@@ -139,7 +156,7 @@ theme_override_constants/shadow_offset_x = 1
 theme_override_constants/shadow_offset_y = 1
 text = "Regolith — Ø19 км
 WASD — ходьба, Shift — бег, Space — прыжок, Esc — настройки
-1–9 — инструменты, ЛКМ — действие
+1–9 — инструменты, ЛКМ — действие, L — фонарь
 U — спавн demo-ровера рядом (12 колёс), F8 — метеорит (debug)"
 
 [node name="Coordinates" type="Label" parent="CanvasLayer" unique_id=1659077725]

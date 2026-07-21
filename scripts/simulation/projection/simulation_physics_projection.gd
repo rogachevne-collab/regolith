@@ -1656,6 +1656,7 @@ func _tick_rotor_actuators(delta: float) -> void:
 				head_body,
 				axis_world
 			)
+			var observed_angle := float(measured.get("angle_rad", 0.0))
 			var observed_velocity := float(
 				measured.get("relative_velocity_rad_s", 0.0)
 			)
@@ -1663,13 +1664,13 @@ func _tick_rotor_actuators(delta: float) -> void:
 				_world,
 				sim_joint.element_a_id
 			)
-			var drive_velocity := RotorProjectionUtil.drive_velocity_rad_s(
+			var drive: Dictionary = RotorProjectionUtil.solver_angular_drive(
 				sim_joint.motor,
-				powered
+				powered,
+				observed_angle
 			)
-			var drive_limit_nm := (
-				sim_joint.motor.force_limit_n if powered else 0.0
-			)
+			var drive_velocity := float(drive.get("velocity_rad_s", 0.0))
+			var drive_limit_nm := float(drive.get("torque_limit_nm", 0.0))
 			var constraint: Generic6DOFJoint3D = (
 				record.get("constraint") as Generic6DOFJoint3D
 			)
@@ -1730,7 +1731,7 @@ func _tick_rotor_actuators(delta: float) -> void:
 			sim_joint.motor.force_saturated = saturated
 			_world.sync_actuator_observation(
 				int(record.get("joint_id", 0)),
-				float(measured.get("angle_rad", 0.0)),
+				observed_angle,
 				observed_velocity,
 				torque_nm,
 				saturated

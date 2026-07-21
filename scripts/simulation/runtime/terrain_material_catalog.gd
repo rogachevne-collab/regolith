@@ -5,6 +5,10 @@ extends RefCounted
 
 const EPSILON := 0.000001
 
+## Default share of excavated volume that stays on the ground as loose
+## material, for anything without its own `spoil_fraction`.
+const DEFAULT_SPOIL_FRACTION := 0.35
+
 const MAT_MARE_REGOLITH := "mat_mare_regolith"
 const MAT_HIGHLAND_REGOLITH := "mat_highland_regolith"
 const MAT_ILMENITE := "mat_ilmenite"
@@ -22,6 +26,7 @@ const ENTRIES: Dictionary = {
 		"hardness": 0.45,
 		"density_kg_m3": 1500.0,
 		"collectible_fraction": 0.01,
+		"spoil_fraction": 0.35,
 		"drill_power_mul": 1.0,
 		"yield_table": [
 			{"item_id": "ore_mare_regolith", "mass_fraction": 1.0},
@@ -35,6 +40,7 @@ const ENTRIES: Dictionary = {
 		"hardness": 0.50,
 		"density_kg_m3": 1450.0,
 		"collectible_fraction": 0.01,
+		"spoil_fraction": 0.35,
 		"drill_power_mul": 1.0,
 		"yield_table": [
 			{"item_id": "ore_highland_regolith", "mass_fraction": 1.0},
@@ -48,6 +54,7 @@ const ENTRIES: Dictionary = {
 		"hardness": 0.85,
 		"density_kg_m3": 2800.0,
 		"collectible_fraction": 0.02,
+		"spoil_fraction": 0.80,
 		"drill_power_mul": 1.35,
 		"yield_table": [
 			{"item_id": "ore_ilmenite", "mass_fraction": 0.85},
@@ -62,6 +69,7 @@ const ENTRIES: Dictionary = {
 		"hardness": 0.80,
 		"density_kg_m3": 2700.0,
 		"collectible_fraction": 0.02,
+		"spoil_fraction": 0.80,
 		"drill_power_mul": 1.3,
 		"yield_table": [
 			{"item_id": "ore_anorthite", "mass_fraction": 0.85},
@@ -76,6 +84,7 @@ const ENTRIES: Dictionary = {
 		"hardness": 0.75,
 		"density_kg_m3": 2600.0,
 		"collectible_fraction": 0.018,
+		"spoil_fraction": 0.80,
 		"drill_power_mul": 1.2,
 		"yield_table": [
 			{"item_id": "ore_olivine", "mass_fraction": 0.80},
@@ -90,6 +99,7 @@ const ENTRIES: Dictionary = {
 		"hardness": 0.70,
 		"density_kg_m3": 2500.0,
 		"collectible_fraction": 0.018,
+		"spoil_fraction": 0.80,
 		"drill_power_mul": 1.15,
 		"yield_table": [
 			{"item_id": "ore_pyroxene", "mass_fraction": 0.80},
@@ -104,6 +114,7 @@ const ENTRIES: Dictionary = {
 		"hardness": 0.35,
 		"density_kg_m3": 950.0,
 		"collectible_fraction": 0.04,
+		"spoil_fraction": 1.0,
 		"drill_power_mul": 0.85,
 		"yield_table": [
 			{"item_id": "ore_ice", "mass_fraction": 0.90},
@@ -159,6 +170,23 @@ static func collectible_fraction(material_id: String) -> float:
 	var owned: Variant = entry(material_id).get("collectible_fraction", null)
 	if owned == null:
 		return IndustryArchetypeProfile.terrain_collectible_fraction()
+	return clampf(float(owned), 0.0, 1.0)
+
+
+## Share of excavated volume that stays put as loose material instead of being
+## carried off. Rock leaves a thin apron; an ore or ice lens is soft enough that
+## nearly all of it stays and flows — which is what makes a lens worth finding
+## and worth loading with a bucket.
+##
+## This multiplies the volume a *cut* actually removed, never a lens as a whole.
+## A lens is tens of metres across intersected with a depth band, so it holds
+## thousands of cubic metres, and one granular region is a 16 m box. Converting
+## a lens ahead of time cannot fit and must never be attempted: material becomes
+## loose only at the working face, only as fast as it is dug.
+static func spoil_fraction(material_id: String) -> float:
+	var owned: Variant = entry(material_id).get("spoil_fraction", null)
+	if owned == null:
+		return DEFAULT_SPOIL_FRACTION
 	return clampf(float(owned), 0.0, 1.0)
 
 

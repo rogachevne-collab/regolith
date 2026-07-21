@@ -9,6 +9,8 @@
 [ext_resource type="PackedScene" path="res://scenes/simulation_session.tscn" id="11"]
 [ext_resource type="PackedScene" uid="uid://lunarskydecor001" path="res://scenes/lunar_sky_decor.tscn" id="12"]
 [ext_resource type="Material" path="res://resources/sky/lunar_starfield_sky_material.tres" id="13"]
+[ext_resource type="PackedScene" uid="uid://solarskydecor001" path="res://scenes/solar_sky_decor.tscn" id="14"]
+[ext_resource type="Script" path="res://scripts/day_night_cycle.gd" id="15"]
 
 [sub_resource type="Sky" id="Sky_env"]
 sky_material = ExtResource("13")
@@ -66,6 +68,19 @@ earth_direction = Vector3(0.35, 0.78, -0.52)
 angular_diameter_deg = 5.2
 distance_m = 12000.0
 
+[node name="SolarSkyDecor" parent="." instance=ExtResource("14")]
+sun_light_path = NodePath("../DirectionalLight3D")
+distance_m = 12000.0
+
+[node name="DayNightCycle" type="Node" parent="."]
+script = ExtResource("15")
+sun_light_path = NodePath("../DirectionalLight3D")
+fill_light_path = NodePath("../FillLight")
+world_environment_path = NodePath("../WorldEnvironment")
+day_ambient_energy = 0.2
+flat_day_ambient_energy = 0.2
+flat_night_ambient_energy = 0.06
+
 [node name="VoxelTerrain" type="VoxelTerrain" parent="." unique_id=823362394]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
 generator = ExtResource("3")
@@ -120,7 +135,7 @@ theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.8)
 theme_override_constants/shadow_offset_x = 1
 theme_override_constants/shadow_offset_y = 1
 text = "WASD — ходьба, Shift — бег, Space — прыжок, Esc — настройки
-1–9 — инструменты, ЛКМ — действие, C/V/B — поворот блока
+1–9 — инструменты, ЛКМ — действие, L — фонарь, C/V/B — поворот блока
 ПКМ/F по грунту — первый блок базы, E у ровера — кокпит
 В кокпите: WASD — ехать, Space — тормоз, E — выйти"
 

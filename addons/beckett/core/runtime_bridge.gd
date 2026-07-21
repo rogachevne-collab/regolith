@@ -24,6 +24,8 @@ var _pending: StreamPeerTCP = null
 var _pending_buf := PackedByteArray()
 var _pending_t0 := 0
 var _seq: int = 0
+var _last_reject_warn_ms := 0
+var _reject_suppressed := 0
 
 
 func start(p_port: int, bind_address: String = "127.0.0.1") -> int:
@@ -120,7 +122,16 @@ func _pump_pending() -> void:
 	if has_hello and _secure_equals(str((parsed as Dictionary).get("hello", "")), expected_token):
 		_promote()
 		return
-	push_warning("[beckett] runtime channel: rejected a peer with a missing/invalid handshake token")
+	var now := Time.get_ticks_msec()
+	if now - _last_reject_warn_ms >= 30000:
+		var extra := ""
+		if _reject_suppressed > 0:
+			extra = " (%d similar rejections suppressed)" % _reject_suppressed
+		push_warning("[beckett] runtime channel: rejected a peer with a missing/invalid handshake token%s" % extra)
+		_last_reject_warn_ms = now
+		_reject_suppressed = 0
+	else:
+		_reject_suppressed += 1
 	_pending.disconnect_from_host()
 	_pending = null
 

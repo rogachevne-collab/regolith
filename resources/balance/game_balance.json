@@ -517,7 +517,7 @@
       "carve_radius_m": 1.0,
       "bite_depth_m": 0.18,
       "sdf_scale": 0.8,
-      "reach_m": 2.25,
+      "reach_m": 2.5,
       "terrain_collectible_fraction": 0.01,
       "loot_pile_max_mass_kg": 32.0,
       "loot_base_radius_m": 0.16,

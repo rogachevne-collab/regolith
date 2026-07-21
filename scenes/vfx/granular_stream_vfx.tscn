@@ -1,0 +1,156 @@
+[gd_scene load_steps=16 format=3]
+
+[ext_resource type="Script" path="res://scripts/vfx/granular_stream_vfx.gd" id="1"]
+[ext_resource type="Texture2D" uid="uid://hlkf7q3wiren" path="res://resources/vfx/dust_soft.png" id="2"]
+[ext_resource type="Texture2D" uid="uid://c6hh07rp8whwq" path="res://resources/vfx/cloud02_8x8.png" id="3"]
+
+[sub_resource type="StandardMaterial3D" id="Mat_core"]
+transparency = 1
+cull_mode = 2
+shading_mode = 1
+albedo_color = Color(0.72, 0.68, 0.6, 1)
+albedo_texture = ExtResource("2")
+metallic_specular = 0.0
+roughness = 1.0
+vertex_color_use_as_albedo = true
+billboard_mode = 3
+billboard_keep_scale = true
+disable_receive_shadows = true
+proximity_fade_enabled = true
+proximity_fade_distance = 0.2
+distance_fade_mode = 1
+distance_fade_min_distance = 0.1
+distance_fade_max_distance = 0.4
+
+[sub_resource type="QuadMesh" id="Mesh_core"]
+material = SubResource("Mat_core")
+size = Vector2(0.038, 0.038)
+
+[sub_resource type="StandardMaterial3D" id="Mat_haze"]
+transparency = 1
+cull_mode = 2
+shading_mode = 1
+albedo_color = Color(0.7, 0.66, 0.58, 1)
+albedo_texture = ExtResource("3")
+metallic_specular = 0.0
+roughness = 1.0
+vertex_color_use_as_albedo = true
+billboard_mode = 3
+billboard_keep_scale = true
+particles_anim_h_frames = 8
+particles_anim_v_frames = 8
+particles_anim_loop = true
+disable_receive_shadows = true
+proximity_fade_enabled = true
+proximity_fade_distance = 0.28
+distance_fade_mode = 1
+distance_fade_min_distance = 0.12
+distance_fade_max_distance = 0.5
+
+[sub_resource type="QuadMesh" id="Mesh_haze"]
+material = SubResource("Mat_haze")
+size = Vector2(0.42, 0.42)
+
+[sub_resource type="Gradient" id="Grad_core"]
+offsets = PackedFloat32Array(0, 0.06, 0.4, 0.8, 1)
+colors = PackedColorArray(0.55, 0.52, 0.46, 0, 0.55, 0.52, 0.46, 0.5, 0.52, 0.49, 0.44, 0.38, 0.48, 0.46, 0.41, 0.14, 0.45, 0.43, 0.38, 0)
+
+[sub_resource type="GradientTexture1D" id="GradTex_core"]
+gradient = SubResource("Grad_core")
+
+[sub_resource type="Curve" id="Curve_core_scale"]
+_data = [Vector2(0, 0.55), 0.0, 1.4, 0, 0, Vector2(0.35, 1.0), 0.1, 0.0, 0, 0, Vector2(1, 0.65), -0.4, 0.0, 0, 0]
+point_count = 3
+
+[sub_resource type="CurveTexture" id="CurveTex_core_scale"]
+curve = SubResource("Curve_core_scale")
+
+[sub_resource type="ParticleProcessMaterial" id="Proc_core"]
+lifetime_randomness = 0.3
+emission_shape = 1
+emission_sphere_radius = 0.06
+angle_min = -180.0
+angle_max = 180.0
+direction = Vector3(0, -1, 0)
+spread = 8.0
+initial_velocity_min = 1.0
+initial_velocity_max = 2.0
+angular_velocity_min = -25.0
+angular_velocity_max = 25.0
+gravity = Vector3(0, -1.62, 0)
+damping_min = 0.15
+damping_max = 0.45
+scale_min = 0.5
+scale_max = 1.0
+scale_curve = SubResource("CurveTex_core_scale")
+color_ramp = SubResource("GradTex_core")
+
+[sub_resource type="Gradient" id="Grad_haze"]
+offsets = PackedFloat32Array(0, 0.1, 0.45, 0.85, 1)
+colors = PackedColorArray(0.52, 0.5, 0.45, 0, 0.52, 0.5, 0.45, 0.2, 0.48, 0.46, 0.42, 0.12, 0.44, 0.42, 0.38, 0.04, 0.4, 0.38, 0.34, 0)
+
+[sub_resource type="GradientTexture1D" id="GradTex_haze"]
+gradient = SubResource("Grad_haze")
+
+[sub_resource type="Curve" id="Curve_haze_scale"]
+_data = [Vector2(0, 0.45), 0.0, 1.2, 0, 0, Vector2(0.5, 1.0), 0.1, 0.0, 0, 0, Vector2(1, 1.15), 0.05, 0.0, 0, 0]
+point_count = 3
+
+[sub_resource type="CurveTexture" id="CurveTex_haze_scale"]
+curve = SubResource("Curve_haze_scale")
+
+[sub_resource type="ParticleProcessMaterial" id="Proc_haze"]
+lifetime_randomness = 0.45
+emission_shape = 1
+emission_sphere_radius = 0.1
+angle_min = -180.0
+angle_max = 180.0
+direction = Vector3(0, -1, 0)
+spread = 14.0
+initial_velocity_min = 0.4
+initial_velocity_max = 1.0
+angular_velocity_min = -10.0
+angular_velocity_max = 10.0
+gravity = Vector3(0, -1.62, 0)
+damping_min = 0.9
+damping_max = 1.8
+scale_min = 0.75
+scale_max = 1.35
+scale_curve = SubResource("CurveTex_haze_scale")
+color_ramp = SubResource("GradTex_haze")
+anim_speed_min = 0.7
+anim_speed_max = 1.3
+anim_offset_min = 0.0
+anim_offset_max = 1.0
+
+[node name="GranularStreamVfx" type="Node3D"]
+script = ExtResource("1")
+metadata/vfx_duration = 3.0
+
+[node name="Core" type="GPUParticles3D" parent="."]
+cast_shadow = 0
+emitting = false
+amount = 420
+lifetime = 2.0
+preprocess = 0.6
+explosiveness = 0.0
+randomness = 0.55
+fixed_fps = 60
+visibility_aabb = AABB(-3.5, -5.5, -3.5, 7, 9, 7)
+draw_order = 3
+process_material = SubResource("Proc_core")
+draw_pass_1 = SubResource("Mesh_core")
+
+[node name="Haze" type="GPUParticles3D" parent="."]
+cast_shadow = 0
+emitting = false
+amount = 36
+lifetime = 2.3
+preprocess = 0.4
+explosiveness = 0.0
+randomness = 0.65
+fixed_fps = 60
+visibility_aabb = AABB(-4, -6, -4, 8, 10, 8)
+draw_order = 3
+process_material = SubResource("Proc_haze")
+draw_pass_1 = SubResource("Mesh_haze")

@@ -37,15 +37,15 @@ normal_texture = ExtResource("2_ohvn5")
 texture_filter = 2
 
 [sub_resource type="VoxelInstanceLibraryMultiMeshItem" id="VoxelInstanceLibraryMultiMeshItem_1einc"]
-resource_name = "pebble_a"
-name = "pebble_a"
-generator = SubResource("VoxelInstanceGenerator_e7ku5")
-persistent = true
-floating_sdf_offset_along_normal = -0.15
 mesh = ExtResource("3_gy6o3")
 material_override = SubResource("StandardMaterial3D_vdosh")
 cast_shadow = 0
 gi_mode = 0
+name = "pebble_a"
+generator = SubResource("VoxelInstanceGenerator_e7ku5")
+persistent = true
+floating_sdf_offset_along_normal = -0.15
+resource_name = "pebble_a"
 
 [sub_resource type="FastNoiseLite" id="FastNoiseLite_ir4mw"]
 seed = 511
@@ -77,15 +77,15 @@ normal_texture = ExtResource("2_ohvn5")
 texture_filter = 2
 
 [sub_resource type="VoxelInstanceLibraryMultiMeshItem" id="VoxelInstanceLibraryMultiMeshItem_3g020"]
-resource_name = "pebble_b"
-name = "pebble_b"
-generator = SubResource("VoxelInstanceGenerator_00gsr")
-persistent = true
-floating_sdf_offset_along_normal = -0.15
 mesh = ExtResource("4_01lb1")
 material_override = SubResource("StandardMaterial3D_4pw74")
 cast_shadow = 0
 gi_mode = 0
+name = "pebble_b"
+generator = SubResource("VoxelInstanceGenerator_00gsr")
+persistent = true
+floating_sdf_offset_along_normal = -0.15
+resource_name = "pebble_b"
 
 [sub_resource type="FastNoiseLite" id="FastNoiseLite_j2y6d"]
 seed = 618
@@ -117,15 +117,15 @@ normal_texture = ExtResource("2_ohvn5")
 texture_filter = 2
 
 [sub_resource type="VoxelInstanceLibraryMultiMeshItem" id="VoxelInstanceLibraryMultiMeshItem_6gwe4"]
-resource_name = "pebble_c"
-name = "pebble_c"
-generator = SubResource("VoxelInstanceGenerator_gg5i6")
-persistent = true
-floating_sdf_offset_along_normal = -0.15
 mesh = ExtResource("5_lmtae")
 material_override = SubResource("StandardMaterial3D_r3prs")
 cast_shadow = 0
 gi_mode = 0
+name = "pebble_c"
+generator = SubResource("VoxelInstanceGenerator_gg5i6")
+persistent = true
+floating_sdf_offset_along_normal = -0.15
+resource_name = "pebble_c"
 
 [sub_resource type="FastNoiseLite" id="FastNoiseLite_apo7i"]
 seed = 722
@@ -157,15 +157,15 @@ normal_texture = ExtResource("2_ohvn5")
 texture_filter = 2
 
 [sub_resource type="VoxelInstanceLibraryMultiMeshItem" id="VoxelInstanceLibraryMultiMeshItem_jbgyn"]
-resource_name = "rock_a"
-name = "rock_a"
-generator = SubResource("VoxelInstanceGenerator_au513")
-persistent = true
-floating_sdf_offset_along_normal = -0.15
 mesh = ExtResource("3_gy6o3")
 material_override = SubResource("StandardMaterial3D_u3s8b")
 cast_shadow = 0
 gi_mode = 0
+name = "rock_a"
+generator = SubResource("VoxelInstanceGenerator_au513")
+persistent = true
+floating_sdf_offset_along_normal = -0.15
+resource_name = "rock_a"
 
 [sub_resource type="FastNoiseLite" id="FastNoiseLite_i6a6b"]
 seed = 833
@@ -196,15 +196,15 @@ normal_texture = ExtResource("2_ohvn5")
 texture_filter = 2
 
 [sub_resource type="VoxelInstanceLibraryMultiMeshItem" id="VoxelInstanceLibraryMultiMeshItem_bmi1f"]
-resource_name = "rock_b"
-name = "rock_b"
-generator = SubResource("VoxelInstanceGenerator_m7tdg")
-persistent = true
-floating_sdf_offset_along_normal = -0.15
 mesh = ExtResource("4_01lb1")
 material_override = SubResource("StandardMaterial3D_4fxlb")
 cast_shadow = 0
 gi_mode = 0
+name = "rock_b"
+generator = SubResource("VoxelInstanceGenerator_m7tdg")
+persistent = true
+floating_sdf_offset_along_normal = -0.15
+resource_name = "rock_b"
 
 [sub_resource type="FastNoiseLite" id="FastNoiseLite_hiw5h"]
 seed = 504
@@ -238,16 +238,16 @@ normal_texture = ExtResource("2_ohvn5")
 texture_filter = 2
 
 [sub_resource type="VoxelInstanceLibraryMultiMeshItem" id="VoxelInstanceLibraryMultiMeshItem_urcvy"]
-resource_name = "boulder"
+mesh = ExtResource("6_nmqtj")
+material_override = SubResource("StandardMaterial3D_m6vrq")
+cast_shadow = 0
+gi_mode = 0
 name = "boulder"
 lod_index = 1
 generator = SubResource("VoxelInstanceGenerator_0xkio")
 persistent = true
 floating_sdf_offset_along_normal = -0.15
-mesh = ExtResource("6_nmqtj")
-material_override = SubResource("StandardMaterial3D_m6vrq")
-cast_shadow = 0
-gi_mode = 0
+resource_name = "boulder"
 
 [sub_resource type="FastNoiseLite" id="FastNoiseLite_yiws2"]
 seed = 591
@@ -279,16 +279,16 @@ normal_texture = ExtResource("2_ohvn5")
 texture_filter = 2
 
 [sub_resource type="VoxelInstanceLibraryMultiMeshItem" id="VoxelInstanceLibraryMultiMeshItem_whxxo"]
-resource_name = "boulder_flat"
+mesh = ExtResource("7_e4u57")
+material_override = SubResource("StandardMaterial3D_dobco")
+cast_shadow = 0
+gi_mode = 0
 name = "boulder_flat"
 lod_index = 1
 generator = SubResource("VoxelInstanceGenerator_6gygr")
 persistent = true
 floating_sdf_offset_along_normal = -0.15
-mesh = ExtResource("7_e4u57")
-material_override = SubResource("StandardMaterial3D_dobco")
-cast_shadow = 0
-gi_mode = 0
+resource_name = "boulder_flat"
 
 [resource]
 _data = [0, 0, SubResource("VoxelInstanceLibraryMultiMeshItem_1einc"), 1, SubResource("VoxelInstanceLibraryMultiMeshItem_3g020"), 2, SubResource("VoxelInstanceLibraryMultiMeshItem_6gwe4"), 3, SubResource("VoxelInstanceLibraryMultiMeshItem_jbgyn"), 4, SubResource("VoxelInstanceLibraryMultiMeshItem_bmi1f"), 5, SubResource("VoxelInstanceLibraryMultiMeshItem_urcvy"), 6, SubResource("VoxelInstanceLibraryMultiMeshItem_whxxo")]

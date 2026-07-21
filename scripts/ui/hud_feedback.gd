@@ -92,6 +92,19 @@ func _prompt_for(hit: InteractionHit) -> String:
 		]
 	):
 		return "E — настройки модуля"
+	if _tools.active_tool == &"scoop":
+		# The load has no other readout, and it is the whole state of the tool:
+		# a scoop that looks empty but is full simply refuses to scoop, with
+		# nothing on screen to say why.
+		var load_text := "%.2f / %.2f м³" % [
+			_tools.scoop_load_m3,
+			ToolController.SCOOP_CAPACITY_M3,
+		]
+		if _tools.scoop_load_m3 >= ToolController.SCOOP_CAPACITY_M3 - 0.000001:
+			return "совок полон: %s · ПКМ — высыпать" % load_text
+		if _tools.scoop_load_m3 <= 0.000001:
+			return "совок пуст · ЛКМ — зачерпнуть сыпучее"
+		return "совок %s · ЛКМ — черпать · ПКМ — высыпать" % load_text
 	if _tools.active_tool == &"drill":
 		return ""
 	if _tools.active_tool == &"connect":

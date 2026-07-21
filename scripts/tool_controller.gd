@@ -19,6 +19,8 @@ signal connect_rejected(reason: StringName)
 ## Presentation state only — the layout override does not touch the const
 ## TOOLBAR_PAGES nor the way construction commands are issued.
 signal toolbar_layout_changed(page: int, slot: int, archetype_id: String)
+## How much the hand scoop is carrying, for a readout.
+signal scoop_load_changed(load_m3: float, capacity_m3: float)
 
 enum ActionState {
 	IDLE,
@@ -134,7 +136,7 @@ const TOOLBAR_PAGES: Array = [
 		{"type": &"block", "archetype_id": "frame_basalt"},
 		{"type": &"block", "archetype_id": "large_frame"},
 		{"type": &"block", "archetype_id": "frame_beam"},
-		{"type": &"block", "archetype_id": "power_source"},
+		{"type": &"scoop"},
 	],
 	[
 		{"type": &"block", "archetype_id": "rover_frame"},
@@ -197,6 +199,20 @@ var _inventory_revision := -1
 var _last_drill_excavation_msec := -1
 ## When true, +/- / Y apply the same command to every piston in the assembly.
 var actuator_chain_sync := false
+
+## Hand scoop. A bucket's worth, not a truck's: small enough that carrying spoil
+## by hand stays a way to check how the material behaves rather than a way to
+## move a heap.
+const SCOOP_CAPACITY_M3 := 0.15
+const SCOOP_RADIUS_M := 0.5
+const SCOOP_REACH_M := 2.6
+## Slower than the drill's 0.05 s. Collecting has to cost more than cutting, or
+## clearing your own spoil becomes the cheapest way to mine.
+const SCOOP_INTERVAL_S := 0.35
+## What the scoop is carrying, in cubic metres. Lives on the tool because the
+## player is the carrier; the world has no record of it once it is scooped, so
+## losing this number loses the material.
+var scoop_load_m3 := 0.0
 
 const CONNECT_RANGE := 4.0
 const CONNECT_MAX_WAYPOINTS := 16
@@ -310,6 +326,14 @@ func _physics_process(delta: float) -> void:
 		profile["max_range"] = IndustryArchetypeProfile.hand_drill_reach_m()
 	elif active_action == &"tool_primary" and active_tool == &"weld":
 		profile = ACTIONS[&"tool_weld"].duplicate()
+	elif active_tool == &"scoop" and (
+		active_action == &"tool_primary"
+		or active_action == &"tool_secondary"
+	):
+		profile = profile.duplicate()
+		profile["interval"] = SCOOP_INTERVAL_S
+		profile["max_range"] = SCOOP_REACH_M
+		profile["continuous"] = true
 	var hit := _action_hit(active_action, profile)
 	if (
 		_locked_hit != null
@@ -385,11 +409,31 @@ func _on_gateway_command_completed(
 	_command_id: int,
 	result: Dictionary
 ) -> void:
-	if StringName(result.get("command_kind", &"")) != &"voxel_remove":
-		return
-	if float(result.get("removed_volume_m3", 0.0)) <= 0.000001:
-		return
-	_last_drill_excavation_msec = Time.get_ticks_msec()
+	# A gateway result is `{status, reason, data, command_kind}` — everything a
+	# command reports back lives under `data`, never at the top level.
+	var data: Dictionary = result.get("data", {})
+	match StringName(result.get("command_kind", &"")):
+		&"voxel_remove":
+			if float(data.get("removed_volume_m3", 0.0)) <= 0.000001:
+				return
+			_last_drill_excavation_msec = Time.get_ticks_msec()
+		&"scoop_spoil":
+			# Only what the world reports as taken. Assuming a full scoop would
+			# conjure material the field never gave up.
+			scoop_load_m3 = clampf(
+				scoop_load_m3 + float(data.get("scooped_volume_m3", 0.0)),
+				0.0,
+				SCOOP_CAPACITY_M3
+			)
+			scoop_load_changed.emit(scoop_load_m3, SCOOP_CAPACITY_M3)
+		&"dump_scoop":
+			# Only what the world accepted. A region too full to take the whole
+			# load leaves the rest in the scoop, where it still exists.
+			scoop_load_m3 = maxf(
+				scoop_load_m3 - float(data.get("dumped_volume_m3", 0.0)),
+				0.0
+			)
+			scoop_load_changed.emit(scoop_load_m3, SCOOP_CAPACITY_M3)
 
 
 func toolbar_page_count() -> int:
@@ -424,6 +468,27 @@ func _emit_command_for_action(
 		# Cargo/machines use the terminal, not toggle_control_seat.
 		if _is_terminal_target_hit(hit):
 			return
+	# Ahead of the build-preview block: the scoop has nothing to do with
+	# placement, and must not pick up a `placement_plan` on its way out.
+	if active_tool == &"scoop" and (
+		action == &"tool_primary" or action == &"tool_secondary"
+	):
+		if action == &"tool_primary":
+			command_kind = &"scoop_spoil"
+			parameters = {
+				"radius": SCOOP_RADIUS_M,
+				"max_volume_m3": SCOOP_CAPACITY_M3 - scoop_load_m3,
+			}
+		else:
+			command_kind = &"dump_scoop"
+			parameters = {"volume_m3": scoop_load_m3}
+		command_requested.emit({
+			"kind": command_kind,
+			"source": get_parent(),
+			"target": hit.snapshot(),
+			"parameters": parameters,
+		})
+		return
 	if (
 		_construction_mode == &"place"
 		and _preview != null
@@ -493,6 +558,10 @@ func _pressed_action() -> StringName:
 	if (
 		not in_vehicle
 		and Input.is_action_pressed(&"tool_secondary")
+		# The scoop is the one tool whose right button does something of its
+		# own: tipping the load out. Everything else treats a held right button
+		# as "no action", and that would leave a full scoop with no way to empty.
+		and active_tool != &"scoop"
 	):
 		return StringName()
 	for action: StringName in ACTIONS:
@@ -507,6 +576,7 @@ func _pressed_action() -> StringName:
 				and active_tool != &"build"
 				and active_tool != &"weld"
 				and active_tool != &"connect"
+				and active_tool != &"scoop"
 			):
 				continue
 		if (
@@ -778,6 +848,9 @@ func _tracks_live_target_while_holding(action: StringName) -> bool:
 			active_tool == &"drill"
 			or active_tool == &"grinder"
 			or active_tool == &"weld"
+			# Scooping is a sweep through a heap, so it follows the aim rather
+			# than the spot the button was pressed on.
+			or active_tool == &"scoop"
 		)
 	)
 
@@ -802,9 +875,20 @@ func _hit_accepts_action(
 			hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
 			or hit.target_kind == InteractionHit.KIND_ELECTRIC_CABLE
 		)
+	if active_tool == &"scoop":
+		# Scooping needs loose material under the aim; tipping out only needs
+		# somewhere to put it, and any solid surface will do.
+		if action == &"tool_primary":
+			return (
+				scoop_load_m3 < SCOOP_CAPACITY_M3 - 0.000001
+				and hit.target_kind == InteractionHit.KIND_GRANULAR
+			)
+		if action == &"tool_secondary":
+			return scoop_load_m3 > 0.000001
 	if action == &"tool_primary" and active_tool == &"drill":
 		return (
 			hit.target_kind == InteractionHit.KIND_VOXEL
+			or hit.target_kind == InteractionHit.KIND_GRANULAR
 			or hit.target_kind == InteractionHit.KIND_TERRAIN_DEBRIS
 			or hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
 		)

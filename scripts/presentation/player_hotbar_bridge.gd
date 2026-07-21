@@ -10,6 +10,14 @@ const LEGACY_TOOL_TYPES: Dictionary = {
 	&"connect": "tool_connector",
 }
 
+## Tools that are not inventory instances: they resolve straight from the slot
+## and are always usable. `apply_registry_to_layout` leaves their slots alone
+## because it only rewrites canonical types listed in `LEGACY_TOOL_TYPES`, so a
+## builtin never blanks out for want of an item the player cannot be given.
+const BUILTIN_TOOL_TYPES: Dictionary = {
+	&"scoop": "совок",
+}
+
 const ITEM_TO_ACTIVE_TOOL: Dictionary = {
 	"tool_hand_drill": &"drill",
 	"tool_welder": &"weld",
@@ -73,6 +81,13 @@ static func resolve_slot_entry(
 			"active_tool": StringName(legacy_type),
 			"legacy": true,
 		}
+	if BUILTIN_TOOL_TYPES.has(legacy_type):
+		return {
+			"kind": &"tool_instance",
+			"active_tool": legacy_type,
+			"legacy": true,
+			"builtin": true,
+		}
 	if legacy_type == &"block":
 		return {
 			"kind": &"block",
@@ -130,7 +145,8 @@ static func slot_label(entry: Dictionary, registry: PlayerInventoryRegistry) -> 
 				&"connect":
 					return "соединение"
 				_:
-					return "—"
+					var tool := StringName(resolved.get("active_tool", &""))
+					return str(BUILTIN_TOOL_TYPES.get(tool, "—"))
 		&"block":
 			return str(resolved.get("archetype_id", ""))
 		_:

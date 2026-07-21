@@ -19,7 +19,7 @@ Gameplay/HUD/presentation changes are NOT verified here — run the game
 
 ## Prerequisites
 
-- Stock Godot 4.7+ (`/Applications/Godot.app`, `$GODOT`, `PATH`; Windows: `Y:\Godot\Godot_v4.7.1-stable_win64*.exe` via `run.ps1` / `run.sh`)
+- Godot 4.8 (`/Applications/Godot.app`, `$GODOT`, `PATH`; Windows: `Y:\Godot\Godot_v4.8-stable_win64*.exe` via `run.ps1` / `run.sh`)
 - Voxel GDExtension present: `addons/zylann.voxel/voxel.gdextension`
 - First clone: `./run.sh --headless --import` or `.\run.ps1 --headless --import` once
 

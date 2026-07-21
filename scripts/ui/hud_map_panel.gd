@@ -116,7 +116,12 @@ func _open_map() -> void:
 	_load_user_markers()
 	_refresh_overlay_entries()
 	_rebuild_marker_list()
-	_spawn_world_hint = player_world_position()
+	## The landing site, not wherever the player is standing. Sampling the
+	## player made the starting lenses follow them around the map while the
+	## drill, which passes the real origin, found nothing there.
+	_spawn_world_hint = MoonMaterialField.spawn_world()
+	if _spawn_world_hint.length() <= 0.001:
+		_spawn_world_hint = player_world_position()
 	if _spawn_world_hint.length() <= 0.001:
 		_spawn_world_hint = Vector3(MoonGeometry.active_surface_radius_m(), 0.0, 0.0)
 	_sync_map_mode()

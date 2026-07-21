@@ -9,6 +9,8 @@ extends Node
 ## zero impact when the bridge is off.
 
 const RETRY_INTERVAL := 2.0
+const RUNTIME_TOKEN_FILE := "res://.beckett/runtime_token"
+const RUNTIME_PORT_FILE := "res://.beckett/port"
 
 var _peer := StreamPeerTCP.new()
 var _buf := PackedByteArray()
@@ -16,6 +18,7 @@ var _port := 8771
 var _since_retry := 0.0
 var _was_connected := false
 var _hello_sent := false
+var _runtime_token := ""
 
 var _recording := false
 var _rec: Array = []
@@ -58,9 +61,8 @@ func _ready() -> void:
 			set_process_input(false)
 			return
 	process_mode = Node.PROCESS_MODE_ALWAYS
-	var p := OS.get_environment("BECKETT_RUNTIME_PORT")
-	if p != "" and p.is_valid_int():
-		_port = p.to_int()
+	_port = _resolve_runtime_port()
+	_runtime_token = _resolve_runtime_token()
 	_dial()
 	set_process(true)
 	set_process_input(true)
@@ -81,9 +83,30 @@ func _input(event: InputEvent) -> void:
 		_rec.append(d)
 
 
+func _resolve_runtime_port() -> int:
+	var p := OS.get_environment("BECKETT_RUNTIME_PORT")
+	if p != "" and p.is_valid_int():
+		return p.to_int()
+	if FileAccess.file_exists(RUNTIME_PORT_FILE):
+		var from_file := FileAccess.get_file_as_string(RUNTIME_PORT_FILE).strip_edges()
+		if from_file.is_valid_int():
+			return from_file.to_int()
+	return _port
+
+
+func _resolve_runtime_token() -> String:
+	var from_env := OS.get_environment("BECKETT_RUNTIME_TOKEN")
+	if not from_env.is_empty():
+		return from_env
+	if FileAccess.file_exists(RUNTIME_TOKEN_FILE):
+		return FileAccess.get_file_as_string(RUNTIME_TOKEN_FILE).strip_edges()
+	return ""
+
+
 func _dial() -> void:
 	_peer = StreamPeerTCP.new()
 	_hello_sent = false
+	_runtime_token = _resolve_runtime_token()
 	_peer.connect_to_host("127.0.0.1", _port)
 
 
@@ -93,7 +116,7 @@ func _process(delta: float) -> void:
 	if st == StreamPeerTCP.STATUS_CONNECTED:
 		if not _hello_sent:
 			_hello_sent = true
-			_peer.put_data((JSON.stringify({"hello": OS.get_environment("BECKETT_RUNTIME_TOKEN")}) + "\n").to_utf8_buffer())
+			_peer.put_data((JSON.stringify({"hello": _runtime_token}) + "\n").to_utf8_buffer())
 		_was_connected = true
 		var avail := _peer.get_available_bytes()
 		if avail > 0:

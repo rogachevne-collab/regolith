@@ -20,6 +20,8 @@ var _camera: Camera3D
 var _tools: ToolController
 var _terrain: Node3D
 var _voxel_tool: VoxelTool
+## Resolved lazily and cached — see `_granular_world_node`.
+var _granular_world: Node
 var _session: SimulationSession
 
 
@@ -59,11 +61,10 @@ func _physics_process(_delta: float) -> void:
 	var origin := aim.origin
 	var direction := -aim.basis.z.normalized()
 	var reach := _effective_max_distance()
-	var physics_hit := _query_physics(origin, direction, reach)
-	if physics_hit.valid:
-		_publish(physics_hit)
-		return
-	_publish(_query_voxel(origin, direction, reach))
+	var hit := _query_physics(origin, direction, reach)
+	if not hit.valid:
+		hit = _query_voxel(origin, direction, reach)
+	_publish(_prefer_dust(origin, direction, reach, hit))
 
 
 func _effective_max_distance() -> float:
@@ -169,6 +170,53 @@ func _query_voxel(
 		StringName(),
 		{"aim_direction": direction}
 	)
+
+
+## Loose material in front of whatever the ray found.
+##
+## It has no collider on purpose — it is a medium, not a surface, which is what
+## stopped it blocking the drill and lifting the player — so the only way to aim
+## at it is to ask the field along the same ray. Nearer than the rock wins: if
+## there is spoil between the bit and the stone, the spoil is what is being
+## worked.
+func _prefer_dust(
+	origin: Vector3,
+	direction: Vector3,
+	reach: float,
+	hit: InteractionHit
+) -> InteractionHit:
+	var world := _granular_world_node()
+	if world == null:
+		return hit
+	var limit: float = hit.distance if hit.valid else reach
+	var found := Dictionary(
+		world.call(&"raycast_dust", origin, direction, limit)
+	)
+	if found.is_empty():
+		return hit
+	var point: Vector3 = found["point"]
+	return InteractionHit.create(
+		point,
+		GravityField.resolve_up(_terrain, point),
+		origin.distance_to(point),
+		InteractionHit.KIND_GRANULAR,
+		null,
+		&"granular_spoil",
+		{"aim_direction": direction, "granular": true}
+	)
+
+
+## The volumetric loose-material world, when a scene has one. Checked by method:
+## the parked height-field implementation answers to the same group and has no
+## field to march a ray through.
+func _granular_world_node() -> Node:
+	if _granular_world != null and is_instance_valid(_granular_world):
+		return _granular_world
+	var found := get_tree().get_first_node_in_group(&"granular_world")
+	_granular_world = (
+		found if found != null and found.has_method(&"raycast_dust") else null
+	)
+	return _granular_world
 
 
 func _target_kind(

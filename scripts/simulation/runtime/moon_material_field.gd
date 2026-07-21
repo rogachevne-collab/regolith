@@ -22,12 +22,37 @@ const LENS_CELL_ARC_M := 70.0
 const LENS_RADIUS_MIN := 0.28
 const LENS_RADIUS_MAX := 0.48
 
+## Where the player landed, in world space. The starting lenses are placed
+## relative to it, so every consumer — hand drill yield, stationary drill, map
+## overlay — has to agree on one value or the map marks ore where digging finds
+## none. Held here rather than passed down each call chain because it is a
+## property of the world, and the per-call argument was in practice never
+## supplied: `WorldCommandGateway.set_hand_drill_spawn_world` had no callers, so
+## the dig path resolved the starting lenses as nonexistent while the map drew
+## them around wherever the player happened to be standing.
+##
+## An explicit non-zero argument still wins, for tests and for any caller that
+## genuinely means a different origin.
+static var _spawn_world := Vector3.ZERO
+
+
+static func set_spawn_world(world_pos: Vector3) -> void:
+	_spawn_world = world_pos
+
+
+static func spawn_world() -> Vector3:
+	return _spawn_world
+
 
 func lens_cell_scale() -> float:
 	return MoonGeometry.active_surface_radius_m() / LENS_CELL_ARC_M
 
 
 func material_id_at_world(world_pos: Vector3, spawn_world: Vector3 = Vector3.ZERO) -> String:
+	# Note: depth comes from the fixed constant while `lens_cell_scale` uses
+	# `active_surface_radius_m()`. In a scene that calls `set_test_diameter`
+	# the two disagree — depth bands and lens geometry then describe different
+	# planets. Harmless on the real moon; fix before trusting a shrunk one.
 	var radius_m := MoonGeometry.SURFACE_RADIUS_M
 	var radial := world_pos.length()
 	if radial <= 0.001:
@@ -43,8 +68,9 @@ func material_id_at_dir_depth(
 	spawn_world: Vector3 = Vector3.ZERO
 ) -> String:
 	var n := dir.normalized()
-	if spawn_world.length() > 0.001:
-		var overlay := _starting_overlay(n, depth_m, spawn_world.normalized())
+	var origin := spawn_world if spawn_world.length() > 0.001 else _spawn_world
+	if origin.length() > 0.001:
+		var overlay := _starting_overlay(n, depth_m, origin.normalized())
 		if not overlay.is_empty():
 			return overlay
 

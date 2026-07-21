@@ -1,6 +1,6 @@
 # Regolith — AI-first lunar sandbox (Godot)
 
-Standalone Godot 4.5+ проект: voxel terrain (Voxel Tools 1.6x), Jolt physics
+Standalone Godot 4.8 проект: voxel terrain (Voxel Tools 1.6x), Jolt 5.6
 (гравитация 1.62 m/s²), GDScript. Код в `scripts/`, сцены в `scenes/`,
 ресурсы в `resources/`. Концепт: `docs/CONCEPT.md`.
 Этот файл — единственный источник процессных правил для агентов.
@@ -53,7 +53,7 @@ Rule 1 - отвечай коротко, по делу и понятным язы
   («Граница владения») и релевантная PoC-спека (`docs/specs/`), затем
   **официальная дока Godot** ([Using Jolt Physics](https://docs.godotengine.org/en/stable/tutorials/physics/using_jolt_physics.html),
   [Physics introduction](https://docs.godotengine.org/en/stable/tutorials/physics/physics_introduction.html))
-  и **веб-поиск** по конкретному поведению (встроенный Jolt-модуль Godot 4.4+,
+  и **веб-поиск** по конкретному поведению (встроенный Jolt 5.6 в Godot 4.8,
   не legacy extension `godot-jolt`; при необходимости — [JoltPhysics](https://jrouwe.github.io/JoltPhysics/),
   GitHub issues Godot/Jolt). Не выводить семантику движка из кода проекта.
 

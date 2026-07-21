@@ -6,6 +6,7 @@ extends "res://scripts/character_motor.gd"
 
 var _head: Camera3D
 var _voxel_viewer: VoxelViewer
+var _mining_light: SpotLight3D
 var _spawn_locked := true
 var _spawn_settling := false
 var _settled_frames := 0
@@ -112,6 +113,8 @@ func _ready() -> void:
 	super._ready()
 	_head = get_node(head_path)
 	_voxel_viewer = get_node_or_null("VoxelViewer") as VoxelViewer
+	if _head != null:
+		_mining_light = _head.get_node_or_null("MiningLight") as SpotLight3D
 	_world_parent = get_parent()
 	## Foot mode: interpolation OFF — yaw/basis mix on voxel ground.
 	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
@@ -198,6 +201,13 @@ func _physics_process(delta: float) -> void:
 		and Input.is_action_just_pressed(&"toggle_fly")
 	):
 		set_fly_mode(not _fly_mode)
+
+	if (
+		_gameplay_input_enabled
+		and _mining_light != null
+		and Input.is_action_just_pressed(&"toggle_mining_light")
+	):
+		_mining_light.visible = not _mining_light.visible
 
 	if _fly_mode:
 		_fly_move(delta)

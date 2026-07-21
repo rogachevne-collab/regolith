@@ -150,3 +150,25 @@ static func orientation_with_local_face(
 		):
 			return index
 	return 0
+
+
+## Two local faces → world directions (e.g. hinge mount + bend). First match
+## wins; returns 0 if none.
+static func orientation_with_local_faces(
+	local_face_a: Vector3i,
+	world_direction_a: Vector3i,
+	local_face_b: Vector3i,
+	world_direction_b: Vector3i
+) -> int:
+	for index: int in range(OrientationUtil.ORIENTATION_COUNT):
+		if (
+			OrientationUtil.rotate_direction(local_face_a, index)
+			!= world_direction_a
+		):
+			continue
+		if (
+			OrientationUtil.rotate_direction(local_face_b, index)
+			== world_direction_b
+		):
+			return index
+	return 0

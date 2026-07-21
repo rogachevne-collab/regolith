@@ -150,14 +150,17 @@ static func _place_drill_arm(
 	intent: MachineIntent
 ) -> bool:
 	# Boom along −X (away from power on +X). Hinge/piston: local +Y → −X,
-	# bend +X → +Z (pitch).
+	# bend local +X → world −Z so bend+ pitches the boom upward (RH around −Z).
+	# A single-face orientation pick leaves bend on +Y (yaw) — wrong plane.
 	#
 	# stationary_drill is a 180 kg 2×2×2 ground tool — hanging it on the tip
 	# yaws sideways, detaches, and kinetic-explodes. Keep it on the pad; tip
 	# is a light frame end-effector.
-	var boom_ori := AssemblyBuildHelper.orientation_with_local_face(
+	var boom_ori := AssemblyBuildHelper.orientation_with_local_faces(
 		Vector3i(0, 1, 0),
-		Vector3i(-1, 0, 0)
+		Vector3i(-1, 0, 0),
+		Vector3i(1, 0, 0),
+		Vector3i(0, 0, -1)
 	)
 
 	if not helper.place(
