@@ -35,6 +35,11 @@ var topology_generation := 0
 ## Nested: while > 0, structural_event is suppressed (except world_restored).
 ## Use around bulk compose so projections rebuild once at the end.
 var _structural_batch_depth := 0
+## Set when a topology change happened inside a batch. The heavy full-world
+## derived recompute (store sync, cargo graph, network prune) is coalesced to
+## run once when the batch closes instead of once per placed/welded element —
+## the difference between an instant compose and a ~30 s one on big rovers.
+var _deferred_derived_recompute := false
 var _allocator := SimulationIdAllocator.new()
 var _archetypes := ArchetypeRegistry.new()
 var _assemblies: Dictionary = {}
@@ -1127,8 +1132,12 @@ func _emit_element_state_changed(
 	})
 	# Cargo adjacency tracks operational membership only. Partial weld/repair
 	# ticks do not change it; the final tick that brings the element online does.
+	# Inside a batch (bulk weld_all) coalesce to one rebuild at batch close.
 	if operational_changed:
-		_cargo_graph.rebuild(self)
+		if _structural_batch_depth > 0:
+			_deferred_derived_recompute = true
+		else:
+			_cargo_graph.rebuild(self)
 
 func _element_state_result(
 	element: SimulationElement,
@@ -1243,14 +1252,34 @@ func _reconcile_terrain_anchors_for_assemblies(
 
 func _notify_topology_changed() -> void:
 	topology_generation += 1
+	# Cheap per-op cache invalidation must stay eager: mid-batch validation
+	# (occupancy, body groups) reads these and must see the current topology.
 	_body_group_compile_cache.clear()
 	_occupancy_index_cache.clear()
 	# Origin-keyed surface lookups must not grow unbounded across places.
 	GridSurfaceUtil.clear_descriptor_cache()
+	_mark_derived_dirty()
+
+
+## Full-world derived recompute. Every step is a from-scratch rebuild, so
+## running it once after a batch of topology edits yields the same result as
+## running it after each edit — only far cheaper.
+func _recompute_derived_now() -> void:
+	_deferred_derived_recompute = false
 	_industry_network.prune_dangling_links(self)
 	_purge_industry_runtime_for_missing_elements()
 	IndustryStoreService.sync_all_elements(self)
 	_cargo_graph.rebuild(self)
+
+
+## Run the heavy derived recompute now, or defer it to batch close. Consumers
+## that need fresh derived state mid-batch use the lazy paths
+## (ensure_cargo_graph_current), which rebuild on demand off topology_revision.
+func _mark_derived_dirty() -> void:
+	if _structural_batch_depth > 0:
+		_deferred_derived_recompute = true
+		return
+	_recompute_derived_now()
 
 func _cargo_graph_needs_rebuild() -> bool:
 	for assembly: SimulationAssembly in list_assemblies():
@@ -1352,6 +1381,8 @@ func begin_structural_batch() -> void:
 
 func end_structural_batch() -> void:
 	_structural_batch_depth = maxi(_structural_batch_depth - 1, 0)
+	if _structural_batch_depth == 0 and _deferred_derived_recompute:
+		_recompute_derived_now()
 
 
 func _emit_structural_event(event: Dictionary) -> void:

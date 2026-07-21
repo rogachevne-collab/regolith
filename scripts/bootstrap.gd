@@ -12,12 +12,15 @@ const _NativeSdfGen := preload(
 const MIN_WARMUP_FRAMES := 30
 ## Lunar g=1.62: settle can take a few seconds once a floor exists.
 const MAX_SPAWN_SETTLE_FRAMES := 360
-## Voxel trimesh colliders lag SDF (VT #677 / scale≠1). Don't block play for
-## LOD0 physics — short probe, then temp landing pad; retire when voxel floor
-## appears (_retire_landing_pad_when_voxel_floor_ready).
-const PHYSICS_GROUND_TIMEOUT_MS := 1500
-const PHYSICS_GROUND_TIMEOUT_LOAD_MS := 1500
-const BASE_SPAWN_TIMEOUT_MS := 60000
+## Voxel trimesh colliders lag SDF (VT #677 / scale≠1). Wait for a cooked LOD0
+## collider before seating so the player/vehicles land on the real surface
+## instead of the SDF landing pad (which reads as "floating in the sky" over the
+## lower visual mesh) or a coarse far-LOD collider (gaps → falling through).
+## On Ø19 km the near-spawn collider takes several seconds to cook, so the old
+## 1.5 s probe almost always fell back to the pad. The temp landing pad still
+## backs this up if the collider never appears in time.
+const PHYSICS_GROUND_TIMEOUT_MS := 8000
+const PHYSICS_GROUND_TIMEOUT_LOAD_MS := 8000
 const AUTOSAVE_INTERVAL_S := 90.0
 ## Coalesce carve spam before writing digs; flush only after async save completes.
 const DIG_PERSIST_DEBOUNCE_S := 1.5
@@ -386,10 +389,13 @@ func _configure_dig_stream() -> void:
 	## Fresh gen_v dir (no partial LOD scraps). Generator fills crust; digs persist.
 	var stream := VoxelStreamSQLite.new()
 	stream.database_path = MoonTerrainParams.stream_database_path()
-	## Persist generated blocks too: Ø19 km analytic gen is heavy enough that
-	## re-deriving the whole shell every launch costs ~30 s; second launch
-	## reads SQLite instead. GENERATOR_VERSION bump → fresh DB, no staleness.
-	stream.save_generator_output = true
+	## Do NOT persist generator output: writing every streamed crust block to
+	## SQLite during generation adds heavy I/O on the critical path, so the first
+	## build of the map is slower than pure in-memory gen (and during dev the
+	## cache is wiped on every GENERATOR_VERSION bump, so the "fast relaunch" it
+	## bought rarely materialises). Player digs are modified blocks — they still
+	## persist regardless of this flag.
+	stream.save_generator_output = false
 	_voxel_stream = stream
 	var lod := _terrain as VoxelLodTerrain
 	lod.stream = stream
@@ -570,7 +576,9 @@ func _begin_fresh_world(player_position: Vector3) -> void:
 	):
 		push_error("Fresh world player starter resources seed failed")
 	await _finish_world_entry(player_position)
-	_spawn_base_when_terrain_ready()
+	## Main map is intentionally bare on a fresh world — only the demo rover and
+	## hopper (spawned in _finish_world_entry). The Slice-01 starter base is no
+	## longer auto-placed; build it in-game instead.
 
 
 func _finish_world_entry(player_position: Vector3) -> void:
@@ -977,73 +985,6 @@ func _place_when_ground_exists() -> void:
 		await get_tree().physics_frame
 
 
-func _spawn_base_when_terrain_ready() -> void:
-	var tool: VoxelTool = TerrainCompat.get_voxel_tool(_terrain)
-	tool.channel = VoxelBuffer.CHANNEL_SDF
-	var center_hint := _base_spawn.global_position
-	if center_hint.length_squared() <= 0.000001:
-		center_hint = Vector3.UP
-	var up := _gravity_field.up_at(center_hint)
-	var tangent := _gravity_field.tangent_basis_at(center_hint)
-	var probe_origin := MoonGeometry.spawn_hold_point(center_hint)
-	var probe_dir := -up
-	var offset := 1.0
-	var samples: Array[Vector3] = [
-		probe_origin,
-		probe_origin + tangent.x * offset,
-		probe_origin - tangent.x * offset,
-		probe_origin + tangent.z * offset,
-		probe_origin - tangent.z * offset,
-	]
-	var wait_start_ms := Time.get_ticks_msec()
-
-	while true:
-		var hits: Array = []
-		var all_ready := true
-		for sample: Vector3 in samples:
-			var hit: VoxelRaycastResult = VoxelSpaceUtil.raycast_world(
-				tool,
-				_terrain,
-				sample,
-				probe_dir,
-				MoonGeometry.GROUND_PROBE_DISTANCE_M
-			)
-			hits.append(hit)
-			if hit == null:
-				all_ready = false
-		if all_ready:
-			var grounds: Array[Vector3] = []
-			for i in samples.size():
-				grounds.append(
-					_ground_point_from_hit(samples[i], probe_dir, hits[i])
-				)
-			var base_ground: Vector3 = grounds[0]
-			var base_basis := GridSpawnUtil.terrain_basis(
-				grounds[1] - grounds[2],
-				grounds[3] - grounds[4]
-			)
-			var base_transform := GridSpawnUtil.transform_on_terrain(
-				base_ground,
-				base_basis,
-				0.0
-			)
-			var base_result: StructuralCommandResult = (
-				_session.spawn_slice01_base_at(base_transform)
-			)
-			if not base_result.is_ok():
-				push_error(
-					"Anchored base spawn failed: %s"
-					% String(base_result.reason)
-				)
-			return
-
-		if Time.get_ticks_msec() - wait_start_ms >= BASE_SPAWN_TIMEOUT_MS:
-			push_error("Base spawn aborted: terrain SDF raycast timed out")
-			return
-
-		await get_tree().physics_frame
-
-
 func _ensure_player_viewer_for_planet() -> void:
 	var viewer := _find_voxel_viewer()
 	if viewer == null:
@@ -1403,26 +1344,6 @@ func _spawn_position_from_voxel_hit(
 	var up := _gravity_field.up_at(surface)
 	_player_spawn_pos = surface + up * MoonGeometry.SPAWN_CLEARANCE_M
 	return _player_spawn_pos
-
-
-func _ground_point_from_hit(
-	origin: Vector3,
-	direction: Vector3,
-	hit: VoxelRaycastResult
-) -> Vector3:
-	var sdf_point := VoxelSpaceUtil.raycast_hit_world_point(
-		_terrain,
-		origin,
-		direction,
-		hit
-	)
-	return VoxelSpaceUtil.resolve_ground_surface_along_ray(
-		_physics_space_state(),
-		origin,
-		direction,
-		sdf_point,
-		MoonGeometry.GROUND_PROBE_DISTANCE_M
-	)
 
 
 func _physics_space_state() -> PhysicsDirectSpaceState3D:

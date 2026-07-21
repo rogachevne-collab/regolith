@@ -8,6 +8,10 @@ const RoverModuleVisualScript := preload(
 var _world: SimulationWorld
 var _physics_projection: SimulationPhysicsProjection
 var _records_by_assembly: Dictionary = {}
+## assembly_id -> was the wheel physics ticking last frame. Used to run one
+## final visual sync when a rover park-freezes, so the wheels settle onto the
+## ground visually instead of staying stuck in their pre-settle (floating) pose.
+var _ticking_last: Dictionary = {}
 
 
 func bind(
@@ -44,8 +48,13 @@ func _process(delta: float) -> void:
 		return
 	for assembly_id: int in _records_by_assembly.keys():
 		var aid := int(assembly_id)
-		# Skip frozen / non-driven locomotives — same gate as wheel physics.
-		if not _physics_projection._should_tick_wheels(aid):
+		# Skip frozen / non-driven locomotives — same gate as wheel physics —
+		# but run one extra sync on the tick→frozen edge so the wheels land on
+		# their final grounded pose instead of freezing mid-settle (floating).
+		var ticking := _physics_projection._should_tick_wheels(aid)
+		var was_ticking := bool(_ticking_last.get(aid, false))
+		_ticking_last[aid] = ticking
+		if not ticking and not was_ticking:
 			continue
 		_sync_assembly(aid, delta)
 
@@ -144,7 +153,9 @@ func _find_wheel_visual(
 
 func _clear_assembly(assembly_id: int) -> void:
 	_records_by_assembly.erase(assembly_id)
+	_ticking_last.erase(assembly_id)
 
 
 func _clear_all() -> void:
 	_records_by_assembly.clear()
+	_ticking_last.clear()
