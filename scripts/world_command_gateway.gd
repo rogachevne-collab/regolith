@@ -70,6 +70,10 @@ var _material_field := MoonMaterialField.new()
 var _hand_drill_spawn_world := Vector3.ZERO
 var _hand_drill_last_bite_center: Variant = null
 var _hand_drill_last_bite_msec := 0
+## element_id → world-space centre of that stationary drill's last carve, so the
+## drill service can sample the material it actually cut (see
+## `stationary_drill_carve_point`).
+var _stationary_drill_carve_points: Dictionary = {}
 ## Whose commands this gateway executes. One local player today; under coop
 ## the host stamps the sending peer's uid instead.
 var actor_uid := PlayerIdentity.local_uid()
@@ -566,6 +570,26 @@ func stationary_drill_has_terrain_contact(element_id: int) -> bool:
 	return not _stationary_drill_contact(element_id).is_empty()
 
 
+## World-space point the drill's last carve worked, for material sampling. The
+## drill service calls this straight after `carve_stationary_drill`, so the
+## cached centre is the one it just cut. Falls back to a fresh contact resolve
+## when nothing is cached yet (first tick / cache miss).
+func stationary_drill_carve_point(element_id: int) -> Vector3:
+	if _stationary_drill_carve_points.has(element_id):
+		return _stationary_drill_carve_points[element_id]
+	var contact := _stationary_drill_contact(element_id)
+	if contact.is_empty():
+		return Vector3.ZERO
+	var radius := IndustryArchetypeProfile.drill_carve_radius_m()
+	var direction: Vector3 = contact["direction"]
+	return (
+		contact["point"]
+		+ direction
+		* radius
+		* IndustryArchetypeProfile.drill_carve_center_offset_factor()
+	)
+
+
 func carve_stationary_drill(element_id: int) -> float:
 	var contact := _stationary_drill_contact(element_id)
 	if contact.is_empty():
@@ -578,6 +602,10 @@ func carve_stationary_drill(element_id: int) -> float:
 		* radius
 		* IndustryArchetypeProfile.drill_carve_center_offset_factor()
 	)
+	# Remember where this bit is cutting so `stationary_drill_carve_point` can
+	# report it back for material sampling — without it the drill service reads
+	# the material at the world origin and only ever yields mare regolith.
+	_stationary_drill_carve_points[element_id] = center
 	var removed := float(
 		_excavation.excavate(
 			_voxel_tool,

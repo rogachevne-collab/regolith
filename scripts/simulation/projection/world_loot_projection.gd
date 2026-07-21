@@ -28,6 +28,14 @@ func bind(world: SimulationWorld) -> void:
 func _physics_process(_delta: float) -> void:
 	if _world == null:
 		return
+	# Piles created after bind() — every hand-drill overflow drop — only become
+	# visible if we re-sync when the set changes. bind() alone renders whatever
+	# existed at startup and nothing after, so a fresh drop never got a body.
+	# The signature ignores position (physics owns that via write-back) and only
+	# moves on add / remove / amount change, so this rebuilds just when needed.
+	var rows := _world.list_world_loot_piles()
+	if _rows_signature(rows) != _signature:
+		_sync_piles(rows)
 	_write_back_positions()
 
 

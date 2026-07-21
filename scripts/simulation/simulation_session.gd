@@ -100,7 +100,8 @@ func _bind_stationary_drill_gateway() -> void:
 		return
 	_industry_simulation.set_drill_terrain_hooks(
 		gateway.stationary_drill_has_terrain_contact,
-		gateway.carve_stationary_drill
+		gateway.carve_stationary_drill,
+		gateway.stationary_drill_carve_point
 	)
 
 
