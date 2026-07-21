@@ -1161,15 +1161,17 @@ func preview_construction(
 			"reason": &"not_ready",
 		}
 	var archetype := _get_archetype(archetype_id)
-	return _seat_ground_plan(
-		ConstructionPlacement.plan(
-			_session.world,
-			target,
-			archetype,
-			orientation_index,
-			PlayerIdentity.store_id(actor_uid),
-			held_ground_pivot,
-			held_attach_pivot
+	return _guard_placement_collision(
+		_seat_ground_plan(
+			ConstructionPlacement.plan(
+				_session.world,
+				target,
+				archetype,
+				orientation_index,
+				PlayerIdentity.store_id(actor_uid),
+				held_ground_pivot,
+				held_attach_pivot
+			)
 		)
 	)
 
@@ -1237,8 +1239,8 @@ func resolve_construction_placement(params: Dictionary) -> Dictionary:
 		"held_ground_pivot": held_ground_pivot,
 		"held_attach_pivot": held_attach_pivot,
 	})
-	result["selected_plan"] = _seat_ground_plan(
-		result.get("selected_plan", {})
+	result["selected_plan"] = _guard_placement_collision(
+		_seat_ground_plan(result.get("selected_plan", {}))
 	)
 	return result
 
@@ -1536,7 +1538,19 @@ func _weld_element(
 
 
 func _apply_place_plan(plan: Dictionary) -> Dictionary:
-	var place := plan.get("command") as PlaceElementCommand
+	# Authoritative re-check: the plan was validated at preview time, but a
+	# dynamic assembly or the player may have moved into the footprint since. The
+	# grid kernel cannot see either, so the physics guard runs once more here
+	# before the placement is committed.
+	var guarded := _guard_placement_collision(plan)
+	if not bool(guarded.get("valid", false)):
+		return _result(
+			_map_structural_reason(
+				StringName(guarded.get("reason", &"invalid_target"))
+			),
+			guarded.get("data", {})
+		)
+	var place := guarded.get("command") as PlaceElementCommand
 	# The plan was built client-side, so its owner is a suggestion. Re-stamp it:
 	# a peer must not be able to spend someone else's materials by sending a
 	# plan that names their store.
@@ -1671,6 +1685,41 @@ func _physics_space_state() -> PhysicsDirectSpaceState3D:
 	if _terrain == null or not _terrain.is_inside_tree():
 		return null
 	return _terrain.get_world_3d().direct_space_state
+
+
+## Rejects a valid placement plan when its final world pose clips another
+## construction, the player, or (for physical elements) terrain — the world-space
+## checks the grid kernel cannot make. Invalid plans and plans without physics
+## context pass through untouched.
+func _guard_placement_collision(plan: Dictionary) -> Dictionary:
+	if not bool(plan.get("valid", false)):
+		return plan
+	var space_state := _physics_space_state()
+	if space_state == null:
+		return plan
+	var archetype := plan.get("archetype") as ElementArchetype
+	var command := plan.get("command") as PlaceElementCommand
+	if archetype == null or command == null:
+		return plan
+	var root: Transform3D = plan.get(
+		"preview_root_transform",
+		plan.get("assembly_world_transform", Transform3D.IDENTITY)
+	)
+	var reason := ConstructionPlacementCollision.evaluate(
+		space_state,
+		archetype,
+		root,
+		command.origin_cell,
+		command.orientation_index,
+		command.assembly_id,
+		_terrain
+	)
+	if reason == &"":
+		return plan
+	var blocked := plan.duplicate()
+	blocked["valid"] = false
+	blocked["reason"] = reason
+	return blocked
 
 
 func _get_archetype(archetype_id: String) -> ElementArchetype:
@@ -2122,6 +2171,12 @@ func _map_structural_reason(reason: StringName) -> StringName:
 			return &"invalid_target"
 		StructuralCommandResult.REASON_INVALID_TRANSFORM:
 			return &"invalid_target"
+		ConstructionPlacementCollision.REASON_STRUCTURE_OVERLAP:
+			return &"structure_overlap"
+		ConstructionPlacementCollision.REASON_TERRAIN_OVERLAP:
+			return &"terrain_overlap"
+		ConstructionPlacementCollision.REASON_PLAYER_BLOCKED:
+			return &"player_blocked"
 		_:
 			return reason
 

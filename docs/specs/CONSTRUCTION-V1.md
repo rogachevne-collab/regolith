@@ -102,6 +102,34 @@ assembly никогда не получает anchor joint** от установ
 ровере не приваривает транспорт к земле и не даёт reconcile-churn revision'ов
 на каждую правку terrain.
 
+### World-space placement guard
+
+Grid-checks (§ выше) видят только occupancy target Assembly — они не знают о
+других постройках, о ландшафте и об игроке. Поэтому поверх kernel-валидации
+работает **world-space guard** (`ConstructionPlacementCollision`,
+`WorldCommandGateway._guard_placement_collision`): для финальной мировой позы
+плана он делает `intersect_shape` по каждому collider'у (shape ужат на
+`OVERLAP_MARGIN_M`, чтобы касание вплотную не считалось пересечением) и
+отклоняет постановку по правилам Space Engineers:
+
+- **другая конструкция** (static или dynamic, слой `assembly`, `assembly_id` ≠
+  target) — запрещено для **любого** блока (`structure_overlap`);
+- **игрок** (группа `player`, слой 4) — запрещено для любого блока
+  (`player_blocked`); нельзя поставить блок в себя;
+- **ландшафт** (слой terrain) — запрещено только для **физических** элементов
+  (`is_physical_element` = `structural_surface_policy != full_surface`: бур,
+  поршень, ротор, петля, колесо, машины). Плоские структурные блоки
+  (`full_surface`: frame/beam/foundation/pipe) по-прежнему **могут** пересекать
+  грунт — это by design.
+
+Assembly, к которой крепимся (`target_assembly_id`), исключается: касание
+опоры ожидаемо, а overlap внутри неё уже ловит kernel. Guard запускается в
+`resolve_construction_placement`/`preview_construction` (красный ghost + запрет
+клика) и повторно в `_apply_place_plan` перед коммитом — динамическая Assembly
+или игрок могли зайти в footprint между preview и кликом, а grid kernel их не
+видит. Guard не мутирует simulation и не является источником collision-геометрии
+(та берётся из archetype collider'ов через `GridPoseUtil`).
+
 ### Масштаб production archetypes
 
 Все размеры заданы в общей grid 0.5 m. Footprint определяет occupancy; один
