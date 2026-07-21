@@ -22,6 +22,7 @@ KERNEL=(
 	test_construction_damage
 	test_industry_ports
 	test_industry_v1
+	test_dozer_blade
 	test_game_balance
 	test_terrain_materials
 	test_player_inventory_hotbar

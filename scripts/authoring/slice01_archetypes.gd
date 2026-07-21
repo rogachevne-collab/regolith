@@ -25,6 +25,7 @@ const REQUIRED_IDS: PackedStringArray = [
 	"power_distributor",
 	"power_battery",
 	"stationary_drill",
+	"dozer_blade",
 	"cargo_store",
 	"cargo_pipe",
 	"processor",
@@ -90,6 +91,10 @@ static func power_source() -> ElementArchetype:
 
 static func stationary_drill() -> ElementArchetype:
 	return load_required("stationary_drill")
+
+
+static func dozer_blade() -> ElementArchetype:
+	return load_required("dozer_blade")
 
 
 static func cargo_store() -> ElementArchetype:

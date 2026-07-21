@@ -74,6 +74,9 @@ var _hand_drill_last_bite_msec := 0
 ## drill service can sample the material it actually cut (see
 ## `stationary_drill_carve_point`).
 var _stationary_drill_carve_points: Dictionary = {}
+## element_id → world-space point a dozer blade last worked loose material at, so
+## the blade service can sample the material it collected.
+var _dozer_blade_contact_points: Dictionary = {}
 ## Whose commands this gateway executes. One local player today; under coop
 ## the host stamps the sending peer's uid instead.
 var actor_uid := PlayerIdentity.local_uid()
@@ -773,6 +776,110 @@ func _stationary_drill_sdf_contact_along_axis(
 		):
 			return {"point": sample, "direction": direction}
 	return {}
+
+
+# --- Dozer blade (mounted) terrain hooks -------------------------------------
+#
+# A dozer blade works loose (granular) material only — it never touches the SDF
+# rock. `DozerBladeService` runs in the simulation (no scene tree) and reaches
+# the granular world through these gateway callables, the same shape as the
+# stationary drill's carve hooks. Contact is probed against loose material in
+# front of the blade's working edge (local +X, like the drill).
+
+
+func _granular_world() -> Node:
+	return get_tree().get_first_node_in_group(&"granular_world")
+
+
+func dozer_blade_has_terrain_contact(element_id: int) -> bool:
+	return not _dozer_blade_contact(element_id).is_empty()
+
+
+## World point the blade last worked, for material sampling. Falls back to a
+## fresh contact resolve when nothing is cached (first tick / cache miss).
+func dozer_blade_contact_point(element_id: int) -> Vector3:
+	if _dozer_blade_contact_points.has(element_id):
+		return _dozer_blade_contact_points[element_id]
+	var contact := _dozer_blade_contact(element_id)
+	if contact.is_empty():
+		return Vector3.ZERO
+	return contact["point"]
+
+
+## Load up to `budget_m3` of loose material under the blade into the tool,
+## returning the volume actually taken. The world loses that volume here; the
+## service credits it as yield.
+func dozer_blade_load(element_id: int, budget_m3: float) -> float:
+	var granular := _granular_world()
+	if granular == null or not granular.has_method(&"scoop_spoil"):
+		return 0.0
+	var contact := _dozer_blade_contact(element_id)
+	if contact.is_empty():
+		return 0.0
+	var point: Vector3 = contact["point"]
+	_dozer_blade_contact_points[element_id] = point
+	var radius := IndustryArchetypeProfile.dozer_blade_push_radius_m()
+	return float(
+		granular.call(&"scoop_spoil", point, radius, maxf(budget_m3, 0.0))
+	)
+
+
+## Shove loose material aside without collecting any (buffer full). Returns the
+## volume moved; it stays in the world.
+func dozer_blade_plow(element_id: int) -> float:
+	var granular := _granular_world()
+	if granular == null or not granular.has_method(&"plow_spoil"):
+		return 0.0
+	var contact := _dozer_blade_contact(element_id)
+	if contact.is_empty():
+		return 0.0
+	var point: Vector3 = contact["point"]
+	_dozer_blade_contact_points[element_id] = point
+	var radius := IndustryArchetypeProfile.dozer_blade_push_radius_m()
+	var share := IndustryArchetypeProfile.dozer_blade_push_share()
+	return float(granular.call(&"plow_spoil", point, radius, share))
+
+
+func _dozer_blade_contact(element_id: int) -> Dictionary:
+	if _session == null or _session.world == null:
+		return {}
+	var element := _session.world.get_element(element_id)
+	if element == null or element.archetype_id != "dozer_blade":
+		return {}
+	var granular := _granular_world()
+	if granular == null or not granular.has_method(&"raycast_dust"):
+		return {}
+	var working_frame := _stationary_drill_working_frame(element)
+	if working_frame == Transform3D.IDENTITY:
+		return {}
+	# Authored working face is local +X — presentation and the drill share it.
+	var local_direction := OrientationUtil.rotate_direction(
+		Vector3i.RIGHT,
+		element.orientation_index
+	)
+	var direction := (
+		working_frame.basis * Vector3(local_direction)
+	).normalized()
+	var local_tip := (
+		GridPoseUtil.oriented_footprint_pivot(
+			element.get_archetype(),
+			element.origin_cell,
+			element.orientation_index
+		)
+		+ Vector3(local_direction)
+		* IndustryArchetypeProfile.dozer_blade_head_offset_m()
+	)
+	var tip := working_frame * local_tip
+	var reach := IndustryArchetypeProfile.dozer_blade_contact_reach_m()
+	var hit: Dictionary = granular.call(
+		&"raycast_dust",
+		tip - direction * 0.1,
+		direction,
+		reach + 0.1
+	)
+	if hit.is_empty():
+		return {}
+	return {"point": hit["point"], "direction": direction}
 
 
 func get_voxel_tool() -> VoxelTool:

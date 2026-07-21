@@ -657,6 +657,23 @@ func scoop_spoil(
 	return 0.0
 
 
+## Shove loose material aside at a world point without collecting any — a plow
+## blade parting a heap the way `dig_spoil` does, but with nothing taken as
+## yield. Returns the volume moved. Used by a mounted dozer blade whose buffer is
+## full: material stays in the world, just relocated.
+func plow_spoil(world_point: Vector3, radius_m: float, share: float) -> float:
+	for index in range(_regions.size() - 1, -1, -1):
+		var region: GranularVoxelRegion = _regions[index]["region"]
+		if not region.covers(world_point):
+			continue
+		var pushed := region.push_at(world_point, radius_m, share)
+		if pushed <= 0.0:
+			continue
+		_touch(index)
+		return pushed
+	return 0.0
+
+
 ## Put a carried load back into the world. Returns what the field accepted;
 ## anything short of that is still in the tool and must stay there, or the
 ## volume is gone with nothing to show for it.
