@@ -134,6 +134,51 @@ func _run_test() -> void:
 	_tools._physics_process(0.016)
 	await get_tree().process_frame
 
+	# Drill ПКМ: excavation mode carves the same voxel target but discards yield.
+	_completed_commands = 0
+	_last_command_kind = StringName()
+	_last_command_parameters = {}
+	_query.current_hit = InteractionHit.create(
+		Vector3(1.0, 0.0, 0.0),
+		Vector3.UP,
+		1.0,
+		InteractionHit.KIND_VOXEL
+	)
+	Input.action_press("tool_secondary")
+	_tools._physics_process(0.016)
+	await get_tree().process_frame
+	if _completed_commands != 1 or _last_command_kind != &"voxel_remove":
+		_fail("drill secondary must dispatch voxel_remove")
+		return
+	if not bool(_last_command_parameters.get("discard_yield", false)):
+		_fail("drill secondary must discard yield")
+		return
+	Input.action_release("tool_secondary")
+	_tools._physics_process(0.016)
+	await get_tree().process_frame
+
+	# Excavation refuses to damage built elements — that stays a primary job.
+	_completed_commands = 0
+	_last_command_kind = StringName()
+	_query.current_hit = InteractionHit.create(
+		Vector3(1.0, 0.0, 0.0),
+		Vector3.UP,
+		1.0,
+		InteractionHit.KIND_SIMULATION_ELEMENT,
+		null,
+		"element_1",
+		{"archetype_id": "frame", "status_reason": &"ok"}
+	)
+	Input.action_press("tool_secondary")
+	_tools._physics_process(0.016)
+	await get_tree().process_frame
+	if _completed_commands != 0:
+		_fail("drill secondary must not act on built elements")
+		return
+	Input.action_release("tool_secondary")
+	_tools._physics_process(0.016)
+	await get_tree().process_frame
+
 	_completed_commands = 0
 	_last_command_kind = StringName()
 	_last_command_parameters = {}

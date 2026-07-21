@@ -526,6 +526,8 @@
       "loot_scale_max": 1.35,
       "loot_merge_contact_epsilon_m": 0.02,
       "interval_s": 0.15,
+      "extract_interval_s": 0.09,
+      "extract_carve_radius_m": 1.35,
       "path_max_span_m": 1.4,
       "path_max_gap_ms": 250,
       "loot_despawn_s": 600.0

@@ -334,9 +334,13 @@ func _compute_hold_lmb() -> bool:
 		return false
 	if not _gameplay_input_enabled():
 		return false
+	# Both buttons drive the drill: LMB mines, RMB is the excavation mode. The
+	# bit spins and the impact feedback plays for either.
 	return (
 		Input.is_action_pressed(&"tool_primary")
 		or Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+		or Input.is_action_pressed(&"tool_secondary")
+		or Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)
 	)
 
 

@@ -225,7 +225,8 @@ Gameplay-код не читает физические keycode или mouse butt
 - Слоты **бура**, **сварки** и **болгарки** выходят из placement; preview скрыт.
 - `tool_primary` (ЛКМ): бур/болгарка — воздействие по цели; блок — установка;
   сварка — сварка каркаса и ремонт повреждённого элемента.
-- `tool_secondary` (ПКМ/F): в v1 не используется для строительства.
+- `tool_secondary` (ПКМ/F): для строительства не используется; у бура включает
+  режим выемки породы (см. «Drill excavation routing»), у совка — высыпает груз.
 
 ### Orientation
 
@@ -249,6 +250,23 @@ Gameplay-код не читает физические keycode или mouse butt
   eye-to-floor плюс рабочую глубину, чтобы бурение под ногами срабатывало
   надёжно и продолжало доставать по мере углубления ямы (болгарка остаётся 2.2);
 - урон по блоку за tick: `DRILL_DPS * interval` (настраиваемая константа, v0: 5 integrity/s).
+
+### Drill excavation routing (ПКМ)
+
+При удержании **ПКМ** с выбранным буром — режим выемки породы: убираем материал
+активнее, но ничего не добываем (как grind-mode в Space Engineers).
+
+- цель `voxel` / `granular` → `voxel_remove` с параметром `discard_yield = true`;
+  порода убирается, но `_route_hand_drill_yield` не вызывается — в стор/лут ничего
+  не попадает;
+- цель `simulation_element` и прочие — action не выполняется (выемка не ломает
+  построенные элементы; это остаётся работой ЛКМ бура/болгарки);
+- быстрее mining-tick: `interval = hand_drill.extract_interval_s` (v0: 0.09 против
+  0.15 у ЛКМ) и чуть шире bite: `radius = hand_drill.extract_carve_radius_m`
+  (v0: 1.35 против 1.0);
+- `max_range = 2.5` — тот же `hand_drill_reach_m`, что и у mining-режима;
+- continuous, следует live aim, как и удержание ЛКМ буром;
+- бит крутится и impact-VFX/звук играют так же, как при ЛКМ.
 
 ### Grinder command routing
 
