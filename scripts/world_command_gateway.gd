@@ -47,6 +47,12 @@ signal terrain_modified(
 	dig_radius_m: float,
 	dig_direction: Vector3
 )
+## Material was *added* to the rock SDF — sintered loose material becoming
+## ground. Deliberately separate from `terrain_modified`, which the granular
+## worlds turn into fresh spoil: routing a sinter through that signal would turn
+## the deposited rock straight back into dust, forever. Only the dig-persistence
+## listener (`bootstrap.gd`) needs this, so the new solid is saved to SQLite.
+signal terrain_deposited(deposit_center: Vector3, deposit_radius_m: float)
 
 var _terrain: Node3D
 var _placed_blocks: Node
@@ -529,6 +535,17 @@ func _dig_radius_from_request(request: Dictionary) -> float:
 			return float(radii[radii.size() - 1])
 		_:
 			return float(request.get("radius", 0.0))
+
+
+## Announce that loose material was sintered into the rock SDF, so the dig
+## stream is marked dirty and the new solid persists. Does *not* touch
+## `terrain_modified` — see that signal's note. The granular world writes the
+## SDF itself (it owns the tool); this is only the persistence hand-off.
+func mark_terrain_deposited(
+	deposit_center: Vector3 = Vector3.ZERO,
+	deposit_radius_m: float = 0.0
+) -> void:
+	terrain_deposited.emit(deposit_center, deposit_radius_m)
 
 
 func _notify_terrain_modified(

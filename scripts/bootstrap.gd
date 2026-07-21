@@ -141,6 +141,10 @@ func _ready() -> void:
 	var gateway := get_node_or_null("WorldCommandGateway")
 	if gateway != null and gateway.has_signal("terrain_modified"):
 		gateway.terrain_modified.connect(_on_terrain_modified)
+	# Sintered loose material becomes rock — mark the dig stream dirty so the
+	# new solid persists to SQLite exactly like a carve does.
+	if gateway != null and gateway.has_signal("terrain_deposited"):
+		gateway.terrain_deposited.connect(_on_terrain_deposited)
 	_player_spawn_hint = _player.global_position
 	if _player_spawn_hint.length_squared() <= 0.000001:
 		_player_spawn_hint = Vector3.UP
@@ -508,6 +512,15 @@ func _persist_world_snapshot_only(force := false) -> void:
 		return
 	if WorldPersistence.save(_session.world, _player):
 		_last_save_ms = now_ms
+	_persist_granular()
+
+
+## Save the un-sintered loose material beside the world snapshot, on the same
+## cadence. Sintered material is already rock and saves with the terrain.
+func _persist_granular() -> void:
+	var granular := get_node_or_null("GranularVoxelWorld") as GranularVoxelWorld
+	if granular != null:
+		granular.save_field(MoonGeometry.granular_save_path())
 
 
 func _request_quit_after_persist() -> void:
@@ -564,6 +577,17 @@ func _on_terrain_modified(
 	_dig_center: Vector3,
 	_dig_radius_m: float,
 	_dig_direction: Vector3
+) -> void:
+	_digs_dirty = true
+	_dig_persist_cooldown_s = DIG_PERSIST_DEBOUNCE_S
+
+
+## Sintered granular material wrote solid into the rock SDF. Same durability
+## path as a carve — the plugin already marked the touched blocks modified, this
+## just tells the autosave loop to flush them.
+func _on_terrain_deposited(
+	_deposit_center: Vector3,
+	_deposit_radius_m: float
 ) -> void:
 	_digs_dirty = true
 	_dig_persist_cooldown_s = DIG_PERSIST_DEBOUNCE_S
@@ -886,6 +910,11 @@ func _finalize_loaded_world_after_entry() -> void:
 		tool,
 		_physics_space_state()
 	)
+	# Un-sintered loose material from last session, back on top of the terrain it
+	# was resting on. Only on a loaded world — a fresh one has no heaps to place.
+	var granular := get_node_or_null("GranularVoxelWorld") as GranularVoxelWorld
+	if granular != null:
+		granular.load_field(MoonGeometry.granular_save_path())
 
 
 func _place_when_ground_exists() -> void:

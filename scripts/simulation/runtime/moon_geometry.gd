@@ -98,6 +98,10 @@ static func world_save_path() -> String:
 	return MoonTerrainParams.world_save_path()
 
 
+static func granular_save_path() -> String:
+	return MoonTerrainParams.granular_save_path()
+
+
 static func radius_voxels() -> float:
 	return active_surface_radius_m() / VOXEL_SCALE
 

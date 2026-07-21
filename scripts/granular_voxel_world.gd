@@ -312,9 +312,18 @@ const SPOIL_MATERIAL_PATH := "res://resources/spoil_material_grain.tres"
 ## gateway inheriting a second terrain it never asked for.
 @export var enabled := false
 
+## How long a region must lie fully at rest before it sinters into rock. The
+## field measures rest as `is_settled()` (nothing moving, nothing queued); any
+## deposit, dig, push or carve wakes it and the region's dwell resets to zero in
+## the next `_process`. Fifteen minutes is "the player left this face and is not
+## coming back to work it", not "turned away for a moment" — a heap still being
+## dug never sits still long enough to cross it. See `docs/specs/GRANULAR-V2.md`.
+const SINTER_DWELL_S := 900.0
+
 var _terrain: Node3D
 var _voxel_tool: VoxelTool
 var _gravity_field: GravityField
+var _gateway: WorldCommandGateway
 var _sweep_debt := 0.0
 var _stream: GranularStreamVfx
 var _stream_left := 0.0
@@ -342,6 +351,7 @@ func _ready() -> void:
 		)
 		set_process(false)
 		return
+	_gateway = gateway
 	add_to_group(GROUP_NAME)
 	gateway.terrain_modified.connect(_on_terrain_modified)
 	call_deferred("_bind_gravity_field")
@@ -385,6 +395,28 @@ func _process(delta: float) -> void:
 				break
 			region.field.step(CELL_BUDGET_PER_SWEEP)
 	_prof_sweep_us += Time.get_ticks_usec() - t_sweep
+	# Rest turns into ground. A region at rest for `SINTER_DWELL_S` is old ground:
+	# sinter it, which also empties the field so it stops costing sweeps. Any
+	# disturbance dropped `is_settled` and reset the clock in the `else` below.
+	# An empty region that sinters nothing goes dormant (`-INF`) rather than
+	# re-scanning every dwell; a fresh deposit wakes the field and the `else`
+	# restores its clock to zero.
+	for entry: Dictionary in _regions:
+		var dwell_region: GranularVoxelRegion = entry["region"]
+		if dwell_region.field.is_settled():
+			entry["settled_s"] = float(entry["settled_s"]) + delta
+			if float(entry["settled_s"]) >= SINTER_DWELL_S:
+				var moved := _sinter_region(dwell_region)
+				entry["settled_s"] = 0.0 if moved > 0.0 else -INF
+				# The heap is rock now and the field is empty, but the field just
+				# stopped stepping — without one forced flush the granular view
+				# keeps drawing the old mesh over the fresh rock. (Eviction frees
+				# the view outright, so it needs no such flush.)
+				if moved > 0.0:
+					var sintered_view: GranularVoxelRegionView = entry["view"]
+					sintered_view.flush()
+		else:
+			entry["settled_s"] = 0.0
 	var t_flush := Time.get_ticks_usec()
 	if should_flush:
 		for entry: Dictionary in _regions:
@@ -689,26 +721,55 @@ func _create_region(dig_center: Vector3) -> int:
 		if _gravity_field != null
 		else GravityField.resolve_up(self, dig_center)
 	)
-	var centre := dig_center + up * REGION_LIFT_M
+	return _instantiate_region(
+		dig_center + up * REGION_LIFT_M, up, REGION_CELLS, REGION_CELL_SIZE_M
+	)
+
+
+## Build a region at an already-lifted frame centre and attach its view. Shared
+## by fresh cuts (`_create_region`, which adds the lift) and save restore (which
+## has the stored centre and grid outright). Returns the new region's index.
+func _instantiate_region(
+	centre: Vector3, up: Vector3, cells: int, cell_size: float
+) -> int:
 	var region := GranularVoxelRegion.create(
-		centre, up, _terrain, _voxel_tool, REGION_CELLS, REGION_CELL_SIZE_M
+		centre, up, _terrain, _voxel_tool, cells, cell_size
 	)
 	var view := GranularVoxelRegionView.new()
 	add_child(view)
 	view.setup(region, _make_spoil_material())
-	_regions.append({"region": region, "view": view})
+	_regions.append({"region": region, "view": view, "settled_s": 0.0})
 	while _regions.size() > MAX_REGIONS:
 		var evicted: Dictionary = _regions.pop_front()
-		# Whatever the retired region still held goes with it. That is the one
-		# place material genuinely vanishes from the world, so count it here
-		# rather than let a heap quietly disappear when the player walks back.
+		# The retired region used to drop whatever it still held — walk back and
+		# the heap was gone. Now it sinters into rock first: the material becomes
+		# ground (which persists and can be dug back out) instead of vanishing.
+		# Sooner than the fifteen-minute dwell, but the trigger is the same, and
+		# a heap the player left far enough behind to push a region off the end
+		# of the list has, for its purposes, been abandoned.
 		var retired: GranularVoxelRegion = evicted["region"]
 		if retired != null and retired.field != null:
-			_spoil_dropped_m3 += retired.field.total_volume_m3()
+			_sinter_region(retired)
 		var oldest: GranularVoxelRegionView = evicted["view"]
 		if is_instance_valid(oldest):
 			oldest.queue_free()
 	return _regions.size() - 1
+
+
+## Bake a region's settled material into the world rock and, if anything landed,
+## tell the dig-persistence path so the new solid saves. Never routed through
+## `terrain_modified` — that would turn the deposited rock back into spoil.
+## Returns the volume sintered, so the caller can tell an emptied region from one
+## with nothing to give.
+func _sinter_region(region: GranularVoxelRegion) -> float:
+	var moved := region.sinter_into_terrain()
+	if moved <= 0.0 or _gateway == null:
+		return moved
+	_gateway.mark_terrain_deposited(
+		region.anchor.center_world,
+		float(region.field.size.x) * region.field.cell_size * 0.5
+	)
+	return moved
 
 
 ## Volume that never made it into the field: cuts with no region to take them,
@@ -745,3 +806,118 @@ func _touch(index: int) -> void:
 	if index < 0 or index >= _regions.size() - 1:
 		return
 	_regions.append(_regions.pop_at(index))
+
+
+# --- Persistence of the live field -------------------------------------------
+#
+# Sintered material is rock and rides the terrain's own SQLite save. What does
+# not persist for free is the *un-sintered* field — a fresh heap, or anything in
+# the fifteen minutes before it slews into ground. That is what this saves, so a
+# heap survives a quit as the field it still is. See `docs/specs/GRANULAR-V2.md`.
+
+const FIELD_SAVE_VERSION := 1
+
+
+## Sparse snapshot of every region that still holds loose material: the frame
+## needed to rebuild it (centre, up, grid) and only the occupied cells. A
+## settled 20 m³ heap is ~1280 cells — kilobytes — where the full grid would be
+## megabytes, so empty space is never written.
+func capture_field_snapshot() -> Dictionary:
+	var regions_out: Array = []
+	for entry: Dictionary in _regions:
+		var region: GranularVoxelRegion = entry["region"]
+		var field := region.field
+		# One bulk read (native, cheap) then a sparse sift. If this shows up in
+		# the autosave profile, the place to cache is here — skip the sift for a
+		# region that is settled and untouched since its last capture.
+		var mass := field.copy_mass_box(Vector3i.ZERO, field.size)
+		var idx := PackedInt32Array()
+		var val := PackedFloat32Array()
+		for i in mass.size():
+			if mass[i] > 0.0:
+				idx.append(i)
+				val.append(mass[i])
+		if idx.is_empty():
+			continue
+		regions_out.append({
+			"center": region.anchor.center_world,
+			"up": region.up(),
+			"cells": field.size.x,
+			"cell_size": field.cell_size,
+			"idx": idx,
+			"val": val,
+		})
+	return {"version": FIELD_SAVE_VERSION, "regions": regions_out}
+
+
+## Rebuild regions from a snapshot on top of the (already persisted) terrain.
+## Material is re-deposited into the field, so it re-settles from the saved mass
+## rather than being frozen — a settled heap lands back at the same shape.
+## Returns how many regions were restored.
+func restore_field_snapshot(data: Dictionary) -> int:
+	if int(data.get("version", 0)) != FIELD_SAVE_VERSION:
+		return 0
+	var regions_in: Array = data.get("regions", [])
+	# Never exceed the live cap; keep the most recent, which are last.
+	var start := maxi(regions_in.size() - MAX_REGIONS, 0)
+	var restored := 0
+	for r in range(start, regions_in.size()):
+		var rd: Dictionary = regions_in[r]
+		var cells := int(rd.get("cells", REGION_CELLS))
+		var cell_size := float(rd.get("cell_size", REGION_CELL_SIZE_M))
+		var center: Vector3 = rd.get("center", Vector3.ZERO)
+		var up: Vector3 = rd.get("up", Vector3.UP)
+		var index := _instantiate_region(center, up, cells, cell_size)
+		var region: GranularVoxelRegion = _regions[index]["region"]
+		var field := region.field
+		var cell_vol := field.cell_volume_m3()
+		var plane := cells * cells
+		var idx: PackedInt32Array = rd.get("idx", PackedInt32Array())
+		var val: PackedFloat32Array = rd.get("val", PackedFloat32Array())
+		for k in idx.size():
+			var i := idx[k]
+			var y := i / plane
+			var rem := i - y * plane
+			var z := rem / cells
+			var x := rem - z * cells
+			field.deposit(x, y, z, val[k] * cell_vol)
+		restored += 1
+	return restored
+
+
+## Write the live field beside the world save. An empty world drops any stale
+## sidecar rather than leave one that would resurrect vanished heaps. Returns
+## whether the save is now consistent on disk (true also when there was nothing
+## to write).
+func save_field(path: String) -> bool:
+	if not enabled:
+		return true
+	var snap := capture_field_snapshot()
+	if (snap["regions"] as Array).is_empty():
+		if FileAccess.file_exists(path):
+			DirAccess.remove_absolute(path)
+		return true
+	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file == null:
+		push_warning("GranularVoxelWorld: cannot write field save %s" % path)
+		return false
+	file.store_var(snap, false)
+	file.close()
+	return true
+
+
+## Load the live field from a sidecar, if one exists. Returns the number of
+## regions restored (0 when there is no save, it is unreadable, or the world is
+## off).
+func load_field(path: String) -> int:
+	if not enabled or _voxel_tool == null or not FileAccess.file_exists(path):
+		return 0
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return 0
+	var data: Variant = file.get_var(false)
+	file.close()
+	if data is Dictionary:
+		return restore_field_snapshot(data)
+	return 0
