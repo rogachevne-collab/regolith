@@ -77,3 +77,10 @@ static func stream_database_path() -> String:
 
 static func world_save_path() -> String:
 	return "%s/world_save.json" % stream_directory()
+
+
+## Live granular field sidecar — the loose material that has not yet sintered
+## into rock. Sits beside the world save and the dig SQLite so all three share a
+## generation directory and are wiped together when the generator version bumps.
+static func granular_save_path() -> String:
+	return "%s/granular_field.dat" % stream_directory()

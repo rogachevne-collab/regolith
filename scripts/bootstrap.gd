@@ -506,6 +506,15 @@ func _persist_world_snapshot_only(force := false) -> void:
 		return
 	if WorldPersistence.save(_session.world, _player):
 		_last_save_ms = now_ms
+	_persist_granular()
+
+
+## Save the un-sintered loose material beside the world snapshot, on the same
+## cadence. Sintered material is already rock and saves with the terrain.
+func _persist_granular() -> void:
+	var granular := get_node_or_null("GranularVoxelWorld") as GranularVoxelWorld
+	if granular != null:
+		granular.save_field(MoonGeometry.granular_save_path())
 
 
 func _request_quit_after_persist() -> void:
@@ -893,6 +902,11 @@ func _finalize_loaded_world_after_entry() -> void:
 		tool,
 		_physics_space_state()
 	)
+	# Un-sintered loose material from last session, back on top of the terrain it
+	# was resting on. Only on a loaded world — a fresh one has no heaps to place.
+	var granular := get_node_or_null("GranularVoxelWorld") as GranularVoxelWorld
+	if granular != null:
+		granular.load_field(MoonGeometry.granular_save_path())
 
 
 func _place_when_ground_exists() -> void:
