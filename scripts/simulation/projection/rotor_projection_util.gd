@@ -36,8 +36,17 @@ static func configure_hinge_joint(joint: Generic6DOFJoint3D) -> void:
 	update_angular_motor(joint, "y", 0.0, 0.0)
 
 
+## Godot Generic6DOFJoint3D angular motors are clockwise when looking along
+## the axis; Jolt's native CCW is flipped in the engine to match. Our sim
+## angles / reconstruct use the right-hand rule (CCW), so the velocity written
+## here is negated. See modules/jolt_physics/.../jolt_generic_6dof_joint_3d.cpp
+## `_update_motor_velocity` ("Jolt is CCW but Godot is CW").
+const GODOT_ANGULAR_MOTOR_SIGN := -1.0
+
+
 ## Solver-side angular drive (rotor spins about joint Y, hinge bends about
 ## joint X). Cheap to call per tick — never touches limits or springs.
+## `target_velocity_rad_s` is right-hand / sim-space.
 static func update_angular_motor(
 	joint: Generic6DOFJoint3D,
 	axis_name: String,
@@ -47,7 +56,7 @@ static func update_angular_motor(
 	joint.set("angular_motor_%s/enabled" % axis_name, true)
 	joint.set(
 		"angular_motor_%s/target_velocity" % axis_name,
-		target_velocity_rad_s
+		GODOT_ANGULAR_MOTOR_SIGN * target_velocity_rad_s
 	)
 	joint.set(
 		"angular_motor_%s/force_limit" % axis_name,
@@ -67,6 +76,29 @@ static func drive_velocity_rad_s(
 	if motor.control_mode == SimulationMotorState.ControlMode.STOP:
 		return 0.0
 	return desired_angular_velocity_rad_s(motor)
+
+
+## Solver-motor inputs for the physics tick. Bounded hinges taper the
+## torque limit (and zero velocity at the stop) so full force_limit never
+## fights Jolt hard angle constraints — the 7dc1046 anti-explosion rule,
+## kept after the 245e434 move from apply_torque to angular_motor.
+## Pass the freshly measured home-relative angle as `observed_override_m`.
+static func solver_angular_drive(
+	motor: SimulationMotorState,
+	powered: bool,
+	observed_override_m: float = NAN
+) -> Dictionary:
+	var velocity := drive_velocity_rad_s(motor, powered)
+	if motor == null:
+		return {"velocity_rad_s": 0.0, "torque_limit_nm": 0.0}
+	var taper := near_limit_torque_scale(motor, observed_override_m)
+	var limit_nm := motor.force_limit_n * taper if powered else 0.0
+	if taper <= 0.0:
+		velocity = 0.0
+	return {
+		"velocity_rad_s": velocity,
+		"torque_limit_nm": limit_nm,
+	}
 
 
 ## Estimated applied torque for the status machine / overlay: gravity hold
@@ -184,11 +216,21 @@ static func desired_angular_velocity_rad_s(motor: SimulationMotorState) -> float
 	return 0.0
 
 
-static func near_limit_torque_scale(motor: SimulationMotorState) -> float:
+## `observed_override_m` lets the physics tick taper against the freshly
+## measured angle before observation sync (NAN → motor.observed_position_m).
+static func near_limit_torque_scale(
+	motor: SimulationMotorState,
+	observed_override_m: float = NAN
+) -> float:
 	if motor == null or motor.continuous or not motor.angular:
 		return 1.0
 	if motor.control_mode == SimulationMotorState.ControlMode.STOP:
 		return 1.0
+	var position := (
+		observed_override_m
+		if not is_nan(observed_override_m)
+		else motor.observed_position_m
+	)
 	var toward_upper := false
 	var toward_lower := false
 	match motor.control_mode:
@@ -196,17 +238,21 @@ static func near_limit_torque_scale(motor: SimulationMotorState) -> float:
 			toward_upper = motor.target_velocity_mps > 0.0001
 			toward_lower = motor.target_velocity_mps < -0.0001
 		SimulationMotorState.ControlMode.POSITION:
-			var error := motor.position_error()
+			var error := (
+				motor.clamp_target_position() - position
+				if not is_nan(observed_override_m)
+				else motor.position_error()
+			)
 			toward_upper = error > 0.0001
 			toward_lower = error < -0.0001
 	if toward_upper:
-		var room := motor.upper_limit_m - motor.observed_position_m
+		var room := motor.upper_limit_m - position
 		if room <= 0.0:
 			return 0.0
 		if room < LIMIT_TAPER_RAD:
 			return clampf(room / LIMIT_TAPER_RAD, 0.0, 1.0)
 	if toward_lower:
-		var room_lower := motor.observed_position_m - motor.lower_limit_m
+		var room_lower := position - motor.lower_limit_m
 		if room_lower <= 0.0:
 			return 0.0
 		if room_lower < LIMIT_TAPER_RAD:

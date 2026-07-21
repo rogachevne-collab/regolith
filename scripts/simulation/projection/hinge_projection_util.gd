@@ -1,10 +1,10 @@
 class_name HingeProjectionUtil
 extends RefCounted
-## Hinge (ServoHinge) constraint projection. Motor math is shared with the
-## rotor (RotorProjectionUtil.compute_motor_torque_scalar handles the
-## non-continuous position error transparently); this util owns the joint
-## frame (bend axis on local X — Jolt's twist axis, which supports the
-## asymmetric angle limits) and the hard angular stops.
+## Hinge (ServoHinge) constraint projection. Drive goes through the shared
+## solver angular motor (`RotorProjectionUtil.solver_angular_drive` +
+## near-limit taper); this util owns the joint frame (bend axis on local X
+## — Jolt's twist axis, which supports the asymmetric angle limits) and
+## the hard angular stops.
 ##
 ## Jolt measures angular X from the relative pose at joint creation. Motor
 ## observed angle is home-relative. `angle_offset_rad` is the measured angle
@@ -31,17 +31,19 @@ static func basis_with_x_axis(axis: Vector3) -> Basis:
 	return Basis(x_axis, y_axis, z_axis)
 
 
-## Convert home-relative motor limits into Jolt rest-relative limits.
+## Home-relative RH motor limits → Godot Generic6DOFJoint3D angular limit
+## pair (CW API). Engine then flips again into Jolt CCW, so the physical
+## hard stops match right-hand motor angles — including asymmetric bounds.
+## `angle_offset_rad` is the RH measured angle at constraint create.
 static func jolt_angle_limits(
 	motor: SimulationMotorState,
 	angle_offset_rad: float
 ) -> Vector2:
 	if motor == null:
 		return Vector2.ZERO
-	return Vector2(
-		motor.lower_limit_m - angle_offset_rad,
-		motor.upper_limit_m - angle_offset_rad
-	)
+	var rh_lower := motor.lower_limit_m - angle_offset_rad
+	var rh_upper := motor.upper_limit_m - angle_offset_rad
+	return Vector2(-rh_upper, -rh_lower)
 
 
 ## Full joint setup (locked linear + swing, limited twist). Call once when
