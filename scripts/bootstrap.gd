@@ -138,6 +138,10 @@ func _ready() -> void:
 	var gateway := get_node_or_null("WorldCommandGateway")
 	if gateway != null and gateway.has_signal("terrain_modified"):
 		gateway.terrain_modified.connect(_on_terrain_modified)
+	# Sintered loose material becomes rock — mark the dig stream dirty so the
+	# new solid persists to SQLite exactly like a carve does.
+	if gateway != null and gateway.has_signal("terrain_deposited"):
+		gateway.terrain_deposited.connect(_on_terrain_deposited)
 	_player_spawn_hint = _player.global_position
 	if _player_spawn_hint.length_squared() <= 0.000001:
 		_player_spawn_hint = Vector3.UP
@@ -558,6 +562,17 @@ func _on_terrain_modified(
 	_dig_center: Vector3,
 	_dig_radius_m: float,
 	_dig_direction: Vector3
+) -> void:
+	_digs_dirty = true
+	_dig_persist_cooldown_s = DIG_PERSIST_DEBOUNCE_S
+
+
+## Sintered granular material wrote solid into the rock SDF. Same durability
+## path as a carve — the plugin already marked the touched blocks modified, this
+## just tells the autosave loop to flush them.
+func _on_terrain_deposited(
+	_deposit_center: Vector3,
+	_deposit_radius_m: float
 ) -> void:
 	_digs_dirty = true
 	_dig_persist_cooldown_s = DIG_PERSIST_DEBOUNCE_S

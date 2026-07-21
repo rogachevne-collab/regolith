@@ -30,6 +30,7 @@ KERNEL=(
 	test_impact_destruction
 	test_granular_patch
 	test_granular_lens_scoop
+	test_granular_sinter
 )
 
 # Physics/gameplay/UI integration scenes. Not part of the gate: the running

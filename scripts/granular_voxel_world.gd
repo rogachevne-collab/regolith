@@ -312,9 +312,18 @@ const SPOIL_MATERIAL_PATH := "res://resources/spoil_material_grain.tres"
 ## gateway inheriting a second terrain it never asked for.
 @export var enabled := false
 
+## How long a region must lie fully at rest before it sinters into rock. The
+## field measures rest as `is_settled()` (nothing moving, nothing queued); any
+## deposit, dig, push or carve wakes it and the region's dwell resets to zero in
+## the next `_process`. Fifteen minutes is "the player left this face and is not
+## coming back to work it", not "turned away for a moment" — a heap still being
+## dug never sits still long enough to cross it. See `docs/specs/GRANULAR-V2.md`.
+const SINTER_DWELL_S := 900.0
+
 var _terrain: Node3D
 var _voxel_tool: VoxelTool
 var _gravity_field: GravityField
+var _gateway: WorldCommandGateway
 var _sweep_debt := 0.0
 var _stream: GranularStreamVfx
 var _stream_left := 0.0
@@ -342,6 +351,7 @@ func _ready() -> void:
 		)
 		set_process(false)
 		return
+	_gateway = gateway
 	add_to_group(GROUP_NAME)
 	gateway.terrain_modified.connect(_on_terrain_modified)
 	call_deferred("_bind_gravity_field")
@@ -385,6 +395,28 @@ func _process(delta: float) -> void:
 				break
 			region.field.step(CELL_BUDGET_PER_SWEEP)
 	_prof_sweep_us += Time.get_ticks_usec() - t_sweep
+	# Rest turns into ground. A region at rest for `SINTER_DWELL_S` is old ground:
+	# sinter it, which also empties the field so it stops costing sweeps. Any
+	# disturbance dropped `is_settled` and reset the clock in the `else` below.
+	# An empty region that sinters nothing goes dormant (`-INF`) rather than
+	# re-scanning every dwell; a fresh deposit wakes the field and the `else`
+	# restores its clock to zero.
+	for entry: Dictionary in _regions:
+		var dwell_region: GranularVoxelRegion = entry["region"]
+		if dwell_region.field.is_settled():
+			entry["settled_s"] = float(entry["settled_s"]) + delta
+			if float(entry["settled_s"]) >= SINTER_DWELL_S:
+				var moved := _sinter_region(dwell_region)
+				entry["settled_s"] = 0.0 if moved > 0.0 else -INF
+				# The heap is rock now and the field is empty, but the field just
+				# stopped stepping — without one forced flush the granular view
+				# keeps drawing the old mesh over the fresh rock. (Eviction frees
+				# the view outright, so it needs no such flush.)
+				if moved > 0.0:
+					var sintered_view: GranularVoxelRegionView = entry["view"]
+					sintered_view.flush()
+		else:
+			entry["settled_s"] = 0.0
 	var t_flush := Time.get_ticks_usec()
 	if should_flush:
 		for entry: Dictionary in _regions:
@@ -696,19 +728,38 @@ func _create_region(dig_center: Vector3) -> int:
 	var view := GranularVoxelRegionView.new()
 	add_child(view)
 	view.setup(region, _make_spoil_material())
-	_regions.append({"region": region, "view": view})
+	_regions.append({"region": region, "view": view, "settled_s": 0.0})
 	while _regions.size() > MAX_REGIONS:
 		var evicted: Dictionary = _regions.pop_front()
-		# Whatever the retired region still held goes with it. That is the one
-		# place material genuinely vanishes from the world, so count it here
-		# rather than let a heap quietly disappear when the player walks back.
+		# The retired region used to drop whatever it still held — walk back and
+		# the heap was gone. Now it sinters into rock first: the material becomes
+		# ground (which persists and can be dug back out) instead of vanishing.
+		# Sooner than the fifteen-minute dwell, but the trigger is the same, and
+		# a heap the player left far enough behind to push a region off the end
+		# of the list has, for its purposes, been abandoned.
 		var retired: GranularVoxelRegion = evicted["region"]
 		if retired != null and retired.field != null:
-			_spoil_dropped_m3 += retired.field.total_volume_m3()
+			_sinter_region(retired)
 		var oldest: GranularVoxelRegionView = evicted["view"]
 		if is_instance_valid(oldest):
 			oldest.queue_free()
 	return _regions.size() - 1
+
+
+## Bake a region's settled material into the world rock and, if anything landed,
+## tell the dig-persistence path so the new solid saves. Never routed through
+## `terrain_modified` — that would turn the deposited rock back into spoil.
+## Returns the volume sintered, so the caller can tell an emptied region from one
+## with nothing to give.
+func _sinter_region(region: GranularVoxelRegion) -> float:
+	var moved := region.sinter_into_terrain()
+	if moved <= 0.0 or _gateway == null:
+		return moved
+	_gateway.mark_terrain_deposited(
+		region.anchor.center_world,
+		float(region.field.size.x) * region.field.cell_size * 0.5
+	)
+	return moved
 
 
 ## Volume that never made it into the field: cuts with no region to take them,

@@ -482,6 +482,109 @@ func dig_at(
 	return taken
 
 
+## A metre voxel is turned to rock only once this much of it is loose material.
+## Below it the fringe is left as field — thin scatter is not ground, and it
+## still persists (as field) and can slump if the rock under it is later dug.
+const SINTER_MIN_VOXEL_OCCUPANCY := 0.5
+## Radius of the ADD sphere that solidifies one metre voxel, in terrain-local
+## units (voxel scale is 1, so metres). A whole cube's half-diagonal is 0.87;
+## 0.6 fills the body of a voxel and merges with its solid neighbours without
+## bulging a lone voxel into a ball much bigger than a metre.
+const SINTER_SPHERE_RADIUS_M := 0.6
+
+
+## Bake settled loose material into the world's rock SDF: the heap stops being a
+## field and becomes ground. Coarsened to the world's metre voxel — a heap that
+## has lain still for fifteen minutes is old ground, not a fresh pour, and has
+## no fine shape worth keeping. Once it is rock it persists with the terrain
+## (SQLite), survives this region being retired, and drills back into fresh
+## dust: the loop `GRANULAR-V1.md` describes.
+##
+## Returns the volume moved out of the field — exact on the field side; what
+## lands in the SDF is quantised to whole metre voxels at or above
+## `SINTER_MIN_VOXEL_OCCUPANCY`.
+##
+## Writes the SDF through the region's own `VoxelTool` (`MODE_ADD`), not through
+## `terrain_modified` — that signal is turned into fresh spoil, which would put
+## the rock straight back as dust. The caller marks the dig stream dirty
+## separately so the new solid saves.
+##
+## With no terrain to write to (headless tests, demo stands) it still empties
+## the field and reports the volume, so the dwell/eviction logic that drives it
+## is verifiable without a world.
+func sinter_into_terrain() -> float:
+	if field.total_volume_m3() <= 0.0:
+		return 0.0
+	var mass := field.copy_mass_box(Vector3i.ZERO, field.size)
+	var sx := field.size.x
+	var plane := field.size.x * field.size.z
+	var writing := _terrain != null and _voxel_tool != null
+	# Occupancy summed per terrain-local metre voxel, and the field cells that
+	# fed each — so a voxel crossing the solid threshold clears exactly the cells
+	# it swallowed. Only built when there is a terrain to write into.
+	var voxel_fill := {}
+	var voxel_cells := {}
+	var occupied: Array[Vector3i] = []
+	var has_bounds := false
+	var occ_lo := Vector3i.ZERO
+	var occ_hi := Vector3i.ZERO
+	for i in mass.size():
+		var m := mass[i]
+		if m <= 0.0:
+			continue
+		var y := i / plane
+		var rem := i - y * plane
+		var z := rem / sx
+		var x := rem - z * sx
+		var cell := Vector3i(x, y, z)
+		occupied.append(cell)
+		if not has_bounds:
+			occ_lo = cell
+			occ_hi = cell
+			has_bounds = true
+		else:
+			occ_lo = occ_lo.min(cell)
+			occ_hi = occ_hi.max(cell)
+		if writing:
+			var local := VoxelSpaceUtil.world_to_local(
+				_terrain, cell_centre_world(cell)
+			)
+			var vox := Vector3i(
+				floori(local.x), floori(local.y), floori(local.z)
+			)
+			voxel_fill[vox] = float(voxel_fill.get(vox, 0.0)) + m
+			var list: Array = voxel_cells.get(vox, [])
+			list.append(cell)
+			voxel_cells[vox] = list
+	if occupied.is_empty():
+		return 0.0
+	var moved := 0.0
+	if writing:
+		_voxel_tool.channel = VoxelBuffer.CHANNEL_SDF
+		_voxel_tool.mode = VoxelTool.MODE_ADD
+		_voxel_tool.sdf_strength = 1.0
+		var cells_per_voxel: float = maxf(
+			pow(1.0 / field.cell_size, 3.0), 1.0
+		)
+		for vox: Vector3i in voxel_fill:
+			if float(voxel_fill[vox]) / cells_per_voxel < SINTER_MIN_VOXEL_OCCUPANCY:
+				continue
+			_voxel_tool.do_sphere(
+				Vector3(vox) + Vector3.ONE * 0.5, SINTER_SPHERE_RADIUS_M
+			)
+			var cells_in: Array = voxel_cells[vox]
+			for cell: Vector3i in cells_in:
+				moved += field.take(cell.x, cell.y, cell.z)
+		_voxel_tool.mode = VoxelTool.MODE_REMOVE
+		# The SDF now holds rock where the field held mass. Forget the stale "air"
+		# the oracle cached there so any fringe left behind re-reads real ground.
+		field.invalidate_solid(occ_lo, occ_hi)
+	else:
+		for cell: Vector3i in occupied:
+			moved += field.take(cell.x, cell.y, cell.z)
+	return moved
+
+
 ## Tell the region that the world's rock changed inside a sphere, so anything
 ## resting on it re-checks its support. This is what a carve calls.
 ## Forget the rock around a cut and learn it straight back, in that order and
