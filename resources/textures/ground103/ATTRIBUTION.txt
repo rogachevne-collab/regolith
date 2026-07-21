@@ -1,0 +1,3 @@
+Ground103 2K PNG (ambientCG-style pack, user-provided Ground103_2K-PNG.zip)
+Maps used: Color (fully desaturated for Regolith), NormalGL, AmbientOcclusion, Roughness.
+Do not re-upload as a standalone texture pack.

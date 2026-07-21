@@ -80,6 +80,15 @@ uniform float u_mare_amount : hint_range(0.0, 1.0, 0.01) = 0.55;
 // Layer mix ceilings: lunar is THE base, the other two only blend into it.
 uniform float u_wall_mix : hint_range(0.0, 1.0, 0.01) = 0.5;
 uniform float u_mare_mix : hint_range(0.0, 1.0, 0.01) = 0.7;
+// Wall subtlety: breakup frays the steep mask; albedo/detail split lets a
+// second pack (e.g. Ground103) add grit without replacing base albedo.
+// Defaults 0 / 1 / 1 / 0 / 0 keep legacy "full dust layer on steep" behaviour.
+// When albedo_start/end > 0, dust albedo only on near-vertical scarps.
+uniform float u_wall_breakup : hint_range(0.0, 1.0, 0.01) = 0.0;
+uniform float u_wall_albedo_mix : hint_range(0.0, 1.0, 0.01) = 1.0;
+uniform float u_wall_detail : hint_range(0.0, 1.0, 0.01) = 1.0;
+uniform float u_wall_albedo_start : hint_range(0.0, 1.0, 0.01) = 0.0;
+uniform float u_wall_albedo_end : hint_range(0.0, 1.0, 0.01) = 0.0;
 // Final grade — the only place albedo value/chroma is touched.
 uniform float u_exposure : hint_range(0.3, 1.5, 0.01) = 0.58;
 uniform float u_contrast : hint_range(0.5, 2.0, 0.01) = 1.0;
@@ -343,6 +352,9 @@ void fragment() {
 	vec3 surface_up = u_radial_up > 0.5 ? normalize(wpos) : vec3(0.0, 1.0, 0.0);
 	float upness = clamp(dot(normal, surface_up), -1.0, 1.0);
 	float slope = clamp(1.0 - upness, 0.0, 1.0);
+	// How close the face is to vertical (floor/ceiling → 0, wall → 1).
+	// Sphere-carve "walls" are rarely true vertical; this still reads them.
+	float wallness = clamp(1.0 - abs(upness), 0.0, 1.0);
 
 	// Height vs mean sphere — crater bowls sit below 0.
 	float h_signal = u_planet_radius > 0.0
@@ -373,7 +385,13 @@ void fragment() {
 	// Lunar is the base everywhere; the other two only mix in, never take over.
 	float w_mare = clamp(max(bowl, foot) + basin, 0.0, 1.0)
 		* (1.0 - steep) * u_mare_mix;
-	float w_dust = steep * u_wall_mix;
+	// Optional ragged edge so wall packs don't paint continuous iso-bands.
+	float wall_m = steep;
+	if (u_wall_breakup > 0.001) {
+		float ragged = smoothstep(0.30, 0.62, breakup);
+		wall_m *= mix(1.0, ragged, u_wall_breakup);
+	}
+	float w_dust = wall_m * u_wall_mix;
 	float w_rock = max(1.0 - w_dust - w_mare, 0.0);
 	float w_sum = max(w_rock + w_dust + w_mare, 1e-3);
 	w_rock /= w_sum;
@@ -468,7 +486,32 @@ void fragment() {
 	b_dust /= b_sum;
 	b_mare /= b_sum;
 
-	vec3 tex_col = albedo_rock * b_rock + albedo_dust * b_dust + albedo_mare * b_mare;
+	// Split wall albedo vs detail so a grit pack can ride normals without
+	// painting a second photo tone over the refined base. Optional gate uses
+	// wallness (not slope): slope treats ceilings as steep, wallness only
+	// true side-walls — matches dig adits / scarps.
+	float albedo_gate = 1.0;
+	if (u_wall_albedo_end > 0.001) {
+		albedo_gate = smoothstep(u_wall_albedo_start, u_wall_albedo_end, wallness);
+	}
+	float albedo_w = u_wall_albedo_mix * albedo_gate;
+	float ab_dust = b_dust * albedo_w;
+	float ab_rock = b_rock + b_dust * (1.0 - albedo_w);
+	float ab_mare = b_mare;
+	float ab_sum = max(ab_rock + ab_dust + ab_mare, 1e-3);
+	ab_rock /= ab_sum;
+	ab_dust /= ab_sum;
+	ab_mare /= ab_sum;
+
+	float db_dust = b_dust * u_wall_detail;
+	float db_rock = b_rock + b_dust * (1.0 - u_wall_detail);
+	float db_mare = b_mare;
+	float db_sum = max(db_rock + db_dust + db_mare, 1e-3);
+	db_rock /= db_sum;
+	db_dust /= db_sum;
+	db_mare /= db_sum;
+
+	vec3 tex_col = albedo_rock * ab_rock + albedo_dust * ab_dust + albedo_mare * ab_mare;
 
 	// --- Micro band: grain that survives magnification ---------------------
 	// Base texels are ~0.65 cm, so a few metres out the photo is stretched
@@ -496,7 +539,7 @@ void fragment() {
 	float macro_n = fbm_surface(meter_pos, surf_dir, u_large_scale);
 	tex_col *= mix(1.0, mix(0.93, 1.07, smoothstep(0.25, 0.75, macro_n)), u_macro_strength);
 
-	float ao = ao_rock * b_rock + ao_dust * b_dust + ao_mare * b_mare;
+	float ao = ao_rock * db_rock + ao_dust * db_dust + ao_mare * db_mare;
 	// AO fades with distance — at meso scale it would just shimmer.
 	tex_col *= mix(1.0, ao, u_ao_strength * (1.0 - far_w * 0.7));
 
@@ -513,18 +556,18 @@ void fragment() {
 	ALBEDO = grade_lunar(tex_col);
 
 	vec3 normal_perturb =
-		(n_rock - normal) * b_rock
-		+ (n_dust - normal) * b_dust
-		+ (n_mare - normal) * b_mare;
+		(n_rock - normal) * db_rock
+		+ (n_dust - normal) * db_dust
+		+ (n_mare - normal) * db_mare;
 	vec3 final_normal = normalize(
 		normal + normal_perturb * u_normal_strength + micro_normal_add
 	);
 	NORMAL = normalize((VIEW_MATRIX * vec4(final_normal, 0.0)).xyz);
 
-	float rough = rough_rock * b_rock + rough_dust * b_dust + rough_mare * b_mare;
+	float rough = rough_rock * db_rock + rough_dust * db_dust + rough_mare * db_mare;
 	ROUGHNESS = clamp(rough, 0.70, 0.97);
 	METALLIC = 0.0;
-	SPECULAR = mix(u_specular * 0.7, u_specular * 1.05, b_rock);
+	SPECULAR = mix(u_specular * 0.7, u_specular * 1.05, db_rock);
 
 	if (get_lod_fade_discard(SCREEN_UV)) {
 		discard;

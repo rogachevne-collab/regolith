@@ -1,0 +1,170 @@
+[gd_scene format=3 uid="uid://craktuykw6ed1"]
+
+[ext_resource type="Script" uid="uid://cwcj1wnwdhyvt" path="res://scripts/bootstrap.gd" id="1"]
+[ext_resource type="PackedScene" uid="uid://player001" path="res://scenes/player.tscn" id="2"]
+[ext_resource type="Material" path="res://resources/terrain_material_moon_test.tres" id="4"]
+[ext_resource type="Script" uid="uid://q1onpmc4txha" path="res://scripts/placed_blocks.gd" id="6"]
+[ext_resource type="Script" uid="uid://dy6xqaqoolp22" path="res://scripts/world_command_gateway.gd" id="10"]
+[ext_resource type="PackedScene" path="res://scenes/simulation_session.tscn" id="11"]
+[ext_resource type="Script" uid="uid://bay7tnuum4xx6" path="res://scripts/simulation/runtime/gravity_field.gd" id="12"]
+[ext_resource type="PackedScene" uid="uid://cdgwh0kuuyve3" path="res://scenes/lunar_sky_decor.tscn" id="14"]
+[ext_resource type="Material" path="res://resources/sky/lunar_starfield_sky_material.tres" id="15"]
+[ext_resource type="VoxelInstanceLibrary" path="res://resources/moon_boulder_instance_library.tres" id="16"]
+[ext_resource type="Script" path="res://scripts/meteorite_system.gd" id="17"]
+[ext_resource type="Script" path="res://scripts/granular_voxel_world.gd" id="18"]
+[ext_resource type="Script" path="res://scripts/granular_corridor_test.gd" id="19"]
+
+[sub_resource type="Sky" id="Sky_env"]
+sky_material = ExtResource("15")
+
+[sub_resource type="Environment" id="Environment_moon"]
+background_mode = 2
+sky = SubResource("Sky_env")
+ambient_light_source = 2
+ambient_light_color = Color(0.16, 0.18, 0.26, 1)
+ambient_light_sky_contribution = 0.55
+ambient_light_energy = 0.32
+tonemap_mode = 2
+tonemap_exposure = 0.92
+ssao_enabled = true
+ssao_radius = 1.2
+ssao_intensity = 0.65
+ssao_power = 1.4
+
+[sub_resource type="SphereShape3D" id="SphereShape_gravity"]
+radius = 675.0
+
+[sub_resource type="VoxelMesherTransvoxel" id="VoxelMesherTransvoxel_moon"]
+
+[node name="Main" type="Node3D" unique_id=426261859]
+script = ExtResource("1")
+enable_boulder_instancer = true
+boulder_density_scale = -1.0
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1964025307]
+environment = SubResource("Environment_moon")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=1814655263]
+transform = Transform3D(0.866025, -0.25, 0.433013, 0, 0.866025, 0.5, -0.5, -0.433013, 0.75, 0, 600, 0)
+light_color = Color(0.98, 0.99, 1, 1)
+light_energy = 1.55
+shadow_enabled = true
+directional_shadow_mode = 1
+directional_shadow_blend_splits = true
+directional_shadow_max_distance = 256.0
+
+[node name="FillLight" type="DirectionalLight3D" parent="." unique_id=666809088]
+transform = Transform3D(-0.866025, 0.25, -0.433013, 0, 0.866025, 0.5, 0.5, 0.433013, -0.75, 0, 400, 0)
+light_color = Color(0.55, 0.62, 0.82, 1)
+light_energy = 0.28
+
+[node name="LunarSkyDecor" parent="." unique_id=845958376 instance=ExtResource("14")]
+angular_diameter_deg = 5.8
+distance_m = 12000.0
+sun_light_path = NodePath("../DirectionalLight3D")
+
+[node name="GravityField" type="Node" parent="." unique_id=1255160184]
+script = ExtResource("12")
+mode = 1
+
+[node name="MoonGravityArea" type="Area3D" parent="." unique_id=400049353]
+collision_layer = 0
+collision_mask = 2147483647
+monitorable = false
+gravity_space_override = 3
+gravity_point = true
+gravity_point_center = Vector3(0, 0, 0)
+gravity_direction = Vector3(0, 0, 0)
+gravity = 1.62
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="MoonGravityArea" unique_id=207735754]
+shape = SubResource("SphereShape_gravity")
+
+[node name="VoxelTerrain" type="VoxelLodTerrain" parent="." unique_id=1233454214]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+mesher = SubResource("VoxelMesherTransvoxel_moon")
+view_distance = 2048
+material = ExtResource("4")
+
+[node name="VoxelInstancer" type="VoxelInstancer" parent="VoxelTerrain" unique_id=1790512269]
+library = ExtResource("16")
+up_mode = 1
+
+[node name="PlacedBlocks" type="Node3D" parent="." unique_id=880763894]
+script = ExtResource("6")
+
+[node name="WorldCommandGateway" type="Node" parent="." unique_id=278946686]
+script = ExtResource("10")
+
+[node name="GranularVoxelWorld" type="Node3D" parent="." unique_id=1408627731]
+script = ExtResource("18")
+enabled = true
+
+[node name="SimulationSession" parent="." unique_id=1580499463 instance=ExtResource("11")]
+gateway_path = NodePath("../WorldCommandGateway")
+
+[node name="BaseSpawn" type="Marker3D" parent="." unique_id=490737595]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 9500, 0)
+
+[node name="Player" parent="." unique_id=2047904443 instance=ExtResource("2")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 9580, 0)
+
+[node name="MeteoriteSystem" type="Node" parent="."]
+script = ExtResource("17")
+enabled = false
+
+[node name="CorridorTestRig" type="Node3D" parent="."]
+script = ExtResource("19")
+
+[node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=1718140636]
+
+[node name="Loading" type="Label" parent="CanvasLayer" unique_id=560459123]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -240.0
+offset_top = -20.0
+offset_right = 240.0
+offset_bottom = 20.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(1, 1, 1, 0.95)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.85)
+theme_override_constants/shadow_offset_x = 2
+theme_override_constants/shadow_offset_y = 2
+theme_override_font_sizes/font_size = 22
+text = "Загрузка луны..."
+horizontal_alignment = 1
+
+[node name="Hint" type="Label" parent="CanvasLayer" unique_id=1681801852]
+offset_left = 16.0
+offset_top = 12.0
+offset_right = 720.0
+offset_bottom = 215.0
+theme_override_colors/font_color = Color(1, 1, 1, 0.9)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.8)
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 1
+text = "GRANULAR CORRIDOR TEST — заваленный проход
+WASD — ходьба, Shift — бег, Space — прыжок, Esc — настройки
+1–9 — инструменты, ЛКМ — бур, L — фонарь
+Впереди коридор, завал внутри — прокопай его буром"
+
+[node name="Coordinates" type="Label" parent="CanvasLayer" unique_id=1659077725]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -300.0
+offset_top = 12.0
+offset_right = -16.0
+offset_bottom = 70.0
+grow_horizontal = 0
+theme_override_colors/font_color = Color(1, 1, 1, 0.9)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.8)
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 1
+theme_override_font_sizes/font_size = 18
+text = "Игрок:  0.0, 0.0, 0.0"
+horizontal_alignment = 2

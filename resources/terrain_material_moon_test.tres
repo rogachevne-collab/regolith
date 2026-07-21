@@ -1,10 +1,14 @@
-[gd_resource type="ShaderMaterial" load_steps=6 format=3]
+[gd_resource type="ShaderMaterial" load_steps=10 format=3]
 
 [ext_resource type="Shader" path="res://resources/transvoxel_terrain.gdshader" id="1"]
 [ext_resource type="Texture2D" uid="uid://cl126lff4w8ma" path="res://resources/textures/moon_test/albedo.png" id="2"]
 [ext_resource type="Texture2D" uid="uid://cl126lfs8fhi6" path="res://resources/textures/moon_test/normal.png" id="3"]
 [ext_resource type="Texture2D" uid="uid://cqwrsa8nemb4e" path="res://resources/textures/moon_test/ao.png" id="4"]
 [ext_resource type="Texture2D" uid="uid://dq7iv2c3q278f" path="res://resources/textures/moon_test/roughness.png" id="5"]
+[ext_resource type="Texture2D" uid="uid://b13h243kdk3r7" path="res://resources/textures/ground103/albedo.png" id="6"]
+[ext_resource type="Texture2D" uid="uid://b13h25hnts0o7" path="res://resources/textures/ground103/normal.png" id="7"]
+[ext_resource type="Texture2D" uid="uid://b13h243n27q37" path="res://resources/textures/ground103/ao.png" id="8"]
+[ext_resource type="Texture2D" uid="uid://b13h25lnwm737" path="res://resources/textures/ground103/roughness.png" id="9"]
 
 [resource]
 render_priority = 0
@@ -13,10 +17,10 @@ shader_parameter/u_rock_albedo = ExtResource("2")
 shader_parameter/u_rock_normal = ExtResource("3")
 shader_parameter/u_rock_ao = ExtResource("4")
 shader_parameter/u_rock_roughness = ExtResource("5")
-shader_parameter/u_dust_albedo = ExtResource("2")
-shader_parameter/u_dust_normal = ExtResource("3")
-shader_parameter/u_dust_ao = ExtResource("4")
-shader_parameter/u_dust_roughness = ExtResource("5")
+shader_parameter/u_dust_albedo = ExtResource("6")
+shader_parameter/u_dust_normal = ExtResource("7")
+shader_parameter/u_dust_ao = ExtResource("8")
+shader_parameter/u_dust_roughness = ExtResource("9")
 shader_parameter/u_mare_albedo = ExtResource("2")
 shader_parameter/u_mare_normal = ExtResource("3")
 shader_parameter/u_mare_ao = ExtResource("4")
@@ -31,8 +35,14 @@ shader_parameter/u_far_normal = 0.7
 shader_parameter/u_ao_strength = 0.28
 shader_parameter/u_macro_strength = 0.0
 shader_parameter/u_height_blend = 0.0
+shader_parameter/u_layer_equalize = 0.35
 shader_parameter/u_mare_amount = 0.0
 shader_parameter/u_mare_mix = 0.0
-shader_parameter/u_wall_mix = 0.0
+shader_parameter/u_wall_mix = 0.9
+shader_parameter/u_wall_breakup = 0.15
+shader_parameter/u_wall_albedo_mix = 0.75
+shader_parameter/u_wall_detail = 0.7
+shader_parameter/u_wall_albedo_start = 0.32
+shader_parameter/u_wall_albedo_end = 0.62
 shader_parameter/u_moon_brightness_strength = 0.0
 shader_parameter/u_hex_rotation = 0.04
