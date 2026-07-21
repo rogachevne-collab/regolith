@@ -1,6 +1,7 @@
 #include "granular_voxel_field.hpp"
 
 #include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/core/math.hpp>
 #include <godot_cpp/variant/variant.hpp>
 
 #include <algorithm>
@@ -320,6 +321,7 @@ int GranularVoxelField::step(int max_cells) {
 	// below moves out of the way before the cell above is asked to come down.
 	std::sort(order_.begin(), order_.end());
 	const int count = (int)order_.size();
+	last_pending_count_ = count;
 	const int budget = max_cells <= 0 ? count : std::min(max_cells, count);
 	for (int k = 0; k < count; ++k) {
 		queued_[order_[k]] = 0;
@@ -454,6 +456,211 @@ void GranularVoxelField::spread(
 	wake(x, y, z);
 }
 
+void GranularVoxelField::prime_solid_box(
+		const Vector3i &lo,
+		const Vector3i &extent,
+		const PackedByteArray &sdf_bytes,
+		const Vector3i &buffer_size,
+		const Vector3i &buffer_origin,
+		const Transform3D &cell_to_local,
+		double s16_scale) {
+	const int voxels = buffer_size.x * buffer_size.y * buffer_size.z;
+	if (sdf_bytes.size() < voxels * 2 || voxels <= 0) {
+		return;
+	}
+	const uint8_t *raw = sdf_bytes.ptr();
+	const double inv_scale = 1.0 / s16_scale;
+	// The buffer's own layout, measured against the plugin: y runs fastest,
+	// then x, then z.
+	auto sample = [&](int x, int y, int z) -> double {
+		x = std::min(std::max(x, 0), buffer_size.x - 1);
+		y = std::min(std::max(y, 0), buffer_size.y - 1);
+		z = std::min(std::max(z, 0), buffer_size.z - 1);
+		const int vi = (y + buffer_size.y * (x + buffer_size.x * z)) * 2;
+		const int16_t v = (int16_t)((uint16_t)raw[vi] | ((uint16_t)raw[vi + 1] << 8));
+		return (double)v * inv_scale;
+	};
+	const Vector3i hi = lo + extent;
+	for (int y = std::max(lo.y, 0); y < std::min(hi.y, size_.y); ++y) {
+		for (int z = std::max(lo.z, 0); z < std::min(hi.z, size_.z); ++z) {
+			for (int x = std::max(lo.x, 0); x < std::min(hi.x, size_.x); ++x) {
+				const int i = index(x, y, z);
+				// Explicit answers win, exactly as they do on the lazy path.
+				if (solid_known_[i] != 0) {
+					continue;
+				}
+				// The cell's centre, not the corner it is indexed from: a
+				// corner test calls a cell rock only once its lowest face is
+				// buried, so material comes to rest a whole cell above the
+				// ground it can see, always in the same direction.
+				const Vector3 p = cell_to_local.xform(
+						Vector3((double)x + 0.5, (double)y + 0.5, (double)z + 0.5));
+				const Vector3 rel = p - Vector3(buffer_origin);
+				const int bx = (int)Math::floor(rel.x);
+				const int by = (int)Math::floor(rel.y);
+				const int bz = (int)Math::floor(rel.z);
+				const double tx = rel.x - (double)bx;
+				const double ty = rel.y - (double)by;
+				const double tz = rel.z - (double)bz;
+				const double c000 = sample(bx, by, bz);
+				const double c100 = sample(bx + 1, by, bz);
+				const double c010 = sample(bx, by + 1, bz);
+				const double c110 = sample(bx + 1, by + 1, bz);
+				const double c001 = sample(bx, by, bz + 1);
+				const double c101 = sample(bx + 1, by, bz + 1);
+				const double c011 = sample(bx, by + 1, bz + 1);
+				const double c111 = sample(bx + 1, by + 1, bz + 1);
+				const double sdf = Math::lerp(
+						Math::lerp(Math::lerp(c000, c100, tx), Math::lerp(c010, c110, tx), ty),
+						Math::lerp(Math::lerp(c001, c101, tx), Math::lerp(c011, c111, tx), ty),
+						tz);
+				// Solid is `occupancy >= 0.5`, and occupancy is `0.5 - sdf`,
+				// so this is exactly the mesher's own inside test.
+				solid_known_[i] = 1;
+				solid_[i] = sdf <= 0.0 ? 1 : 0;
+			}
+		}
+	}
+}
+
+/// One pass of the separable kernel along whichever axis `stride` steps. Ends
+/// are clamped rather than wrapped, which is why the work box carries a ring
+/// the written box does not use.
+void GranularVoxelField::blur_axis(
+		const std::vector<float> &source,
+		std::vector<float> &target,
+		int total,
+		int stride,
+		int axis_size,
+		double smooth_centre) const {
+	const double scale = 1.0 / (smooth_centre + 2.0);
+	const int span = stride * axis_size;
+	const int tail = (axis_size - 1) * stride;
+	for (int base = 0; base < total; base += span) {
+		for (int offset = 0; offset < stride; ++offset) {
+			const int start = base + offset;
+			const int last = start + tail;
+			for (int i = start; i <= last; i += stride) {
+				double sum = (double)source[i] * smooth_centre;
+				sum += (double)(i > start ? source[i - stride] : source[i]);
+				sum += (double)(i < last ? source[i + stride] : source[i]);
+				target[i] = (float)(sum * scale);
+			}
+		}
+	}
+}
+
+PackedByteArray GranularVoxelField::build_sdf_box(
+		const Vector3i &lo,
+		const Vector3i &extent,
+		int smooth_passes,
+		double smooth_centre,
+		double render_min_fill,
+		double surface_iso,
+		double sdf_gain,
+		double air_sdf,
+		double s16_scale) {
+	const int radius = smooth_passes;
+	const Vector3i work_lo = lo - Vector3i(radius, radius, radius);
+	const Vector3i work_extent = extent + Vector3i(radius, radius, radius) * 2;
+	const int work_total = work_extent.x * work_extent.y * work_extent.z;
+	if ((int)sdf_occupancy_.size() < work_total) {
+		sdf_occupancy_.resize(work_total);
+		sdf_scratch_.resize(work_total);
+		sdf_mass_.resize(work_total);
+		sdf_solid_.resize(work_total);
+	}
+	// The same bulk reads the script made, without crossing the binding.
+	{
+		int i = 0;
+		for (int y = 0; y < work_extent.y; ++y) {
+			const int cy = work_lo.y + y;
+			for (int z = 0; z < work_extent.z; ++z) {
+				const int cz = work_lo.z + z;
+				const bool row_outside = cy < 0 || cy >= size_.y || cz < 0 || cz >= size_.z;
+				const int row = row_outside ? 0 : (cy * size_.z + cz) * size_.x;
+				for (int x = 0; x < work_extent.x; ++x) {
+					const int cx = work_lo.x + x;
+					if (row_outside || cx < 0 || cx >= size_.x) {
+						sdf_mass_[i] = 0.0f;
+						sdf_solid_[i] = 0;
+					} else {
+						const int j = row + cx;
+						sdf_mass_[i] = mass_[j];
+						sdf_solid_[i] = solid_known_[j] != 0 ? solid_[j] : (solid_at(j) ? 1 : 0);
+					}
+					++i;
+				}
+			}
+		}
+	}
+	// Rock counts as full. Without it the low-pass thins the heap exactly
+	// where it meets the ground, and material ends in a feathered lip hanging
+	// over the rock instead of sitting in it.
+	const double floor_scale = 1.0 / (1.0 - render_min_fill);
+	for (int i = 0; i < work_total; ++i) {
+		if (sdf_solid_[i] != 0) {
+			sdf_occupancy_[i] = 1.0f;
+		} else {
+			sdf_occupancy_[i] = (float)(
+					std::max((double)sdf_mass_[i] - render_min_fill, 0.0) * floor_scale);
+		}
+	}
+	// Separable: passes of three taps each, never one pass of twenty-seven.
+	const int strides[3] = { 1, work_extent.x, work_extent.x * work_extent.z };
+	const int axis_sizes[3] = { work_extent.x, work_extent.z, work_extent.y };
+	bool in_scratch = false;
+	for (int round = 0; round < smooth_passes; ++round) {
+		for (int axis = 0; axis < 3; ++axis) {
+			if (in_scratch) {
+				blur_axis(sdf_scratch_, sdf_occupancy_, work_total, strides[axis],
+						axis_sizes[axis], smooth_centre);
+			} else {
+				blur_axis(sdf_occupancy_, sdf_scratch_, work_total, strides[axis],
+						axis_sizes[axis], smooth_centre);
+			}
+			in_scratch = !in_scratch;
+		}
+	}
+	const std::vector<float> &smoothed = in_scratch ? sdf_scratch_ : sdf_occupancy_;
+
+	PackedByteArray out;
+	const int total = extent.x * extent.y * extent.z;
+	out.resize(total * 2);
+	uint8_t *w = out.ptrw();
+	const int stride_z = work_extent.x;
+	const int stride_y = work_extent.x * work_extent.z;
+	const int air = (int)(air_sdf * s16_scale);
+	for (int y = 0; y < extent.y; ++y) {
+		for (int z = 0; z < extent.z; ++z) {
+			// The written box sits inside the work box by the kernel's radius,
+			// so walking one row of it is walking one row of the scratch.
+			int wi = (y + radius) * stride_y + (z + radius) * stride_z + radius;
+			// The buffer's own layout, which is not the field's: y runs
+			// fastest, then x, then z.
+			int vi = (y + extent.y * extent.x * z) * 2;
+			for (int x = 0; x < extent.x; ++x) {
+				int encoded = air;
+				// Rock belongs to the world's own terrain, which already draws
+				// it. The exception is rock directly under material, which is
+				// claimed so a heap's underside is buried in the ground rather
+				// than stopping exactly at it.
+				if (sdf_solid_[wi] == 0 || sdf_mass_[wi + stride_y] > 0.0f) {
+					double distance = (surface_iso - (double)smoothed[wi]) * sdf_gain;
+					distance = std::min(std::max(distance, -1.0), 1.0);
+					encoded = (int)(distance * s16_scale);
+				}
+				const int16_t v = (int16_t)encoded;
+				w[vi] = (uint8_t)(v & 0xff);
+				w[vi + 1] = (uint8_t)((v >> 8) & 0xff);
+				++wi;
+				vi += extent.y * 2;
+			}
+		}
+	}
+	return out;
+}
+
 void GranularVoxelField::_bind_methods() {
 	ClassDB::bind_static_method(
 			"GranularVoxelField",
@@ -473,12 +680,21 @@ void GranularVoxelField::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("copy_solid_box", "lo", "extent"), &GranularVoxelField::copy_solid_box);
 	ClassDB::bind_method(D_METHOD("total_volume_m3"), &GranularVoxelField::total_volume_m3);
 	ClassDB::bind_method(D_METHOD("active_count"), &GranularVoxelField::active_count);
+	ClassDB::bind_method(D_METHOD("pending_count"), &GranularVoxelField::pending_count);
 	ClassDB::bind_method(D_METHOD("is_settled"), &GranularVoxelField::is_settled);
 	ClassDB::bind_method(D_METHOD("deposit", "x", "y", "z", "volume_m3"), &GranularVoxelField::deposit);
 	ClassDB::bind_method(D_METHOD("take", "x", "y", "z"), &GranularVoxelField::take);
 	ClassDB::bind_method(
 			D_METHOD("take_fraction", "x", "y", "z", "fraction"), &GranularVoxelField::take_fraction);
 	ClassDB::bind_method(D_METHOD("take_dirty"), &GranularVoxelField::take_dirty);
+	ClassDB::bind_method(
+			D_METHOD("prime_solid_box", "lo", "extent", "sdf_bytes", "buffer_size",
+					"buffer_origin", "cell_to_local", "s16_scale"),
+			&GranularVoxelField::prime_solid_box);
+	ClassDB::bind_method(
+			D_METHOD("build_sdf_box", "lo", "extent", "smooth_passes", "smooth_centre",
+					"render_min_fill", "surface_iso", "sdf_gain", "air_sdf", "s16_scale"),
+			&GranularVoxelField::build_sdf_box);
 	ClassDB::bind_method(D_METHOD("step", "max_cells"), &GranularVoxelField::step, DEFVAL(0));
 
 	ClassDB::bind_method(D_METHOD("get_size"), &GranularVoxelField::get_size);

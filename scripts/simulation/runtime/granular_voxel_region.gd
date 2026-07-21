@@ -37,6 +37,39 @@ const MAX_DEPOSIT_RADIUS_CELLS := 16
 ## where it is. Short: this runs per column of every deposit.
 const GROUND_SEARCH_CELLS := 12
 
+## How much of a sweep's worth of movement one sweep now makes.
+##
+## Smooth and fast are different things, and this is the one for smooth. The
+## rates say how far material moves per sweep, so at 1.0 a falling cell hands
+## over most of itself in one go — up to fourteen centimetres of surface, thirty
+## times a second, which is a visible hop however quickly the heap comes to
+## rest. Quartering the rates and running four times as many sweeps settles at
+## exactly the same speed while the largest jump any cell makes drops from 0.56
+## of a fill to 0.12 — measured, along with the settled shape, which does not
+## move: 38.7 degrees at every scale from 1.0 down to 0.125, volume exact.
+##
+## That the shape survives is not obvious and was the thing worth checking. The
+## field has floors — `MIN_SPREAD_TRANSFER`, `MIN_MASS` — below which a
+## transfer is skipped or made whole, so shrinking every transfer could have
+## quietly changed the angle of repose. It does not.
+##
+## This is affordable only because the field is native: four times the sweeps
+## at about a tenth of a millisecond each. In GDScript the same setting would
+## have cost most of the frame.
+##
+## `GranularVoxelWorld.SETTLE_HZ` is derived from this, so the two cannot drift
+## apart and change how fast material actually falls.
+## Half, where it was a quarter — and this is a cut that costs nothing now that
+## the real cause of the stepping is known.
+##
+## The rate was never what made settling look coarse; the *budget* was. With a
+## budget too small for the heap, cells were reached in rotation and each one
+## moved twelve times a second whatever the sweep rate. Now that the budget
+## covers the heap, every awake cell moves on every sweep, so a cell's motion
+## runs at the sweep rate itself: sixty a second here, five times finer than
+## the twelve that read as stepped, and half the sweeps to pay for.
+const STEP_FINENESS := 0.5
+
 var anchor: GranularAnchor
 ## The simulation, which is now the native `GranularVoxelField` from the
 ## `regolith_moon_bake` extension rather than the script of the same name.
@@ -54,6 +87,16 @@ var field: GranularVoxelField
 ## Cell in the field that the anchor's origin corresponds to. The field counts
 ## from a corner and the anchor is centred, so this is the shift between them.
 var _centre_cell := Vector3i.ZERO
+## Kept so rock can also be read in bulk, which the per-cell oracle closure
+## cannot do. Null in the headless tests and the demo stands, where the field
+## is self-contained and `prime_rock` has nothing to read from.
+var _terrain: Node3D
+var _voxel_tool: VoxelTool
+## How many cells asked the terrain for themselves rather than being covered by
+## a bulk read. Read and cleared by the profiler in `GranularVoxelWorld`: if
+## this stays high while digging, `prime_rock` is missing the box that is
+## actually being touched, which no timing on its own would reveal.
+var oracle_calls := 0
 
 
 ## Build a region centred on a world point, with local up taken from the
@@ -76,9 +119,17 @@ static func create(
 	region.field = GranularVoxelField.create(
 		Vector3i(span, span, span), cell_size
 	)
+	# Finer steps, run proportionally more often: the same settling speed at a
+	# quarter of the quantum. See `STEP_FINENESS`.
+	region.field.fall_rate *= STEP_FINENESS
+	region.field.spread_rate *= STEP_FINENESS
+	region.field.lateral_rate *= STEP_FINENESS
 	region._centre_cell = Vector3i(span / 2, span / 2, span / 2)
 	if terrain != null and voxel_tool != null:
+		region._terrain = terrain
+		region._voxel_tool = voxel_tool
 		region.field.solid_query = func(cell: Vector3i) -> bool:
+			region.oracle_calls += 1
 			return region._cell_is_rock(cell, terrain, voxel_tool)
 	return region
 
@@ -433,11 +484,47 @@ func dig_at(
 
 ## Tell the region that the world's rock changed inside a sphere, so anything
 ## resting on it re-checks its support. This is what a carve calls.
-func invalidate_rock(world_point: Vector3, radius_m: float) -> void:
+## Forget the rock around a cut and learn it straight back, in that order and
+## in one pass.
+##
+## `prime_radius_m` is usually wider than the invalidated box: the cut forgets
+## what it disturbed, but the spoil is about to land further out than that, and
+## reading both in one go is half the work of reading them in two. The first
+## version did read them twice — `invalidate_rock` re-primed its own box and
+## then the caller primed an overlapping one — and the game put that at forty
+## milliseconds a second.
+##
+## Learning it back matters as much as forgetting it. An earlier attempt just
+## rewound the background priming cursor instead, and at ten to fifteen bites a
+## second the cursor was reset faster than it could climb: a region never
+## finished priming at all, and everything above the cursor went on being asked
+## one cell and one GDScript callback at a time. Thirty thousand a second,
+## where the point was to have none.
+func invalidate_rock(
+	world_point: Vector3,
+	radius_m: float,
+	prime_radius_m: float = 0.0,
+	prime_below_cells: int = 0
+) -> void:
 	var centre := world_to_cell(world_point)
 	var reach := int(ceil(radius_m / field.cell_size)) + 1
 	field.invalidate_solid(
 		centre - Vector3i.ONE * reach, centre + Vector3i.ONE * reach
+	)
+	var prime_reach := maxi(
+		reach, int(ceil(prime_radius_m / field.cell_size)) + 1
+	)
+	prime_rock_cells(
+		Vector3i(
+			centre.x - prime_reach,
+			centre.y - prime_reach - prime_below_cells,
+			centre.z - prime_reach
+		),
+		Vector3i(
+			prime_reach * 2 + 1,
+			prime_reach * 2 + 1 + prime_below_cells,
+			prime_reach * 2 + 1
+		)
 	)
 
 
@@ -452,6 +539,124 @@ func invalidate_rock(world_point: Vector3, radius_m: float) -> void:
 ##
 ## Eight samples per cell is fine: the field caches every answer and only ever
 ## asks about cells material is actually touching.
+## Establish rock for everything a deposit is about to touch, in one read.
+##
+## The oracle below answers one cell at a time and costs eight `get_voxel_f`
+## calls each — fine for a cell here and there, ruinous for a fresh cut, which
+## asks about a thousand cells at once and pays about three milliseconds per
+## three cubic metres in the frame the spoil lands. Confirmed from the other
+## side too: with spoil generation switched off, even huge excavations do not
+## hitch at all.
+##
+## So the same neighbourhood is copied out of the terrain once — 32768 voxels
+## in 0.037 ms against 11.5 ms one at a time — and the field samples it with no
+## binding crossings. Cells `set_solid` was explicit about are left alone.
+##
+## Best effort: with no terrain to read, or a box that lands outside what the
+## terrain has streamed, this simply does less and the lazy oracle still
+## answers whatever is left.
+func prime_rock(centre_world: Vector3, radius_m: float, below_cells: int = 0) -> void:
+	if _terrain == null or _voxel_tool == null:
+		return
+	var reach := int(ceil(radius_m / field.cell_size)) + 1
+	var centre := world_to_cell(centre_world)
+	var lo := Vector3i(
+		centre.x - reach, centre.y - reach - below_cells, centre.z - reach
+	).clamp(Vector3i.ZERO, field.size - Vector3i.ONE)
+	var hi := Vector3i(
+		centre.x + reach, centre.y + reach, centre.z + reach
+	).clamp(Vector3i.ZERO, field.size - Vector3i.ONE)
+	prime_rock_cells(lo, hi - lo + Vector3i.ONE)
+
+
+## Establish rock for a slice of the region, and say whether there is more.
+##
+## Priming only where a bite lands is not enough, and the game said so: with
+## just that, digging still fired fifty-three thousand oracle calls a second.
+## They come from the sweeps and the flush, not the deposit — a heap spreads
+## past wherever the last bite was primed, an invalidation clears what was
+## known, and a freshly created region knows nothing at all. Both phases then
+## stall on a GDScript callback per cell, which is why sweeps that cost the
+## native field a tenth of a millisecond were measured at 165 ms a second.
+##
+## So the whole region gets primed, a few layers per frame rather than in one
+## 27-millisecond lump. Until it finishes the lazy oracle still answers, so
+## this is only ever an optimisation — nothing waits on it.
+func prime_rock_step(layers: int) -> bool:
+	if _terrain == null or _voxel_tool == null or _prime_y >= field.size.y:
+		return true
+	var count := mini(layers, field.size.y - _prime_y)
+	prime_rock_cells(
+		Vector3i(0, _prime_y, 0), Vector3i(field.size.x, count, field.size.z)
+	)
+	_prime_y += count
+	return _prime_y >= field.size.y
+
+
+var _prime_y := 0
+
+
+## Establish rock for an explicit box of cells.
+func prime_rock_cells(lo: Vector3i, extent: Vector3i) -> void:
+	if _terrain == null or _voxel_tool == null:
+		return
+	lo = lo.clamp(Vector3i.ZERO, field.size - Vector3i.ONE)
+	var hi := (lo + extent - Vector3i.ONE).clamp(
+		Vector3i.ZERO, field.size - Vector3i.ONE
+	)
+	extent = hi - lo + Vector3i.ONE
+	if extent.x <= 0 or extent.y <= 0 or extent.z <= 0:
+		return
+	# Field cell index straight to terrain-local voxel space, as one affine map:
+	# the terrain's inverse, the region's own frame, and the cell size. Composed
+	# here so the native side needs no idea that any of those exist.
+	var cell_to_local := (
+		_terrain.global_transform.affine_inverse()
+		* world_transform()
+		* Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * field.cell_size), Vector3.ZERO)
+	)
+	# The voxels those cells can reach, with a margin for the trilinear corner.
+	var corner_a := cell_to_local * Vector3(lo)
+	var corner_b := cell_to_local * Vector3(hi + Vector3i.ONE)
+	var v_lo := Vector3i(
+		floori(minf(corner_a.x, corner_b.x)) - 1,
+		floori(minf(corner_a.y, corner_b.y)) - 1,
+		floori(minf(corner_a.z, corner_b.z)) - 1
+	)
+	var v_hi := Vector3i(
+		ceili(maxf(corner_a.x, corner_b.x)) + 1,
+		ceili(maxf(corner_a.y, corner_b.y)) + 1,
+		ceili(maxf(corner_a.z, corner_b.z)) + 1
+	)
+	var v_size := v_hi - v_lo + Vector3i.ONE
+	if v_size.x <= 0 or v_size.y <= 0 or v_size.z <= 0:
+		return
+	if v_size.x * v_size.y * v_size.z > PRIME_MAX_VOXELS:
+		return
+	var buffer := VoxelBuffer.new()
+	buffer.create(v_size.x, v_size.y, v_size.z)
+	_voxel_tool.copy(v_lo, buffer, 1 << VoxelBuffer.CHANNEL_SDF, false)
+	field.prime_solid_box(
+		lo,
+		extent,
+		buffer.get_channel_as_byte_array(VoxelBuffer.CHANNEL_SDF),
+		v_size,
+		v_lo,
+		cell_to_local,
+		SDF_S16_SCALE
+	)
+
+
+## Ceiling on one bulk read, so a wild radius cannot ask for a buffer the size
+## of the district. Past it the lazy oracle handles the box as it always did —
+## slower, but never a stall of its own making.
+const PRIME_MAX_VOXELS := 262144
+## Units of the terrain's 16-bit SDF channel per unit of distance. Measured
+## against the plugin; see `GranularVoxelRegionView.SDF_S16_SCALE`, which is the
+## same number for the same reason.
+const SDF_S16_SCALE := 65.535
+
+
 func _cell_is_rock(
 	cell: Vector3i,
 	terrain: Node3D,

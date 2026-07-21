@@ -7,6 +7,7 @@
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include <godot_cpp/variant/packed_float32_array.hpp>
 #include <godot_cpp/variant/packed_int32_array.hpp>
+#include <godot_cpp/variant/transform3d.hpp>
 #include <godot_cpp/variant/vector3i.hpp>
 
 #include <cstdint>
@@ -71,6 +72,13 @@ public:
 
 	double total_volume_m3() const;
 	int active_count() const { return last_active_count_; }
+	/// Cells that *wanted* to move last sweep, before the budget took its
+	/// window. `active_count` can only ever report the budget, so it cannot
+	/// answer the question that matters: whether the budget covers the heap.
+	/// Above the budget, every cell moves at a fraction of the sweep rate —
+	/// 1600 awake against a budget of 160 is twelve hertz per cell, which is
+	/// what "the settling looks stepped" turned out to mean.
+	int pending_count() const { return last_pending_count_; }
 	bool is_settled() const { return active_.empty() && next_.empty(); }
 
 	double deposit(int x, int y, int z, double volume_m3);
@@ -79,6 +87,60 @@ public:
 
 	godot::PackedInt32Array take_dirty();
 	int step(int max_cells);
+
+	/// The whole surface-reconstruction pass for one box, returned as the
+	/// bytes of a 16-bit SDF channel ready to hand straight to a
+	/// `VoxelBuffer`.
+	///
+	/// This is the other half of the port, and the half that actually costs
+	/// the frame. Measured on a cubic-metre-and-a-half collapse: the native
+	/// field's sweeps came to 0.106 ms a frame and the script's flush to
+	/// 3.450, worst frame 15.69 — ninety-seven per cent of the granular frame
+	/// in the reconstruction and the encode, both of them per-voxel GDScript
+	/// loops, neither of them fixable in GDScript because the interpreter *is*
+	/// the cost.
+	///
+	/// Everything the script did is done here in the same order: occupancy
+	/// with rock counted full, a separable three-tap blur run `smooth_passes`
+	/// times over three axes, then the signed distance encoded into the
+	/// buffer's own y-fastest layout. Output is byte-for-byte what the script
+	/// produced; `GranularVoxelRegionView.VERIFY_NATIVE_SDF` checks that
+	/// against the live path rather than taking it on trust.
+	/// Establish rock for a box of cells from one bulk read of the world,
+	/// instead of one callback per cell.
+	///
+	/// The lazy `solid_query` is right for a cell here and a cell there, and
+	/// badly wrong for a fresh excavation, which asks about thousands at once:
+	/// each answer is a GDScript lambda doing eight `get_voxel_f` calls to
+	/// sample the terrain trilinearly. Measured, that is 3.2 microseconds a
+	/// cell — three milliseconds for a three cubic metre bite and proportional
+	/// after that, paid entirely in the frame the spoil appears in. A single
+	/// `VoxelTool.copy` of the same neighbourhood moves 32768 voxels in 0.037
+	/// ms, against 11.5 ms for reading them one at a time.
+	///
+	/// So the caller copies the neighbourhood once and hands the raw channel
+	/// here, and the sampling happens with no binding crossings at all. Cells
+	/// already established — anything `set_solid` was explicit about — are left
+	/// alone, exactly as the lazy path leaves them.
+	void prime_solid_box(
+			const godot::Vector3i &lo,
+			const godot::Vector3i &extent,
+			const godot::PackedByteArray &sdf_bytes,
+			const godot::Vector3i &buffer_size,
+			const godot::Vector3i &buffer_origin,
+			const godot::Transform3D &cell_to_local,
+			double s16_scale);
+
+	godot::PackedByteArray build_sdf_box(
+			const godot::Vector3i &lo,
+			const godot::Vector3i &extent,
+			int smooth_passes,
+			double smooth_centre,
+			double render_min_fill,
+			double surface_iso,
+			double sdf_gain,
+			double air_sdf,
+			double s16_scale);
 
 	godot::Vector3i get_size() const { return size_; }
 	double get_cell_size() const { return cell_size_; }
@@ -138,6 +200,22 @@ private:
 	/// Reused across sweeps so a sort does not allocate every time.
 	std::vector<int32_t> order_;
 
+	/// Scratch for `build_sdf_box`, grown to the largest box seen and kept.
+	/// float32 rather than double, matching the script's packed arrays: the
+	/// blur rounds through these, so their width is part of the result.
+	std::vector<float> sdf_mass_;
+	std::vector<uint8_t> sdf_solid_;
+	std::vector<float> sdf_occupancy_;
+	std::vector<float> sdf_scratch_;
+
+	void blur_axis(
+			const std::vector<float> &source,
+			std::vector<float> &target,
+			int total,
+			int stride,
+			int axis_size,
+			double smooth_centre) const;
+
 	/// float32, matching the script's `PackedFloat32Array` scratch. Storing
 	/// these as double is a real behaviour change, not a tidy-up.
 	float spread_shares_[SPREAD_COUNT] = {};
@@ -146,6 +224,7 @@ private:
 	godot::Callable solid_query_;
 
 	int last_active_count_ = 0;
+	int last_pending_count_ = 0;
 	/// Where the next budgeted sweep starts in the sorted active list, so a
 	/// backlog cannot starve the same cells sweep after sweep.
 	int budget_cursor_ = 0;

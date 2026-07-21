@@ -13,6 +13,8 @@
 [ext_resource type="Script" path="res://scripts/meteorite_system.gd" id="17"]
 [ext_resource type="Script" path="res://scripts/granular_voxel_world.gd" id="18"]
 [ext_resource type="Script" path="res://scripts/granular_corridor_test.gd" id="19"]
+[ext_resource type="PackedScene" uid="uid://solarskydecor001" path="res://scenes/solar_sky_decor.tscn" id="20"]
+[ext_resource type="Script" path="res://scripts/day_night_cycle.gd" id="21"]
 
 [sub_resource type="Sky" id="Sky_env"]
 sky_material = ExtResource("15")
@@ -62,6 +64,16 @@ light_energy = 0.28
 angular_diameter_deg = 5.8
 distance_m = 12000.0
 sun_light_path = NodePath("../DirectionalLight3D")
+
+[node name="SolarSkyDecor" parent="." instance=ExtResource("20")]
+sun_light_path = NodePath("../DirectionalLight3D")
+distance_m = 12000.0
+
+[node name="DayNightCycle" type="Node" parent="."]
+script = ExtResource("21")
+sun_light_path = NodePath("../DirectionalLight3D")
+fill_light_path = NodePath("../FillLight")
+world_environment_path = NodePath("../WorldEnvironment")
 
 [node name="GravityField" type="Node" parent="." unique_id=1255160184]
 script = ExtResource("12")

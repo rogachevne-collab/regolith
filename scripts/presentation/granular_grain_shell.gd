@@ -35,7 +35,20 @@ extends Node3D
 ## was a regular carpet of identical lumps — bubble wrap. Then one or two, which
 ## is a scatter you can see straight through. Neither failure was the count on
 ## its own: round and uniform reads as foam at any density.
-const MAX_GRAINS_PER_CELL := 20
+##
+## Twenty down to eight, and the reason is that the job changed. Twenty was set
+## when chips were the whole picture and had to cover a full cell densely. They
+## are not any more: `RENDER_MIN_FILL` hands the dense interior to the surface
+## mesh and leaves the chips the thin fringe, where the count a cell actually
+## uses is `20 * held` — one to five, never twenty.
+##
+## This is not a saving of the same order as the shadow switch, it is bigger in
+## the place that was actually broken. Every cell reserves `SLOTS_PER_CELL`
+## whatever it uses, and every reserved slot is submitted to the GPU (see
+## `CAPACITY_PER_VARIANT`), so a fringe cell was paying for twenty-one instances
+## to draw three. Measured: 2283 cells came to 47943 submitted instances at
+## eighty primitives each. At eight the same cells come to 20547.
+const MAX_GRAINS_PER_CELL := 8
 ## One extra slot per cell holds the plug: a single lump filling a *buried*
 ## cell one layer behind the chips. Chips at any count cannot be opaque — a
 ## gap between convex stones is geometrically guaranteed — and behind a gap in
@@ -93,9 +106,14 @@ const PLUG_MIN_MASS := 0.3
 ## Instances reserved up front, per mesh variant. `instance_count` cannot be
 ## grown without throwing away everything already written, and everything
 ## already written is precisely what must not be disturbed — so the room is
-## taken once and slots are handed out of it. Unused ones are collapsed to
-## nothing and sit below `visible_instance_count`, where the GPU never looks
-## at them.
+## taken once and slots are handed out of it.
+##
+## Unused slots are collapsed to a zero basis, which costs no pixels. It is NOT
+## true, as this said before, that the GPU never looks at them: `_take_slot`
+## raises `visible_instance_count` to the high-water mark, and below that mark
+## is precisely what gets drawn. A collapsed slot is still an instance fetched,
+## transformed and counted. Slots are therefore the unit this renderer is
+## billed in, not chips — which is also why `report` counts them and says so.
 const CAPACITY_PER_VARIANT := 16000
 
 ## Cell index to an encoded (base slot, variant) pair: `base * VARIANTS +
@@ -110,9 +128,18 @@ var _high_water: PackedInt32Array = PackedInt32Array()
 var _last_write_ms := 0.0
 
 
+## Fill the surface mesh subtracts before it looks for its isosurface — the
+## view's `RENDER_MIN_FILL`. Chips are seated through the same subtraction so
+## they land on the mesh rather than above it; left at zero they seat on the
+## raw fill, which is correct when nothing else is drawing the cell.
+var _seat_floor := 0.0
+
+
 ## `up` is the region's local up, which the chip shader needs to know which way
-## is down before it can shade an underside.
-func setup(local_up: Vector3) -> void:
+## is down before it can shade an underside. `seat_floor` is the surface's fill
+## floor — see `_seat_floor`.
+func setup(local_up: Vector3, seat_floor := 0.0) -> void:
+	_seat_floor = clampf(seat_floor, 0.0, 0.95)
 	_load_meshes()
 	# Their own material, and this is the one place that is right. The rule that
 	# spoil must not have its own lighting language is about a *surface*
@@ -141,9 +168,40 @@ func setup(local_up: Vector3) -> void:
 		var node := MultiMeshInstance3D.new()
 		node.multimesh = multimesh
 		node.material_override = chip
-		# The heap is drawn by its pieces, so the pieces must not vanish before
-		# the heap does.
-		node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		# Off, and this is the single most expensive line in the granular
+		# renderer when it is on. Measured on the stand, one region holding
+		# 63 m3 as 47943 chips: 15358103 primitives a frame with chip shadows,
+		# 3852752 without. Three quarters of all the geometry in the frame was
+		# the directional light's cascades redrawing every chip once per split.
+		# Without them a chip costs its own 80 primitives and nothing more.
+		#
+		# What is given up is less than it sounds, because the chips are not
+		# what casts the heap's shadow — the surface mesh under them is, and it
+		# keeps its own shadow. What goes is each stone's individual shadow on
+		# its neighbours, and the chip shader already draws that: `u_base_shade`
+		# darkens a chip toward its base, which is what makes a dense cluster
+		# read as one mass, and its own comment notes it costs nothing.
+		node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		# Chips stop being drawn past this, and the surface mesh carries the
+		# heap alone from there.
+		#
+		# This is the half of the cost the shadow measurement does not reach.
+		# One heap in front of the camera is affordable either way; the frame
+		# rate goes when a session has dug all around and a dozen old heaps are
+		# still laying out their full shell at eighty metres, where a 7 cm chip
+		# is well under a pixel. The two renderers were always meant to split
+		# this way — the header of `granular_voxel_region_view` says small spoil
+		# favours grains and large masses favour the mesh — and until now
+		# nothing actually made the handover happen.
+		#
+		# Unmeasured, unlike the line above: the stand has one heap and cannot
+		# show the case this is for. Judge it in a dug-out world, and if distant
+		# heaps visibly shed their stones, this is the number to raise.
+		node.visibility_range_end = 30.0
+		node.visibility_range_end_margin = 6.0
+		node.visibility_range_fade_mode = (
+			GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+		)
 		add_child(node)
 		_instances.append(node)
 		_multimeshes.append(multimesh)
@@ -192,7 +250,22 @@ func lay(
 	# How much of this cell's height actually holds material. Chips are spread
 	# through it, so a part full cell reads as a thin scatter lying on the
 	# ground rather than as stones floating half a cell up.
-	var fill := held * cell_size
+	#
+	# Put through the surface's own floor first, because the mesh underneath is
+	# not drawn at the raw fill either — `RENDER_MIN_FILL` subtracts a floor and
+	# rescales what is left, and the isosurface is found in *that*. Seating the
+	# stones on the raw fill instead left them standing slightly proud of the
+	# mesh, by exactly the height the floor had lowered it. Reading the same
+	# number keeps the two agreeing whatever the floor is set to later, which a
+	# hand-tuned offset would not.
+	#
+	# A cell holding less than the floor seats at zero, which is right rather
+	# than a special case: there is no mesh in that cell at all, so its stones
+	# are lying on the rock.
+	var seated := (
+		maxf(held - _seat_floor, 0.0) / maxf(1.0 - _seat_floor, 0.001)
+	)
+	var fill := seated * cell_size
 	if backing:
 		if held < PLUG_MIN_MASS:
 			multimesh.set_instance_transform(base, _EMPTY)
@@ -471,7 +544,10 @@ func report() -> String:
 	var used := 0
 	for variant in _multimeshes.size():
 		used += _high_water[variant] - _free[variant].size() * SLOTS_PER_CELL
-	var out := "%d cells / %d chips %.2f ms" % [
+	# Slots, not chips. They differ by a factor of `SLOTS_PER_CELL` and reading
+	# one as the other is how "47943 chips" was once quoted for 2283 cells.
+	# Slots are the honest number anyway: every one of them is drawn.
+	var out := "%d cells / %d slots %.2f ms" % [
 		_slots.size(), used, _last_write_ms
 	]
 	_last_write_ms = 0.0

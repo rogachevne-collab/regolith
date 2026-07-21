@@ -87,8 +87,192 @@ const SPOIL_THROW_LIFT := 0.45
 ## Cells one region may step per sweep, and how often sweeps run. Wall clock
 ## for now; under coop this has to hang off the simulation's fixed tick or the
 ## number of sweeps follows the frame rate and peers diverge.
-const CELL_BUDGET_PER_SWEEP := 160
-const SETTLE_HZ := 30.0
+## DIAGNOSTIC — put this back to `true` when the question below is answered.
+##
+## Off, digging carves the world and undermines whatever rests on it, but makes
+## no cuttings at all: no deposit, no rock oracle, no heap, nothing for the view
+## to flush. Everything else about a bite is untouched, so the difference
+## between this and `true` is exactly the cost of creating spoil.
+##
+## The question: a powerful bite hitches hard at the moment of extraction. Two
+## candidates and no way to tell them apart from a profile alone — the granular
+## placement, or the plugin remeshing the world chunks the drill just carved,
+## which has nothing to do with any of this. Measured headless, placement came
+## to about three milliseconds for three cubic metres, which is real but is not
+## a drop from two hundred frames to fifteen. So it is worth one A/B rather than
+## another round of me guessing.
+##
+## Off: hitch gone → it is the spoil, and the rock oracle gets batched.
+## Off: hitch stays → it is the terrain carve, and none of the granular work
+## touches it.
+const SPOIL_FROM_DIGGING := true
+## How far below the cut the bulk rock read reaches. Every column of a deposit
+## looks down for its own ground, so the cells under the footprint are asked
+## about too — priming only the footprint would leave that search paying the
+## per-cell oracle it was meant to avoid.
+const GROUND_PRIME_DEPTH_CELLS := 14
+## Cell layers of a region whose rock is read in bulk per frame.
+##
+## The whole region is about 27 milliseconds to prime in one go, which is a
+## dropped frame, so it goes a slice at a time and one region at a time. Four
+## layers of a 96-cube is about 37000 cells, half a millisecond, and a region
+## is fully known inside half a second — during which the lazy oracle still
+## answers anything that is asked early, so nothing waits on this.
+## Eight rather than four: a region is fully known in about a fifth of a
+## second instead of half of one, and the window where a freshly created region
+## still answers cell by cell is what the oracle count is made of. New regions
+## appear exactly while digging, which is the worst possible moment for them to
+## be slow.
+const PRIME_LAYERS_PER_FRAME := 8
+
+## How often the surface is rewritten, as opposed to how often the field moves.
+##
+## These were the same number and should never have been. The field steps at
+## `SETTLE_HZ` — deliberately high, so material moves in small increments rather
+## than visible hops — but every write makes the plugin remesh that chunk, and
+## that cost is not ours to measure: it lands outside every timer in this file,
+## in the plugin's own meshing. Measured in the game, the granular phases came
+## to four to nine milliseconds of a twenty-three millisecond frame while
+## digging, and the missing fifteen are the meshing our own flushes asked for.
+##
+## So the picture updates on its own clock. This is a straight trade and the eye
+## has to settle it: lower is cheaper and coarser, higher is smoother and makes
+## the plugin rebuild more. Sixty matches what it has been doing; thirty was the
+## behaviour before any of the smoothness work and cost half as much.
+const MESH_FLUSH_HZ := 30.0
+
+var _flush_debt := 0.0
+
+## DIAGNOSTIC — prints one line a second while anything is happening.
+##
+## Here because two rounds of fixing this from a headless proxy missed: the
+## proxy puts a whole bite at 0.6 ms and the game still drops frames, so the
+## cost is somewhere the proxy cannot see. Rather than guess a third time, the
+## game measures itself and says which phase it is.
+##
+## Set to `false` when the answer is in.
+const PROFILE_GRANULAR := true
+const PROFILE_PERIOD_S := 1.0
+
+var _prof_bites := 0
+var _prof_invalidate_us := 0
+var _prof_prime_us := 0
+var _prof_scatter_us := 0
+var _prof_sweep_us := 0
+var _prof_flush_us := 0
+var _prof_frames := 0
+var _prof_worst_frame_us := 0
+var _prof_left := PROFILE_PERIOD_S
+
+
+## One line a second, and only when there was work — so a quiet game says
+## nothing and a drilling one says exactly where its milliseconds went.
+func _report_profile(delta: float) -> void:
+	var frame_us := (
+		_prof_invalidate_us + _prof_prime_us + _prof_scatter_us
+		+ _prof_sweep_us + _prof_flush_us
+	)
+	_prof_worst_frame_us = maxi(_prof_worst_frame_us, frame_us - _prof_last_total_us)
+	_prof_last_total_us = frame_us
+	_prof_frames += 1
+	_prof_left -= delta
+	if _prof_left > 0.0:
+		return
+	_prof_left = PROFILE_PERIOD_S
+	var oracle := 0
+	for entry: Dictionary in _regions:
+		var region: GranularVoxelRegion = entry["region"]
+		oracle += region.oracle_calls
+		region.oracle_calls = 0
+	if _prof_bites == 0 and _prof_sweep_us + _prof_flush_us < 1000:
+		_reset_profile()
+		return
+	print(
+		"[granular] %d bites | invalidate %.1f  prime %.1f  scatter %.1f  sweep %.1f  flush %.1f ms/s"
+		% [
+			_prof_bites,
+			_prof_invalidate_us / 1000.0,
+			_prof_prime_us / 1000.0,
+			_prof_scatter_us / 1000.0,
+			_prof_sweep_us / 1000.0,
+			_prof_flush_us / 1000.0,
+		]
+	)
+	# The active count is the one that decides how stepped settling looks: if it
+	# stands above `CELL_BUDGET_PER_SWEEP`, cells are being reached in rotation
+	# and each one moves at a fraction of the sweep rate.
+	var active := 0
+	for entry: Dictionary in _regions:
+		var region: GranularVoxelRegion = entry["region"]
+		active = maxi(active, region.field.pending_count())
+	print(
+		"[granular] worst frame %.2f ms | %d oracle calls/s | %d regions | %d active cells (budget %d)"
+		% [
+			_prof_worst_frame_us / 1000.0,
+			oracle,
+			_regions.size(),
+			active,
+			CELL_BUDGET_PER_SWEEP,
+		]
+	)
+	_reset_profile()
+
+
+var _prof_last_total_us := 0
+
+
+func _reset_profile() -> void:
+	_prof_bites = 0
+	_prof_invalidate_us = 0
+	_prof_prime_us = 0
+	_prof_scatter_us = 0
+	_prof_sweep_us = 0
+	_prof_flush_us = 0
+	_prof_frames = 0
+	_prof_worst_frame_us = 0
+	_prof_last_total_us = 0
+
+## Cells one region may move per sweep.
+##
+## This, not the sweep rate, is what sets how often any *given* cell moves. A
+## sweep takes the budget as a rotating window over the active set, so with 1600
+## cells awake and a budget of 160 each one is reached every tenth sweep — at
+## 120 Hz that is twelve hertz per cell, which is precisely how stepped the
+## settling looked. Raising the rate did nothing for it, because the rate was
+## never the constraint.
+##
+## And a budget below the queue does something worse than slow the picture: it
+## stops the field ever coming to rest. A sweep takes its window and re-queues
+## everything it did not reach, so with nine thousand cells awake and a budget
+## of five hundred the backlog is permanent — measured in the game, nine
+## thousand cells still active with nothing being dug, and thirty-odd
+## milliseconds a second of sweeps and fifty of flush paid for ever.
+##
+## Which inverts what a budget is for. A settled heap costs nothing at all, by
+## construction: no active cells, no dirty cells, no work. So a budget large
+## enough to drain the queue is *cheaper* over any real span than one that
+## keeps the heap permanently half-settled — it pays a burst and then stops,
+## instead of paying a tax with no end.
+##
+## Two thousand across three regions at sixty hertz is a peak of a few hundred
+## thousand visits a second, and only while there is that much to do. The
+## profiler prints the real queue length, so the test is simple: after digging
+## stops, `active cells` has to fall to zero. If it plateaus instead, the field
+## is oscillating and no budget will fix it.
+const CELL_BUDGET_PER_SWEEP := 2048
+## Derived from the step size rather than set beside it, so material keeps
+## falling at the same speed whatever the fineness is: quarter the movement per
+## sweep, four times the sweeps. Setting these two independently is how the
+## sand quietly becomes syrup.
+const SETTLE_HZ := 30.0 / GranularVoxelRegion.STEP_FINENESS
+## Ceiling on catching up after a hitch, so a dropped frame cannot turn into a
+## burst that drops the next one too. At sixty frames a second the rate above
+## already wants two sweeps every frame, so a cap of two would leave no slack
+## at all and settling would quietly fall behind whenever the frame did. Eight
+## is about nine tenths of a millisecond in the worst case, which is what the
+## native field costs — the old cap of two was sized for a field that cost
+## fifty times more per sweep.
+const MAX_SWEEPS_PER_FRAME := 8
 
 ## Share of the drill's radius it actually swallows. The rest it shoves aside.
 const SPOIL_COLLECT_RADIUS := 0.45
@@ -112,9 +296,15 @@ const STREAM_VFX := preload("res://scenes/vfx/granular_stream_vfx.tscn")
 ## Seconds the stream keeps going after the last cut. Long enough to bridge the
 ## gap between bites while drilling, short enough to stop when the trigger does.
 const STREAM_LINGER_S := 0.25
-## Fresh spoil: same Transvoxel triplanar shader as the planet, Ground103 only.
+## Fresh spoil: `granular_surface.gdshader`, Ground103 only.
 ## (StandardMaterial3D has no usable UVs on VoxelTerrain → washed-out white.)
-const SPOIL_MATERIAL_PATH := "res://resources/spoil_material.tres"
+##
+## Was the planet's own Transvoxel shader, which is built for a crust and drew
+## a heap as one continuous substance with a torn quarter-metre outline. The
+## mesh is the same; the stones and the dissolved silhouette are in the
+## fragment stage now. `spoil_material.tres` is the old one, kept so this is a
+## one-line revert.
+const SPOIL_MATERIAL_PATH := "res://resources/spoil_material_grain.tres"
 
 @export var gateway_path: NodePath = NodePath("../WorldCommandGateway")
 @export var terrain_path: NodePath = NodePath("../VoxelTerrain")
@@ -163,7 +353,7 @@ func _bind_gravity_field() -> void:
 
 func _process(delta: float) -> void:
 	_sweep_debt += delta * SETTLE_HZ
-	var sweeps := mini(int(_sweep_debt), 2)
+	var sweeps := mini(int(_sweep_debt), MAX_SWEEPS_PER_FRAME)
 	if sweeps > 0:
 		_sweep_debt -= float(sweeps)
 	# Rewriting a chunk makes the plugin remesh it and rebuild its collider, so
@@ -173,16 +363,36 @@ func _process(delta: float) -> void:
 	if _stream != null:
 		_stream_left = maxf(_stream_left - delta, 0.0)
 		_stream.set_active(_stream_left > 0.0)
-	var should_flush := sweeps > 0
+	# Learn the rock a slice at a time, before anything asks about it a cell at
+	# a time. Cheap and bounded, and once a region is through it the oracle
+	# falls silent — which is the difference between sweeps costing what the
+	# native field costs and sweeps costing what a GDScript callback costs.
+	var t_prime_bg := Time.get_ticks_usec()
+	for entry: Dictionary in _regions:
+		var region: GranularVoxelRegion = entry["region"]
+		if not region.prime_rock_step(PRIME_LAYERS_PER_FRAME):
+			break
+	_prof_prime_us += Time.get_ticks_usec() - t_prime_bg
+	_flush_debt += delta * MESH_FLUSH_HZ
+	var should_flush := sweeps > 0 and _flush_debt >= 1.0
+	if should_flush:
+		_flush_debt = fmod(_flush_debt, 1.0)
+	var t_sweep := Time.get_ticks_usec()
 	for entry: Dictionary in _regions:
 		var region: GranularVoxelRegion = entry["region"]
 		for _i in sweeps:
 			if region.field.is_settled():
 				break
 			region.field.step(CELL_BUDGET_PER_SWEEP)
-		if should_flush:
+	_prof_sweep_us += Time.get_ticks_usec() - t_sweep
+	var t_flush := Time.get_ticks_usec()
+	if should_flush:
+		for entry: Dictionary in _regions:
 			var view: GranularVoxelRegionView = entry["view"]
 			view.flush()
+	_prof_flush_us += Time.get_ticks_usec() - t_flush
+	if PROFILE_GRANULAR:
+		_report_profile(delta)
 
 
 ## Every carve in the world arrives here, whatever made it. Two things happen:
@@ -196,13 +406,31 @@ func _on_terrain_modified(
 ) -> void:
 	if dig_radius_m <= 0.0:
 		return
+	_prof_bites += 1
 	# Support first, and for *every* region that reaches the cut — a heap can
 	# straddle a border, and the one that was undermined is not always the one
 	# the new spoil belongs to.
+	# Forgetting the disturbed rock and re-reading it, plus the ground the spoil
+	# is about to land on, as one box per region. Two separate reads over
+	# overlapping boxes is what this used to be, and the game put that at forty
+	# milliseconds a second.
+	var prime_radius := maxf(
+		dig_radius_m * 2.0,
+		dig_radius_m + SPOIL_THROW_M + float(SPOIL_RADIUS_CELLS) * REGION_CELL_SIZE_M
+	)
+	var t_invalidate := Time.get_ticks_usec()
 	for entry: Dictionary in _regions:
 		var region: GranularVoxelRegion = entry["region"]
 		if region.covers(dig_center):
-			region.invalidate_rock(dig_center, dig_radius_m * 2.0)
+			region.invalidate_rock(
+				dig_center,
+				dig_radius_m * 2.0,
+				prime_radius,
+				GROUND_PRIME_DEPTH_CELLS
+			)
+	_prof_invalidate_us += Time.get_ticks_usec() - t_invalidate
+	if not SPOIL_FROM_DIGGING:
+		return
 	# What the cut was made of decides how much of it stays. Sampled here rather
 	# than shipped along the signal: the material field is a pure function of
 	# position, so every emitter — hand drill, impact, rig — is covered without
@@ -219,9 +447,15 @@ func _on_terrain_modified(
 		_spoil_dropped_m3 += spoil
 		return
 	var target: GranularVoxelRegion = _regions[index]["region"]
+	# Read the rock the whole cone is about to land on in one go. Without this
+	# every one of the thousand-odd cells a bite touches asks the terrain for
+	# itself, eight voxel reads at a time, in this frame — which is what made a
+	# big cut hitch while the spoil appeared.
+	var t_scatter := Time.get_ticks_usec()
 	var accepted := _scatter_spoil(
 		target, dig_center, dig_radius_m, dig_direction, spoil
 	)
+	_prof_scatter_us += Time.get_ticks_usec() - t_scatter
 	_spoil_dropped_m3 += maxf(spoil - accepted, 0.0)
 	_touch(index)
 

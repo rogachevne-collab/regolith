@@ -15,10 +15,16 @@ render_mode diffuse_burley, cull_back;
 // ground's own value. Fresh breaks are darker than gardened surface — by a few
 // per cent, not by half.
 
-uniform vec3 u_rock_color : source_color = vec3(0.44, 0.43, 0.41);
+// Down about seven per cent from 0.44/0.43/0.41. The chips read a shade
+// brighter than the surface mesh they now sit on: that mesh is graded through
+// `grade_lunar` at 0.52 exposure and these are not graded at all, so the two
+// halves of the same heap were describing slightly different substances. A
+// nudge rather than a match — the mismatch was small, and overshooting it puts
+// the chips in shadow against their own heap.
+uniform vec3 u_rock_color : source_color = vec3(0.41, 0.40, 0.38);
 // What a chip lying deep in the fines wears. Nearer the ground's value, because
 // that is what it is: a stone with dust on it.
-uniform vec3 u_dust_color : source_color = vec3(0.58, 0.57, 0.55);
+uniform vec3 u_dust_color : source_color = vec3(0.54, 0.53, 0.51);
 // The ground's own rock photo, laid over the flat colours above. Sampled
 // triplanar in world space: the chips share one mesh, so their surfaces can
 // only differ by where they stand, and world space is exactly that. The period
