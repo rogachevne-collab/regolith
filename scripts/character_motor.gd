@@ -15,9 +15,62 @@ extends CharacterBody3D
 @export_range(0.0, 89.0, 0.1) var max_floor_angle_degrees := 45.0
 @export var support_frame_path: NodePath = NodePath("SupportFrame")
 
+## --- Loose material ---------------------------------------------------------
+##
+## Dust is a medium, not a surface. It carries you, and it gives way under you,
+## and it does the second one slowly — which is why it is here and not in a
+## collision shape. A collider can only do the first, and doing only the first
+## to a ten-centimetre scattering is what threw the player into the air every
+## time they drilled under their own feet.
+##
+## Everything below is inert in a scene with no loose material in it: the
+## lookup fails, depth is zero, and not one line of the walk changes.
+
+## How far a standing character can sink, before the material's own depth caps
+## it. About knee height: deep enough to be worth getting out of, shallow enough
+## that the horizon never disappears.
+const DUST_MAX_SINK_M := 0.55
+## Metres per second of sinking under a standing load, and of climbing back out
+## while moving. Sinking is the faster of the two on purpose — you notice it
+## settling under you, and getting clear costs more than staying put saved.
+const DUST_SINK_RATE := 0.35
+const DUST_RECOVER_RATE := 0.22
+## Below this much horizontal speed a character counts as standing, and the
+## material starts taking them.
+const DUST_STANDING_SPEED := 0.6
+## Depth at which movement is as slow as it gets, and how slow that is. Wading
+## through half a metre of fines at a third of walking pace is the cost that
+## makes spoil something to manage rather than scenery.
+const DUST_SLOW_FULL_M := 0.5
+const DUST_SLOW_FLOOR := 0.35
+
 var _support_frame: Node
 var _last_step_height := 0.0
 var _passive_step_height := 0.0
+## Distance below the material's surface at which the body still counts as
+## carried. Sinking lowers the surface out from under the feet a few millimetres
+## a frame, and gravity closes that gap on the next one; without a little slack
+## the body would report itself airborne on every other frame while settling.
+const DUST_SUPPORT_TOLERANCE_M := 0.08
+## Material thinner than this carries nobody. A scattering a few centimetres
+## deep is something you walk through, not something you stand on, and lifting
+## the body onto every one of them is what made loose chippings feel like a kerb
+## — as if the stones had colliders, which they do not.
+const DUST_CARRY_MIN_M := 0.15
+## Fastest the material can push the body up. Being carried is a climb, not a
+## snap: unlimited, every column the feet crossed raised the body its full
+## quarter-metre in a single frame, and a walk across a heap was a stair.
+const DUST_RISE_RATE := 2.5
+
+var _granular_world: Node
+var _dust_sink_m := 0.0
+var _dust_depth_m := 0.0
+var _dust_surface := Vector3.ZERO
+var _dust_surface_valid := false
+## Whether the material — not the ground — is what is holding the body up. Feeds
+## the same branch `is_on_floor` does, so standing on a heap walks, jumps and
+## accelerates exactly like standing on rock.
+var _dust_supported := false
 
 
 func _ready() -> void:
@@ -54,14 +107,17 @@ func move_character(
 	var desired_direction := GravityField.project_on_tangent(move_direction, up)
 	if desired_direction.length_squared() > 1.0:
 		desired_direction = desired_direction.normalized()
-	var move_speed: float = (
-		speed * sprint_multiplier if sprint else speed
-	)
-	var desired_horizontal: Vector3 = desired_direction * move_speed
-	var was_on_floor: bool = is_on_floor()
-
 	var vertical := velocity.dot(up)
 	var horizontal := velocity - up * vertical
+
+	_update_dust(delta, up, horizontal.length())
+	var move_speed: float = (
+		speed * sprint_multiplier if sprint else speed
+	) * _dust_speed_scale()
+	var desired_horizontal: Vector3 = desired_direction * move_speed
+	# Material holds a body up exactly the way ground does, so it feeds the same
+	# branch: walking, jumping and accelerating on a heap are not special cases.
+	var was_on_floor: bool = is_on_floor() or _dust_supported
 
 	if was_on_floor:
 		if jump_requested:
@@ -115,8 +171,84 @@ func move_character(
 			_last_step_height = _passive_step_height
 		else:
 			_passive_step_height = 0.0
+	_apply_dust_support(up, delta)
 	if _support_frame != null:
 		_support_frame.call("update_from_character", self)
+
+
+## Read the material standing in this body's column and let it take the weight,
+## slowly. Under a brief load loose material behaves stiff; under a sustained
+## one it creeps — so jumping across a heap works and standing on it does not.
+## That is not a contrivance, it is what granular material does.
+func _update_dust(delta: float, up: Vector3, horizontal_speed: float) -> void:
+	_dust_depth_m = 0.0
+	_dust_surface_valid = false
+	var world := _granular_world_node()
+	var column := (
+		Dictionary(world.call(&"dust_at", global_position))
+		if world != null
+		else {}
+	)
+	if column.is_empty():
+		_dust_sink_m = 0.0
+		_dust_supported = false
+		return
+	_dust_depth_m = float(column["depth_m"])
+	_dust_surface = column["surface"]
+	_dust_surface_valid = true
+	# Cannot sink further than there is material to sink into: twenty
+	# centimetres of dust leaves you standing on rock, whatever the limit says.
+	var limit := minf(_dust_depth_m, DUST_MAX_SINK_M)
+	if horizontal_speed <= DUST_STANDING_SPEED:
+		_dust_sink_m = minf(_dust_sink_m + DUST_SINK_RATE * delta, limit)
+	else:
+		_dust_sink_m = maxf(_dust_sink_m - DUST_RECOVER_RATE * delta, 0.0)
+	_dust_sink_m = minf(_dust_sink_m, limit)
+
+
+## Carry the body at the material's surface less however far it has sunk in.
+##
+## Only ever lifts. Sinking is left to gravity: settling drops the support a few
+## millimetres a frame and the body follows it down on its own, which reads as
+## being taken by the material rather than as being scripted into it.
+func _apply_dust_support(up: Vector3, delta: float) -> void:
+	# A thin scattering is walked through, not stood on.
+	if not _dust_surface_valid or _dust_depth_m < DUST_CARRY_MIN_M:
+		_dust_supported = false
+		return
+	var feet := global_position - up * _collision_half_height()
+	var gap := (_dust_surface - up * _dust_sink_m - feet).dot(up)
+	if gap > 0.0:
+		global_position += up * minf(gap, DUST_RISE_RATE * delta)
+		var vertical := velocity.dot(up)
+		if vertical < 0.0:
+			velocity -= up * vertical
+		_dust_supported = true
+		return
+	_dust_supported = gap > -DUST_SUPPORT_TOLERANCE_M
+
+
+func _dust_speed_scale() -> float:
+	if _dust_depth_m <= 0.0:
+		return 1.0
+	return lerpf(
+		1.0,
+		DUST_SLOW_FLOOR,
+		clampf(_dust_depth_m / DUST_SLOW_FULL_M, 0.0, 1.0)
+	)
+
+
+## The live loose-material world, when a scene has one. Found by group and
+## checked by method: the parked height-field implementation answers to the same
+## group and has no columns to report.
+func _granular_world_node() -> Node:
+	if _granular_world != null and is_instance_valid(_granular_world):
+		return _granular_world
+	var found := get_tree().get_first_node_in_group(&"granular_world")
+	_granular_world = (
+		found if found != null and found.has_method(&"dust_at") else null
+	)
+	return _granular_world
 
 
 func _resolve_up() -> Vector3:

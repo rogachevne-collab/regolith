@@ -2327,16 +2327,25 @@ func _test_hinge_jolt_limit_offset_math() -> bool:
 		HINGE_BASE.hinge_definition
 	)
 	var offset := 0.5
+	var rh_lower := motor.lower_limit_m - offset
+	var rh_upper := motor.upper_limit_m - offset
 	var limits := HingeProjectionUtil.jolt_angle_limits(motor, offset)
-	if not is_equal_approx(limits.x, motor.lower_limit_m - offset):
-		return _fail("jolt lower limit offset mismatch")
-	if not is_equal_approx(limits.y, motor.upper_limit_m - offset):
-		return _fail("jolt upper limit offset mismatch")
+	# Godot CW pair: lower_g = -rh_upper, upper_g = -rh_lower.
+	if not is_equal_approx(limits.x, -rh_upper):
+		return _fail("godot CW lower limit mismatch")
+	if not is_equal_approx(limits.y, -rh_lower):
+		return _fail("godot CW upper limit mismatch")
 	var at_home := HingeProjectionUtil.jolt_angle_limits(motor, 0.0)
-	if not is_equal_approx(at_home.x, motor.lower_limit_m):
-		return _fail("zero-offset lower limit should match motor")
-	if not is_equal_approx(at_home.y, motor.upper_limit_m):
-		return _fail("zero-offset upper limit should match motor")
+	if not is_equal_approx(at_home.x, -motor.upper_limit_m):
+		return _fail("zero-offset CW lower should be -RH upper")
+	if not is_equal_approx(at_home.y, -motor.lower_limit_m):
+		return _fail("zero-offset CW upper should be -RH lower")
+	# Asymmetric RH bounds must not collapse after CW conversion.
+	motor.lower_limit_m = -0.2
+	motor.upper_limit_m = 1.0
+	var asym := HingeProjectionUtil.jolt_angle_limits(motor, 0.0)
+	if not is_equal_approx(asym.x, -1.0) or not is_equal_approx(asym.y, 0.2):
+		return _fail("asymmetric RH bounds must map to Godot CW pair")
 	return true
 
 
@@ -2376,6 +2385,30 @@ func _test_hinge_near_limit_torque_taper() -> bool:
 	)
 	if absf(float(stopped.get("torque_nm", 0.0))) > 0.001:
 		return _fail("torque at hard stop must taper to 0")
+	# Physics tick path uses solver_angular_drive, not apply_torque.
+	motor.observed_position_m = 0.0
+	var mid_drive := RotorProjectionUtil.solver_angular_drive(motor, true)
+	if float(mid_drive.get("torque_limit_nm", 0.0)) < motor.force_limit_n - 0.001:
+		return _fail("mid-travel solver drive must keep full torque limit")
+	if absf(float(mid_drive.get("velocity_rad_s", 0.0))) <= 0.0:
+		return _fail("mid-travel solver drive must keep commanded velocity")
+	var stop_drive := RotorProjectionUtil.solver_angular_drive(
+		motor,
+		true,
+		motor.upper_limit_m
+	)
+	if float(stop_drive.get("torque_limit_nm", 1.0)) > 0.001:
+		return _fail("solver drive at hard stop must taper torque limit to 0")
+	if absf(float(stop_drive.get("velocity_rad_s", 1.0))) > 0.001:
+		return _fail("solver drive at hard stop must zero target velocity")
+	var band_drive := RotorProjectionUtil.solver_angular_drive(
+		motor,
+		true,
+		motor.upper_limit_m - 0.01
+	)
+	var band_limit := float(band_drive.get("torque_limit_nm", 0.0))
+	if band_limit <= 0.0 or band_limit >= motor.force_limit_n:
+		return _fail("solver drive inside taper band must partially scale limit")
 	return true
 
 

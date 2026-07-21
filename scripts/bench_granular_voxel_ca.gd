@@ -32,6 +32,9 @@ const BUDGET_MS_PER_SWEEP := 7.0
 ## Matches what `granular_voxel_playground` actually runs, so the measurement
 ## is of the shipping configuration rather than of a number chosen here.
 const CELL_BUDGET_PER_SWEEP := 128
+## This suite settles four separate piles to a full stop, which is far more
+## work than a logic test. Generous, but still a hang detector.
+const WATCHDOG_SEC := 180.0
 
 
 func _ready() -> void:
@@ -39,7 +42,9 @@ func _ready() -> void:
 
 
 func _run() -> void:
-	_HeadlessTestHarness.arm_watchdog(self, LABEL)
+	# Four settling scenarios, each thousands of sweeps: the default 20 s
+	# watchdog kills this suite part way through and reports it as a hang.
+	_HeadlessTestHarness.arm_watchdog(self, LABEL, WATCHDOG_SEC)
 	var field := GranularVoxelField.create(DIMS, CELL)
 	var cells_total := DIMS.x * DIMS.y * DIMS.z
 	for z in DIMS.z:
@@ -119,8 +124,85 @@ func _run() -> void:
 		return
 	if not _test_undermining_rock_drops_the_heap_on_it():
 		return
+	if not _test_material_falls_toward_the_planet_not_toward_minus_y():
+		return
 	print("%s: PASS" % LABEL)
 	get_tree().quit(0)
+
+
+## The world is a sphere, so "down" is the radial and only at one point on the
+## planet does it agree with -Y. The field keeps -Y internally and the region's
+## frame is what turns; this checks that the two together actually drop
+## material toward the centre of the planet on the side of it, where a naive
+## -Y would send material sideways along the ground.
+func _test_material_falls_toward_the_planet_not_toward_minus_y() -> bool:
+	var started := Time.get_ticks_msec()
+	var planet_radius := 9500.0
+	# On the equator: local up is +X here, and global -Y is a horizontal
+	# direction — the worst case for getting this wrong.
+	var centre := Vector3(planet_radius, 0.0, 0.0)
+	var up := centre.normalized()
+	var span := 32
+	var region := GranularVoxelRegion.create(centre, up, null, null, span, CELL)
+	if region.up().dot(up) < 0.9999:
+		_fail("region up is not the radial: %s" % str(region.up()))
+		return false
+	# Rock floor: a slab perpendicular to the radial, i.e. one field layer.
+	for z in span:
+		for y in 4:
+			for x in span:
+				region.field.set_solid(x, y, z, true)
+	var drop_point := centre + up * 2.0
+	var poured := region.deposit_at(drop_point, 0.6)
+	if poured <= 0.0:
+		_fail("nothing was deposited into the region")
+		return false
+	var start_radius := drop_point.length()
+	var sweeps := 0
+	while not region.field.is_settled() and sweeps < 20000:
+		region.field.step()
+		sweeps += 1
+	if sweeps >= 20000:
+		_fail("material on the planet's side never came to rest")
+		return false
+	if absf(region.field.total_volume_m3() - poured) > 1e-4:
+		_fail("radial region lost volume")
+		return false
+	# Where did the mass end up, in world terms? It has to be closer to the
+	# planet's centre than it started, and still above the rock floor.
+	var mass_total := 0.0
+	var radius_total := 0.0
+	for y in span:
+		for z in span:
+			for x in span:
+				var mass := region.field.mass_at(x, y, z)
+				if mass <= 0.0:
+					continue
+				mass_total += mass
+				radius_total += mass * region.cell_to_world(
+					Vector3i(x, y, z)
+				).length()
+	if mass_total <= 0.0:
+		_fail("no material left in the radial region")
+		return false
+	var settled_radius := radius_total / mass_total
+	if settled_radius >= start_radius:
+		_fail(
+			"material did not fall toward the planet: r %.2f -> %.2f"
+			% [start_radius, settled_radius]
+		)
+		return false
+	print(
+		"%s: on the planet's side, material fell radially r %.2f -> %.2f m (down is %s) [%d ms]"
+		% [
+			LABEL,
+			start_radius,
+			settled_radius,
+			str(-region.up().round()),
+			Time.get_ticks_msec() - started,
+		]
+	)
+	return true
 
 
 ## Rock comes from the world's own voxel field, so the granular field learns it
@@ -129,6 +211,7 @@ func _run() -> void:
 ## rock that is no longer there, which is exactly the "pile left hanging in the
 ## air over my excavation" the height-field version could never fix.
 func _test_undermining_rock_drops_the_heap_on_it() -> bool:
+	var started := Time.get_ticks_msec()
 	var pillar_top := 20
 	# A lambda captures a local by *value* in GDScript, so a plain bool here
 	# would freeze at `false` and the carve would never reach the query. An
@@ -188,8 +271,8 @@ func _test_undermining_rock_drops_the_heap_on_it() -> bool:
 		)
 		return false
 	print(
-		"%s: undermined heap fell %d cells to the floor, volume intact"
-		% [LABEL, pillar_top]
+		"%s: undermined heap fell %d cells to the floor, volume intact [%d ms]"
+		% [LABEL, pillar_top, Time.get_ticks_msec() - started]
 	)
 	return true
 
@@ -200,13 +283,16 @@ func _test_undermining_rock_drops_the_heap_on_it() -> bool:
 ## budget the top of a falling column was never visited at all and simply
 ## stayed floating. The budget window has to rotate.
 func _test_a_tight_budget_does_not_strand_material() -> bool:
-	var field := GranularVoxelField.create(Vector3i(24, 64, 24), CELL)
+	var started := Time.get_ticks_msec()
+	var field := GranularVoxelField.create(Vector3i(24, 40, 24), CELL)
 	for z in 24:
 		for x in 24:
 			field.set_solid(x, 0, z, true)
-	# A tall column, and a budget far smaller than the cells it wakes.
+	# A column well clear of the floor, and a budget far smaller than the cells
+	# it wakes. Height is what makes this catch starvation, not volume, so it
+	# is kept just tall enough to matter.
 	var poured := 0.0
-	for y in range(20, 60):
+	for y in range(20, 36):
 		for dz in range(-1, 2):
 			for dx in range(-1, 2):
 				poured += field.deposit(12 + dx, y, 12 + dz, 1.0)
@@ -222,14 +308,14 @@ func _test_a_tight_budget_does_not_strand_material() -> bool:
 		return false
 	# Everything must have reached the floor: nothing left up where it started.
 	var stranded := 0.0
-	for y in range(20, 64):
+	for y in range(20, 40):
 		for z in 24:
 			for x in 24:
 				stranded += field.mass_at(x, y, z)
 	if stranded > 0.0:
 		# Say where it is and what is under it, or "stranded" is just a number.
 		var report := PackedStringArray()
-		for y in range(63, 19, -1):
+		for y in range(39, 19, -1):
 			var layer := 0.0
 			for z in 24:
 				for x in 24:
@@ -262,8 +348,8 @@ func _test_a_tight_budget_does_not_strand_material() -> bool:
 		)
 		return false
 	print(
-		"%s: tight budget (16 cells/sweep) drained the column in %d sweeps, nothing stranded"
-		% [LABEL, sweeps]
+		"%s: tight budget (16 cells/sweep) drained the column in %d sweeps, nothing stranded [%d ms]"
+		% [LABEL, sweeps, Time.get_ticks_msec() - started]
 	)
 	return true
 

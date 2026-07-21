@@ -38,7 +38,15 @@ const MAP_STRUCTURE_ARCHETYPES := {
 @export var placed_blocks_path: NodePath = NodePath("../PlacedBlocks")
 @export var simulation_session_path: NodePath = NodePath("../SimulationSession")
 
-signal terrain_modified(removed_volume_m3: float, dig_center: Vector3, dig_radius_m: float)
+## `dig_direction` is the way the tool was pushing, unit length, or zero when
+## whatever made the cut has no direction (an impact, a separation pass).
+## Loose material uses it to throw cuttings back out of the hole.
+signal terrain_modified(
+	removed_volume_m3: float,
+	dig_center: Vector3,
+	dig_radius_m: float,
+	dig_direction: Vector3
+)
 
 var _terrain: Node3D
 var _placed_blocks: Node
@@ -150,6 +158,10 @@ func _execute(command: Dictionary) -> Dictionary:
 			return _remove_voxel(command, target)
 		&"dig_terrain_debris":
 			return _dig_terrain_debris(command, target)
+		&"scoop_spoil":
+			return _scoop_spoil(command, target)
+		&"dump_scoop":
+			return _dump_scoop(command, target)
 		&"damage_element":
 			return _damage_element(command, target)
 		&"place_block":
@@ -264,7 +276,7 @@ func _remove_voxel(
 	if total_removed_m3 > 0.000001:
 		_hand_drill_last_bite_center = bite_center
 		_hand_drill_last_bite_msec = now_msec
-		_notify_terrain_modified(total_removed_m3, bite_center, radius)
+		_notify_terrain_modified(total_removed_m3, bite_center, radius, direction)
 		_maybe_separate_floating_chunks(bite_center, total_removed_m3, radius)
 	else:
 		_hand_drill_last_bite_center = null
@@ -298,10 +310,11 @@ func _remove_granular(
 	command: Dictionary,
 	target: Dictionary
 ) -> Dictionary:
-	var granular := get_tree().get_first_node_in_group(
-		&"granular_world"
-	) as GranularWorld
-	if granular == null:
+	# Found by group and called by name rather than by type: the height-field
+	# implementation and the volumetric one both answer `dig_spoil`, and which
+	# is live is a scene decision, not this node's business.
+	var granular := get_tree().get_first_node_in_group(&"granular_world")
+	if granular == null or not granular.has_method(&"dig_spoil"):
 		return _result(&"not_ready")
 	var parameters: Dictionary = command.get("parameters", {})
 	var radius := clampf(
@@ -315,7 +328,7 @@ func _remove_granular(
 		4.0
 	)
 	var contact_point := Vector3(target["point"])
-	var removed_m3 := granular.dig_spoil(contact_point, radius)
+	var removed_m3 := float(granular.call(&"dig_spoil", contact_point, radius))
 	if removed_m3 <= 0.000001:
 		return _result(&"no_target", {"point": contact_point})
 	var material_id := _material_field.material_id_at_world(
@@ -329,6 +342,59 @@ func _remove_granular(
 	return _result(
 		&"ok",
 		{"point": contact_point, "removed_volume_m3": removed_m3}
+	)
+
+
+## Fill a carried scoop from a heap. Reports the volume taken so the tool can
+## add it to its load; the world has no record of it after this, so a caller
+## that drops the number drops the material.
+##
+## No yield is credited: a scoop moves material around the world rather than
+## into a store. Loading it into cargo is a separate mechanism and a separate
+## decision.
+func _scoop_spoil(
+	command: Dictionary,
+	target: Dictionary
+) -> Dictionary:
+	var granular := get_tree().get_first_node_in_group(&"granular_world")
+	if granular == null or not granular.has_method(&"scoop_spoil"):
+		return _result(&"not_ready")
+	var parameters: Dictionary = command.get("parameters", {})
+	var radius := clampf(float(parameters.get("radius", 0.5)), 0.05, 2.0)
+	var capacity := maxf(float(parameters.get("max_volume_m3", 0.0)), 0.0)
+	if capacity <= 0.000001:
+		return _result(&"no_capacity", {"scooped_volume_m3": 0.0})
+	var contact_point := Vector3(target["point"])
+	var taken := float(
+		granular.call(&"scoop_spoil", contact_point, radius, capacity)
+	)
+	if taken <= 0.000001:
+		return _result(&"no_target", {"point": contact_point})
+	return _result(
+		&"ok",
+		{"point": contact_point, "scooped_volume_m3": taken}
+	)
+
+
+## Tip a carried load back out. Reports what the world accepted — the caller
+## keeps the remainder in the tool rather than treating the dump as complete,
+## or the shortfall is volume destroyed.
+func _dump_scoop(
+	command: Dictionary,
+	target: Dictionary
+) -> Dictionary:
+	var granular := get_tree().get_first_node_in_group(&"granular_world")
+	if granular == null or not granular.has_method(&"dump_load"):
+		return _result(&"not_ready")
+	var parameters: Dictionary = command.get("parameters", {})
+	var volume := maxf(float(parameters.get("volume_m3", 0.0)), 0.0)
+	if volume <= 0.000001:
+		return _result(&"no_target", {"dumped_volume_m3": 0.0})
+	var contact_point := Vector3(target["point"])
+	var accepted := float(granular.call(&"dump_load", contact_point, volume))
+	return _result(
+		&"ok",
+		{"point": contact_point, "dumped_volume_m3": accepted}
 	)
 
 
@@ -468,9 +534,12 @@ func _dig_radius_from_request(request: Dictionary) -> float:
 func _notify_terrain_modified(
 	removed_volume_m3: float,
 	dig_center: Vector3 = Vector3.ZERO,
-	dig_radius_m: float = 0.0
+	dig_radius_m: float = 0.0,
+	dig_direction: Vector3 = Vector3.ZERO
 ) -> void:
-	terrain_modified.emit(removed_volume_m3, dig_center, dig_radius_m)
+	terrain_modified.emit(
+		removed_volume_m3, dig_center, dig_radius_m, dig_direction
+	)
 	# A frozen parked rover must re-settle if the ground under it is dug away.
 	if _session != null and _session.projection != null and dig_radius_m > 0.0:
 		_session.projection.wake_frozen_near(dig_center, dig_radius_m)
@@ -505,7 +574,7 @@ func carve_stationary_drill(element_id: int) -> float:
 		).get("removed_volume_m3", 0.0)
 	)
 	if removed > 0.000001:
-		_notify_terrain_modified(removed, center, radius)
+		_notify_terrain_modified(removed, center, radius, direction)
 		_maybe_separate_floating_chunks(center, removed, radius)
 	return removed
 
