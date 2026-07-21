@@ -674,7 +674,7 @@ IndustryMachineState {
   enabled
   active_recipe_id
   progress_s
-  queue[]        # recipe_id FIFO, max depth fixture (default 4)
+  queue[]        # recipe_id FIFO, max depth fixture (queue_max_depth, 200)
   reserved_inputs{}
 }
 ```
@@ -758,8 +758,8 @@ Typed GDScript classes:
 | `disconnect_network` / `DisconnectNetworkCommand` | remove electric wire |
 | `transfer_resource` / `TransferResourceCommand` | manual pickup/deposit (не structural) |
 | `set_machine_enabled` / `SetMachineEnabledCommand` | toggle machine |
-| `enqueue_recipe` / `EnqueueRecipeCommand` | optional explicit queue |
-| `dequeue_recipe` / `DequeueRecipeCommand` | remove queued recipe |
+| `enqueue_recipe` / `EnqueueRecipeCommand` | append `count` copies (default 1; capped by remaining depth) |
+| `dequeue_recipe` / `DequeueRecipeCommand` | remove `count` queued slots from `index` (default index 0, count 1) |
 
 `connect_network` / `disconnect_network` — structural queue через `SimulationWorld`
 (как place/weld); increment `industry_network_revision` on success.
@@ -815,9 +815,15 @@ StoreSnapshot {
   отправляет перенос всего стека в другую открытую панель.
 - Drop строит `TransferResourceCommand`; UI обновляется только по completion /
   новому snapshot. Нулевой transfer показывает feedback и не меняет grid.
-- Для machine target правая панель дополнительно показывает `enabled`, рецепт,
-  очередь, progress и status. Кнопки вызывают `set_machine_enabled`,
-  `enqueue_recipe` и dequeue counterpart; они не используют world controls.
+- Для **recipe machine** (`processor` / `fabricator` / `electrolyzer`) terminal
+  раскрывается в **factory window** (SE-style): каталог рецептов карточками
+  (иконка результата + сырьё, ЛКМ +1 · Ctrl +10 · Shift +100), визуальная очередь
+  производства (активная job с progress + pending-карточки, сгруппированные в
+  `×N`, ЛКМ по карточке — отмена run), и внизу инвентарь машины + инвентарь
+  игрока с drag&drop. Виджеты шлют `enqueue_recipe` (`count`) /
+  `dequeue_recipe` (`index`,`count`) / `set_machine_enabled`; окно поллит snapshot
+  ~5 Гц для живого progress. Для non-recipe machine (`stationary_drill`) правая
+  панель показывает inline `enabled` + status как прежде.
 
 Первый набор item icons — цветная плашка с коротким кодом. Его API привязан к
 `item_id`, чтобы будущая PNG-графика не меняла terminal или transfer contract.

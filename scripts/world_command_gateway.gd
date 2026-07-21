@@ -1856,6 +1856,7 @@ func _enqueue_recipe(
 		)
 	)
 	recipe.recipe_id = str(parameters.get("recipe_id", ""))
+	recipe.count = maxi(1, int(parameters.get("count", 1)))
 	var result := _session.apply_enqueue_recipe(recipe)
 	return _result(
 		StringName(result.get("reason", &"invalid_target")),
@@ -1877,6 +1878,8 @@ func _dequeue_recipe(
 			target.get("metadata", {}).get("element_id", 0)
 		)
 	)
+	dequeue.index = maxi(0, int(parameters.get("index", 0)))
+	dequeue.count = maxi(1, int(parameters.get("count", 1)))
 	var result := _session.apply_dequeue_recipe(dequeue)
 	return _result(
 		StringName(result.get("reason", &"invalid_target")),

@@ -18,6 +18,10 @@ const SAFE_RIGHT := 48.0
 const SAFE_TOP := 52.0
 const SAFE_BOTTOM := 140.0
 const MAX_HEIGHT_RATIO := 0.62
+const FACTORY_EXTRAS_HEIGHT := 240.0
+const CATALOG_MIN_WIDTH := 288.0
+const QUEUE_MIN_WIDTH := 252.0
+const FACTORY_REFRESH_INTERVAL := 0.2
 
 var _gateway: WorldCommandGateway
 var _query: InteractionQuery
@@ -31,6 +35,13 @@ var _body: HBoxContainer
 var _player_panel: HudInventoryContainerPanel
 var _target_panel: HudInventoryContainerPanel
 var _panel_divider: Panel
+var _factory_extras: HBoxContainer
+var _factory_divider: Panel
+var _recipe_catalog: HudRecipeCatalog
+var _queue_view: HudProductionQueue
+var _machine_mode := false
+var _factory_element_id := 0
+var _factory_refresh_accum := 0.0
 var _open := false
 var _solo := true
 var _target_store_id := ""
@@ -46,6 +57,10 @@ func setup(ctx: Dictionary) -> void:
 		_player_panel.setup(_gateway)
 	if _target_panel != null:
 		_target_panel.setup(_gateway)
+	if _recipe_catalog != null:
+		_recipe_catalog.setup(_gateway)
+	if _queue_view != null:
+		_queue_view.setup(_gateway)
 	if _gateway != null and _gateway.has_signal("command_completed"):
 		if not _gateway.command_completed.is_connected(_on_command_completed):
 			_gateway.command_completed.connect(_on_command_completed)
@@ -113,9 +128,14 @@ func close_for_interact() -> void:
 	close()
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if _interact_release_latch and not Input.is_action_pressed(&"interact"):
 		_interact_release_latch = false
+	if _open and _machine_mode:
+		_factory_refresh_accum += delta
+		if _factory_refresh_accum >= FACTORY_REFRESH_INTERVAL:
+			_factory_refresh_accum = 0.0
+			_refresh_factory()
 
 
 func _build() -> void:
@@ -171,6 +191,30 @@ func _build() -> void:
 	_content.add_child(_close_hint)
 
 	_content.add_child(HudTokens.make_divider())
+
+	_factory_extras = HBoxContainer.new()
+	_factory_extras.add_theme_constant_override("separation", int(PANEL_GAP))
+	_factory_extras.custom_minimum_size = Vector2(0.0, FACTORY_EXTRAS_HEIGHT)
+	_factory_extras.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_factory_extras.visible = false
+	_content.add_child(_factory_extras)
+
+	_recipe_catalog = HudRecipeCatalog.new()
+	_recipe_catalog.custom_minimum_size = Vector2(CATALOG_MIN_WIDTH, 0.0)
+	_recipe_catalog.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_factory_extras.add_child(_recipe_catalog)
+
+	_factory_divider = Panel.new()
+	_factory_divider.theme_type_variation = &"HudDivider"
+	_factory_divider.custom_minimum_size = Vector2(1.0, 0.0)
+	_factory_divider.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_factory_divider.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_factory_extras.add_child(_factory_divider)
+
+	_queue_view = HudProductionQueue.new()
+	_queue_view.custom_minimum_size = Vector2(QUEUE_MIN_WIDTH, 0.0)
+	_queue_view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_factory_extras.add_child(_queue_view)
 
 	_body_scroll = ScrollContainer.new()
 	_body_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -281,10 +325,67 @@ func _refresh_panels() -> void:
 	if bool(player_snap.get("valid", true)):
 		_player_panel.apply_snapshot(player_snap)
 	if _solo or _target_panel == null or _target_store_id.is_empty():
+		_set_machine_mode(false, {})
 		return
 	var target_snap := _gateway.store_snapshot(_target_store_id)
 	if bool(target_snap.get("valid", true)):
 		_target_panel.apply_snapshot(target_snap)
+		_apply_factory_mode(target_snap)
+	else:
+		_set_machine_mode(false, {})
+
+
+func _apply_factory_mode(target_snap: Dictionary) -> void:
+	var machine: Variant = target_snap.get("machine", null)
+	var is_recipe_machine := (
+		bool(target_snap.get("is_machine", false))
+		and machine is Dictionary
+		and not (machine as Dictionary).get("recipes", []).is_empty()
+	)
+	if not is_recipe_machine:
+		_set_machine_mode(false, {})
+		return
+	_factory_element_id = HudInventoryTransferUtil.element_id_for_store(
+		_target_store_id
+	)
+	_set_machine_mode(true, machine as Dictionary)
+
+
+func _set_machine_mode(on: bool, machine: Dictionary) -> void:
+	var mode_changed := _machine_mode != on
+	_machine_mode = on
+	if _factory_extras != null:
+		_factory_extras.visible = on
+	if _target_panel != null:
+		_target_panel.set_machine_controls_visible(not on)
+	if not on:
+		_factory_element_id = 0
+		if mode_changed:
+			call_deferred("_update_panel_layout")
+		return
+	if _recipe_catalog != null:
+		_recipe_catalog.set_element_id(_factory_element_id)
+		_recipe_catalog.apply_machine(machine)
+	if _queue_view != null:
+		_queue_view.set_element_id(_factory_element_id)
+		_queue_view.apply_machine(machine)
+	if mode_changed:
+		call_deferred("_update_panel_layout")
+
+
+## Lightweight poll while a factory window is open: the sim tick advances job
+## progress and completes jobs without emitting a command, so we re-read the
+## machine snapshot to keep the progress bar and queue live. The widgets skip
+## rebuilds when nothing changed, so this stays cheap and click-safe.
+func _refresh_factory() -> void:
+	if _gateway == null or not _machine_mode or _target_store_id.is_empty():
+		return
+	var target_snap := _gateway.store_snapshot(_target_store_id)
+	if not bool(target_snap.get("valid", true)):
+		return
+	if _target_panel != null:
+		_target_panel.apply_snapshot(target_snap)
+	_apply_factory_mode(target_snap)
 
 
 func _on_command_completed(_command_id: int, _result: Dictionary) -> void:
@@ -304,6 +405,8 @@ func _update_panel_layout() -> void:
 
 	var slot_size := HudTokens.SLOT_SIZE
 	var max_body_h := _max_body_height(safe_rect.size.y)
+	if _machine_mode:
+		max_body_h = maxf(max_body_h - FACTORY_EXTRAS_HEIGHT - 6.0, 120.0)
 	var layout_ctx := {
 		"column_width": column_width,
 		"slot_size": slot_size,
@@ -331,6 +434,10 @@ func _update_panel_layout() -> void:
 	)
 	var panel_w := body_width + PANEL_MARGIN_H * 2.0
 	var panel_h := PANEL_HEADER_V + PANEL_MARGIN_V * 2.0 + body_h
+	if _machine_mode:
+		var extras_w := CATALOG_MIN_WIDTH + QUEUE_MIN_WIDTH + PANEL_GAP + 1.0
+		panel_w = maxf(panel_w, extras_w + PANEL_MARGIN_H * 2.0)
+		panel_h += FACTORY_EXTRAS_HEIGHT + 6.0
 	panel_h = minf(panel_h, safe_rect.size.y)
 
 	var half_w := panel_w * 0.5
