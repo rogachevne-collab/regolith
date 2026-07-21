@@ -121,7 +121,10 @@ func _tick_blade(
 	# that cannot hold it would lose volume. When it does not fit, plow instead:
 	# the material stays in the world, just moved.
 	if _buffer_has_room_for(element, budget, contact_point):
-		var loaded := _load_material(element.element_id, budget)
+		# Room was reserved for a full `budget`; clamp to it so a load hook that
+		# ever returned more than it was asked for could not have its excess
+		# clamped away at credit time — i.e. removed from the world but not stored.
+		var loaded := minf(_load_material(element.element_id, budget), budget)
 		if loaded <= EPSILON:
 			element.industry_functional_reason = &"no_terrain_contact"
 			return
