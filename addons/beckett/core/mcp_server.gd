@@ -50,6 +50,7 @@ const MCPEffortScript := preload("res://addons/beckett/core/effort.gd")
 const MCPClientConfigScript := preload("res://addons/beckett/core/client_config.gd")
 
 const AUTH_TOKEN_FILE := "res://.beckett/token"
+const RUNTIME_TOKEN_FILE := "res://.beckett/runtime_token"
 
 var plugin: EditorPlugin
 
@@ -166,18 +167,54 @@ func start_server(port: int) -> int:
 		if rp_err != OK:
 			push_error("[beckett] runtime bridge could not bind %d..%d — play-session tools will not connect" % [_runtime_port, _runtime_port + 9])
 		OS.set_environment("BECKETT_RUNTIME_PORT", str(_runtime_port))
-		var kill := OS.get_environment("BECKETT_AUTH").to_lower()
-		if kill == "0" or kill == "false":
-			_runtime_token = ""
-		elif not OS.get_environment("BECKETT_RUNTIME_TOKEN").is_empty():
-			_runtime_token = OS.get_environment("BECKETT_RUNTIME_TOKEN")
-		else:
-			_runtime_token = Crypto.new().generate_random_bytes(16).hex_encode()
-		bridge.expected_token = _runtime_token
-		if not _runtime_token.is_empty():
-			OS.set_environment("BECKETT_RUNTIME_TOKEN", _runtime_token)
+		_apply_runtime_handshake()
 	_write_port_discovery(http.port)
 	return OK
+
+
+## Runtime-bridge handshake follows HTTP token auth: when auth is off in the dock (or
+## BECKETT_AUTH=0), any local game may connect — matching the panel's "auth: off" label.
+func _resolve_runtime_handshake_token() -> String:
+	var kill := OS.get_environment("BECKETT_AUTH").to_lower()
+	if kill == "0" or kill == "false":
+		return ""
+	if _token.is_empty():
+		return ""
+	var env := OS.get_environment("BECKETT_RUNTIME_TOKEN")
+	if not env.is_empty():
+		return env
+	return Crypto.new().generate_random_bytes(16).hex_encode()
+
+
+func _apply_runtime_handshake() -> void:
+	_runtime_token = _resolve_runtime_handshake_token()
+	if bridge != null:
+		bridge.expected_token = _runtime_token
+	if _runtime_token.is_empty():
+		OS.set_environment("BECKETT_RUNTIME_TOKEN", "")
+	else:
+		OS.set_environment("BECKETT_RUNTIME_TOKEN", _runtime_token)
+	_write_runtime_token_discovery(_runtime_token)
+
+
+## Persist the live runtime handshake token next to the HTTP port so games launched
+## outside the editor (run.sh, exported builds) can dial the bridge without inheriting
+## BECKETT_RUNTIME_TOKEN from the editor process environment.
+func _write_runtime_token_discovery(token: String) -> void:
+	var dir := _ensure_beckett_dir()
+	if token.is_empty():
+		if FileAccess.file_exists(RUNTIME_TOKEN_FILE):
+			DirAccess.remove_absolute(RUNTIME_TOKEN_FILE)
+		return
+	var f := FileAccess.open(RUNTIME_TOKEN_FILE, FileAccess.WRITE)
+	if f != null:
+		f.store_string(token + "\n")
+		f.close()
+
+
+func _clear_runtime_token_discovery() -> void:
+	if FileAccess.file_exists(RUNTIME_TOKEN_FILE):
+		DirAccess.remove_absolute(RUNTIME_TOKEN_FILE)
 
 
 ## Persist the live HTTP port next to the auth token (same self-gitignored dir) so external
@@ -210,6 +247,7 @@ func stop_server() -> void:
 		http.stop()
 	if bridge != null:
 		bridge.stop()
+	_clear_runtime_token_discovery()
 
 
 func is_running() -> bool:
@@ -771,6 +809,8 @@ func auth_enabled() -> bool:
 ## clients start 401ing. Returns the new token ("" on IO failure = still off).
 func rotate_auth_token() -> String:
 	_token = _write_new_token()
+	if is_running():
+		_apply_runtime_handshake()
 	return _token
 
 
@@ -779,6 +819,8 @@ func set_auth_disabled() -> void:
 	_token = ""
 	if FileAccess.file_exists(AUTH_TOKEN_FILE):
 		DirAccess.remove_absolute(AUTH_TOKEN_FILE)
+	if is_running():
+		_apply_runtime_handshake()
 
 
 ## Validate the session header ONLY when the client actually sends one. The spec lets

@@ -78,6 +78,7 @@ far = 20000.0
 script = ExtResource("2")
 
 [node name="MiningLight" type="SpotLight3D" parent="Camera" unique_id=1608737082]
+visible = false
 light_color = Color(1, 0.93, 0.82, 1)
 light_energy = 3.2
 spot_range = 12.0

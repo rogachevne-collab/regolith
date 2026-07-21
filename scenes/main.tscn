@@ -11,7 +11,7 @@
 [ext_resource type="Material" path="res://resources/sky/lunar_starfield_sky_material.tres" id="15"]
 [ext_resource type="VoxelInstanceLibrary" path="res://resources/moon_boulder_instance_library.tres" id="16"]
 [ext_resource type="Script" path="res://scripts/meteorite_system.gd" id="17"]
-[ext_resource type="Script" path="res://scripts/granular_world.gd" id="18"]
+[ext_resource type="Script" path="res://scripts/granular_voxel_world.gd" id="18"]
 
 [sub_resource type="Sky" id="Sky_env"]
 sky_material = ExtResource("15")
@@ -95,9 +95,9 @@ script = ExtResource("6")
 [node name="WorldCommandGateway" type="Node" parent="." unique_id=278946686]
 script = ExtResource("10")
 
-[node name="GranularWorld" type="Node3D" parent="." unique_id=1408627731]
+[node name="GranularVoxelWorld" type="Node3D" parent="." unique_id=1408627731]
 script = ExtResource("18")
-enabled = false
+enabled = true
 
 [node name="SimulationSession" parent="." unique_id=1580499463 instance=ExtResource("11")]
 gateway_path = NodePath("../WorldCommandGateway")
@@ -144,7 +144,7 @@ theme_override_constants/shadow_offset_x = 1
 theme_override_constants/shadow_offset_y = 1
 text = "Regolith — Ø19 км
 WASD — ходьба, Shift — бег, Space — прыжок, Esc — настройки
-1–9 — инструменты, ЛКМ — действие
+1–9 — инструменты, ЛКМ — действие, L — фонарь
 U — спавн demo-ровера рядом (12 колёс), F8 — метеорит (debug)"
 
 [node name="Coordinates" type="Label" parent="CanvasLayer" unique_id=1659077725]
