@@ -12,11 +12,15 @@ const _NativeSdfGen := preload(
 const MIN_WARMUP_FRAMES := 30
 ## Lunar g=1.62: settle can take a few seconds once a floor exists.
 const MAX_SPAWN_SETTLE_FRAMES := 360
-## Voxel trimesh colliders lag SDF (VT #677 / scale≠1). Don't block play for
-## LOD0 physics — short probe, then temp landing pad; retire when voxel floor
-## appears (_retire_landing_pad_when_voxel_floor_ready).
-const PHYSICS_GROUND_TIMEOUT_MS := 1500
-const PHYSICS_GROUND_TIMEOUT_LOAD_MS := 1500
+## Voxel trimesh colliders lag SDF (VT #677 / scale≠1). Wait for a cooked LOD0
+## collider before seating so the player/vehicles land on the real surface
+## instead of the SDF landing pad (which reads as "floating in the sky" over the
+## lower visual mesh) or a coarse far-LOD collider (gaps → falling through).
+## On Ø19 km the near-spawn collider takes several seconds to cook, so the old
+## 1.5 s probe almost always fell back to the pad. The temp landing pad still
+## backs this up if the collider never appears in time.
+const PHYSICS_GROUND_TIMEOUT_MS := 8000
+const PHYSICS_GROUND_TIMEOUT_LOAD_MS := 8000
 const AUTOSAVE_INTERVAL_S := 90.0
 ## Coalesce carve spam before writing digs; flush only after async save completes.
 const DIG_PERSIST_DEBOUNCE_S := 1.5
