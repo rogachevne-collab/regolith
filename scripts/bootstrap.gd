@@ -28,6 +28,9 @@ const DIG_SAVE_TIMEOUT_MS := 15000
 const LANDING_PAD_SIZE_M := Vector3(48.0, 4.0, 48.0)
 ## Cross-fade LOD mesh swaps (requires get_lod_fade_discard in terrain shader).
 const TERRAIN_LOD_FADE_DURATION_S := 0.25
+## Milliseconds to coalesce collider re-cooks after an edit. Modest on purpose:
+## this is the gap between "the hole is visible" and "you can walk into it".
+const TERRAIN_COLLISION_UPDATE_DELAY_MS := 100
 ## Detail normalmaps from LOD 2+ — illusion of geometry on distant blocks.
 const TERRAIN_NORMALMAP_BEGIN_LOD := 2
 const DEMO_ROVER_OFFSET_M := 32.0
@@ -55,6 +58,12 @@ const MAP_HEIGHTMAP_SIZE := Vector2i(2048, 1024)
 @onready var _hint: Label = $CanvasLayer/Hint
 
 @export var debug_overlay := false
+## Draws the streamer's own view of itself: one wire box per viewer, and where
+## mesh vs collision actually exist. The "crust is drawn but there is no LOD0
+## under you" family of bugs is a picture here instead of an afternoon of
+## reading plugin sources — that is what it is for. Editor builds only
+## (`debug_set_draw_enabled` is behind TOOLS_ENABLED), which is what we run.
+@export var debug_terrain_draw := false
 @export var playtest_cargo := true
 ## Enable after radial rover seating (phase 6). Off for early shell bring-up.
 @export var spawn_demo_rover := true
@@ -229,16 +238,35 @@ func _configure_terrain() -> void:
 		var lod := _terrain as VoxelLodTerrain
 		## Docs Generators→Planet: graph resource and/or knobs (see exports).
 		lod.generator = _make_planet_generator()
+		## Clipbox, not the default legacy octree. The octree system supports
+		## exactly ONE viewer: `VoxelLodTerrain::get_local_viewer_pos` walks every
+		## registered viewer and keeps whichever comes last ("TODO Support for
+		## multiple viewers, this is a placeholder implementation"). We have more
+		## than one — `GranularVoxelRegionView` creates a VoxelViewer per loose
+		## material region — so the moon's LODs followed a coin flip: settle
+		## around the sand, and LOD0 under the player never gets requested at all
+		## (stats stayed blocked=0, io=0 while digs returned `terrain_unavailable`
+		## and LOD1/2 colliders carried the player). Clipbox pairs viewers
+		## individually, which is what it was added upstream to do.
+		lod.streaming_system = VoxelLodTerrain.STREAMING_SYSTEM_CLIPBOX
+		## ORDER MATTERS. `set_voxel_bounds` snaps the box to the octree size
+		## (`mesh_block_size << (lod_count - 1)`) as it is at assignment time.
+		## `set_mesh_block_size` re-snaps, but returns early when the value is
+		## already the default (16), and `set_lod_count` never re-snaps at all.
+		## Assigned first, the bounds get snapped against the *default* octree
+		## size and keep it: ±11888 instead of a multiple of 8192. That, not the
+		## arithmetic, is what made `32 + lod_count 10` cut the moon into cubes.
+		lod.mesh_block_size = MoonGeometry.DEFAULT_MESH_BLOCK_SIZE
+		lod.lod_count = MoonGeometry.DEFAULT_LOD_COUNT
 		lod.voxel_bounds = MoonGeometry.voxel_bounds_aabb()
 		lod.view_distance = MoonGeometry.DEFAULT_VIEW_DISTANCE_VOXELS
 		lod.generate_collisions = true
 		lod.collision_lod_count = SPAWN_COLLISION_LOD_COUNT
-		## mesh_block_size + lod_count from MoonGeometry: coarsest block must
-		## fit inside voxel_bounds (see DEFAULT_LOD_COUNT). Wrong pair
-		## (32 + 10) → cubic cuts and LOD0 never subdivides past spawn.
-		lod.mesh_block_size = MoonGeometry.DEFAULT_MESH_BLOCK_SIZE
-		lod.lod_count = MoonGeometry.DEFAULT_LOD_COUNT
 		lod.lod_distance = MoonGeometry.DEFAULT_LOD_DISTANCE
+		## Clipbox splits what octree took from one knob: `lod_distance` is LOD0
+		## reach (and, streaming on, how far edits are allowed), this one is
+		## every LOD above it.
+		lod.secondary_lod_distance = MoonGeometry.DEFAULT_SECONDARY_LOD_DISTANCE
 		lod.lod_fade_duration = TERRAIN_LOD_FADE_DURATION_S
 		## Detail normalmaps need generator series generation, which script
 		## generators don't support (VT asserts per tile). Graph fallback keeps
@@ -249,6 +277,13 @@ func _configure_terrain() -> void:
 		lod.normalmap_tile_resolution_max = 16
 		lod.cache_generated_blocks = true
 		lod.threaded_update_enabled = true
+		## Trimesh cooking is the expensive half of a ring update, and every dig
+		## re-cooks the blocks it touched. Default 0 re-cooks immediately, one
+		## edit at a time; a delay coalesces a burst (drill held down, dozer
+		## blade pushing) into fewer cooks. Cost is colliders lagging the visual
+		## mesh by that long — keep it under a frame or two of gameplay.
+		lod.collision_update_delay = TERRAIN_COLLISION_UPDATE_DELAY_MS
+		_apply_terrain_debug_draw(lod)
 	if _terrain.material != null:
 		var mat: Material = (_terrain.material as Material).duplicate()
 		_terrain.material = mat
@@ -257,6 +292,21 @@ func _configure_terrain() -> void:
 			_apply_planet_terrain_shader_params(shader_mat)
 	_terrain.scale = Vector3.ONE * MoonGeometry.VOXEL_SCALE
 	_ensure_player_viewer_for_planet()
+
+
+## The four flags that answer "why is there no LOD0 here": which viewer the
+## streamer is actually serving, and where mesh and collision each exist. The
+## other eight flags stay off — they draw per-block boxes across the whole
+## Ø19 km shell and bury the ones worth reading.
+func _apply_terrain_debug_draw(lod: VoxelLodTerrain) -> void:
+	if not debug_terrain_draw:
+		return
+	lod.debug_draw_enabled = true
+	lod.debug_draw_viewer_clipboxes = true
+	lod.debug_draw_loaded_visual_and_collision_blocks = true
+	lod.debug_draw_volume_bounds = true
+	lod.debug_draw_edit_boxes = true
+	print("MoonExperiment: terrain debug draw on (clipboxes, blocks, bounds, edits)")
 
 
 func _apply_planet_terrain_shader_params(shader_mat: ShaderMaterial) -> void:
@@ -397,6 +447,13 @@ func _configure_dig_stream() -> void:
 	## Persist generated crust too: Ø19 km analytic gen is heavy; relaunch should
 	## read SQLite instead of re-deriving the shell. GENERATOR_VERSION bump →
 	## fresh DB. Digs are modified blocks and persist either way.
+	##
+	## Costs ~21784 blocks / 108 MB per session, and every one of those saves
+	## goes on the same serial slot as block loads (`push_async_io_task`), so
+	## this was a suspect for LOD0 not reaching the player. It is not: measured
+	## in play, `VoxelEngine.get_stats()` showed an empty queue the whole time
+	## LOD0 was missing (the cause was the streamer following the wrong viewer —
+	## see `_configure_terrain`). Do not re-litigate this flag without a number.
 	stream.save_generator_output = true
 	_voxel_stream = stream
 	var lod := _terrain as VoxelLodTerrain

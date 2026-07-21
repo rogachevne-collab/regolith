@@ -26,11 +26,12 @@ const GRAVITY_AREA_RADIUS_FACTOR := 1.35
 ## Streaming budget for VoxelLodTerrain / VoxelViewer (voxels, local).
 ## World metres ≈ value * VOXEL_SCALE.
 ##
-## Surface floor = spawn-focus (512). On Ø19 km, raw `|cam|+R` ≈ 22k voxels on
-## foot — the streamer never finishes LOD0 under the viewer (only coarser LODs
-## win the queue). `collision_lod_count>1` then masks the hole with LOD1/2
-## colliders; dig fails because edits need LOD0. Ceiling grows with altitude
-## so the far limb LODs instead of unloading.
+## Surface floor 512, ceiling grows with altitude so the far limb LODs instead
+## of unloading. NOTE: the floor was introduced believing a large `view_distance`
+## starved LOD0 under the viewer. That was wrong — LOD0 was missing because the
+## legacy octree streamer followed the wrong VoxelViewer entirely (see
+## `bootstrap._configure_terrain`, now on Clipbox). These numbers are therefore
+## untested tuning, not a diagnosis; re-measure before trusting them.
 ## Do NOT push Camera.far to orbital scales — Godot's light culler breaks
 ## (create_frustum_points) when near/far ratio is extreme.
 const MIN_VIEW_DISTANCE_VOXELS := 512
@@ -48,12 +49,14 @@ const DEFAULT_MESH_BLOCK_SIZE := 16
 ## scale 1.0 (bounds ~±11875): mesh 16 + lod_count 10 → block 8192 fits;
 ## mesh 32 + lod_count 10 → 16384 > bounds → cubic cuts / broken LOD0.
 const DEFAULT_LOD_COUNT := 10
-## How far LOD0 extends (and, on LEGACY_OCTREE, the step for coarser rings).
-## VT default is 48. We had 88 for denser near crust, but once the surface
-## view_distance fix lets LOD0 actually finish, 88³ is a heavy shell of
-## full-res mesh+collider underfoot — dig only needs reach (~6 m). Stay on
-## the VT default; raise only with a measured FPS budget.
+## How far LOD0 extends from the viewer — and, with streaming on, how far edits
+## are allowed at all. VT default is 48. We had 88 for denser near crust, but
+## 88³ is a heavy shell of full-res mesh+collider underfoot and a dig only needs
+## reach (~6 m). Stay on the VT default; raise only with a measured FPS budget.
 const DEFAULT_LOD_DISTANCE := 48.0
+## Clipbox only: reach of every LOD above 0 (octree derived this from
+## `lod_distance`). VT default 48; raise together with a measured FPS budget.
+const DEFAULT_SECONDARY_LOD_DISTANCE := 48.0
 ## Beyond this distance from planet center, show a camera-relative impostor.
 ## Parked far out for Ø19 km: billboard was baked for the Ø1 km moon and
 ## would lie at this scale. Stay below ~5–6 km altitude until scaled-space.

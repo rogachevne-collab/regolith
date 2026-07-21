@@ -157,15 +157,31 @@ Legacy flat yard: `scenes/flat_moon.tscn` + `scripts/flat_moon_bootstrap.gd`.
 - `transform.basis` uniform scale **1.0**.
 - Collisions: on; streaming вокруг viewer (**не** `full_load` с SQLite —
   плагин отвергает).
+- **Стример: `streaming_system = CLIPBOX`, не octree по умолчанию.**
+  Legacy octree держит **ровно одного** зрителя:
+  `VoxelLodTerrain::get_local_viewer_pos` обходит всех и оставляет
+  последнего попавшегося (в апстриме помечено `TODO ... placeholder`).
+  Зрителей у нас больше одного — `GranularVoxelRegionView` заводит
+  `VoxelViewer` на каждый регион сыпучки, — и луна начинала стримиться
+  вокруг песка. Симптом: кора видна (грубые LOD), под ногами нет LOD0,
+  бур отвечает `terrain_unavailable`, несут коллайдеры LOD1/2, местами
+  проваливаешься; в статистике при этом `blocked=0, io=0` — октодерево
+  улеглось и ничего не ждёт. Clipbox сопрягает зрителей по отдельности,
+  ради чего он в апстриме и появился. **Не возвращать octree, пока
+  зритель в проекте не один.**
+- **Порядок настройки террейна:** `mesh_block_size` и `lod_count`
+  выставляются **до** `voxel_bounds`. `set_voxel_bounds` привязывает бокс к
+  размеру октодерева на момент присваивания, `set_mesh_block_size`
+  выходит рано, если значение уже дефолтное, а `set_lod_count` не
+  пересчитывает вовсе. Замер: bounds первым → `size/octree = 2.906`,
+  bounds последним → `4.000`.
 - **Дальняя видимость (планета):** конечные `voxel_bounds` +
-  `mesh_block_size=16` + `lod_count=10` (`MoonGeometry`; coarsest block
-  `16*2^9=8192` ≤ bounds ~±11875; **не** `32+lod_count=10` — block 16384
-  > bounds → cubic cuts / LOD0 не subdivides). `view_distance`
+  `mesh_block_size=16` + `lod_count=10` (`MoonGeometry`). `view_distance`
   **динамический** (`MoonGeometry.view_distance_voxels_for_camera_distance`):
-  на коре floor =512 (LOD0 под viewer; dig/`is_area_editable`); с высотой
-  blend к `|cam|+R`. `lod_distance` =48 (VT default). На Ø19 km сырой
-  `|cam|+R` ~22k — LOD0 не завершался, ходьба маскировалась LOD1/2. Орбита —
-  impostor (не раздувать `Camera.far`). Туман выключен (вакуум).
+  на коре floor =512, с высотой blend к `|cam|+R`. `lod_distance` =48 (реч
+  LOD0 и предел, докуда вообще разрешены правки), `secondary_lod_distance`
+  =48 (все LOD выше нуля; в octree это выводилось из `lod_distance`).
+  Орбита — impostor (не раздувать `Camera.far`). Туман выключен (вакуум).
 - Spawn: SDF gate → short physics probe (~1.5s) → temp landing pad if
   collider lag; pad retires when voxel floor appears. Spawn-focus
   `view_distance` (512) + `collision_lod_count=2` until world_ready.
