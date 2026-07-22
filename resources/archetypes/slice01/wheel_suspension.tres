@@ -30,8 +30,8 @@ script = ExtResource("4_susp")
 
 [resource]
 script = ExtResource("6_arch")
-archetype_id = "drive_wheel"
-display_name = "Колесо"
+archetype_id = "wheel_suspension"
+display_name = "Подвеска"
 roles = PackedStringArray("Support")
 mass_kg = 18.0
 footprint_cells = Array[Vector3i]([Vector3i(0, 0, 0), Vector3i(0, 1, 0)])
