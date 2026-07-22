@@ -62,9 +62,20 @@ Methods:
 
 ## Open API questions
 
-- Stiffness/damping: which knobs become public, in what units
-- Mid-rope attachments (more than two anchors)
-- Breaking / cutting
+Informed by the Obi Rope precedent (docs/research/obi-rope-api-notes.md):
+
+- Stiffness/damping — leaning: per-rope stretch compliance in m/N (0 =
+  as stiff as the budget allows); damping and the quality dial (substeps)
+  are solver-global, not per rope
+- Mid-rope attachments — leaning: v1, as a list of
+  {offset_m, node, compliance, break_force}
+- Breaking / cutting — leaning: break_force (N) on attachments first;
+  tearing the rope body itself later
+- Winch limits of the `length` design (accepted for v0): feeding at anchor B
+  needs a future `feed_end` enum; two simultaneous winches or mid-rope
+  feeding cannot be expressed by a single total length — if ever needed,
+  add additive methods on top, don't break `length`. A stalling winch
+  (motor force limit) is game-side: read `get_segment_tension()` and decide
 
 ## License
 
