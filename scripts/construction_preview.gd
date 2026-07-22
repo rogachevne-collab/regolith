@@ -523,6 +523,16 @@ func _build_collider_preview_nodes(
 	preview_material: Material
 ) -> Array[Node]:
 	var nodes: Array[Node] = []
+	# Wizard-baked parts ghost with their real model, not collider boxes.
+	var scene_visual := _scene_visual_preview_node(
+		archetype,
+		origin_cell,
+		orientation_index,
+		preview_material
+	)
+	if scene_visual != null:
+		nodes.append(scene_visual)
+		return nodes
 	var use_connected := CONNECTED_BLOCK_VISUAL_SCRIPT.is_connected_archetype(
 		archetype.archetype_id
 	)
@@ -568,6 +578,39 @@ func _build_collider_preview_nodes(
 		)
 		nodes.append(instance)
 	return nodes
+
+
+func _scene_visual_preview_node(
+	archetype: ElementArchetype,
+	origin_cell: Vector3i,
+	orientation_index: int,
+	preview_material: Material
+) -> Node3D:
+	if archetype.visual_scene_path.is_empty():
+		return null
+	if not ResourceLoader.exists(archetype.visual_scene_path):
+		return null
+	var packed := load(archetype.visual_scene_path) as PackedScene
+	if packed == null:
+		return null
+	var instance := packed.instantiate() as Node3D
+	if instance == null:
+		return null
+	instance.transform = (
+		GridPoseUtil.element_metric_transform(origin_cell, orientation_index)
+		* Transform3D(Basis.IDENTITY, archetype.visual_offset)
+	)
+	_apply_preview_material_recursive(instance, preview_material)
+	return instance
+
+
+func _apply_preview_material_recursive(node: Node, material: Material) -> void:
+	var mesh_instance := node as MeshInstance3D
+	if mesh_instance != null:
+		mesh_instance.material_override = material
+		mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	for child: Node in node.get_children():
+		_apply_preview_material_recursive(child, material)
 
 
 func _connected_rim_preview_material(base: Material) -> Material:
@@ -683,7 +726,20 @@ func _sync_preview_visuals() -> void:
 	if next_signature != _signature:
 		_apply_cached_mesh(archetype, orientation_index, valid)
 		_signature = next_signature
-	_mesh_root.position = GridMetric.cell_to_meters(origin_cell)
+	var pose_offset := Transform3D.IDENTITY
+	var command := resolved_plan.get("command") as PlaceElementCommand
+	if command != null:
+		pose_offset = command.pose_offset
+	# The ghost must sit exactly where the placed element will: the precise
+	# connector pull (wheel hub onto axle slot) rides in as pose_offset.
+	_mesh_root.transform = (
+		GridPoseUtil.element_pose_delta(
+			origin_cell,
+			orientation_index,
+			pose_offset
+		)
+		* Transform3D(Basis.IDENTITY, GridMetric.cell_to_meters(origin_cell))
+	)
 	global_transform = resolved_plan.get(
 		"preview_root_transform",
 		resolved_plan.get("assembly_world_transform", Transform3D.IDENTITY)

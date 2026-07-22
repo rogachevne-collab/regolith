@@ -1,69 +1,110 @@
 extends Node3D
-## Ghost polyline while routing a cable with the connect tool: pending element
-## → placed скобы → current aim point. Presentation only — reads ToolController
-## and InteractionQuery, never issues commands.
+## The rope being pulled. Not a ghost line — the actual cable, tied to the end
+## the player already clicked and trailing the cursor, sagging exactly as much
+## as the wheel says it will when it is built. Presentation only: reads
+## ToolController and InteractionQuery, never issues commands.
 
-const GHOST_COLOR := Color(0.35, 0.95, 1.0, 0.9)
-const MAX_AIM_DISTANCE := 4.0
+## Slightly brighter than a placed cable so the one in your hands reads as live.
+const PENDING_COLOR := Color(0.10, 0.11, 0.12, 1.0)
+const PENDING_EMISSION := Color(0.16, 0.55, 0.62, 1.0)
+const ROPE_RADIUS := 0.024
+const ROPE_SEGMENTS := 20
+## Fallback reach when nothing is aimed at; the real limit is the tool's own
+## throw range, so the rope trails as far as the throw would land.
+const FALLBACK_AIM_DISTANCE := 4.0
 
 @export var query_path: NodePath = NodePath("../InteractionQuery")
 @export var tool_controller_path: NodePath = NodePath("../ToolController")
 
 var _query: InteractionQuery
 var _tools: ToolController
-var _mesh: ImmediateMesh
+var _mesh_instance: MeshInstance3D
 var _material: StandardMaterial3D
+## Verlet state of the rope in hand — the same solver the built ropes use, so
+## what trails the cursor drapes over the ground instead of sinking through it.
+var _rope_state: Dictionary = {}
 
 
 func _ready() -> void:
 	top_level = true
 	global_transform = Transform3D.IDENTITY
-	_mesh = ImmediateMesh.new()
-	var mesh_instance := MeshInstance3D.new()
-	mesh_instance.mesh = _mesh
-	mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(mesh_instance)
 	_material = StandardMaterial3D.new()
-	_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	_material.albedo_color = GHOST_COLOR
+	_material.albedo_color = PENDING_COLOR
+	_material.metallic = 0.2
+	_material.roughness = 0.55
 	_material.emission_enabled = true
-	_material.emission = GHOST_COLOR
+	_material.emission = PENDING_EMISSION
+	_material.emission_energy_multiplier = 0.35
+	_mesh_instance = MeshInstance3D.new()
+	_mesh_instance.name = "PendingRope"
+	_mesh_instance.material_override = _material
+	_mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_mesh_instance.visible = false
+	add_child(_mesh_instance)
 	_query = get_node_or_null(query_path) as InteractionQuery
 	_tools = get_node_or_null(tool_controller_path) as ToolController
 
 
-func _process(_delta: float) -> void:
-	if _mesh == null:
+func _process(delta: float) -> void:
+	if _mesh_instance == null or _tools == null or _query == null:
 		return
-	_mesh.clear_surfaces()
-	if _tools == null or _query == null:
+	if _tools.active_tool != &"connect" or not _tools.rope_routing_active():
+		_mesh_instance.visible = false
+		_rope_state = {}
 		return
-	if _tools.active_tool != &"connect":
-		return
-	var pending_id := _tools.connect_pending_element_id()
-	if pending_id <= 0:
-		return
-	var waypoints := _tools.connect_waypoints()
-	var hit := _query.current_hit
-	var aim_valid := hit.valid and hit.distance <= MAX_AIM_DISTANCE
-	# The route starts at the pending element's electric port nearest to the
-	# next routed point — not at the element pivot.
-	var anchor_reference := (
-		waypoints[0]
-		if not waypoints.is_empty()
-		else (hit.point if aim_valid else global_position)
-	)
-	var anchor := _tools.connect_anchor_position(anchor_reference)
+	var anchor := _tools.rope_anchor_world_position()
 	if not anchor.is_finite():
+		_mesh_instance.visible = false
 		return
-	var points := PackedVector3Array()
-	points.append(anchor)
-	points.append_array(waypoints)
-	if aim_valid:
-		points.append(hit.point)
-	if points.size() < 2:
+	var free_end := _free_end_position(anchor)
+	var span := anchor.distance_to(free_end)
+	if span < CableAnchorUtil.MIN_SPAN_M:
+		_mesh_instance.visible = false
 		return
-	_mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP, _material)
-	for point: Vector3 in points:
-		_mesh.surface_add_vertex(point)
-	_mesh.surface_end()
+	var rest_length := CableAnchorUtil.rest_length_m(span, _tools.rope_slack())
+	var gravity := GravityField.resolve_gravity_accel(
+		self,
+		(anchor + free_end) * 0.5
+	)
+	if _rope_state.is_empty():
+		_rope_state = CableRopeSolver.create_state(
+			anchor,
+			free_end,
+			rest_length,
+			-gravity.normalized() if gravity.length_squared() > 0.0 else Vector3.UP,
+			get_world_3d().direct_space_state
+		)
+	CableRopeSolver.step(
+		_rope_state,
+		anchor,
+		free_end,
+		rest_length,
+		gravity,
+		delta,
+		get_world_3d().direct_space_state
+	)
+	var path := CableRopeSolver.path(_rope_state)
+	if path.size() < 2:
+		_mesh_instance.visible = false
+		return
+	_mesh_instance.mesh = CableCurveUtil.build_tube_mesh(
+		CableCurveUtil.smooth_adaptive(path),
+		ROPE_RADIUS
+	)
+	_mesh_instance.visible = true
+
+
+## Where the loose end hangs: on the aimed surface when there is one, otherwise
+## at arm's length down the view ray, so the rope keeps trailing the cursor
+## even while the player looks at the sky.
+func _free_end_position(anchor: Vector3) -> Vector3:
+	var hit := _query.current_hit
+	if hit != null and hit.valid and hit.distance <= _tools.rope_click_range():
+		return hit.point + hit.normal * 0.06
+	var camera := get_viewport().get_camera_3d()
+	if camera == null:
+		return anchor
+	return (
+		camera.global_position
+		- camera.global_transform.basis.z * FALLBACK_AIM_DISTANCE
+	)

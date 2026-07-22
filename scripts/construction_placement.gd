@@ -119,6 +119,64 @@ static func plan(
 		command.initial_motion.transform = assembly_world_transform
 
 	var validation := world.preview_place_element(command)
+	if (
+		not validation.is_ok()
+		and validation.reason == StructuralCommandResult.REASON_INCOMPATIBLE_CONNECTION
+		and target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
+	):
+		# Auto-facing: a part with only a few mount faces (a suspension with
+		# one frame pad) often arrives rotated so none of them touch the
+		# target. Instead of a mute red ghost, turn the part so a mount face
+		# looks at the target — nearest rotation to the player's wins.
+		var original_orientation := command.orientation_index
+		var original_origin := command.origin_cell
+		for alt_orientation: int in _auto_facing_orientations(
+			archetype,
+			attach_snap_context,
+			orientation_index
+		):
+			command.orientation_index = alt_orientation
+			command.origin_cell = _resolve_attach_origin(
+				world,
+				archetype,
+				attach_snap_context,
+				alt_orientation,
+				command.assembly_id,
+				store_id,
+				held_attach_pivot
+			)
+			var alt_validation := world.preview_place_element(command)
+			if alt_validation.is_ok():
+				validation = alt_validation
+				world_transform = (
+					assembly_world_transform
+					* GridPoseUtil.element_local_transform(
+						command.origin_cell,
+						command.orientation_index
+					)
+				)
+				break
+		if not validation.is_ok():
+			command.orientation_index = original_orientation
+			command.origin_cell = original_origin
+	if (
+		validation.is_ok()
+		and target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
+	):
+		command.pose_offset = _precise_attach_offset(
+			world,
+			command,
+			validation.data
+		)
+		if command.pose_offset != Transform3D.IDENTITY:
+			world_transform = (
+				assembly_world_transform
+				* GridPoseUtil.element_local_transform(
+					command.origin_cell,
+					command.orientation_index,
+					command.pose_offset
+				)
+			)
 	return {
 		"valid": validation.is_ok(),
 		"reason": validation.reason,
@@ -405,6 +463,21 @@ static func _plan_for_attach_origin(
 		)
 	)
 	var validation := world.preview_place_element(command)
+	if validation.is_ok():
+		command.pose_offset = _precise_attach_offset(
+			world,
+			command,
+			validation.data
+		)
+		if command.pose_offset != Transform3D.IDENTITY:
+			world_transform = (
+				assembly_world_transform
+				* GridPoseUtil.element_local_transform(
+					command.origin_cell,
+					command.orientation_index,
+					command.pose_offset
+				)
+			)
 	return {
 		"valid": validation.is_ok(),
 		"reason": validation.reason,
@@ -418,6 +491,138 @@ static func _plan_for_attach_origin(
 		"archetype": archetype,
 		"attach_snap_context": snap_context.duplicate(true),
 	}
+
+
+## Orientations that turn at least one of the part's grid mount faces toward
+## the snap target (face == -snap_dir), nearest to `current` first. `current`
+## itself is excluded — it just failed.
+static func _auto_facing_orientations(
+	archetype: ElementArchetype,
+	snap_context: Dictionary,
+	current: int
+) -> Array[int]:
+	var snap_dir: Vector3i = snap_context.get("snap_dir", Vector3i.ZERO)
+	if snap_dir == Vector3i.ZERO or archetype == null:
+		return []
+	var wanted := -snap_dir
+	var result: Array[int] = []
+	for index: int in range(OrientationUtil.ORIENTATION_COUNT):
+		if index == current:
+			continue
+		for connector: ConnectorDefinition in archetype.effective_connectors():
+			if connector == null or not connector.is_grid:
+				continue
+			var rotated := OrientationUtil.rotate_direction(
+				OrientationUtil.face_to_vector(connector.grid_face),
+				index
+			)
+			if rotated == wanted:
+				result.append(index)
+				break
+	var current_basis := OrientationUtil.orientation_basis(current)
+	result.sort_custom(
+		func(left: int, right: int) -> bool:
+			return (
+				_rotation_distance(current_basis, left)
+				< _rotation_distance(current_basis, right)
+			)
+	)
+	return result
+
+
+static func _rotation_distance(from_basis: Basis, to_index: int) -> float:
+	var delta := (
+		from_basis.inverse() * OrientationUtil.orientation_basis(to_index)
+	)
+	return delta.get_rotation_quaternion().get_angle()
+
+
+## Translation-only pose_offset that puts the held part's mount point exactly
+## on the target's mount point.
+##
+## The target side is a grid pad: a block's mount point is the centre of the
+## cell face, so the part lands on the 0.5 m grid as expected. The held side
+## is whatever the author marked — the tip of a stub axle, a bracket ear —
+## so THAT is the bit of the model that touches. A part with no authored
+## points is face-centred on both sides and gets identity.
+static func precise_attach_pose_offset(
+	existing: SimulationElement,
+	existing_port_id: String,
+	archetype: ElementArchetype,
+	origin_cell: Vector3i,
+	orientation_index: int,
+	new_port_id: String
+) -> Transform3D:
+	if existing == null:
+		return Transform3D.IDENTITY
+	var existing_connector := _connector_by_id(
+		existing.get_archetype(),
+		existing_port_id
+	)
+	var new_connector := _connector_by_id(archetype, new_port_id)
+	if existing_connector == null or new_connector == null:
+		return Transform3D.IDENTITY
+	var target_point: Vector3 = GridPoseUtil.element_metric_transform(
+		existing.origin_cell,
+		existing.orientation_index,
+		existing.pose_offset
+	) * existing_connector.local_position
+	var held_metric := GridPoseUtil.element_metric_transform(
+		origin_cell,
+		orientation_index
+	)
+	var delta: Vector3 = held_metric.basis.inverse() * (
+		target_point - held_metric * new_connector.local_position
+	)
+	if delta.is_zero_approx():
+		return Transform3D.IDENTITY
+	return Transform3D(Basis.IDENTITY, delta)
+
+
+static func _precise_attach_offset(
+	world: SimulationWorld,
+	command: PlaceElementCommand,
+	validation_data: Dictionary
+) -> Transform3D:
+	var connections: Variant = validation_data.get("connections", [])
+	if not (connections is Array):
+		return Transform3D.IDENTITY
+	var offset := Transform3D.IDENTITY
+	for connection: Variant in connections:
+		if not (connection is Dictionary):
+			continue
+		var existing := world.get_element(
+			int(connection.get("existing_element_id", 0))
+		)
+		var candidate := precise_attach_pose_offset(
+			existing,
+			str(connection.get("existing_port_id", "")),
+			command.archetype,
+			command.origin_cell,
+			command.orientation_index,
+			str(connection.get("new_port_id", ""))
+		)
+		if candidate == Transform3D.IDENTITY:
+			continue
+		if offset == Transform3D.IDENTITY:
+			offset = candidate
+		elif not offset.is_equal_approx(candidate):
+			# Two connections pull to different points; the grid pose is the
+			# only one that satisfies every face pair, so keep it.
+			return Transform3D.IDENTITY
+	return offset
+
+
+static func _connector_by_id(
+	archetype: ElementArchetype,
+	connector_id: String
+) -> ConnectorDefinition:
+	if archetype == null or connector_id.is_empty():
+		return null
+	for connector: ConnectorDefinition in archetype.effective_connectors():
+		if connector != null and connector.id == connector_id:
+			return connector
+	return null
 
 
 static func _resolve_attach_origin(

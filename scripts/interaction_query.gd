@@ -68,8 +68,14 @@ func _physics_process(_delta: float) -> void:
 
 
 func _effective_max_distance() -> float:
-	if _tools != null and _tools.active_tool == &"build":
+	if _tools == null:
+		return max_distance
+	if _tools.active_tool == &"build":
 		return build_max_distance
+	# Second end of a rope is thrown: the aim ray has to reach as far as the
+	# throw does, or you could never anchor to the rock you are driving past.
+	if _tools.active_tool == &"connect" and _tools.rope_routing_active():
+		return maxf(max_distance, _tools.rope_click_range())
 	return max_distance
 
 
