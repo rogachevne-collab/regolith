@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="ConnectorRuleTable" load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/simulation/resources/connector_rule_table.gd" id="1_table"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/connector_rule.gd" id="2_rule"]
+
+[sub_resource type="Resource" id="Resource_structural"]
+script = ExtResource("2_rule")
+tag_a = "structural"
+tag_b = "structural"
+
+[sub_resource type="Resource" id="Resource_wheel"]
+script = ExtResource("2_rule")
+tag_a = "wheel_socket"
+tag_b = "wheel_plug"
+
+[resource]
+script = ExtResource("1_table")
+rules = Array[ExtResource("2_rule")]([SubResource("Resource_structural"), SubResource("Resource_wheel")])
