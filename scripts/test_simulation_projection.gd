@@ -49,6 +49,12 @@ func _run() -> void:
 		return
 	if not await _test_rope_tension_pulls_and_breaks():
 		return
+	if not await _test_rope_cannot_launch_a_body():
+		return
+	if not await _test_rope_wakes_a_parked_body():
+		return
+	if not await _test_rope_carries_the_actuator_rating():
+		return
 	if not await _test_ground_anchor_tears_out_with_the_ground():
 		return
 	if not await _test_rope_lies_on_the_world():
@@ -1277,6 +1283,185 @@ func _test_rope_tension_pulls_and_breaks() -> bool:
 	return true
 
 
+## A crane has to be able to pull a parked machine. A parked assembly is a frozen
+## RigidBody3D and CableTensionUtil reads frozen as "world anchor", so before the
+## thaw a winch rigged to one pulled against a wall — nothing lifted, and since
+## the tension was only ever what it took to arrest the light end, the rope did
+## not even snap. The other half of the contract matters just as much: a rope
+## that merely hangs taut must leave a parked body parked, or nothing moored
+## would ever sleep again.
+func _test_rope_wakes_a_parked_body() -> bool:
+	var fixture: Dictionary = _new_fixture()
+	var world: SimulationWorld = fixture["world"]
+	var projection: SimulationPhysicsProjection = fixture["projection"]
+	var spawned: StructuralCommandResult = _spawn(
+		world,
+		_single_blueprint(Slice01Archetypes.frame()),
+		GridTransform.identity()
+	)
+	if not spawned.is_ok():
+		_free_fixture(fixture)
+		return _fail("parked-body rope spawn failed: %s" % spawned.reason)
+	var assembly_id: int = int(spawned.data["assembly_id"])
+	var element_id: int = int(spawned.data["element_ids"][0])
+	var parked := projection.get_physics_body(assembly_id) as RigidBody3D
+	if parked == null:
+		_free_fixture(fixture)
+		return _fail("a loose frame must project as a RigidBody3D")
+	var element_origin := world.element_world_transform(element_id).origin
+	var anchor_point := element_origin + Vector3(6.0, 0.0, 0.0)
+	await get_tree().physics_frame
+	# Everything below is driven by hand, with no physics frame in between: the
+	# projection ticks ropes in its own _physics_process, and _tick_cable_anchors
+	# would tear a world-nailed end that has no ground stand-in under it — the
+	# rest of the test would then be asserting against a rope that is gone.
+	var roped := world.connect_rope(
+		element_id,
+		element_origin,
+		0,
+		anchor_point,
+		0.5
+	)
+	if not roped.is_ok():
+		_free_fixture(fixture)
+		return _fail("rope to the ground failed: %s" % str(roped.reason))
+	var link_id := int(roped.data["link_id"])
+	var link: IndustryElectricLink = (
+		world.get_industry_network().get_link(link_id)
+	)
+	# A test winch that cannot part: snapping would pull the link out mid-run and
+	# leave the later ticks quietly asserting nothing.
+	link.break_force_n = 1.0e9
+	# Reel in past the span: the rope is now taut and still taking up.
+	link.rest_length_m = element_origin.distance_to(anchor_point) - 0.25
+	parked.freeze = true
+	parked.sleeping = true
+	projection._tick_cable_tension(1.0 / 60.0)
+	if world.get_industry_network().get_link(link_id) == null:
+		_free_fixture(fixture)
+		return _fail("the test winch must not snap")
+	if parked.freeze:
+		_free_fixture(fixture)
+		return _fail("a rope running out must thaw the parked body it pulls")
+	# Park it again and hold the rope exactly where it is. A taut rope does no
+	# work; re-thawing here is what would keep a moored rover awake forever.
+	parked.freeze = true
+	parked.sleeping = true
+	projection._tick_cable_tension(1.0 / 60.0)
+	if not parked.freeze:
+		_free_fixture(fixture)
+		return _fail("a rope hanging taut and still must leave a park alone")
+	# Winch takes up another half metre: that is a pull, and it must land.
+	link.rest_length_m -= 0.5
+	projection._tick_cable_tension(1.0 / 60.0)
+	if parked.freeze:
+		_free_fixture(fixture)
+		return _fail("taking up more rope must thaw the parked body again")
+	_free_fixture(fixture)
+	return true
+
+
+## A crane is as strong as its winch, not as its hook. A rope on a piston
+## carriage pulls against the machine the piston is bolted to and is capped by
+## what the motor is rated for. Solved as a free 20 kg hook — which is all the
+## point-mass solve can see on its own — a 5 kN piston delivered a few hundred
+## newtons, and a crane rigged over a two-tonne structure lifted nothing at all.
+func _test_rope_carries_the_actuator_rating() -> bool:
+	var root := Node3D.new()
+	add_child(root)
+	# Two carriages, so the backed measurement starts from rest instead of from
+	# whatever the unbacked one was left holding.
+	var bare_hook := RigidBody3D.new()
+	bare_hook.mass = 20.0
+	bare_hook.gravity_scale = 0.0
+	root.add_child(bare_hook)
+	bare_hook.global_position = Vector3(30.0, 0.0, 0.0)
+	var hook := RigidBody3D.new()
+	hook.mass = 20.0
+	hook.gravity_scale = 0.0
+	root.add_child(hook)
+	hook.global_position = Vector3.ZERO
+	# The machine behind the piston.
+	var mast := RigidBody3D.new()
+	mast.mass = 800.0
+	mast.gravity_scale = 0.0
+	root.add_child(mast)
+	mast.global_position = Vector3(0.0, 2.0, 0.0)
+	var slung := RigidBody3D.new()
+	slung.mass = 2210.0
+	slung.gravity_scale = 0.0
+	root.add_child(slung)
+	slung.global_position = Vector3(0.0, -12.0, 0.0)
+	await get_tree().physics_frame
+	var rest_length := 11.5
+	var delta := 1.0 / 60.0
+	var lunar_weight_n := 2210.0 * 1.62
+	var bare := CableTensionUtil.solve(
+		bare_hook.global_position,
+		bare_hook,
+		slung.global_position + Vector3(30.0, 0.0, 0.0),
+		null,
+		rest_length,
+		delta
+	)
+	if bare >= lunar_weight_n:
+		root.queue_free()
+		return _fail(
+			"a bare 20 kg hook must not out-pull two tonnes, %.0f N" % bare
+		)
+	# Same rope, now told what is behind the hook: a 5 kN piston on an 800 kg
+	# mast. The rope is tied to a port face, NOT to the hook's centre of mass —
+	# that offset is the whole reason the reaction may not land on the hook.
+	var rating_n := 5000.0
+	var hook_anchor := hook.global_position + Vector3(0.0, 0.0, 0.9)
+	var backed := CableTensionUtil.solve(
+		hook_anchor,
+		hook,
+		slung.global_position,
+		slung,
+		rest_length,
+		delta,
+		0.0,
+		{
+			"inverse_mass": 1.0 / mast.mass,
+			"force_cap_n": rating_n,
+			"reaction_body": mast,
+		},
+		{}
+	)
+	if backed <= lunar_weight_n:
+		root.queue_free()
+		return _fail(
+			"a %.0f N piston must out-pull %.0f N of lunar weight, got %.0f N"
+			% [rating_n, lunar_weight_n, backed]
+		)
+	if backed > rating_n + 0.5:
+		root.queue_free()
+		return _fail(
+			"rope transmitted %.0f N through a %.0f N motor" % [backed, rating_n]
+		)
+	await get_tree().physics_frame
+	# The impulse is sized by the mast's mass. Land it on the 20 kg carriage
+	# instead and a metre of lever arm spins it to the engine's angular ceiling
+	# in one tick — which is exactly how the piston head got torn off.
+	if hook.angular_velocity.length() > 0.5 or hook.linear_velocity.length() > 0.5:
+		root.queue_free()
+		return _fail(
+			"the carriage must not take the pull: v=%.2f m/s, w=%.2f rad/s"
+			% [hook.linear_velocity.length(), hook.angular_velocity.length()]
+		)
+	if mast.linear_velocity.length() <= 0.0:
+		root.queue_free()
+		return _fail("the machine behind the piston must take the reaction")
+	if slung.linear_velocity.y <= 0.0:
+		root.queue_free()
+		return _fail(
+			"the slung load must be pulled up, vy=%.3f" % slung.linear_velocity.y
+		)
+	root.queue_free()
+	return true
+
+
 ## A rope end hammered into the ground is only as good as the ground: while
 ## there is terrain under it the anchor holds, and when the ground is dug out
 ## the rope tears loose instead of hanging off thin air.
@@ -1694,6 +1879,81 @@ func _rope_ripple(path: PackedVector3Array) -> float:
 		var chord := (path[index - 1] + path[index + 1]) * 0.5
 		ripple += path[index].distance_to(chord)
 	return ripple
+
+
+## The rover-launch contract. Two ways a rope used to turn a routine cut into a
+## catastrophe, both fixed here, both checked by watching the body: it must not
+## gain velocity from either.
+func _test_rope_cannot_launch_a_body() -> bool:
+	var root := Node3D.new()
+	add_child(root)
+	var rover := RigidBody3D.new()
+	rover.mass = 3000.0
+	rover.gravity_scale = 0.0
+	# No engine damping: any velocity change in this test must be the rope's.
+	# REPLACE, not the default COMBINE — otherwise the project-wide default
+	# damping is added on top of the zero and the body still bleeds speed.
+	rover.linear_damp_mode = RigidBody3D.DAMP_MODE_REPLACE
+	rover.angular_damp_mode = RigidBody3D.DAMP_MODE_REPLACE
+	rover.linear_damp = 0.0
+	rover.angular_damp = 0.0
+	root.add_child(rover)
+	rover.global_position = Vector3(20.0, 0.0, 0.0)
+	rover.linear_velocity = Vector3(40.0, 0.0, 0.0)
+	await get_tree().physics_frame
+	# 1. Over the break threshold the rope must snap INSTEAD of pulling. It used
+	# to pull first and break after, so the tick that broke it hit hardest.
+	var speed_before := rover.linear_velocity
+	var tension := CableTensionUtil.solve(
+		Vector3.ZERO,
+		null,
+		rover.global_position,
+		rover,
+		10.0,
+		1.0 / 60.0
+	)
+	await get_tree().physics_frame
+	if tension <= CableTensionUtil.break_force_n(0.0):
+		root.queue_free()
+		return _fail("3 t at 40 m/s on a 10 m rope must be over the limit")
+	if not rover.linear_velocity.is_equal_approx(speed_before):
+		root.queue_free()
+		return _fail(
+			"a rope past its breaking force must not pull first: %s vs %s"
+			% [rover.linear_velocity, speed_before]
+		)
+	# 2. An anchor that resolves nowhere near its body — a split child whose
+	# motion has not been seeded resolves near the world origin — must be
+	# ignored, not turned into an impulse at a kilometre-long lever arm.
+	var spinner := RigidBody3D.new()
+	spinner.mass = 3000.0
+	spinner.gravity_scale = 0.0
+	spinner.linear_damp_mode = RigidBody3D.DAMP_MODE_REPLACE
+	spinner.angular_damp_mode = RigidBody3D.DAMP_MODE_REPLACE
+	spinner.linear_damp = 0.0
+	spinner.angular_damp = 0.0
+	root.add_child(spinner)
+	spinner.global_position = Vector3(0.0, 0.0, 0.0)
+	spinner.angular_velocity = Vector3(0.0, 2.0, 0.0)
+	await get_tree().physics_frame
+	var spin_before := spinner.linear_velocity
+	CableTensionUtil.solve(
+		Vector3(9500.0, 0.0, 0.0),
+		null,
+		Vector3(9500.0, 0.0, 0.0),
+		spinner,
+		10.0,
+		1.0 / 60.0
+	)
+	await get_tree().physics_frame
+	if not spinner.linear_velocity.is_equal_approx(spin_before):
+		root.queue_free()
+		return _fail(
+			"rope acted on an anchor 9.5 km from its body: %s"
+			% spinner.linear_velocity
+		)
+	root.queue_free()
+	return true
 
 
 func _fail(reason: String) -> bool:

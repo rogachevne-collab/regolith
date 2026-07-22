@@ -384,9 +384,13 @@ static func configure_slider_joint(
 	# Solver-side axial drive: Jolt resolves the motor together with every
 	# other constraint in the chain, so external per-tick forces are not needed
 	# and long piston chains stay stable.
+	# `linear_drive_y/force_limit` replaces the deprecated
+	# `linear_motor_y/force_limit`; with the motor enabled the effective Jolt
+	# force limit is identical, and it is per-axis so the angular springs below
+	# are untouched.
 	joint.set("linear_motor_y/enabled", true)
 	joint.set("linear_motor_y/target_velocity", 0.0)
-	joint.set("linear_motor_y/force_limit", maxf(motor.force_limit_n, 0.0))
+	joint.set("linear_drive_y/force_limit", maxf(motor.force_limit_n, 0.0))
 
 
 ## Cheap per-tick motor update — never touches limits or springs, so Jolt
@@ -397,7 +401,7 @@ static func update_slider_motor(
 	force_limit_n: float
 ) -> void:
 	joint.set("linear_motor_y/target_velocity", target_velocity_mps)
-	joint.set("linear_motor_y/force_limit", maxf(force_limit_n, 0.0))
+	joint.set("linear_drive_y/force_limit", maxf(force_limit_n, 0.0))
 
 
 ## Rewrite only the axial travel stops (configure_actuator retune on a live

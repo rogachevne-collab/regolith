@@ -5,6 +5,8 @@ extends Resource
 @export var archetype: ElementArchetype
 @export var origin_cell: Vector3i = Vector3i.ZERO
 @export var orientation_index: int = 0
+## Sub-cell precision on top of the grid pose (see SimulationElement).
+@export var pose_offset: Transform3D = Transform3D.IDENTITY
 
 
 func compare_sort_key(other: BlueprintElementPlacement) -> bool:

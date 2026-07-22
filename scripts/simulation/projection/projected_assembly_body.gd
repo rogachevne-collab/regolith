@@ -33,3 +33,5 @@ func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
 	# damping; calling state.integrate_forces() here would apply them twice.
 	if custom_integrator:
 		state.integrate_forces()
+	# Last, so the fence sees the velocity everything else settled on.
+	VelocityGuard.clamp_state(self, state)

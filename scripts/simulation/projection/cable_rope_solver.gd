@@ -61,6 +61,12 @@ const COLLISION_SKIN := 0.015
 ## Per-step motion clamp: a rope whose anchor teleports (split, respawn) must
 ## catch up over a few frames instead of exploding.
 const MAX_STEP_M := 1.2
+## An anchor jumping further than this in one tick is not motion, it is a
+## topology event — the block was cut free, the assembly split, the world was
+## restored. The old rope shape says nothing about the new situation, and the
+## stale first segment would have the tension solver pull in a direction that
+## no longer exists, so the rope is re-seeded from scratch.
+const ANCHOR_TELEPORT_M := 2.0
 ## Terrain + assemblies. Not the player: a rope should not hang on you.
 const COLLISION_MASK := 3
 ## A rope that has stopped moving keeps its shape whether or not it is asked
@@ -84,6 +90,15 @@ const VELOCITY_EPSILON_M := 0.0004
 ## every tick just fights the length constraint forever, which is exactly what
 ## kept ropes jittering.
 const UNFOLD_THRESHOLD := 0.2
+## Long-range attachment headroom: a particle may sit up to this multiple of
+## its along-rope rest distance from an anchor before the LRA pass clamps it
+## back. Distance constraints alone converge slowly near a heavily loaded
+## anchor — Gauss-Seidel needs dozens of passes to squeeze the last stretch
+## out — and ITERATIONS is nowhere near that under a sudden load spike or a
+## heavy object on the free end. 1.0 would clamp every particle onto the exact
+## chord distance and iron out real catenary sag along with the stretch; the
+## headroom keeps the clamp inactive until the rope is genuinely overstretched.
+const LRA_SLACK := 1.1
 
 
 ## Fresh rope, seeded on the analytic hanging curve rather than on the straight
@@ -196,6 +211,21 @@ static func step(
 		motion = maxf(motion, positions[index].distance_to(previous[index]))
 	if not is_equal_approx(float(state.get("solved_rest_m", -1.0)), rest_length_m):
 		motion = INF
+	if motion > ANCHOR_TELEPORT_M:
+		var reseeded := create_state(
+			anchor_a,
+			anchor_b,
+			rest_length_m,
+			up,
+			space_state
+		)
+		state["positions"] = reseeded["positions"]
+		state["previous"] = reseeded["previous"]
+		state["segment_rest"] = reseeded["segment_rest"]
+		state["rest_length_m"] = rest_length_m
+		state["solved_rest_m"] = rest_length_m
+		state["quiescent_ticks"] = 0
+		return
 	state["solved_rest_m"] = rest_length_m
 	var quiescent := int(state.get("quiescent_ticks", 0))
 	quiescent = quiescent + 1 if motion < QUIESCENT_MOTION_M else 0
@@ -234,6 +264,7 @@ static func step(
 	# ends up.
 	for iteration: int in range(ITERATIONS):
 		_relax(positions, count, segment_rest, iteration % 2 == 0)
+		_clamp_lra(positions, count, segment_rest)
 		if (
 			collide_now
 			and iteration % COLLISION_EVERY == COLLISION_EVERY - 1
@@ -411,6 +442,48 @@ static func _unfold(
 			middle,
 			BEND_STIFFNESS * folded
 		)
+
+
+## Long-range attachment: clamps every interior particle to a sphere around
+## each anchor sized by its along-rope rest distance, so a chain segment can
+## never end up carrying more stretch than the rope between it and an anchor
+## actually has. Unilateral — only a particle already outside its sphere is
+## touched — so a slack, sagging rope sits inside both spheres and this pass
+## is a no-op for it; it only ever bites once the rope is genuinely taut.
+static func _clamp_lra(
+	positions: PackedVector3Array,
+	count: int,
+	segment_rest: float
+) -> void:
+	if count < 3 or segment_rest <= 0.000001:
+		return
+	var anchor_a := positions[0]
+	var anchor_b := positions[count - 1]
+	for index: int in range(1, count - 1):
+		_clamp_to_anchor(
+			positions, index, anchor_a, float(index) * segment_rest * LRA_SLACK
+		)
+		_clamp_to_anchor(
+			positions,
+			index,
+			anchor_b,
+			float(count - 1 - index) * segment_rest * LRA_SLACK
+		)
+
+
+static func _clamp_to_anchor(
+	positions: PackedVector3Array,
+	index: int,
+	anchor: Vector3,
+	max_distance: float
+) -> void:
+	if max_distance <= 0.000001:
+		return
+	var offset := positions[index] - anchor
+	var distance_sq := offset.length_squared()
+	if distance_sq <= max_distance * max_distance:
+		return
+	positions[index] = anchor + offset * (max_distance / sqrt(distance_sq))
 
 
 ## Rigid segments, ends pinned: a segment with one pinned end hands its whole

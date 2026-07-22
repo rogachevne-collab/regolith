@@ -20,6 +20,14 @@ const CABLE_ROPE_COLLISION_BUDGET := 320
 ## has ground, and how much ground has to disappear before it tears loose.
 const CABLE_ANCHOR_PROBE_INTERVAL_S := 0.33
 const CABLE_ANCHOR_PROBE_RADIUS := 0.3
+## How much further a rope has to run out before it thaws a parked endpoint,
+## measured against the slackest that rope has been since it last woke anything.
+## Accumulating instead of comparing tick to tick matters: a slow winch adds
+## fractions of a millimetre per frame, and a per-tick threshold never fires.
+const ROPE_WAKE_OVERSHOOT_M := 0.001
+## Nested actuators a rope end is walked back through when working out what
+## really holds it. Matches the actuator chain limit — see _rope_endpoint_backing.
+const ACTUATOR_BACKING_MAX_LINKS := 16
 const FragmentBodyScript := preload(
 	"res://scripts/simulation/projection/projected_assembly_body.gd"
 )
@@ -64,6 +72,9 @@ var _cable_anchor_probe_cooldown := 0.0
 ## link_id → verlet rope state (CableRopeSolver). Presentation/physics only.
 var _rope_states: Dictionary = {}
 var _rope_collision_cursor := 0
+## link_id → slackest overshoot seen since this rope last thawed an endpoint.
+## See ROPE_WAKE_OVERSHOOT_M and _wake_roped_bodies.
+var _rope_wake_overshoot: Dictionary = {}
 
 func bind_impact_service(service: ImpactResolverService) -> void:
 	_impact_service = service
@@ -234,6 +245,10 @@ func _physics_process(delta: float) -> void:
 func _exit_tree() -> void:
 	unbind_world()
 	_clear_all_bodies()
+	# Bodies stop reporting the moment they are freed, so anything still mid
+	# blow-up has to be closed out here or the run's worst episode is the one
+	# that never reaches the file.
+	VelocityGuard.flush()
 
 func _on_structural_event(event: Dictionary) -> void:
 	match StringName(event.get("kind", &"")):
@@ -888,9 +903,23 @@ func _project_assembly_single(
 		motion.frozen = false
 		motion.sleeping = false
 	else:
-		motion.frozen = seed_motion.frozen
+		# By construction: not anchored (that is the branch above), and nothing
+		# aboard can move it — _is_locomotive_assembly, wheels or thrusters, just
+		# failed. Every thaw path in the game is gated on exactly that
+		# capability: driver input (_update_parking_freeze), seat entry
+		# (gateway._wake_rover_body), a dig nearby (wake_frozen_near). Carrying
+		# `frozen` forward here therefore parks a body with nobody holding the
+		# key — not a StaticBody, so the rest of the game reads it as loose, yet
+		# deaf to every force there is. That is how an anchored assembly already
+		# marked released_from_anchor ended up a permanent statue: rigid,
+		# immovable, impossible to so much as tug with a rope. Let Jolt sleep it
+		# instead; sleeping costs the same and it wakes on contact.
+		motion.frozen = false
 		if motion_override != null:
 			motion.sleeping = seed_motion.sleeping
+		if seed_motion.frozen:
+			# Thawed out of a park: left asleep, it would hang where it was.
+			motion.sleeping = false
 	if mounted == null:
 		add_child(body)
 		body.global_transform = motion.transform
@@ -1625,6 +1654,7 @@ func _tick_cable_tension(delta: float) -> void:
 	if _world == null or delta <= 0.0:
 		return
 	var snapped: Array[int] = []
+	var seen: Dictionary = {}
 	for link: IndustryElectricLink in _world.get_industry_network().list_links():
 		if not link.is_rope():
 			continue
@@ -1632,6 +1662,7 @@ func _tick_cable_tension(delta: float) -> void:
 		var body_b := _rope_endpoint_body(link.element_b)
 		if body_a == null and body_b == null:
 			continue
+		seen[link.link_id] = true
 		var anchor_a := CableAnchorUtil.endpoint_world_position(
 			_world,
 			link.element_a,
@@ -1645,11 +1676,19 @@ func _tick_cable_tension(delta: float) -> void:
 			link.attach_b
 		)
 		var tension_n := 0.0
+		var backing_a := _rope_endpoint_backing(body_a)
+		var backing_b := _rope_endpoint_backing(body_b)
 		var state: Variant = _rope_states.get(link.link_id)
 		if state is Dictionary:
 			# Draped over a rock the rope runs longer than the straight span and
 			# hits its limit sooner, and it pulls along its own first segment —
 			# toward what it is draped over, not through it.
+			_wake_roped_bodies(
+				link.link_id,
+				body_a,
+				body_b,
+				CableRopeSolver.routed_length_m(state) - link.rest_length_m
+			)
 			tension_n = CableTensionUtil.solve_routed(
 				anchor_a,
 				body_a,
@@ -1659,21 +1698,84 @@ func _tick_cable_tension(delta: float) -> void:
 				CableRopeSolver.pull_direction(state, false),
 				CableRopeSolver.routed_length_m(state),
 				link.rest_length_m,
-				delta
+				delta,
+				link.break_force_n,
+				backing_a,
+				backing_b
 			)
 		else:
+			_wake_roped_bodies(
+				link.link_id,
+				body_a,
+				body_b,
+				anchor_a.distance_to(anchor_b) - link.rest_length_m
+			)
 			tension_n = CableTensionUtil.solve(
 				anchor_a,
 				body_a,
 				anchor_b,
 				body_b,
 				link.rest_length_m,
-				delta
+				delta,
+				link.break_force_n,
+				backing_a,
+				backing_b
 			)
 		if tension_n > CableTensionUtil.break_force_n(link.break_force_n):
 			snapped.append(link.link_id)
+	for link_id: int in _rope_wake_overshoot.keys():
+		if not seen.has(link_id):
+			_rope_wake_overshoot.erase(link_id)
 	for link_id: int in snapped:
 		_world.disconnect_network(0, "", 0, "", link_id)
+
+## A rope may only pull what physics will listen to. A parked assembly is a
+## frozen RigidBody3D, and CableTensionUtil reads frozen as "world anchor" — so
+## a crane rigged to a parked machine pulled against a wall: the machine never
+## moved, and because the tension was only ever what it took to arrest the light
+## end, the rope never even snapped. It just stretched.
+##
+## Thawing here rather than inside the solver keeps freeze policy in the layer
+## that owns it (and lets _park_settle_frames be reset in the same breath).
+##
+## Only a rope that is running FURTHER out wakes anything. A rope that merely
+## hangs taut does no work, and waking on tautness alone would fight
+## _update_parking_freeze forever — it refreezes a settled rover every
+## PARK_FREEZE_SETTLE_FRAMES, we would thaw it the next tick, and a moored rover
+## would never sleep again. The baseline tracks the slackest the rope has been
+## since the last wake, so a winch that takes up a millimetre a second still
+## eventually crosses the threshold.
+func _wake_roped_bodies(
+	link_id: int,
+	body_a: RigidBody3D,
+	body_b: RigidBody3D,
+	overshoot_m: float
+) -> void:
+	if overshoot_m <= 0.0:
+		# Slack rope: re-arm, so the next time it goes taut counts as a pull.
+		_rope_wake_overshoot.erase(link_id)
+		return
+	var frozen_a := body_a != null and body_a.freeze
+	var frozen_b := body_b != null and body_b.freeze
+	if not frozen_a and not frozen_b:
+		_rope_wake_overshoot[link_id] = overshoot_m
+		return
+	var baseline: float = float(_rope_wake_overshoot.get(link_id, 0.0))
+	if overshoot_m <= baseline + ROPE_WAKE_OVERSHOOT_M:
+		_rope_wake_overshoot[link_id] = minf(baseline, overshoot_m)
+		return
+	_rope_wake_overshoot[link_id] = overshoot_m
+	if frozen_a:
+		_wake_roped_body(body_a)
+	if frozen_b:
+		_wake_roped_body(body_b)
+
+func _wake_roped_body(body: RigidBody3D) -> void:
+	body.freeze = false
+	body.sleeping = false
+	var assembly_id: int = int(body.get_meta("assembly_id", 0))
+	if assembly_id > 0:
+		_park_settle_frames[assembly_id] = 0
 
 ## A rope end hammered into the ground holds on to the ground, not to a point
 ## in space: dig it out and the anchor tears loose. Probed a few times a second
@@ -1718,6 +1820,68 @@ func _rope_endpoint_body(element_id: int) -> RigidBody3D:
 	if element_id <= 0:
 		return null
 	return get_element_projection(element_id).get("body") as RigidBody3D
+
+## What a rope tied to this body is really pulling against. See CableTensionUtil
+## for the why; the short version is that a piston carriage is held on its axis
+## by a motor, so the rope pulls the machine behind the piston, limited by what
+## that motor is rated for — not by the carriage's own few dozen kilos.
+##
+## Walks up nested pistons (a piston mounted on a piston) keeping the weakest
+## rating in the chain, bounded by the same link limit the actuator chains use
+## so a malformed chain cannot spin here.
+##
+## An unpowered or stalled piston reports a live limit of 0 (see
+## _tick_piston_actuators): its motor is holding nothing, so the end falls back
+## to its own mass and the carriage is simply dragged. Rotor and hinge arms are
+## deliberately not walked — their rating is a torque, and turning that into a
+## rope force needs the lever arm, not just a mass.
+func _rope_endpoint_backing(body: RigidBody3D) -> Dictionary:
+	var force_cap_n := INF
+	var current: PhysicsBody3D = body
+	for _link: int in range(ACTUATOR_BACKING_MAX_LINKS):
+		var record: Dictionary = _piston_record_for_head(current)
+		if record.is_empty():
+			break
+		var sim_joint: SimulationJoint = record.get("sim_joint")
+		if sim_joint == null or sim_joint.motor == null:
+			break
+		var live_limit_n := float(
+			record.get("motor_limit_n", sim_joint.motor.force_limit_n)
+		)
+		if live_limit_n <= 0.0:
+			return {}
+		force_cap_n = minf(force_cap_n, live_limit_n)
+		current = record.get("base_body") as PhysicsBody3D
+		if current == null:
+			break
+	if current == body:
+		return {}
+	if current is RigidBody3D:
+		return {
+			"inverse_mass": 1.0 / maxf((current as RigidBody3D).mass, MIN_MASS),
+			"force_cap_n": force_cap_n,
+			"reaction_body": current as RigidBody3D,
+		}
+	# StaticBody3D (or nothing): the piston is bolted to something nailed down.
+	return {
+		"inverse_mass": 0.0,
+		"force_cap_n": force_cap_n,
+		"reaction_body": null,
+	}
+
+func _piston_record_for_head(body: PhysicsBody3D) -> Dictionary:
+	if body == null:
+		return {}
+	var assembly_id: int = int(body.get_meta("assembly_id", 0))
+	if assembly_id <= 0 or not _piston_constraints.has(assembly_id):
+		return {}
+	for record_variant: Variant in _piston_constraints[assembly_id]:
+		if not record_variant is Dictionary:
+			continue
+		var record: Dictionary = record_variant
+		if record.get("head_body") == body:
+			return record
+	return {}
 
 func _apply_thruster_force(
 	element: SimulationElement,

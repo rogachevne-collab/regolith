@@ -20,6 +20,10 @@ enum StructuralSurfacePolicy {
 	StructuralSurfacePolicy.INFER
 )
 @export var structural_mount_pads: Array[StructuralMountPad] = []
+## Authored connectors. Empty = synthesized from mount pads / full surface
+## (see effective_connectors), which keeps every pre-connector archetype
+## working untouched.
+@export var connectors: Array[ConnectorDefinition] = []
 @export var build_requirements: Array[BuildRequirement] = []
 @export var piston_definition: PistonDefinition
 @export var rotor_definition: RotorDefinition
@@ -29,6 +33,16 @@ enum StructuralSurfacePolicy {
 @export var thruster_definition: ThrusterDefinition
 @export var gyro_definition: GyroDefinition
 @export var internal_archetype: bool = false
+## Ghost orientation seeded when the player first selects this part —
+## baked from the authoring-scene pose so the part appears exactly the way
+## the author placed it, instead of always identity.
+@export_range(0, 23) var default_orientation_index: int = 0
+## In-game model baked from the authoring scene. Empty = draw the collider
+## preview meshes (how legacy blocks look).
+@export var visual_scene_path: String = ""
+## Shift that puts the model's minimum corner at the part origin — the same
+## pivot compensation the authoring scene uses (hub-tip pivots etc.).
+@export var visual_offset: Vector3 = Vector3.ZERO
 
 
 func is_piston_base() -> bool:
@@ -81,6 +95,46 @@ func effective_mount_pads() -> Array[StructuralMountPad]:
 		pad.local_face = port.local_face
 		pads.append(pad)
 	return pads
+
+
+## The part's attach points, in canonical local frame. Authored connectors
+## win; otherwise they are synthesized so legacy archetypes keep their exact
+## surface (grid connector ids reuse the structural id scheme, so persisted
+## joint records stay valid).
+func effective_connectors() -> Array[ConnectorDefinition]:
+	if not connectors.is_empty():
+		return connectors
+	if _connector_cache_valid:
+		return _synthesized_connectors
+	var result: Array[ConnectorDefinition] = []
+	match resolved_structural_surface_policy():
+		StructuralSurfacePolicy.FULL_SURFACE:
+			for face_data: Dictionary in FootprintUtil.external_faces(
+				footprint_cells
+			):
+				result.append(ConnectorDefinition.grid_connector(
+					face_data["local_cell"],
+					face_data["local_face"]
+				))
+		StructuralSurfacePolicy.MOUNT_PADS:
+			for pad: StructuralMountPad in effective_mount_pads():
+				if pad == null:
+					continue
+				result.append(ConnectorDefinition.from_pad(pad))
+		_:
+			pass
+	_synthesized_connectors = result
+	_connector_cache_valid = true
+	return result
+
+
+func invalidate_connector_cache() -> void:
+	_connector_cache_valid = false
+	_synthesized_connectors = []
+
+
+var _synthesized_connectors: Array[ConnectorDefinition] = []
+var _connector_cache_valid := false
 
 
 func _is_authored_structural_port(port: PortDefinition) -> bool:
