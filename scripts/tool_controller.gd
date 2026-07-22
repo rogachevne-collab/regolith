@@ -36,6 +36,9 @@ enum ActionState {
 @export var terminal_path: NodePath = NodePath("../HUDRoot/Screen/Terminal")
 @export var actuator_panel_path: NodePath = NodePath("../HUDRoot/Screen/ActuatorPanel")
 @export var wheel_panel_path: NodePath = NodePath("../HUDRoot/Screen/WheelPanel")
+@export var control_terminal_path: NodePath = NodePath(
+	"../HUDRoot/Screen/ControlTerminal"
+)
 
 const ACTIONS := {
 	&"tool_primary": {
@@ -64,6 +67,8 @@ const ACTIONS := {
 	},
 }
 
+## Built-in parts. Wizard-baked parts are discovered automatically — use
+## construction_archetype_ids(), not this constant, for "what can I build".
 const CONSTRUCTION_ARCHETYPES: PackedStringArray = [
 	"frame",
 	"large_frame",
@@ -95,6 +100,21 @@ const CONSTRUCTION_ARCHETYPES: PackedStringArray = [
 	"gyro",
 	"landing_leg",
 ]
+
+static var _construction_ids_cache: PackedStringArray = PackedStringArray()
+
+
+## Everything the player can build: the built-in list plus every part baked
+## by the Part Wizard (resources/archetypes/authored/). Cached per run.
+static func construction_archetype_ids() -> PackedStringArray:
+	if not _construction_ids_cache.is_empty():
+		return _construction_ids_cache
+	var ids := CONSTRUCTION_ARCHETYPES.duplicate()
+	for authored_id: String in Slice01Archetypes.authored_ids():
+		if not ids.has(authored_id):
+			ids.append(authored_id)
+	_construction_ids_cache = ids
+	return _construction_ids_cache
 
 const TOOLBAR_SLOTS_PER_PAGE := 9
 ## Continuous demolition rate when drilling construction blocks (integrity/s).
@@ -193,6 +213,7 @@ var _preview: ConstructionPreview
 var _terminal: Node
 var _actuator_panel: Node
 var _wheel_panel: Node
+var _control_terminal: Node
 var _cooldown := 0.0
 var _issued_for_press := false
 var _locked_hit: InteractionHit
@@ -202,10 +223,15 @@ var _toolbar_slot_by_page: Array[int] = []
 ## const layout. Lazily built so the remap API is usable without a full scene
 ## (e.g. in headless logic tests).
 var _toolbar_layout: Array = []
-var _connect_pending_element_id := 0
-## Freeform cable routing: world-space скобы clicked between the first port
-## element and the final one. Sent with connect_network as `waypoints`.
-var _connect_waypoints: PackedVector3Array = PackedVector3Array()
+## Rope being pulled: the first click's end. `_rope_anchor_local` lives in the
+## frame of `_rope_anchor_element_id` (block-local), or in world space when the
+## end is nailed to terrain — so the rope stays tied to a machine that moves
+## while the player walks the other end away.
+var _rope_pending := false
+var _rope_anchor_element_id := 0
+var _rope_anchor_local := Vector3.ZERO
+## Wheel knob: 0 внатяг … 1 болтается. Kept between ropes, like a tool setting.
+var _rope_slack := CableAnchorUtil.DEFAULT_SLACK
 var _recipe_cursor_by_element: Dictionary = {}
 var _inventory_revision := -1
 var _last_drill_excavation_msec := -1
@@ -235,15 +261,14 @@ const DEBUG_SPOIL_VOLUME_M3 := 0.25
 const DEBUG_SPOIL_INTERVAL_S := 0.1
 var _debug_spoil_cooldown := 0.0
 
+## Tying the first end is hand work — you have to reach what you tie to.
 const CONNECT_RANGE := 4.0
-const CONNECT_MAX_WAYPOINTS := 16
-## Lift the скоба slightly off the clicked surface so the wire does not z-fight.
-const CONNECT_WAYPOINT_SURFACE_OFFSET := 0.06
-## Obstruction ray endpoints are pulled inward so a span pinned to a surface
-## does not report that surface (or the clicked target block) as a blocker.
-const CONNECT_SPAN_CLEARANCE_MARGIN := 0.12
-## Terrain + bodies; wires themselves (layer 4) never block routing.
-const CONNECT_OBSTRUCTION_MASK := 3
+## The far end is thrown, not placed by hand: that is what makes it possible to
+## anchor a moving machine to the ground you are driving past. Walking a rope
+## out still works and is the way to get anything longer than this.
+const CONNECT_THROW_RANGE := 18.0
+## Lift the rope end slightly off the clicked surface so it does not z-fight.
+const CONNECT_SURFACE_OFFSET := 0.06
 
 
 func _ready() -> void:
@@ -253,6 +278,7 @@ func _ready() -> void:
 	_terminal = get_node_or_null(terminal_path)
 	_actuator_panel = get_node_or_null(actuator_panel_path)
 	_wheel_panel = get_node_or_null(wheel_panel_path)
+	_control_terminal = get_node_or_null(control_terminal_path)
 	_ensure_runtime_state()
 	command_requested.connect(_gateway.submit)
 	_gateway.command_completed.connect(_on_gateway_command_completed)
@@ -279,6 +305,11 @@ func _physics_process(delta: float) -> void:
 					_terminal.call("close_for_interact")
 				else:
 					_terminal.call("close")
+			elif _control_terminal_is_open():
+				if _control_terminal.has_method("close_for_interact"):
+					_control_terminal.call("close_for_interact")
+				else:
+					_control_terminal.call("close")
 		return
 	if _query == null:
 		return
@@ -301,7 +332,7 @@ func _physics_process(delta: float) -> void:
 		if Input.is_action_just_pressed(&"tool_primary"):
 			_handle_connect_click(_query.current_hit)
 		if Input.is_action_just_pressed(&"tool_secondary"):
-			_undo_connect_waypoint()
+			_cancel_rope_routing()
 		if Input.is_action_just_pressed(&"interact"):
 			_try_emit_context_interaction(_query.current_hit)
 		return
@@ -727,15 +758,20 @@ func _apply_toolbar_slot(
 	if resolved.is_empty():
 		return
 	var previous_tool := active_tool
+	# Picking any slot — another tool or another build block — drops the rope
+	# currently being pulled. Built ropes are untouched.
+	_reset_connect_route()
 	match StringName(resolved.get("kind", &"")):
 		&"tool_instance":
 			active_tool = StringName(resolved.get("active_tool", &""))
-			if active_tool == &"connect":
-				_connect_pending_element_id = 0
-				_connect_waypoints = PackedVector3Array()
 		&"block":
 			active_tool = &"build"
-			selected_archetype_id = str(resolved.get("archetype_id", "frame"))
+			var next_archetype_id := str(resolved.get("archetype_id", "frame"))
+			if next_archetype_id != selected_archetype_id:
+				selected_orientation_index = _default_orientation_for(
+					next_archetype_id
+				)
+			selected_archetype_id = next_archetype_id
 			construction_selection_changed.emit(
 				selected_archetype_id,
 				selected_orientation_index
@@ -872,7 +908,7 @@ func assign_slot_archetype(page: int, slot: int, archetype_id: String) -> bool:
 	var slots: Array = _toolbar_layout[page]
 	if slot < 0 or slot >= slots.size():
 		return false
-	if not CONSTRUCTION_ARCHETYPES.has(archetype_id):
+	if not construction_archetype_ids().has(archetype_id):
 		return false
 	if not toolbar_slot_accepts_block(page, slot):
 		return false
@@ -882,6 +918,19 @@ func assign_slot_archetype(page: int, slot: int, archetype_id: String) -> bool:
 	if page == toolbar_page and slot == toolbar_slot:
 		_apply_toolbar_slot(page, slot, true)
 	return true
+
+
+func _default_orientation_for(archetype_id: String) -> int:
+	if _gateway == null:
+		return 0
+	var archetype := _gateway.construction_archetype(archetype_id)
+	if archetype == null:
+		return 0
+	return clampi(
+		archetype.default_orientation_index,
+		0,
+		OrientationUtil.ORIENTATION_COUNT - 1
+	)
 
 
 func _rotate_orientation(local_axis: Vector3) -> void:
@@ -1022,138 +1071,120 @@ func _grinder_damage_per_tick() -> float:
 	return GRINDER_DPS * GRINDER_INTERVAL
 
 
-## Connect tool click: first click on an element with electric ports starts a
-## cable; further clicks on surfaces (terrain, blocks without electric ports)
-## drop routing скобы; a click on another electric-port element completes the
-## link with the routed polyline. RMB undoes the last скоба / cancels.
+## Connect tool click (CABLE-ROPE-V0): the first click ties the rope end to
+## whatever is under the cursor — any block, or a point on terrain — and the
+## rope then trails the cursor live. The second click ties the far end and the
+## rope is built. ПКМ отменяет только текущую протяжку. Колесо — слабина.
 func _handle_connect_click(hit: InteractionHit) -> void:
-	if hit == null or not hit.valid or hit.distance > CONNECT_RANGE:
+	if hit == null or not hit.valid or hit.distance > rope_click_range():
 		return
-	if hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT:
-		var element_id := int(hit.metadata.get("element_id", 0))
-		if element_id <= 0:
-			return
-		if _connect_pending_element_id <= 0:
-			if _target_is_wireable(hit):
-				_connect_pending_element_id = element_id
-				_connect_waypoints = PackedVector3Array()
-			return
-		if element_id == _connect_pending_element_id:
-			return
-		if not _target_is_wireable(hit):
-			_append_connect_waypoint(hit)
-			return
-		if _span_blocked(_connect_route_tail(hit.point), hit.point):
-			connect_rejected.emit(&"cable_obstructed")
-			return
-		command_requested.emit({
-			"kind": &"connect_network",
-			"source": get_parent(),
-			"target": hit.snapshot(),
-			"parameters": {
-				"element_a_id": _connect_pending_element_id,
-				"element_b_id": element_id,
-				"waypoints": _connect_waypoints.duplicate(),
-			},
-		})
-		_connect_pending_element_id = 0
-		_connect_waypoints = PackedVector3Array()
+	var element_id := _rope_target_element_id(hit)
+	var world_point := hit.point + hit.normal * CONNECT_SURFACE_OFFSET
+	if not _rope_pending:
+		_reset_connect_route()
+		_rope_pending = true
+		_rope_anchor_element_id = element_id
+		_rope_anchor_local = _localize_rope_point(element_id, world_point)
 		return
-	if (
-		_connect_pending_element_id > 0
-		and hit.target_kind == InteractionHit.KIND_VOXEL
-	):
-		_append_connect_waypoint(hit)
-
-
-func _append_connect_waypoint(hit: InteractionHit) -> void:
-	if _connect_waypoints.size() >= CONNECT_MAX_WAYPOINTS:
+	var anchor_world := rope_anchor_world_position()
+	if not anchor_world.is_finite():
+		_reset_connect_route()
 		return
-	var waypoint := hit.point + hit.normal * CONNECT_WAYPOINT_SURFACE_OFFSET
-	if _span_blocked(_connect_route_tail(waypoint), waypoint):
-		connect_rejected.emit(&"cable_obstructed")
+	if anchor_world.distance_to(world_point) < CableAnchorUtil.MIN_SPAN_M:
+		# Same spot twice — the player is fumbling, not building a rope.
 		return
-	_connect_waypoints.append(waypoint)
+	command_requested.emit({
+		"kind": &"connect_network",
+		"source": get_parent(),
+		"target": hit.snapshot(),
+		"parameters": {
+			"rope": true,
+			"element_a_id": _rope_anchor_element_id,
+			"attach_a": anchor_world,
+			"element_b_id": element_id,
+			"attach_b": world_point,
+			"slack": _rope_slack,
+		},
+	})
+	_reset_connect_route()
 
 
-## Last routed point: the final скоба, or the pending element's nearest
-## electric port anchor when no скобы are placed yet.
-func _connect_route_tail(anchor_ref: Vector3) -> Vector3:
-	if not _connect_waypoints.is_empty():
-		return _connect_waypoints[_connect_waypoints.size() - 1]
-	return connect_anchor_position(anchor_ref)
+## Blocks carry their rope end; terrain, boulders and everything else nail it
+## to the world.
+func _rope_target_element_id(hit: InteractionHit) -> int:
+	if hit == null or hit.target_kind != InteractionHit.KIND_SIMULATION_ELEMENT:
+		return 0
+	return maxi(int(hit.metadata.get("element_id", 0)), 0)
 
 
-## Nearest electric port anchor of the pending element to `anchor_ref`; the
-## ghost preview and obstruction checks both start the route here. Falls back
-## to the element position when no anchor resolves.
-func connect_anchor_position(anchor_ref: Vector3) -> Vector3:
-	var world := _simulation_world()
-	if world == null or _connect_pending_element_id <= 0:
-		return Vector3(INF, INF, INF)
-	var element := world.get_element(_connect_pending_element_id)
-	if element == null:
-		return Vector3(INF, INF, INF)
-	var best := Vector3(INF, INF, INF)
-	var best_distance := INF
-	for port: PortDefinition in IndustryElectricPortUtil.list_electric_ports(
-		element
-	):
-		var anchor := IndustryElectricPortUtil.port_anchor_world_position(
-			world,
-			element,
-			port.port_id
-		)
-		var distance := anchor.distance_to(anchor_ref)
-		if distance < best_distance:
-			best_distance = distance
-			best = anchor
-	if best.is_finite():
-		return best
-	return IndustryElectricBudget.element_world_position(world, element)
-
-
-## A routed span must not pass through terrain or bodies. Endpoints are pulled
-## inward so surfaces the span is pinned to do not self-report as blockers.
-func _span_blocked(from: Vector3, to: Vector3) -> bool:
-	if not from.is_finite() or not to.is_finite():
-		return false
-	var span := to - from
-	var length := span.length()
-	if length <= CONNECT_SPAN_CLEARANCE_MARGIN * 2.0:
-		return false
-	var direction := span / length
-	var query := PhysicsRayQueryParameters3D.create(
-		from + direction * CONNECT_SPAN_CLEARANCE_MARGIN,
-		to - direction * CONNECT_SPAN_CLEARANCE_MARGIN
+func _localize_rope_point(element_id: int, world_point: Vector3) -> Vector3:
+	if element_id <= 0:
+		return world_point
+	return CableAnchorUtil.localize(
+		_simulation_world(),
+		element_id,
+		world_point
 	)
-	query.collision_mask = CONNECT_OBSTRUCTION_MASK
-	query.collide_with_areas = false
-	query.collide_with_bodies = true
-	var player := get_parent()
-	if player is CollisionObject3D:
-		query.exclude = [(player as CollisionObject3D).get_rid()]
-	return not _query.get_world_3d().direct_space_state.intersect_ray(
-		query
-	).is_empty()
 
 
-func _undo_connect_waypoint() -> void:
-	if not _connect_waypoints.is_empty():
-		_connect_waypoints.remove_at(_connect_waypoints.size() - 1)
-		return
-	_connect_pending_element_id = 0
-
-
-## Only power infrastructure (source / distributor / battery) accepts wires;
-## everything else — including machines — is a routing surface for скобы.
-func _target_is_wireable(hit: InteractionHit) -> bool:
-	var world := _simulation_world()
-	if world == null:
-		return false
-	return IndustryElectricPortUtil.is_wireable_element(
-		world.get_element(int(hit.metadata.get("element_id", 0)))
+## Live world position of the rope end already tied down — recomputed every
+## frame so the rope stays attached to a machine that is driving away.
+func rope_anchor_world_position() -> Vector3:
+	if not _rope_pending:
+		return Vector3(INF, INF, INF)
+	return CableAnchorUtil.endpoint_world_position(
+		_simulation_world(),
+		_rope_anchor_element_id,
+		"",
+		_rope_anchor_local
 	)
+
+
+func rope_routing_active() -> bool:
+	return _rope_pending
+
+
+## How far the current click reaches: arm's length for the first end, a throw
+## for the second. InteractionQuery stretches the aim ray to match.
+func rope_click_range() -> float:
+	return CONNECT_THROW_RANGE if _rope_pending else CONNECT_RANGE
+
+
+func rope_slack() -> float:
+	return _rope_slack
+
+
+## Wheel while a rope is being pulled: tight ↔ loose. Nothing else in gameplay
+## uses the wheel, so it needs no modifier.
+func _unhandled_input(event: InputEvent) -> void:
+	if not _rope_pending or active_tool != &"connect":
+		return
+	var button := event as InputEventMouseButton
+	if button == null or not button.pressed:
+		return
+	var steps := 0
+	if button.button_index == MOUSE_BUTTON_WHEEL_UP:
+		steps = 1
+	elif button.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+		steps = -1
+	if steps == 0:
+		return
+	if button.shift_pressed:
+		steps *= CableAnchorUtil.SLACK_COARSE_MULTIPLIER
+	_rope_slack = CableAnchorUtil.step_slack(_rope_slack, steps)
+	get_viewport().set_input_as_handled()
+
+
+## ПКМ — отмена только текущей протяжки: ropes already built stay where they
+## are, and the tool stays in connect mode ready for the next one.
+func _cancel_rope_routing() -> void:
+	_reset_connect_route()
+
+
+func _reset_connect_route() -> void:
+	_rope_pending = false
+	_rope_anchor_element_id = 0
+	_rope_anchor_local = Vector3.ZERO
 
 
 func _simulation_world() -> SimulationWorld:
@@ -1167,16 +1198,10 @@ func _simulation_world() -> SimulationWorld:
 	return session.world
 
 
+## The block the pending rope starts on, 0 when it starts on terrain (or when
+## no rope is being pulled). Presentation uses it to highlight that block.
 func connect_pending_element_id() -> int:
-	return _connect_pending_element_id
-
-
-func connect_waypoints() -> PackedVector3Array:
-	return _connect_waypoints.duplicate()
-
-
-func connect_waypoint_count() -> int:
-	return _connect_waypoints.size()
+	return _rope_anchor_element_id if _rope_pending else 0
 
 
 func selected_recipe_for_element(element_id: int, archetype_id: String) -> String:
@@ -1270,6 +1295,23 @@ func _ui_modal_blocks_world_interact() -> bool:
 		_terminal_blocks_world_interact()
 		or _actuator_panel_blocks_world_interact()
 		or _wheel_panel_blocks_world_interact()
+		or _control_terminal_blocks_world_interact()
+	)
+
+
+func _control_terminal_is_open() -> bool:
+	return (
+		_control_terminal != null
+		and _control_terminal.has_method("is_open")
+		and bool(_control_terminal.call("is_open"))
+	)
+
+
+func _control_terminal_blocks_world_interact() -> bool:
+	return (
+		_control_terminal != null
+		and _control_terminal.has_method("blocks_world_interact")
+		and bool(_control_terminal.call("blocks_world_interact"))
 	)
 
 

@@ -333,7 +333,7 @@ static func color_for_status(status: StringName) -> Color:
 			return COL_VALID
 		&"damaged":
 			return COL_WARNING
-		&"element_broken":
+		&"element_broken", &"actuator_broken":
 			return COL_CRITICAL
 		&"no_power", &"outside_power_radius", &"port_disconnected":
 			return COL_WARNING
@@ -367,6 +367,8 @@ static func status_label(status: StringName) -> String:
 			return "ПОВРЕЖДЕНИЕ"
 		&"element_broken":
 			return "СЛОМАН"
+		&"actuator_broken":
+			return "ОТКАЗ ПРИВОДА"
 		&"no_power":
 			return "НЕТ ПИТАНИЯ"
 		&"outside_power_radius":

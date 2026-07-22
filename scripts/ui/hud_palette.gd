@@ -150,7 +150,7 @@ func _build() -> void:
 	_grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_scroll.add_child(_grid)
 
-	for archetype_id: String in ToolController.CONSTRUCTION_ARCHETYPES:
+	for archetype_id: String in ToolController.construction_archetype_ids():
 		_grid.add_child(_make_entry(archetype_id))
 
 	_panel_overlay = HudTokens.make_panel_overlay(Vector2(PANEL_WIDTH, PANEL_MIN_HEIGHT))

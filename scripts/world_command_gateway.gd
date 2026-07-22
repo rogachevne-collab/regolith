@@ -102,7 +102,7 @@ func _ready() -> void:
 	_voxel_tool = TerrainCompat.get_voxel_tool(_terrain)
 	_voxel_tool.channel = VoxelBuffer.CHANNEL_SDF
 	add_to_group(&"world_command_gateway")
-	for archetype_id: String in ToolController.CONSTRUCTION_ARCHETYPES:
+	for archetype_id: String in ToolController.construction_archetype_ids():
 		_get_archetype(archetype_id)
 	var piston_head := Slice01Archetypes.piston_head()
 	if piston_head != null:
@@ -202,6 +202,8 @@ func _execute(command: Dictionary) -> Dictionary:
 			return _disconnect_network(command, target)
 		&"set_machine_enabled":
 			return _set_machine_enabled(command, target)
+		&"set_element_name":
+			return _set_element_name(command, target)
 		&"enqueue_recipe":
 			return _enqueue_recipe(command, target)
 		&"dequeue_recipe":
@@ -1048,6 +1050,19 @@ func tick_rover_locomotion_input() -> void:
 	if assembly_id <= 0:
 		return
 	var locomotion := _session.world.get_locomotion_controller(assembly_id)
+	# Открытое модальное окно (пульт управления, терминал) забирает ввод: из
+	# меню нельзя уезжать. Просто выйти нельзя — последняя команда газа осталась
+	# бы залипшей и техника продолжила бы ехать, поэтому команды обнуляем.
+	if (
+		_rover_seat_player != null
+		and _rover_seat_player.has_method("is_gameplay_input_enabled")
+		and not _rover_seat_player.call("is_gameplay_input_enabled")
+	):
+		locomotion.set_drive_command(0.0)
+		locomotion.set_steering_command(0.0)
+		locomotion.set_translate_command(Vector3.ZERO)
+		locomotion.set_attitude_commands(0.0, 0.0, 0.0)
+		return
 	var is_flight := ThrusterSimulationService.is_flight_assembly(
 		_session.world,
 		assembly_id
@@ -1535,6 +1550,27 @@ func vehicle_power_snapshot(assembly_id: int = 0) -> Dictionary:
 	return VehiclePowerSnapshotBuilder.build(_session.world, resolved_id)
 
 
+## Снапшот сборки для терминала управления (CONTROL-ACTIONS-V0).
+## Резолв цели: сидя — своя сборка; иначе — сборка наведённого элемента
+## (panel передаёт element_id из InteractionQuery).
+func control_terminal_snapshot(
+	assembly_id: int = 0,
+	hint_element_id: int = 0
+) -> Dictionary:
+	if _session == null or _session.world == null:
+		return ControlTerminalSnapshotBuilder.failure(&"not_ready")
+	var resolved_id := assembly_id
+	if resolved_id <= 0:
+		resolved_id = _resolve_active_rover_assembly_id()
+	if resolved_id <= 0 and hint_element_id > 0:
+		var element := _session.world.get_element(hint_element_id)
+		if element != null:
+			resolved_id = element.assembly_id
+	if resolved_id <= 0:
+		return ControlTerminalSnapshotBuilder.failure(&"no_target")
+	return ControlTerminalSnapshotBuilder.build(_session.world, resolved_id)
+
+
 func player_inventory() -> PlayerInventoryRegistry:
 	if _session == null or _session.world == null:
 		return null
@@ -1555,6 +1591,10 @@ func assign_player_hotbar_instance(
 	if _session == null or _session.world == null:
 		return false
 	return _session.world.assign_player_hotbar_instance(page, slot, instance_id)
+
+
+func construction_archetype(archetype_id: String) -> ElementArchetype:
+	return _get_archetype(archetype_id)
 
 
 func archetype_display_name(archetype_id: String) -> String:
@@ -1980,7 +2020,8 @@ func apply_connect_network(
 	element_b_id: int,
 	port_a_id: String = "",
 	port_b_id: String = "",
-	waypoints: PackedVector3Array = PackedVector3Array()
+	waypoints: PackedVector3Array = PackedVector3Array(),
+	waypoint_anchors: PackedInt32Array = PackedInt32Array()
 ) -> Dictionary:
 	if _session == null:
 		return _result(&"not_ready")
@@ -2018,10 +2059,38 @@ func apply_connect_network(
 	command.element_b_id = resolved_b
 	command.port_b_id = resolved_port_b
 	command.waypoints = waypoints
+	command.waypoint_anchors = waypoint_anchors
 	if assembly_a != null:
 		command.expected_revision_a = assembly_a.topology_revision
 	if assembly_b != null:
 		command.expected_revision_b = assembly_b.topology_revision
+	var result := _session.world.apply_structural_command_now(command)
+	if result == null:
+		return _result(&"not_ready")
+	if result.is_ok():
+		return _result(&"ok", result.data)
+	return _result(_connect_failure_reason(result.reason), result.data)
+
+
+## Rope form: both ends are free attach points in world space, either of which
+## may be a bare world anchor (element id 0). Nothing else is required.
+func apply_connect_rope(
+	element_a_id: int,
+	attach_a: Vector3,
+	element_b_id: int,
+	attach_b: Vector3,
+	slack: float = CableAnchorUtil.DEFAULT_SLACK
+) -> Dictionary:
+	if _session == null:
+		return _result(&"not_ready")
+	var command := ConnectNetworkCommand.new()
+	command.element_a_id = element_a_id
+	command.element_b_id = element_b_id
+	command.port_a_id = ""
+	command.port_b_id = ""
+	command.attach_a = attach_a
+	command.attach_b = attach_b
+	command.slack = slack
 	var result := _session.world.apply_structural_command_now(command)
 	if result == null:
 		return _result(&"not_ready")
@@ -2035,12 +2104,21 @@ func _connect_network(
 	_target: Dictionary
 ) -> Dictionary:
 	var parameters: Dictionary = command.get("parameters", {})
+	if bool(parameters.get("rope", false)):
+		return apply_connect_rope(
+			int(parameters.get("element_a_id", 0)),
+			parameters.get("attach_a", Vector3.ZERO),
+			int(parameters.get("element_b_id", 0)),
+			parameters.get("attach_b", Vector3.ZERO),
+			float(parameters.get("slack", CableAnchorUtil.DEFAULT_SLACK))
+		)
 	return apply_connect_network(
 		int(parameters.get("element_a_id", 0)),
 		int(parameters.get("element_b_id", 0)),
 		str(parameters.get("port_a_id", "")),
 		str(parameters.get("port_b_id", "")),
-		PackedVector3Array(parameters.get("waypoints", PackedVector3Array()))
+		PackedVector3Array(parameters.get("waypoints", PackedVector3Array())),
+		PackedInt32Array(parameters.get("waypoint_anchors", PackedInt32Array()))
 	)
 
 
@@ -2096,6 +2174,33 @@ func _transfer_resource(
 	transfer.amount = float(parameters.get("amount", 0.0))
 	transfer.instance_id = str(parameters.get("instance_id", ""))
 	return apply_transfer_resource(transfer)
+
+
+## Переименование узла из терминала управления. Надёжная команда, но не
+## структурная: меняет `state_revision` элемента, не топологию (CONTROL-ACTIONS-V0).
+func _set_element_name(
+	command: Dictionary,
+	target: Dictionary
+) -> Dictionary:
+	if _session == null:
+		return _result(&"not_ready")
+	var parameters: Dictionary = command.get("parameters", {})
+	var rename := SetElementNameCommand.new()
+	rename.element_id = int(
+		parameters.get(
+			"element_id",
+			target.get("metadata", {}).get("element_id", 0)
+		)
+	)
+	rename.element_name = str(parameters.get("element_name", ""))
+	var result := _session.apply_set_element_name(rename)
+	return _result(
+		StringName(result.get("reason", &"invalid_target")),
+		{
+			"element_id": rename.element_id,
+			"custom_name": result.get("custom_name", ""),
+		}
+	)
 
 
 func _set_machine_enabled(
@@ -2273,6 +2378,9 @@ func _configure_wheel(
 	if parameters.has("steerable"):
 		configure.steerable_set = true
 		configure.steerable = bool(parameters["steerable"])
+	if parameters.has("invert_drive"):
+		configure.invert_drive_set = true
+		configure.invert_drive = bool(parameters["invert_drive"])
 	if parameters.has("drive_torque_scale"):
 		configure.drive_torque_scale = float(
 			parameters["drive_torque_scale"]

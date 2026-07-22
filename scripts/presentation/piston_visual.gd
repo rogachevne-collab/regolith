@@ -41,7 +41,8 @@ static func element_body_transform(
 ) -> Transform3D:
 	return GridPoseUtil.element_local_transform(
 		element.origin_cell,
-		element.orientation_index
+		element.orientation_index,
+		element.pose_offset
 	)
 
 
