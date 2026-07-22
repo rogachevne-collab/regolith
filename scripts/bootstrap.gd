@@ -241,13 +241,15 @@ func _configure_terrain() -> void:
 		## Clipbox, not the default legacy octree. The octree system supports
 		## exactly ONE viewer: `VoxelLodTerrain::get_local_viewer_pos` walks every
 		## registered viewer and keeps whichever comes last ("TODO Support for
-		## multiple viewers, this is a placeholder implementation"). We have more
-		## than one — `GranularVoxelRegionView` creates a VoxelViewer per loose
-		## material region — so the moon's LODs followed a coin flip: settle
-		## around the sand, and LOD0 under the player never gets requested at all
-		## (stats stayed blocked=0, io=0 while digs returned `terrain_unavailable`
-		## and LOD1/2 colliders carried the player). Clipbox pairs viewers
-		## individually, which is what it was added upstream to do.
+		## multiple viewers, this is a placeholder implementation"). At the time
+		## this bit, `GranularVoxelRegionView` created a VoxelViewer per loose
+		## material region (it meshes natively now and needs none), so the moon's
+		## LODs followed a coin flip: settle around the sand, and LOD0 under the
+		## player never gets requested at all (stats stayed blocked=0, io=0 while
+		## digs returned `terrain_unavailable` and LOD1/2 colliders carried the
+		## player). Clipbox pairs viewers individually, which is what it was added
+		## upstream to do — and it stays: nothing guarantees the player's viewer
+		## remains the only one.
 		lod.streaming_system = VoxelLodTerrain.STREAMING_SYSTEM_CLIPBOX
 		## ORDER MATTERS. `set_voxel_bounds` snaps the box to the octree size
 		## (`mesh_block_size << (lod_count - 1)`) as it is at assignment time.

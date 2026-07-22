@@ -1,11 +1,9 @@
 shader_type spatial;
 render_mode diffuse_burley, cull_back;
 
-#include "res://addons/zylann.voxel/shaders/transvoxel.gdshaderinc"
-
 // Loose material drawn as a crust of packed stones rather than as a skin.
 //
-// The mesh under this shader is unchanged: the same transvoxel isosurface over
+// The mesh under this shader is unchanged: the same isosurface over
 // the same low-passed occupancy field. What changed is that the isosurface is
 // no longer asked to *be* the picture. It carries mass and silhouette; the
 // stones live in the fragment stage, where a pebble can be seven centimetres
@@ -46,6 +44,12 @@ uniform float u_tex_scale : hint_range(0.5, 12.0) = 3.4;
 uniform float u_tex_mean : hint_range(0.01, 1.0) = 0.149;
 uniform float u_tex_amount : hint_range(0.0, 1.0) = 0.55;
 uniform float u_photo_normal : hint_range(0.0, 2.0) = 0.7;
+// A second, finer sample of the same normal map for close-up micro-relief — the
+// grit inside a stone that the pebble field is too coarse to carry. Faded out
+// with the fine band, because at range it is sub-pixel and only aliases. 0 = the
+// single-scale photo normal as before.
+uniform float u_detail_scale : hint_range(4.0, 40.0) = 14.0;
+uniform float u_detail_amount : hint_range(0.0, 1.5) = 0.0;
 // Broken rock, and the dust it settles into. Fresh breaks are darker than
 // gardened surface by a few per cent, not by half.
 uniform vec3 u_rock_color : source_color = vec3(0.46, 0.45, 0.43);
@@ -78,6 +82,36 @@ uniform float u_crevice_shade : hint_range(0.0, 1.0) = 0.55;
 // under a pixel and the field is only aliasing — the coarse band carries on
 // alone, and past twice this the surface is plain triplanar again.
 uniform float u_grain_end_m : hint_range(2.0, 120.0) = 26.0;
+
+// --- parallax stones -------------------------------------------------------
+// The stones live in the height field the coarse pebble band already computes;
+// this marches the view ray through it so a stone top occludes the crevice
+// behind it, giving real apparent depth with no geometry. It is what lets the
+// instanced chips be thinned or dropped: density here is `u_grain_size_m`, a
+// uniform, not a count of MultiMesh instances — free to crank — and the cost
+// is per pixel and fades with distance rather than scaling with the heap's
+// surface area.
+//
+// Steps the view ray takes through the height field. 0 restores the old
+// flat-on-the-polygon look exactly (the march is skipped and the shading
+// position is `v_local` untouched), so this whole block is a no-op until asked
+// for. Each step is one coarse `pebble_field`, so this is the cost knob: 6-8
+// reads as solid depth, past ~12 is diminishing returns on rubble.
+uniform int u_pom_steps : hint_range(0, 24) = 0;
+// Relief height as a fraction of a coarse stone's own size. How far a stone top
+// stands above the crevice floor; too high and the march skips through thin
+// stones and smears, too low and it flattens back toward the un-parallaxed look.
+uniform float u_pom_depth : hint_range(0.0, 1.2) = 0.5;
+
+// --- domain warp -----------------------------------------------------------
+// Low-frequency wander of the pebble field's input, in metres, to break the
+// Voronoi lattice's residual axis alignment — the thing that reads as a
+// regular, artificial pattern rather than tipped rubble. 0 = the plain grid.
+// This is the geometry fix; a photo cannot hide a regular cell lattice.
+uniform float u_warp_amp : hint_range(0.0, 0.6) = 0.0;
+// Cycles of the warp per metre. Low, so it moves whole clusters of stones
+// rather than jittering each one — jitter at the stone scale is just noise.
+uniform float u_warp_freq : hint_range(0.05, 3.0) = 0.6;
 
 // --- silhouette ------------------------------------------------------------
 // How much of the outline is allowed to dissolve into stones. Zero is the old
@@ -141,6 +175,30 @@ vec3 hash33(vec3 c) {
 	uint a = n * 1103515245u + 12345u;
 	uint b = a * 1103515245u + 12345u;
 	return vec3(float(n), float(a), float(b)) * (1.0 / 4294967296.0);
+}
+
+// Smooth value noise off the same integer hash, trilinear between cell corners.
+// Used only to warp the pebble field's input so its cells wander instead of
+// sitting on a regular lattice — the residual axis alignment is what reads as an
+// artificial pattern from a distance. One evaluation per pixel, before the
+// parallax march, so the whole field warps coherently rather than per sample.
+vec3 vnoise3(vec3 p) {
+	vec3 i = floor(p);
+	vec3 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	vec3 c000 = hash33(i + vec3(0.0, 0.0, 0.0));
+	vec3 c100 = hash33(i + vec3(1.0, 0.0, 0.0));
+	vec3 c010 = hash33(i + vec3(0.0, 1.0, 0.0));
+	vec3 c110 = hash33(i + vec3(1.0, 1.0, 0.0));
+	vec3 c001 = hash33(i + vec3(0.0, 0.0, 1.0));
+	vec3 c101 = hash33(i + vec3(1.0, 0.0, 1.0));
+	vec3 c011 = hash33(i + vec3(0.0, 1.0, 1.0));
+	vec3 c111 = hash33(i + vec3(1.0, 1.0, 1.0));
+	vec3 x00 = mix(c000, c100, f.x);
+	vec3 x10 = mix(c010, c110, f.x);
+	vec3 x01 = mix(c001, c101, f.x);
+	vec3 x11 = mix(c011, c111, f.x);
+	return mix(mix(x00, x10, f.y), mix(x01, x11, f.y), f.z);
 }
 
 // How far inside its own cell this point sits, which way the nearest wall of
@@ -218,6 +276,18 @@ void pebble_field(vec3 p, out float border, out vec3 away, out float id) {
 	}
 }
 
+// Just the height the coarse band would show at `p`, for the parallax march:
+// the same `c_high` the shading computes, without the wall normal or id the
+// march does not need. One `pebble_field` per call, which is why `u_pom_steps`
+// is the cost knob.
+float pebble_height(vec3 p) {
+	float border;
+	vec3 away;
+	float id;
+	pebble_field(p, border, away, id);
+	return clamp(border * u_facet_gain, 0.0, 1.0);
+}
+
 // Triplanar sample of the photo, blended off the shaded normal. No UVs exist:
 // the mesher emits none, which is why a plain textured material on this surface
 // comes out as flat colour.
@@ -248,7 +318,6 @@ vec3 grade_lunar(vec3 c) {
 }
 
 void vertex() {
-	VERTEX = get_transvoxel_position(VERTEX, CUSTOM0);
 	v_model = VERTEX;
 	vec3 world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	v_local = (u_local_from_world * vec4(world, 1.0)).xyz;
@@ -270,15 +339,75 @@ void fragment() {
 	vec3 blend = pow(abs(n), vec3(4.0));
 	blend /= blend.x + blend.y + blend.z;
 
+	float coarse_size = u_grain_size_m * u_coarse_ratio;
+
+	// --- parallax ----------------------------------------------------------
+	// March the view ray through the coarse height field so stone tops occlude
+	// the crevices behind them, and shade at where the ray actually lands
+	// rather than straight down the polygon. `p_shade` is that landing point;
+	// with `u_pom_steps = 0` it is `v_local` and everything below is unchanged.
+	//
+	// Faded out with distance for the same reason the fine band is: a stone's
+	// worth of parallax under a pixel is shimmer, not depth. Past the fade the
+	// march is skipped outright, so range costs nothing.
+	// The field's frame, warped so its lattice wanders. Everything that samples
+	// the pebble field — the parallax march and both bands below — starts from
+	// this, so the whole crust warps as one rather than tearing between bands.
+	vec3 field_local = v_local;
+	if (u_warp_amp > 0.0001) {
+		field_local += (vnoise3(v_local * u_warp_freq) - vec3(0.5)) * (2.0 * u_warp_amp);
+	}
+
+	vec3 p_shade = field_local;
+	float pom_fade = 1.0 - smoothstep(u_grain_end_m * 0.5, u_grain_end_m, view_dist);
+	if (u_pom_steps > 0 && pom_fade > 0.01) {
+		// The pebble field lives in the region-local frame; the ray and the
+		// normal are in world space, so bring them across. The region transform
+		// is rigid, so its linear part maps directions without a normal matrix.
+		mat3 to_local = mat3(u_local_from_world);
+		vec3 n_local = normalize(to_local * n);
+		vec3 view_local = normalize((INV_VIEW_MATRIX * vec4(view_dir, 0.0)).xyz);
+		view_local = normalize(to_local * view_local);
+		float vn = dot(view_local, n_local);
+		if (vn > 0.05) {
+			// Lateral travel of the ray per unit descent along the normal, over
+			// the full relief height — the classic POM offset, in local metres.
+			vec3 view_tan = view_local - n_local * vn;
+			float amp = u_pom_depth * coarse_size * pom_fade;
+			vec3 max_off = view_tan * (amp / vn);
+			float layer = 1.0 / float(u_pom_steps);
+			vec3 dP = max_off * layer;
+			float cur_depth = 0.0;
+			vec3 cur_p = field_local;
+			float map_depth = 1.0 - pebble_height(cur_p / coarse_size);
+			// Constant bound so the compiler can cap the loop; the uniform ends
+			// it early. Steps down the ray until it passes below the height.
+			for (int i = 0; i < 24; i++) {
+				if (i >= u_pom_steps || cur_depth >= map_depth) {
+					break;
+				}
+				cur_p -= dP;
+				map_depth = 1.0 - pebble_height(cur_p / coarse_size);
+				cur_depth += layer;
+			}
+			// Refine between the last two layers so the tops are smooth rather
+			// than quantised to the step count.
+			vec3 prev_p = cur_p + dP;
+			float after = cur_depth - map_depth;
+			float before =
+				(1.0 - pebble_height(prev_p / coarse_size)) - (cur_depth - layer);
+			p_shade = mix(cur_p, prev_p, clamp(after / max(after + before, 1e-4), 0.0, 1.0));
+		}
+	}
+
 	// --- pebbles -----------------------------------------------------------
 	// The coarse band is always paid for: it is what the silhouette dissolves
 	// along, and an outline that stops breaking up at range would put the torn
 	// polygon edge back exactly where it is most visible against black sky.
-	float coarse_size = u_grain_size_m * u_coarse_ratio;
 	float c_border;
 	vec3 c_away;
 	float c_id;
-	pebble_field(v_local / coarse_size, c_border, c_away, c_id);
+	pebble_field(p_shade / coarse_size, c_border, c_away, c_id);
 	// Full height in the body of a stone, falling to nothing at its walls. The
 	// gain decides how much of a stone is flat top and how much is the bevel
 	// down to the crack: high and they are paving slabs, low and the facets
@@ -294,7 +423,7 @@ void fragment() {
 	float f_id = 0.5;
 	if (fine_w > 0.01) {
 		float f_border;
-		pebble_field(v_local / u_grain_size_m, f_border, f_away, f_id);
+		pebble_field(p_shade / u_grain_size_m, f_border, f_away, f_id);
 		f_high = clamp(f_border * u_facet_gain, 0.0, 1.0);
 	}
 
@@ -313,10 +442,16 @@ void fragment() {
 	// reason above. Only the phase differs from the crust's own projection, and
 	// a phase step at a 0.3 m period across rubble is not something an eye has
 	// any way to see.
-	vec3 tp = v_local * u_tex_scale;
+	vec3 tp = p_shade * u_tex_scale;
 	vec3 photo = triplanar_rgb(u_albedo, tp, blend) / u_tex_mean;
 	photo = mix(vec3(1.0), photo, u_tex_amount);
 	vec3 bump = triplanar_bump(u_normal, tp, blend);
+	// A finer octave of the same normal, up close only: micro-grit inside each
+	// stone. Faded with the fine band so it never becomes sub-pixel shimmer.
+	if (u_detail_amount > 0.0001 && fine_w > 0.01) {
+		bump += triplanar_bump(u_normal, p_shade * u_detail_scale, blend)
+			* (u_detail_amount * fine_w);
+	}
 
 	vec3 world_n = normalize(n + relief + bump * u_photo_normal * mix(0.35, 1.0, fine_w));
 	NORMAL = normalize((VIEW_MATRIX * vec4(world_n, 0.0)).xyz);

@@ -641,9 +641,14 @@ those hooks do not define production yield semantics.
    к текущему (непрерывный канал).
 3. `grow_sphere` не используется.
 
-Yield из результата сначала передаётся в player resource store; остаток
-создаёт world loot pile в **точке контакта на поверхности** (aim hit), не в
-центре carve. Презентация — `RigidBody3D` (Jolt): pile падает и скатывается
+Yield **никогда** не идёт в player resource store: что добыто руками — то и
+поднимается руками. Масса копится в буфере по `resource_id` и покидает его
+квантами `hand_drill_loot_emit_volume_l` (объём, не масса — кванты разных руд
+выглядят на земле одинаково; конверсия по `mass_per_unit_kg /
+volume_per_unit_l`). Один тик — ~0.1 м³ каждые 0.15 с, поэтому pile за тик
+оставлял дорожку обмылков вдоль забоя; буфер это и лечит. Буфер не
+персистится: quit теряет меньше одного кванта. Pile создаётся в **точке
+контакта на поверхности** (aim hit), не в центре carve. Презентация — `RigidBody3D` (Jolt): pile падает и скатывается
 по terrain под лунной гравитацией; осевшая поза **write-back** в
 `WorldLootPile.position` через `WorldLootProjection` →
 `SimulationWorld.sync_world_loot_position`. Коллайдер pile — **layer 8**;
@@ -798,9 +803,11 @@ StoreSnapshot {
 }
 ```
 
-- Окно, открытое на target, показывает player store слева и target
-  store/internal buffer справа. `toggle_inventory` (`I`) открывает solo-вариант
-  только с player store.
+- Окно — фиксированный прямоугольник по центру экрана (не растёт от содержимого):
+  player store слева, target store/internal buffer справа, обе колонки
+  тянутся, гриды скроллятся внутри. `toggle_inventory` (`I`) открывает
+  solo-вариант только с player store. Пока окно открыто, панель ЦЕЛЬ,
+  E-подсказка и прицел скрыты — окно уже показывает то же самое.
 - `interact` (`E`) на operational element с Store/buffer открывает terminal;
   повторный `E`, `I` или release mouse закрывает его. Пока terminal открыт,
   gameplay input paused/handled. Loot-pile `E` collect сохраняется; мировые
@@ -816,11 +823,11 @@ StoreSnapshot {
 - Drop строит `TransferResourceCommand`; UI обновляется только по completion /
   новому snapshot. Нулевой transfer показывает feedback и не меняет grid.
 - Для **recipe machine** (`processor` / `fabricator` / `electrolyzer`) terminal
-  раскрывается в **factory window** (SE-style): каталог рецептов карточками
-  (иконка результата + сырьё, ЛКМ +1 · Ctrl +10 · Shift +100), визуальная очередь
-  производства (активная job с progress + pending-карточки, сгруппированные в
-  `×N`, ЛКМ по карточке — отмена run), и внизу инвентарь машины + инвентарь
-  игрока с drag&drop. Виджеты шлют `enqueue_recipe` (`count`) /
+  раскрывается в **factory window** (SE-style): слева во всю высоту инвентарь
+  игрока, справа сверху каталог рецептов карточками (иконка результата + сырьё,
+  ЛКМ +1 · Ctrl +10 · Shift +100) и визуальная очередь производства (активная
+  job с progress + pending-карточки, сгруппированные в `×N`, ЛКМ по карточке —
+  отмена run), справа снизу инвентарь машины; drag&drop между инвентарями. Виджеты шлют `enqueue_recipe` (`count`) /
   `dequeue_recipe` (`index`,`count`) / `set_machine_enabled`; окно поллит snapshot
   ~5 Гц для живого progress. Для non-recipe machine (`stationary_drill`) правая
   панель показывает inline `enabled` + status как прежде.

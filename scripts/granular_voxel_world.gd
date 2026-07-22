@@ -79,9 +79,41 @@ const SPOIL_RADIUS_CELLS := 1
 ## spoil fraction, or a delivery point that stops following the aim — and both
 ## of those are design decisions, not tuning. The per-material fraction is the
 ## first of those two levers.
+##
+## Tightened again, and this time for a reason the earlier measurement could
+## not see. That one asked what the pattern does to the *shape* of a heap and
+## correctly answered "nothing" — repose angle wins. It never asked what the
+## pattern does to the heap's *edge*, and that turns out to be the whole of it.
+##
+## The far samples are the problem, and they are doubly so: they carry the least
+## volume (the weight falls off toward the tip) and they land the furthest out.
+## A small volume landing on its own, a metre or two clear of everything else,
+## is a scatter one cell thick — which is exactly the material the surface
+## mesher cannot draw, and the source of both the black plates that used to ring
+## a dig and the loose fringe that replaced them. Throwing less far and sharing
+## the load more evenly is what stops making that material in the first place,
+## and it is a better fix than any amount of work downstream on how it is drawn.
 const SPOIL_CONE_SAMPLES := 3
-const SPOIL_CONE_SPREAD_DEG := 18.0
-const SPOIL_THROW_M := 1.0
+const SPOIL_CONE_SPREAD_DEG := 12.0
+const SPOIL_THROW_M := 0.55
+## Hard ceiling on how far from the cut spoil may land, whatever the tool.
+##
+## The throw used to be `dig_radius + up to a metre`, so it scaled with the
+## cut: a rig carve at three metres flung its cuttings four metres out and
+## dressed the whole area in a thin skirt. Nothing about a bigger bite means the
+## material should travel further — it means there is more of it. Capping the
+## distance keeps a large cut piling its spoil against itself, which is what a
+## large cut actually does.
+##
+## Below the reach of a big carve on purpose, so its spray lands back inside the
+## hole it came from. `deposit_landing_at` refuses cells that are still rock and
+## fills upward, so that settles into the cut rather than floating in it.
+const SPOIL_THROW_MAX_M := 1.6
+## How evenly the load is shared along the cone. Nearer the mouth still gets
+## more, as a throw does, but only somewhat: at the old 0.6 the tip sample took
+## a quarter of what the mouth did, and a quarter share landing furthest out is
+## precisely the thin ring above.
+const SPOIL_THROW_FALLOFF := 0.3
 const SPOIL_THROW_LIFT := 0.45
 
 ## Cells one region may step per sweep, and how often sweeps run. Wall clock
@@ -151,6 +183,10 @@ var _flush_debt := 0.0
 ## game measures itself and says which phase it is.
 ##
 ## Set to `false` when the answer is in.
+##
+## Off: the answer was the plugin's Transvoxel remesh behind every paste, and
+## the native mesher removed it — flip this back on to see the split
+## (`prep/sdf/mesh/chips/lay`) if granular frames ever misbehave again.
 const PROFILE_GRANULAR := true
 const PROFILE_PERIOD_S := 1.0
 
@@ -160,6 +196,11 @@ var _prof_prime_us := 0
 var _prof_scatter_us := 0
 var _prof_sweep_us := 0
 var _prof_flush_us := 0
+## Time spent coupling bodies to the material — `press_at` and `mould_at`. This
+## runs in the rover's physics, not this node's `_process`, so none of the
+## numbers above see it; it is accumulated straight from the entry points and is
+## the one granular cost that only appears while a body is standing in a heap.
+var _prof_couple_us := 0
 var _prof_frames := 0
 var _prof_worst_frame_us := 0
 var _prof_left := PROFILE_PERIOD_S
@@ -184,11 +225,11 @@ func _report_profile(delta: float) -> void:
 		var region: GranularVoxelRegion = entry["region"]
 		oracle += region.oracle_calls
 		region.oracle_calls = 0
-	if _prof_bites == 0 and _prof_sweep_us + _prof_flush_us < 1000:
+	if _prof_bites == 0 and _prof_sweep_us + _prof_flush_us + _prof_couple_us < 1000:
 		_reset_profile()
 		return
 	print(
-		"[granular] %d bites | invalidate %.1f  prime %.1f  scatter %.1f  sweep %.1f  flush %.1f ms/s"
+		"[granular] %d bites | invalidate %.1f  prime %.1f  scatter %.1f  sweep %.1f  flush %.1f  couple %.1f ms/s"
 		% [
 			_prof_bites,
 			_prof_invalidate_us / 1000.0,
@@ -196,6 +237,39 @@ func _report_profile(delta: float) -> void:
 			_prof_scatter_us / 1000.0,
 			_prof_sweep_us / 1000.0,
 			_prof_flush_us / 1000.0,
+			_prof_couple_us / 1000.0,
+		]
+	)
+	# The flush split. It is the dominant cost by a wide margin and covers
+	# unrelated jobs, so the aggregate above cannot say which of them to
+	# attack. `sdf` is the native reconstruction-and-march, `mesh` is the
+	# commit of the arrays to the chunk meshes — since the native mesher there
+	# is no plugin remesh landing outside these numbers, which is the whole
+	# point of it.
+	var prep_us := 0
+	var sdf_us := 0
+	var mesh_us := 0
+	var shell_us := 0
+	var lay_us := 0
+	for entry: Dictionary in _regions:
+		var view: GranularVoxelRegionView = entry["view"]
+		if not is_instance_valid(view):
+			continue
+		prep_us += view.prof_prep_us
+		sdf_us += view.prof_sdf_us
+		mesh_us += view.prof_mesh_us
+		shell_us += view.prof_shell_us
+		lay_us += view.prof_lay_us
+		view.prof_prep_us = 0
+		view.prof_sdf_us = 0
+		view.prof_mesh_us = 0
+		view.prof_shell_us = 0
+		view.prof_lay_us = 0
+	print(
+		"[granular]   flush split: prep %.1f  sdf %.1f  mesh %.1f  chips %.1f  lay %.1f ms/s"
+		% [
+			prep_us / 1000.0, sdf_us / 1000.0, mesh_us / 1000.0,
+			shell_us / 1000.0, lay_us / 1000.0
 		]
 	)
 	# The active count is the one that decides how stepped settling looks: if it
@@ -228,9 +302,20 @@ func _reset_profile() -> void:
 	_prof_scatter_us = 0
 	_prof_sweep_us = 0
 	_prof_flush_us = 0
+	_prof_couple_us = 0
 	_prof_frames = 0
 	_prof_worst_frame_us = 0
 	_prof_last_total_us = 0
+	# The view holds its own per-second accumulators; clear them here too so an
+	# idle stretch does not carry `lay` into the next printed line.
+	for entry: Dictionary in _regions:
+		var view: GranularVoxelRegionView = entry["view"]
+		if is_instance_valid(view):
+			view.prof_prep_us = 0
+			view.prof_sdf_us = 0
+			view.prof_mesh_us = 0
+			view.prof_shell_us = 0
+			view.prof_lay_us = 0
 
 ## Cells one region may move per sweep.
 ##
@@ -333,6 +418,22 @@ var _material_field := MoonMaterialField.new()
 ## because a heap that stops growing while you are still cutting reads as a bug
 ## and the only way to tell the difference is a number.
 var _spoil_dropped_m3 := 0.0
+## Seconds between re-asking the world about rock a region had to guess at while
+## the terrain was still streaming. Short enough that a heap does not sit on
+## imaginary ground for long, long enough that the retry is not a per-frame
+## concern — and it costs nothing at all once every region has real answers.
+## Share of the loose material under a load that one press displaces, at full
+## strength. Small: a press is a thing that happens repeatedly — every wheel,
+## every contact — and the rut should deepen over a second of driving rather
+## than appear under the first touch.
+const PRESS_SHARE := 0.12
+## Fill a pressed cell may not be driven below. See `press_at`: this is what
+## makes ground stop giving instead of being excavated by traffic, and it is
+## the stand-in for a density the field does not have. Raise it and ruts stay
+## shallow; drop it to zero and a rover digs its own grave.
+const PRESS_KEEP_FILL := 0.55
+const ROCK_RETRY_S := 1.0
+var _rock_retry_left := ROCK_RETRY_S
 ## Least recently dug first. Each entry: `{ "region", "view" }`.
 var _regions: Array[Dictionary] = []
 
@@ -382,6 +483,26 @@ func _process(delta: float) -> void:
 		var region: GranularVoxelRegion = entry["region"]
 		if not region.prime_rock_step(PRIME_LAYERS_PER_FRAME):
 			break
+	# Throw away anything the regions had to guess at while the terrain was
+	# still streaming, and let them ask again.
+	#
+	# A region is born the moment a cut lands, which is the worst moment to be
+	# asking the world what is solid: blocks are still arriving. An unloaded
+	# block answers zero, and zero means rock, so a region could record ground
+	# that was never there and material would settle onto it metres up in clear
+	# air. The regions now answer "not yet" instead of "yes" and remember where
+	# they did it; this is what makes them ask again.
+	#
+	# On a timer rather than every frame because the answer only changes as
+	# blocks arrive, and because a retry that still finds nothing simply marks
+	# the box again. Nearly always a no-op: a region collects these in its first
+	# seconds and never again.
+	_rock_retry_left -= delta
+	if _rock_retry_left <= 0.0:
+		_rock_retry_left = ROCK_RETRY_S
+		for entry: Dictionary in _regions:
+			var region: GranularVoxelRegion = entry["region"]
+			region.retry_unknown_rock()
 	_prof_prime_us += Time.get_ticks_usec() - t_prime_bg
 	_flush_debt += delta * MESH_FLUSH_HZ
 	var should_flush := sweeps > 0 and _flush_debt >= 1.0
@@ -451,9 +572,22 @@ func _on_terrain_modified(
 		dig_radius_m + SPOIL_THROW_M + float(SPOIL_RADIUS_CELLS) * REGION_CELL_SIZE_M
 	)
 	var t_invalidate := Time.get_ticks_usec()
+	# Reach, not containment.
+	#
+	# This asked whether the cut's *centre* fell inside the region, so a cut
+	# standing just outside a border carved rock several cells inside it and
+	# told that region nothing. The field went on believing in rock that had
+	# been removed, and stale rock is not a harmless bookkeeping error: it
+	# counts as full in the surface reconstruction, so an empty cell beside it
+	# is carried past the iso level and drawn — which is how scraps of mesh came
+	# to hang in the air over ground that had already been dug out.
+	#
+	# `covers` takes a negative margin as an expansion of the box, so this is
+	# every region the cut can actually touch. Wider than it was, and it only
+	# costs anything for cuts near a border, which is where it was wrong.
 	for entry: Dictionary in _regions:
 		var region: GranularVoxelRegion = entry["region"]
-		if region.covers(dig_center):
+		if region.covers(dig_center, -prime_radius):
 			region.invalidate_rock(
 				dig_center,
 				dig_radius_m * 2.0,
@@ -539,7 +673,9 @@ func _scatter_spoil(
 	var weights := PackedFloat32Array()
 	for k in SPOIL_CONE_SAMPLES:
 		# Nearer the mouth gets more, as a throw does.
-		var weight := 1.0 - 0.6 * (float(k) / float(SPOIL_CONE_SAMPLES))
+		var weight := 1.0 - SPOIL_THROW_FALLOFF * (
+			float(k) / float(SPOIL_CONE_SAMPLES)
+		)
 		weights.append(weight)
 		weight_total += weight
 	for k in SPOIL_CONE_SAMPLES:
@@ -550,7 +686,13 @@ func _scatter_spoil(
 		var direction := (
 			back + (side * cos(angle) + other * sin(angle)) * radial
 		).normalized()
-		var distance := dig_radius_m + SPOIL_THROW_M * (0.25 + 0.75 * t)
+		# Capped, so the throw stops scaling with the size of the cut. See
+		# `SPOIL_THROW_MAX_M`: past the cap a big carve buries its own hole
+		# instead of dressing the ground around it in a one-cell skirt.
+		var distance := minf(
+			dig_radius_m + SPOIL_THROW_M * (0.25 + 0.75 * t),
+			SPOIL_THROW_MAX_M
+		)
 		# Landed, not released: the cone says where the throw ends up, and
 		# putting it straight there spares the field the descent — which was
 		# most of its work and all of the visible stepping.
@@ -628,6 +770,117 @@ func dig_spoil(world_point: Vector3, radius_m: float) -> float:
 		_touch(index)
 		return taken
 	return 0.0
+
+
+## Ground giving way under a load: a wheel, a dropped block, anything that
+## bears on loose material rather than cutting it.
+##
+## Displacement, not compaction, and the distinction is not pedantry — it is
+## what the field can express. A cell holds a fill fraction and no density, so
+## material cannot be squeezed into a smaller space; what a wheel really does to
+## regolith is push it down and out, heaving it up at the edges of the rut, and
+## that is a thing this field can do exactly. Volume is conserved throughout, so
+## a rut and its shoulders always add up.
+##
+## `PRESS_KEEP_FILL` is what stops it from being a digging tool. Without a floor
+## the same load pressing the same spot would displace what remained every time
+## and a rover would trench itself to bedrock in a few passes; with one, the
+## ground gives on the first pass or two and then stops, which is what bedded
+## ground does. It is the cheapest honest stand-in for compaction, and if the
+## field ever grows a density channel this is the thing it replaces.
+##
+## Returns the volume actually moved — zero when no region covers the point, or
+## when the ground there is already bedded in.
+## `share` and `keep_fill` are the caller's, because the two kinds of load want
+## opposite things and hiding either behind a single constant got one of them
+## wrong. A wheel *compacts*: it may only take a little at a time and must stop
+## at `PRESS_KEEP_FILL`, or traffic trenches the ground. A body *occupies*: no
+## material may remain where a chassis physically is, so it takes a lot and
+## floors near zero. Same mechanism, opposite settings.
+func press_at(
+	world_point: Vector3,
+	radius_m: float,
+	share := PRESS_SHARE,
+	keep_fill := PRESS_KEEP_FILL
+) -> float:
+	if radius_m <= 0.0 or share <= 0.0:
+		return 0.0
+	var t_couple := Time.get_ticks_usec()
+	share = clampf(share, 0.0, 1.0)
+	for index in range(_regions.size() - 1, -1, -1):
+		var region: GranularVoxelRegion = _regions[index]["region"]
+		if not region.covers(world_point):
+			continue
+		var moved := region.push_at(world_point, radius_m, share, keep_fill)
+		if moved <= 0.0:
+			continue
+		_touch(index)
+		_prof_couple_us += Time.get_ticks_usec() - t_couple
+		return moved
+	_prof_couple_us += Time.get_ticks_usec() - t_couple
+	return 0.0
+
+
+## Mould loose material around a body that is standing in it: take from every
+## point the body occupies, and set the whole lot down once, at its edge.
+##
+## Not a loop of `press_at`, and the difference is both the cost and the look.
+## Ringing each point separately made neighbouring points throw material into
+## each other's cells — work that fights itself, and material that lands back
+## under the machine instead of heaped around it. It was also ten column
+## deposits per point, which is where the price of moulding actually sat: this
+## is one deposit ring for the whole body however many points it has.
+##
+## `lead` offsets where the spoil is put — zero rings it around the body, and
+## along the direction of travel it builds a windrow ahead of a working face.
+##
+## Volume is conserved: whatever the points give up is what the ring receives.
+func mould_at(
+	points: PackedVector3Array,
+	radius_m: float,
+	share: float,
+	keep_fill: float,
+	body_radius_m: float,
+	lead: Vector3
+) -> float:
+	if points.is_empty() or radius_m <= 0.0 or share <= 0.0:
+		return 0.0
+	var t_couple := Time.get_ticks_usec()
+	var gathered := 0.0
+	var centre := Vector3.ZERO
+	var touched := -1
+	for point: Vector3 in points:
+		centre += point
+		for index in range(_regions.size() - 1, -1, -1):
+			var region: GranularVoxelRegion = _regions[index]["region"]
+			if not region.covers(point):
+				continue
+			gathered += region.take_sphere(point, radius_m, share, keep_fill)
+			touched = index
+			break
+	if gathered <= 0.0 or touched < 0:
+		_prof_couple_us += Time.get_ticks_usec() - t_couple
+		return 0.0
+	centre /= float(points.size())
+	# Put down against whichever region holds the middle of the body. A body
+	# straddling a border gives its spoil to one side of it, which is visible
+	# only if someone goes looking — and far better than dropping the volume.
+	var place := centre + lead
+	for index in range(_regions.size() - 1, -1, -1):
+		var region: GranularVoxelRegion = _regions[index]["region"]
+		if not region.covers(place):
+			continue
+		region.place_ring(place, gathered, body_radius_m)
+		_touch(index)
+		_prof_couple_us += Time.get_ticks_usec() - t_couple
+		return gathered
+	# Nowhere to put it: hand it back to the region it came from rather than
+	# letting the volume quietly cease to exist.
+	var origin: GranularVoxelRegion = _regions[touched]["region"]
+	origin.place_ring(centre, gathered, body_radius_m)
+	_touch(touched)
+	_prof_couple_us += Time.get_ticks_usec() - t_couple
+	return gathered
 
 
 ## Take loose material into a carried tool, up to what it can still hold.

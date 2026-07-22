@@ -27,6 +27,9 @@ var _contact_point: Callable = Callable()
 var _material_source := TerrainMaterialSource.new()
 var _material_field: MoonMaterialField = _Field.new()
 var _spawn_world: Vector3 = Vector3.ZERO
+## element_id -> reason last written, so the trace below prints on transition
+## rather than every tick.
+var _last_reported_reason: Dictionary = {}
 
 
 func set_spawn_world(spawn_world: Vector3) -> void:
@@ -96,22 +99,22 @@ func _tick_blade(
 	var runtime := world.ensure_industry_element_runtime(element.element_id)
 
 	if not element.is_operational():
-		element.industry_functional_reason = element.status_reason()
+		_set_reason(element, element.status_reason())
 		return
 	if not runtime.machine_enabled:
-		element.industry_functional_reason = &"disabled"
+		_set_reason(element, &"disabled")
 		return
 	if (
 		IndustryArchetypeProfile.dozer_blade_requires_power()
 		and not runtime.powered
 	):
-		element.industry_functional_reason = runtime.power_reason
+		_set_reason(element, runtime.power_reason)
 		return
 
 	# Free the staging buffer before deciding whether there is room to load more.
 	_push_blade_buffer(world, cargo_graph, transfer_service, element)
 	if not _has_contact(element.element_id):
-		element.industry_functional_reason = &"no_terrain_contact"
+		_set_reason(element, &"no_terrain_contact")
 		return
 
 	var contact_point := _contact_world_point(element.element_id)
@@ -126,15 +129,33 @@ func _tick_blade(
 		# clamped away at credit time — i.e. removed from the world but not stored.
 		var loaded := minf(_load_material(element.element_id, budget), budget)
 		if loaded <= EPSILON:
-			element.industry_functional_reason = &"no_terrain_contact"
+			_set_reason(element, &"no_terrain_contact")
 			return
 		_credit_loose(world, element, loaded, contact_point)
 		_push_blade_buffer(world, cargo_graph, transfer_service, element)
-		element.industry_functional_reason = &"ok"
+		# A blade parts the heap it drives into, and what it keeps is skimmed off
+		# the top of that. Loading alone moved one tick budget out of a 1.5 m
+		# ball — nothing against a real heap, so the tool read as inert no matter
+		# how much it was actually collecting. Plowed material stays in the
+		# world, only relocated, so doing this on every working tick costs no
+		# volume and cannot be farmed.
+		_plow_material(element.element_id)
+		_set_reason(element, &"ok")
 	else:
 		_plow_material(element.element_id)
-		element.industry_functional_reason = &"storage_full"
+		_set_reason(element, &"storage_full")
 	element.bump_state_revision()
+
+
+## Why a pass collected nothing is only readable by aiming at the blade, which
+## is exactly what the driver cannot do while driving into a heap. Trace every
+## transition so the answer survives in the log instead of the moment.
+func _set_reason(element: SimulationElement, reason: StringName) -> void:
+	element.industry_functional_reason = reason
+	if StringName(_last_reported_reason.get(element.element_id, &"")) == reason:
+		return
+	_last_reported_reason[element.element_id] = reason
+	print("[dozer_blade %d] %s" % [element.element_id, reason])
 
 
 func _has_contact(element_id: int) -> bool:

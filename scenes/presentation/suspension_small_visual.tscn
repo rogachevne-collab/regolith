@@ -1,0 +1,11 @@
+[gd_scene format=3 uid="uid://ogardc0urbak"]
+
+[ext_resource type="PackedScene" uid="uid://v2pofduopg6d" path="res://resources/models/suspension_small.fbx" id="1_isngb"]
+
+[node name="SuspensionSmallVisual" type="Node3D" unique_id=1561290519]
+
+[node name="Model" type="Node3D" parent="." unique_id=1015551350 instance=ExtResource("1_isngb")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.4112270107815439, -0.027376206927218485, 0)
+
+[node name="WheelSocket" type="Marker3D" parent="Model" unique_id=759169740]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.4112270107815439, -0.22262379307222815, -6.962637237760576e-18)

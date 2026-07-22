@@ -304,6 +304,9 @@ func _build_actuator_readout_row(key: String, field: String) -> void:
 func _process(_delta: float) -> void:
 	if _query == null:
 		return
+	if HudTokens.modal_window_open(self):
+		_panel.visible = false
+		return
 	var hit := _query.current_hit
 	if not hit.valid or hit.target_kind != InteractionHit.KIND_SIMULATION_ELEMENT:
 		_panel.visible = false

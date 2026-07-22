@@ -93,6 +93,8 @@ func _prompt_for(hit: InteractionHit) -> String:
 		and str(hit.metadata.get("archetype_id", "")) in [
 			"drive_wheel",
 			"wheel_suspension",
+				"wheel_med",
+				"suspension_small",
 		]
 	):
 		return "E — настройки модуля"

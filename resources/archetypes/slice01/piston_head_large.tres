@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="ElementArchetype" format=3]
+[gd_resource type="Resource" script_class="ElementArchetype" format=3 uid="uid://d0cih1jyrj3p4"]
 
 [ext_resource type="Script" uid="uid://b6d2jhfw581hb" path="res://scripts/simulation/resources/collider_definition.gd" id="1"]
 [ext_resource type="Script" uid="uid://c2p36g85wqkru" path="res://scripts/simulation/resources/build_requirement.gd" id="1_e47yp"]
@@ -20,7 +20,6 @@ compatibility_tags = PackedStringArray("piston", "internal")
 
 [sub_resource type="Resource" id="MountPy00"]
 script = ExtResource("3")
-local_cell = Vector3i(0, 0, 0)
 local_face = 2
 
 [sub_resource type="Resource" id="MountPy01"]

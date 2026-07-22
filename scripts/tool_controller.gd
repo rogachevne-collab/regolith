@@ -86,6 +86,8 @@ const CONSTRUCTION_ARCHETYPES: PackedStringArray = [
 	"rover_frame",
 	"wheel_suspension",
 	"drive_wheel",
+	"suspension_small",
+	"wheel_med",
 	"cockpit",
 	"power_battery_small",
 	"power_distributor_small",
@@ -162,6 +164,15 @@ const TOOLBAR_PAGES: Array = [
 		{"type": &"block", "archetype_id": "frame"},
 		{"type": &"connect"},
 	],
+	[
+		{"type": &"block", "archetype_id": "rover_frame"},
+		{"type": &"block", "archetype_id": "suspension_small"},
+		{"type": &"block", "archetype_id": "wheel_med"},
+		{"type": &"block", "archetype_id": "cockpit"},
+		{"type": &"block", "archetype_id": "power_battery_small"},
+		{"type": &"block", "archetype_id": "power_distributor_small"},
+		{"type": &"connect"},
+	],
 ]
 
 var state := ActionState.IDLE
@@ -214,6 +225,15 @@ const SCOOP_INTERVAL_S := 0.35
 ## player is the carrier; the world has no record of it once it is scooped, so
 ## losing this number loses the material.
 var scoop_load_m3 := 0.0
+
+## Debug spoil hose (O). Loose material only exists where something dug or
+## dumped, so testing anything that works it — the dozer blade, the scoop, the
+## angle of repose — starts with standing around drilling a heap. Hold O to pour
+## one at the crosshair instead. A dose per tick large enough to build a
+## blade-height pile in a few seconds, not so large that a tap buries the player.
+const DEBUG_SPOIL_VOLUME_M3 := 0.25
+const DEBUG_SPOIL_INTERVAL_S := 0.1
+var _debug_spoil_cooldown := 0.0
 
 const CONNECT_RANGE := 4.0
 const CONNECT_MAX_WAYPOINTS := 16
@@ -276,6 +296,7 @@ func _physics_process(delta: float) -> void:
 		return
 	if not in_vehicle:
 		_update_toolbar_input()
+	_update_debug_spoil_input(delta)
 	if active_tool == &"connect":
 		if Input.is_action_just_pressed(&"tool_primary"):
 			_handle_connect_click(_query.current_hit)
@@ -614,6 +635,28 @@ func _pressed_action() -> StringName:
 		if Input.is_action_pressed(action):
 			return action
 	return StringName()
+
+
+## Hold O to pour loose material at the crosshair. Bypasses the action state
+## machine on purpose: it is a world fixture, not a tool, and holding it must not
+## cancel or interleave with whatever the player has equipped.
+func _update_debug_spoil_input(delta: float) -> void:
+	if not Input.is_action_pressed(&"debug_spawn_spoil"):
+		_debug_spoil_cooldown = 0.0
+		return
+	_debug_spoil_cooldown = maxf(_debug_spoil_cooldown - delta, 0.0)
+	if _debug_spoil_cooldown > 0.0:
+		return
+	_debug_spoil_cooldown = DEBUG_SPOIL_INTERVAL_S
+	var hit: InteractionHit = _query.current_hit
+	if hit == null or not hit.valid:
+		return
+	command_requested.emit({
+		"kind": &"debug_spawn_spoil",
+		"source": get_parent(),
+		"target": hit.snapshot(),
+		"parameters": {"volume_m3": DEBUG_SPOIL_VOLUME_M3},
+	})
 
 
 func _update_toolbar_input() -> void:

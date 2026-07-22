@@ -393,7 +393,7 @@ static func validate_wheel_place_element(world,
 		if connection.is_empty():
 			continue
 		if (
-			existing.archetype_id == "wheel_suspension"
+			WheelPlacementUtil.is_suspension_archetype(existing.get_archetype())
 			and WheelPlacementUtil.wheel_attached_to_suspension(
 				world,
 				assembly.assembly_id,

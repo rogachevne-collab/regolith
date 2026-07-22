@@ -3,11 +3,15 @@
 #include <godot_cpp/classes/ref.hpp>
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/callable.hpp>
+#include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include <godot_cpp/variant/packed_float32_array.hpp>
 #include <godot_cpp/variant/packed_int32_array.hpp>
+#include <godot_cpp/variant/packed_vector3_array.hpp>
 #include <godot_cpp/variant/transform3d.hpp>
+#include <godot_cpp/variant/vector3.hpp>
 #include <godot_cpp/variant/vector3i.hpp>
 
 #include <cstdint>
@@ -86,6 +90,71 @@ public:
 	double take_fraction(int x, int y, int z, double fraction);
 
 	godot::PackedInt32Array take_dirty();
+	/// The view's per-flush bookkeeping, done in one native pass over the dirty
+	/// list instead of a GDScript loop over every cell that moved.
+	///
+	/// Measured, this loop was two thirds of the whole granular flush on a
+	/// collapse — 129 of 194 ms/s — because in GDScript each dirty cell decodes
+	/// its coordinate, queues itself and up to six neighbours, and grows a
+	/// Vector3i-keyed chunk dictionary. All of that is integer work the field
+	/// can do over its own `dirty_` in C++.
+	///
+	/// Returns a Dictionary:
+	///   "shell"  PackedInt32Array — every cell to reconsider (each dirty cell
+	///            and its neighbours out to `shell_radius`), deduplicated.
+	///   "chunks" PackedInt32Array — nine ints per touched chunk: chunk x,y,z,
+	///            then the min and max cell coordinates that moved inside it.
+	/// Clears the dirty list, so this replaces `take_dirty` rather than
+	/// following it.
+	godot::Dictionary take_dirty_prep(int chunk_size, int shell_radius);
+	/// The field half of deciding what a batch of shell cells should draw, in
+	/// one call instead of a dozen binding calls each.
+	///
+	/// The view's `_refresh_shell_cell` asked the field, per cell, for the
+	/// cell's own mass and then for six face-neighbours (each a mass and a
+	/// solid test) to know whether anything open touches it. That was thirteen
+	/// crossings into native code per cell and the largest granular cost left
+	/// after the flush prep moved here — so it moves here too.
+	///
+	/// Returns, for each cell in `cells`:
+	///   "mass" PackedFloat32Array — the cell's own fill.
+	///   "open" PackedFloat32Array — the smallest fill among its face
+	///          neighbours that are not rock, with a neighbour past the edge
+	///          counting as empty (0). 1e9 when every face neighbour is rock,
+	///          i.e. nothing open touches the cell. The view turns this into
+	///          "facing" by comparing against whichever open threshold applies,
+	///          which keeps the hysteresis (held vs not) on the view side.
+	///   "back" PackedFloat32Array — the same over the two-away neighbours, for
+	///          the plug layer; empty unless `want_backing`.
+	godot::Dictionary sample_shell(const godot::PackedInt32Array &cells, bool want_backing);
+
+	/// The drawn surface as an oriented patch near each cell — a point on the
+	/// isosurface and its outward normal — so the chips seat on the mesh at any
+	/// orientation, not just where it is roughly horizontal.
+	///
+	/// A vertical-column height (the first attempt) only worked where the
+	/// surface faces up; on a heap's walls it found no crossing and the chips
+	/// fell back to a per-cell fill height, which layers them into rings. The
+	/// mesh has a surface at every exposed cell whatever its facing, and it is
+	/// what `build_mesh_box` marches: the isosurface of the floored, blurred
+	/// occupancy. This returns, per cell, the nearest point on that surface and
+	/// the surface normal there, from the field's gradient — so a chip laid on
+	/// the patch clings to the wall exactly as it beds into the top.
+	///
+	/// One-pass smoothing (the view's `SMOOTH_PASSES = 1`) is assumed: a single
+	/// separable [1, centre, 1] blur composes to a 3x3x3 tensor kernel, matched
+	/// here so the patch sits on the same surface the mesher draws.
+	///
+	/// Returns a Dictionary:
+	///   "pos"    PackedVector3Array — the surface point in cell units.
+	///   "normal" PackedVector3Array — the unit outward normal, or the zero
+	///            vector where the gradient is too flat to trust (an isolated
+	///            speck), which the caller reads as "seat on the raw fill".
+	godot::Dictionary sample_surface_patches(
+			const godot::PackedInt32Array &cells,
+			double render_min_fill,
+			double smooth_centre,
+			double surface_iso);
 	int step(int max_cells);
 
 	/// The whole surface-reconstruction pass for one box, returned as the
@@ -142,6 +211,38 @@ public:
 			double air_sdf,
 			double s16_scale);
 
+	/// The surface of one box meshed directly: the same reconstruction as
+	/// `build_sdf_box` — same floor, same kernel, same rock rules, same gate —
+	/// marched at the same iso level, returned as ArrayMesh surface arrays
+	/// (vertex, normal, index) in *cell units* of this field's frame, or an
+	/// empty Array when the box holds no surface at all.
+	///
+	/// This replaces the round trip through `VoxelTerrain`: encode to a 16-bit
+	/// channel, paste, and have the plugin's Transvoxel remesh the chunk on its
+	/// own thread — which was the last granular cost left (~7-11 ms a frame
+	/// while a body moulds the field, measured with everything of ours already
+	/// native). Meshing from the reconstructed floats directly skips the
+	/// encode, the paste and the plugin entirely.
+	///
+	/// `extent` counts *cubes*: cells `[lo, lo+extent)` are marched, sampling
+	/// the field at cell points `[lo-1, lo+extent+1]` so gradients exist at
+	/// every emitted vertex. Two boxes meeting at a face therefore evaluate
+	/// the shared sample points from identical inputs in identical order and
+	/// produce bit-identical seam vertices — chunk seams need no stitching.
+	///
+	/// Triangles are wound for Godot's clockwise front faces; normals are the
+	/// field's gradient, interpolated to the crossing and pointing out of the
+	/// material.
+	godot::Array build_mesh_box(
+			const godot::Vector3i &lo,
+			const godot::Vector3i &extent,
+			int smooth_passes,
+			double smooth_centre,
+			double render_min_fill,
+			double surface_iso,
+			double sdf_gain,
+			double air_sdf);
+
 	godot::Vector3i get_size() const { return size_; }
 	double get_cell_size() const { return cell_size_; }
 	/// Exposed as properties because the region reads `field.size` and
@@ -171,6 +272,15 @@ protected:
 
 private:
 	bool solid_at(int i);
+	/// One cell's reconstructed occupancy, exactly as `build_mesh_box` builds it
+	/// before the blur: floored-and-rescaled fill for loose material, and rock
+	/// counted full only where a face neighbour holds material. Out of bounds
+	/// reads as empty. Shared by the surface-height query so it reconstructs the
+	/// same field the mesher does.
+	double occupancy_at(int x, int y, int z, double render_min_fill);
+	/// The one-pass separable blur of `occupancy_at` at one cell, evaluated as
+	/// its equivalent 3x3x3 tensor kernel. See `sample_surface_heights`.
+	double smoothed_occupancy_at(int x, int y, int z, double render_min_fill, double smooth_centre);
 	void mark_dirty(int i);
 	void touch(int i);
 	void wake(int x, int y, int z);
@@ -197,6 +307,11 @@ private:
 	std::vector<int32_t> active_;
 	std::vector<int32_t> next_;
 	std::vector<int32_t> dirty_;
+	/// Reused across flushes so a collapse does not reallocate it. Marks which
+	/// cells are already in this flush's shell set, cleared back to zero as the
+	/// set is handed over. See `take_dirty_prep`.
+	std::vector<uint8_t> shell_flag_;
+	std::vector<int32_t> shell_out_;
 	/// Reused across sweeps so a sort does not allocate every time.
 	std::vector<int32_t> order_;
 
@@ -207,6 +322,24 @@ private:
 	std::vector<uint8_t> sdf_solid_;
 	std::vector<float> sdf_occupancy_;
 	std::vector<float> sdf_scratch_;
+
+	/// The shared front half of `build_sdf_box` and `build_mesh_box`: bulk-read
+	/// mass and rock over the work box into `sdf_mass_`/`sdf_solid_`, build the
+	/// floored occupancy with the rock rules, and run the separable blur.
+	/// Returns whichever scratch the smoothed field came to rest in.
+	const std::vector<float> &reconstruct_box(
+			const godot::Vector3i &work_lo,
+			const godot::Vector3i &work_extent,
+			int smooth_passes,
+			double smooth_centre,
+			double render_min_fill);
+
+	/// Scratch for `build_mesh_box`, kept for the same reason as the above.
+	/// `mesh_d_` is the gated signed distance over the sample grid;
+	/// `mesh_edge_vertex_` maps a grid edge to the vertex already emitted on
+	/// it, so shared vertices are shared rather than repeated per triangle.
+	std::vector<float> mesh_d_;
+	std::vector<int32_t> mesh_edge_vertex_;
 
 	void blur_axis(
 			const std::vector<float> &source,

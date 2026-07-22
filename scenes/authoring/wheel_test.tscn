@@ -1,0 +1,22 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/authoring/part_authoring_root.gd" id="1_root"]
+[ext_resource type="Script" path="res://scripts/authoring/mount_pad_marker.gd" id="2_marker"]
+[ext_resource type="Resource" path="res://resources/archetypes/slice01/wheel_suspension.tres" id="3_arch"]
+[ext_resource type="PackedScene" path="res://scenes/presentation/wheel_suspension_visual.tscn" id="4_visual"]
+
+[node name="PartAuthoring" type="Node3D"]
+script = ExtResource("1_root")
+archetype = ExtResource("3_arch")
+visual_scene = ExtResource("4_visual")
+auto_structural_faces = Array[int]([])
+
+[node name="MountToFrame" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.5, 0.25, 0.25)
+script = ExtResource("2_marker")
+socket_kind = 0
+
+[node name="WheelSocket" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.25, 0, 0.25)
+script = ExtResource("2_marker")
+socket_kind = 1

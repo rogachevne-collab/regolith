@@ -1,6 +1,7 @@
 shader_type sky;
 
-// Static sky (no TIME) so Godot can cache / skip per-frame re-eval.
+// No TIME. LIGHT0_* forces sky refresh when DirectionalLight3D moves
+// (same +Z vector Godot uses for scene lighting — see light_storage.cpp).
 
 uniform vec3 space_color : source_color = vec3(0.002, 0.003, 0.008);
 uniform float star_density : hint_range(0.5, 8.0, 0.1) = 2.4;
@@ -11,6 +12,10 @@ uniform float plane_width : hint_range(0.02, 0.35, 0.005) = 0.1;
 uniform float dust_strength : hint_range(0.0, 1.0, 0.01) = 0.72;
 uniform float bulge_strength : hint_range(0.0, 2.0, 0.01) = 0.55;
 uniform vec3 bulge_warm : source_color = vec3(1.0, 0.86, 0.72);
+uniform vec3 sun_color : source_color = vec3(1.0, 0.96, 0.88);
+uniform float sun_angular_diameter_deg : hint_range(0.2, 6.0, 0.05) = 2.0;
+uniform float sun_core_energy : hint_range(0.0, 20.0, 0.1) = 10.0;
+uniform float sun_corona_energy : hint_range(0.0, 8.0, 0.05) = 1.8;
 
 float hash13(vec3 p) {
 	p = fract(p * 0.1031);
@@ -106,6 +111,20 @@ void sky() {
 
 	float integrated = plane * dust * clumps * 0.04 * bulge_strength;
 	col += bulge_warm * integrated * 0.3 + vec3(0.75, 0.82, 1.0) * integrated * 0.2;
+
+	// Sun disc locked to LIGHT0 (first DirectionalLight3D = scene sun).
+	if (LIGHT0_ENABLED) {
+		vec3 sun_dir = normalize(LIGHT0_DIRECTION);
+		float cos_ang = clamp(dot(dir, sun_dir), -1.0, 1.0);
+		float half_rad = radians(max(sun_angular_diameter_deg, 0.05) * 0.5);
+		float cos_core = cos(half_rad);
+		float cos_corona = cos(half_rad * 2.8);
+		float core = smoothstep(cos_core, mix(cos_core, 1.0, 0.2), cos_ang);
+		float corona = smoothstep(cos_corona, cos_core, cos_ang);
+		corona *= corona;
+		float sun = (core * sun_core_energy + corona * sun_corona_energy) * max(LIGHT0_ENERGY, 0.0);
+		col += sun_color * sun;
+	}
 
 	COLOR = col;
 }

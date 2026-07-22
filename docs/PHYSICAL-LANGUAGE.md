@@ -22,6 +22,7 @@ ADR. Интеграция в Erebus — через Erebus Lite addon, когда
 | Landing leg (посадочная нога) | «Примитивы» → роли `Support`; `specs/POC-THRUSTERS-V0.md` |
 | Cable / Tether, Sensor | «Примитивы» → одноимённые разделы |
 | ControlSeat, Binding (управление) | «Примитивы» → «ControlSeat и Binding» |
+| Слоты быстрых действий (кокпит/пульт, тулбар) | «Примитивы» → «ControlSeat и Binding»; `specs/CONTROL-ACTIONS-V0.md` |
 | Control Graph (визуальная автоматика) | «Примитивы» → «Control Graph»; `specs/CONTROL-GRAPH-V0.md` |
 | Network, Flow, Store (сети и потоки) | «Примитивы» → «Network, Flow и Store» |
 | Resource, Recipe, производство | «Примитивы» → «Resource, Recipe и производство» |
@@ -514,6 +515,11 @@ Binding {
 
 Игрок, автопилот и декларативное правило используют один командный интерфейс. Не
 существует отдельных «кода ровера» и «кода корабля».
+
+Ручная половина Binding — слоты быстрых действий на `ControlSeat` (кокпит/пульт):
+тулбар со слотами-глаголами («выдвинуть поршень», «включить бур»), которые
+резолвятся в те же управляющие команды. Контракт — `specs/CONTROL-ACTIONS-V0.md`.
+Автоматическая половина — `Control Graph` (ниже).
 
 ### Control Graph
 

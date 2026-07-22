@@ -1,0 +1,32 @@
+[gd_resource type="Resource" script_class="ElementArchetype" format=3]
+
+[ext_resource type="Script" path="res://scripts/simulation/resources/build_requirement.gd" id="1_7rq3p"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/collider_definition.gd" id="2_sagxp"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/port_definition.gd" id="3_vu2cs"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/element_archetype.gd" id="4_aecoi"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/structural_mount_pad.gd" id="5_2phet"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/wheel_definition.gd" id="6_qnfhn"]
+
+[sub_resource type="Resource" id="Resource_wy6l1"]
+script = ExtResource("2_sagxp")
+
+[sub_resource type="Resource" id="Resource_vsi50"]
+script = ExtResource("5_2phet")
+local_face = 2
+socket_tag = "wheel_plug"
+
+[sub_resource type="Resource" id="Resource_xasj2"]
+script = ExtResource("6_qnfhn")
+width_m = 0.30000000000000004
+forward_axis_face = 5
+
+[resource]
+script = ExtResource("4_aecoi")
+archetype_id = "my_wheel"
+display_name = "Моё колесо"
+roles = PackedStringArray("Support", "Actuator")
+mass_kg = 8.0
+colliders = Array[ExtResource("2_sagxp")]([SubResource("Resource_wy6l1")])
+structural_surface_policy = 2
+structural_mount_pads = Array[ExtResource("5_2phet")]([SubResource("Resource_vsi50")])
+wheel_definition = SubResource("Resource_xasj2")

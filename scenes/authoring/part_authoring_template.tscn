@@ -1,0 +1,18 @@
+[gd_scene format=3 uid="uid://ltqego7toc6p"]
+
+[ext_resource type="Script" uid="uid://dgr075qc34e5" path="res://scripts/authoring/part_authoring_root.gd" id="1_root"]
+[ext_resource type="Script" uid="uid://bwsx0ndumvttw" path="res://scripts/authoring/mount_pad_marker.gd" id="2_marker"]
+[ext_resource type="PackedScene" path="res://scenes/presentation/drive_wheel_visual.tscn" id="3_visual"]
+
+[node name="PartAuthoring" type="Node3D" unique_id=1373681657]
+script = ExtResource("1_root")
+part_id = "my_wheel"
+display_name = "Моё колесо"
+part_kind = 1
+visual_scene = ExtResource("3_visual")
+last_bake_diagnostics = PackedStringArray()
+
+[node name="MountHere" type="Node3D" parent="." unique_id=1738682038]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.25, 0.5, 0.25)
+script = ExtResource("2_marker")
+socket_kind = 2

@@ -2122,10 +2122,8 @@ func _should_disable_wheel_module_collider(
 	var element := _world.get_element(element_id)
 	if element == null:
 		return false
-	return (
-		element.archetype_id == "drive_wheel"
-		or element.archetype_id == "wheel_suspension"
-	)
+	var archetype := element.get_archetype()
+	return archetype != null and (archetype.is_wheel() or archetype.is_suspension())
 
 
 func _sync_wheel_loco_body_physics(

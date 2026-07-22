@@ -1,11 +1,11 @@
-[gd_resource type="Resource" script_class="ElementArchetype" format=3]
+[gd_resource type="Resource" script_class="ElementArchetype" format=3 uid="uid://b1d524vgehms5"]
 
-[ext_resource type="Script" path="res://scripts/simulation/resources/build_requirement.gd" id="1_req"]
-[ext_resource type="Script" path="res://scripts/simulation/resources/collider_definition.gd" id="2_col"]
-[ext_resource type="Script" path="res://scripts/simulation/resources/port_definition.gd" id="3_port"]
-[ext_resource type="Script" path="res://scripts/simulation/resources/wheel_definition.gd" id="4_wheel"]
-[ext_resource type="Script" path="res://scripts/simulation/resources/structural_mount_pad.gd" id="5_pad"]
-[ext_resource type="Script" path="res://scripts/simulation/resources/element_archetype.gd" id="6_arch"]
+[ext_resource type="Script" uid="uid://c2p36g85wqkru" path="res://scripts/simulation/resources/build_requirement.gd" id="1_req"]
+[ext_resource type="Script" uid="uid://b6d2jhfw581hb" path="res://scripts/simulation/resources/collider_definition.gd" id="2_col"]
+[ext_resource type="Script" uid="uid://c4hgnuqnf2up8" path="res://scripts/simulation/resources/port_definition.gd" id="3_port"]
+[ext_resource type="Script" uid="uid://bppkqauuwpwdw" path="res://scripts/simulation/resources/wheel_definition.gd" id="4_wheel"]
+[ext_resource type="Script" uid="uid://bfuxth8e6lccw" path="res://scripts/simulation/resources/structural_mount_pad.gd" id="5_pad"]
+[ext_resource type="Script" uid="uid://bxidpb3tep3ih" path="res://scripts/simulation/resources/element_archetype.gd" id="6_arch"]
 
 [sub_resource type="Resource" id="Requirement"]
 script = ExtResource("1_req")
@@ -16,31 +16,14 @@ amount = 2.0
 script = ExtResource("2_col")
 size = Vector3(0.2, 0.2, 0.2)
 
-[sub_resource type="Resource" id="WheelDefinition"]
-script = ExtResource("4_wheel")
-radius_m = 0.4
-width_m = 0.3
-drive_torque_n_m = 65.0
-brake_torque_n_m = 180.0
-longitudinal_grip = 1.2
-lateral_grip = 0.9
-slip_stiffness = 800.0
-lateral_stiffness = 1000.0
-wheel_inertia = 0.65
-angular_damping = 0.2
-max_angular_speed_rad_s = 150.0
-max_steering_angle_rad = 0.4887
-steering_response = 2.5
-steerable_default = false
-forward_axis_face = 5
-power_draw_w = 300.0
-idle_w = 20.0
-requires_socket_tag = "wheel_socket"
-
 [sub_resource type="Resource" id="Mount_plug"]
 script = ExtResource("5_pad")
 local_face = 2
 socket_tag = "wheel_plug"
+
+[sub_resource type="Resource" id="WheelDefinition"]
+script = ExtResource("4_wheel")
+forward_axis_face = 5
 
 [resource]
 script = ExtResource("6_arch")

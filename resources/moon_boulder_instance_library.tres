@@ -2,9 +2,9 @@
 
 [ext_resource type="Texture2D" uid="uid://dgyfmubxy5j3d" path="res://resources/textures/lunar_rock/albedo.png" id="1_17xy2"]
 [ext_resource type="Texture2D" uid="uid://dy7k5netp28jb" path="res://resources/textures/lunar_rock/normal.png" id="2_ohvn5"]
-[ext_resource type="ArrayMesh" path="res://resources/props/lunar_boulder_mesh_small_0.tres" id="3_gy6o3"]
-[ext_resource type="ArrayMesh" path="res://resources/props/lunar_boulder_mesh_small_1.tres" id="4_01lb1"]
-[ext_resource type="ArrayMesh" path="res://resources/props/lunar_boulder_mesh_small_2.tres" id="5_lmtae"]
+[ext_resource type="ArrayMesh" uid="uid://chr6hwbexksai" path="res://resources/props/lunar_boulder_mesh_small_0.tres" id="3_gy6o3"]
+[ext_resource type="ArrayMesh" uid="uid://hpl1qliyfuhb" path="res://resources/props/lunar_boulder_mesh_small_1.tres" id="4_01lb1"]
+[ext_resource type="ArrayMesh" uid="uid://beqewe1sejxih" path="res://resources/props/lunar_boulder_mesh_small_2.tres" id="5_lmtae"]
 [ext_resource type="ArrayMesh" path="res://resources/props/lunar_boulder_mesh_large_0.tres" id="6_nmqtj"]
 [ext_resource type="ArrayMesh" path="res://resources/props/lunar_boulder_mesh_large_1.tres" id="7_e4u57"]
 

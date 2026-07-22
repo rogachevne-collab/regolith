@@ -48,7 +48,7 @@ func lens_cell_scale() -> float:
 	return MoonGeometry.active_surface_radius_m() / LENS_CELL_ARC_M
 
 
-func material_id_at_world(world_pos: Vector3, spawn_world: Vector3 = Vector3.ZERO) -> String:
+func material_id_at_world(world_pos: Vector3, spawn_world_override: Vector3 = Vector3.ZERO) -> String:
 	# Note: depth comes from the fixed constant while `lens_cell_scale` uses
 	# `active_surface_radius_m()`. In a scene that calls `set_test_diameter`
 	# the two disagree — depth bands and lens geometry then describe different
@@ -59,16 +59,16 @@ func material_id_at_world(world_pos: Vector3, spawn_world: Vector3 = Vector3.ZER
 		return _Catalog.MAT_MARE_REGOLITH
 	var dir := world_pos / radial
 	var depth_m := maxf(radius_m - radial, 0.0)
-	return material_id_at_dir_depth(dir, depth_m, spawn_world)
+	return material_id_at_dir_depth(dir, depth_m, spawn_world_override)
 
 
 func material_id_at_dir_depth(
 	dir: Vector3,
 	depth_m: float,
-	spawn_world: Vector3 = Vector3.ZERO
+	spawn_world_override: Vector3 = Vector3.ZERO
 ) -> String:
 	var n := dir.normalized()
-	var origin := spawn_world if spawn_world.length() > 0.001 else _spawn_world
+	var origin := spawn_world_override if spawn_world_override.length() > 0.001 else _spawn_world
 	if origin.length() > 0.001:
 		var overlay := _starting_overlay(n, depth_m, origin.normalized())
 		if not overlay.is_empty():
@@ -85,8 +85,8 @@ func material_id_at_dir_depth(
 	)
 
 
-func voxel_index_at_world(world_pos: Vector3, spawn_world: Vector3 = Vector3.ZERO) -> int:
-	return _Catalog.voxel_index_of(material_id_at_world(world_pos, spawn_world))
+func voxel_index_at_world(world_pos: Vector3, spawn_world_override: Vector3 = Vector3.ZERO) -> int:
+	return _Catalog.voxel_index_of(material_id_at_world(world_pos, spawn_world_override))
 
 
 func _biome_at(dir: Vector3) -> String:

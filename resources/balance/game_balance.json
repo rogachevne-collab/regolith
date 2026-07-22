@@ -489,7 +489,7 @@
     }
   },
   "industry": {
-    "player_carry_capacity_l": 100.0,
+    "player_carry_capacity_l": 10000.0,
     "queue_max_depth": 200,
     "keyed_store_capacity_l": {
       "cargo_store": 2000.0
@@ -517,10 +517,12 @@
     "dozer_blade": {
       "push_radius_m": 1.5,
       "push_share": 0.5,
-      "contact_reach_m": 1.6,
-      "head_offset_m": 1.1,
+      "contact_reach_m": 1.2,
+      "head_offset_m": 0.35,
       "tick_volume_budget_m3": 0.05,
-      "requires_power": true
+      "requires_power": true,
+      "edge_drop_m": 0.35,
+      "probe_pitch_deg": 25.0
     },
     "hand_drill": {
       "carve_radius_m": 1.0,
@@ -528,6 +530,7 @@
       "sdf_scale": 0.8,
       "reach_m": 2.5,
       "terrain_collectible_fraction": 0.01,
+      "loot_emit_volume_l": 20.0,
       "loot_pile_max_mass_kg": 32.0,
       "loot_base_radius_m": 0.16,
       "loot_mass_reference_kg": 12.0,

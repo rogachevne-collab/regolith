@@ -128,7 +128,28 @@ static func dozer_blade_contact_reach_m() -> float:
 static func dozer_blade_head_offset_m() -> float:
 	return GameBalance.industry_float(
 		PackedStringArray(["dozer_blade", "head_offset_m"]),
-		1.1
+		0.35
+	)
+
+
+## How far below the footprint pivot the contact probe starts, along local -Y.
+## The pivot sits at mid-height of the blade; the material a blade actually works
+## is at its cutting edge, so probing from the pivot only found heaps taller than
+## half the blade and lost them the moment the rover pitched.
+static func dozer_blade_edge_drop_m() -> float:
+	return GameBalance.industry_float(
+		PackedStringArray(["dozer_blade", "edge_drop_m"]),
+		0.35
+	)
+
+
+## Downward tilt of the contact probe from the working direction. A horizontal
+## ray leaves the ground the instant the blade rides up on the heap it is
+## cutting; angling it down keeps the probe on the material under the edge.
+static func dozer_blade_probe_pitch_deg() -> float:
+	return GameBalance.industry_float(
+		PackedStringArray(["dozer_blade", "probe_pitch_deg"]),
+		25.0
 	)
 
 
@@ -180,6 +201,17 @@ static func terrain_collectible_fraction() -> float:
 	return GameBalance.industry_float(
 		PackedStringArray(["hand_drill", "terrain_collectible_fraction"]),
 		0.01
+	)
+
+
+## How much the drill has to free before it drops a chunk you can pick up.
+## In litres rather than kilograms so a dropped chunk is the same size whatever
+## it is made of: 20 L of ilmenite outweighs 20 L of regolith by two thirds but
+## looks identical lying on the ground.
+static func hand_drill_loot_emit_volume_l() -> float:
+	return GameBalance.industry_float(
+		PackedStringArray(["hand_drill", "loot_emit_volume_l"]),
+		20.0
 	)
 
 

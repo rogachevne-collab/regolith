@@ -17,8 +17,20 @@ uniform float lead_strength : hint_range(0.0, 2.0) = 0.35;
 void fragment() {
 	float filled = step(UV.x, fill);
 
-	// Segment gaps: thin dark separators across the bar.
-	float gap = step(1.0 - gap_ratio, fract(UV.x * segments));
+	// Segment gaps: thin dark separators across the bar. Measured in local
+	// pixels, not UV fractions — a UV-space step lands the separators on
+	// fractional pixels, so on a short bar some gaps vanish and their
+	// neighbours double, which reads as a ragged, uneven track. Clamped to at
+	// least one pixel and smoothed over one pixel so the spacing stays even at
+	// any width.
+	float pitch_px = rect_size.x / max(segments, 1.0);
+	float gap_px = min(max(pitch_px * gap_ratio, 1.0), pitch_px * 0.5);
+	float phase_px = mod(UV.x * rect_size.x, pitch_px);
+	float gap = smoothstep(
+		pitch_px - gap_px - 0.5,
+		pitch_px - gap_px + 0.5,
+		phase_px
+	);
 
 	// Gentle glossy vertical gradient.
 	float grad = 1.0 - abs(UV.y - 0.5) * 0.9;

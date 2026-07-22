@@ -25,7 +25,9 @@ static func discover_pairs(
 		return cached["pairs"] as Array[Dictionary]
 	for element_id: int in assembly.element_ids:
 		var element := world.get_element(element_id)
-		if element == null or element.archetype_id != "wheel_suspension":
+		if element == null or not WheelPlacementUtil.is_suspension_archetype(
+			element.get_archetype()
+		):
 			continue
 		var wheel_element_id := _wheel_for_suspension(world, assembly_id, element_id)
 		pairs.append(
@@ -106,7 +108,9 @@ static func apply_configure_wheel(
 	if world == null or command == null:
 		return {"status": &"failed", "reason": &"not_ready"}
 	var element := world.get_element(command.wheel_element_id)
-	if element == null or element.archetype_id != "drive_wheel":
+	if element == null or not WheelPlacementUtil.is_wheel_archetype(
+		element.get_archetype()
+	):
 		return {"status": &"failed", "reason": &"invalid_reference"}
 	if not element.is_operational():
 		return {"status": &"failed", "reason": &"element_incomplete"}
@@ -149,7 +153,9 @@ static func apply_configure_suspension(
 	if world == null or command == null:
 		return {"status": &"failed", "reason": &"not_ready"}
 	var element := world.get_element(command.suspension_element_id)
-	if element == null or element.archetype_id != "wheel_suspension":
+	if element == null or not WheelPlacementUtil.is_suspension_archetype(
+		element.get_archetype()
+	):
 		return {"status": &"failed", "reason": &"invalid_reference"}
 	if not element.is_operational():
 		return {"status": &"failed", "reason": &"element_incomplete"}
@@ -248,7 +254,7 @@ static func sync_power_demand(world: SimulationWorld) -> void:
 	if world == null:
 		return
 	for element: SimulationElement in world.list_elements():
-		if element.archetype_id == "drive_wheel":
+		if WheelPlacementUtil.is_wheel_archetype(element.get_archetype()):
 			world.ensure_industry_element_runtime(
 				element.element_id
 			).dynamic_power_w = 0.0
@@ -374,7 +380,9 @@ static func _wheel_for_suspension(
 		else:
 			continue
 		var other := world.get_element(other_id)
-		if other != null and other.archetype_id == "drive_wheel":
+		if other != null and WheelPlacementUtil.is_wheel_archetype(
+			other.get_archetype()
+		):
 			return other_id
 	return 0
 

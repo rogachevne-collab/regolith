@@ -1,26 +1,34 @@
 extends Control
-## Terminal inventory: player store left, target store/buffer right (INDUSTRY-V1
-## § Terminal inventory). Reads StoreSnapshot via WorldCommandGateway; drag/drop
-## and machine controls live in HudInventoryContainerPanel. Presentation only.
+## Terminal window (INDUSTRY-V1 § Terminal inventory). One fixed, screen-centred
+## rectangle: player store fills the left column, the right column holds either
+## the target store alone or — for a recipe machine — the factory stack
+## (recipes + queue on top, machine store below). Reads StoreSnapshot via
+## WorldCommandGateway; drag/drop and machine controls live in the child
+## widgets. Presentation only.
 
 
-const SOLO_COLUMN_WIDTH := 264.0
-const SOLO_COLUMN_MIN := 232.0
-const DUAL_COLUMN_PREFERRED := 276.0
-const DUAL_COLUMN_MIN := 232.0
-const DUAL_COLUMN_MAX := 296.0
-const PANEL_GAP := 8.0
-const PANEL_MARGIN_H := 16.0
-const PANEL_MARGIN_V := 14.0
-const PANEL_HEADER_V := 52.0
-const SAFE_LEFT := 360.0
-const SAFE_RIGHT := 48.0
-const SAFE_TOP := 52.0
-const SAFE_BOTTOM := 140.0
-const MAX_HEIGHT_RATIO := 0.62
-const FACTORY_EXTRAS_HEIGHT := 240.0
-const CATALOG_MIN_WIDTH := 288.0
-const QUEUE_MIN_WIDTH := 252.0
+# Screen-safe box the window is centred in: leaves the compass above and the
+# toolbar / vitals below untouched.
+const SCREEN_MARGIN_H := 48.0
+const SCREEN_MARGIN_TOP := 56.0
+const SCREEN_MARGIN_BOTTOM := 132.0
+
+const PANEL_MARGIN := 16.0
+const CONTENT_GAP := 10.0
+const COLUMN_GAP := 12.0
+
+# Frozen window footprints per mode; each is clamped to the safe box.
+const SOLO_SIZE := Vector2(372.0, 520.0)
+const DUAL_SIZE := Vector2(768.0, 560.0)
+const FACTORY_SIZE := Vector2(1040.0, 660.0)
+
+const LEFT_COLUMN := 296.0
+const LEFT_COLUMN_MIN := 232.0
+const LEFT_COLUMN_RATIO := 0.42
+const CATALOG_STRETCH := 1.9
+const QUEUE_STRETCH := 1.0
+const EXTRAS_STRETCH := 1.7
+const STORE_STRETCH := 1.0
 const FACTORY_REFRESH_INTERVAL := 0.2
 
 var _gateway: WorldCommandGateway
@@ -30,13 +38,11 @@ var _player: Node
 var _panel: Panel
 var _panel_overlay: ColorRect
 var _content: VBoxContainer
-var _body_scroll: ScrollContainer
 var _body: HBoxContainer
+var _right_column: VBoxContainer
 var _player_panel: HudInventoryContainerPanel
 var _target_panel: HudInventoryContainerPanel
-var _panel_divider: Panel
 var _factory_extras: HBoxContainer
-var _factory_divider: Panel
 var _recipe_catalog: HudRecipeCatalog
 var _queue_view: HudProductionQueue
 var _machine_mode := false
@@ -148,35 +154,83 @@ func _build() -> void:
 	_panel.anchor_bottom = 0.5
 	add_child(_panel)
 
-	_panel_overlay = HudTokens.make_panel_overlay(Vector2(SOLO_COLUMN_WIDTH, 200.0))
+	_panel_overlay = HudTokens.make_panel_overlay(FACTORY_SIZE)
 	_panel_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_panel_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_panel.add_child(_panel_overlay)
 
 	var margin := MarginContainer.new()
 	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	margin.add_theme_constant_override("margin_left", int(PANEL_MARGIN_H))
-	margin.add_theme_constant_override("margin_right", int(PANEL_MARGIN_H))
-	margin.add_theme_constant_override("margin_top", int(PANEL_MARGIN_V))
-	margin.add_theme_constant_override("margin_bottom", int(PANEL_MARGIN_V))
+	margin.add_theme_constant_override("margin_left", int(PANEL_MARGIN))
+	margin.add_theme_constant_override("margin_right", int(PANEL_MARGIN))
+	margin.add_theme_constant_override("margin_top", int(PANEL_MARGIN))
+	margin.add_theme_constant_override("margin_bottom", int(PANEL_MARGIN))
 	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_panel.add_child(margin)
 
 	_content = VBoxContainer.new()
-	_content.add_theme_constant_override("separation", 6)
+	_content.add_theme_constant_override("separation", int(CONTENT_GAP))
 	_content.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	margin.add_child(_content)
 
+	_build_header()
+	_content.add_child(HudTokens.make_divider())
+
+	_body = HBoxContainer.new()
+	_body.add_theme_constant_override("separation", int(COLUMN_GAP))
+	_body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_body.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_content.add_child(_body)
+
+	_player_panel = HudInventoryContainerPanel.new()
+	_player_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_body.add_child(_player_panel)
+
+	_right_column = VBoxContainer.new()
+	_right_column.add_theme_constant_override("separation", int(COLUMN_GAP))
+	_right_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_right_column.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_right_column.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_body.add_child(_right_column)
+
+	_factory_extras = HBoxContainer.new()
+	_factory_extras.add_theme_constant_override("separation", int(COLUMN_GAP))
+	_factory_extras.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_factory_extras.size_flags_stretch_ratio = EXTRAS_STRETCH
+	_factory_extras.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_factory_extras.visible = false
+	_right_column.add_child(_factory_extras)
+
+	_recipe_catalog = HudRecipeCatalog.new()
+	_recipe_catalog.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_recipe_catalog.size_flags_stretch_ratio = CATALOG_STRETCH
+	_factory_extras.add_child(_recipe_catalog)
+
+	_queue_view = HudProductionQueue.new()
+	_queue_view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_queue_view.size_flags_stretch_ratio = QUEUE_STRETCH
+	_factory_extras.add_child(_queue_view)
+
+	_target_panel = HudInventoryContainerPanel.new()
+	_target_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_target_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_target_panel.size_flags_stretch_ratio = STORE_STRETCH
+	_right_column.add_child(_target_panel)
+
+
+func _build_header() -> void:
 	var title_row := HBoxContainer.new()
-	title_row.add_theme_constant_override("separation", 6)
+	title_row.add_theme_constant_override("separation", 8)
 	title_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_content.add_child(title_row)
+
 	title_row.add_child(HudTokens.make_emblem(14.0))
 	var title := Label.new()
 	title.text = "ТЕРМИНАЛ"
 	title.theme_type_variation = &"HudSmall"
 	title.add_theme_color_override("font_color", HudTokens.COL_TITLE)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	title_row.add_child(title)
 
 	_close_hint = Label.new()
@@ -184,68 +238,12 @@ func _build() -> void:
 	_close_hint.theme_type_variation = &"HudSmall"
 	_close_hint.add_theme_color_override("font_color", HudTokens.COL_DIM)
 	_close_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_close_hint.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_close_hint.autowrap_mode = TextServer.AUTOWRAP_OFF
-	_close_hint.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	_close_hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_close_hint.visible = false
-	_content.add_child(_close_hint)
-
-	_content.add_child(HudTokens.make_divider())
-
-	_factory_extras = HBoxContainer.new()
-	_factory_extras.add_theme_constant_override("separation", int(PANEL_GAP))
-	_factory_extras.custom_minimum_size = Vector2(0.0, FACTORY_EXTRAS_HEIGHT)
-	_factory_extras.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_factory_extras.visible = false
-	_content.add_child(_factory_extras)
-
-	_recipe_catalog = HudRecipeCatalog.new()
-	_recipe_catalog.custom_minimum_size = Vector2(CATALOG_MIN_WIDTH, 0.0)
-	_recipe_catalog.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_factory_extras.add_child(_recipe_catalog)
-
-	_factory_divider = Panel.new()
-	_factory_divider.theme_type_variation = &"HudDivider"
-	_factory_divider.custom_minimum_size = Vector2(1.0, 0.0)
-	_factory_divider.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_factory_divider.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_factory_extras.add_child(_factory_divider)
-
-	_queue_view = HudProductionQueue.new()
-	_queue_view.custom_minimum_size = Vector2(QUEUE_MIN_WIDTH, 0.0)
-	_queue_view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_factory_extras.add_child(_queue_view)
-
-	_body_scroll = ScrollContainer.new()
-	_body_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	_body_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	_body_scroll.mouse_filter = Control.MOUSE_FILTER_PASS
-	_body_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_body_scroll.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	_content.add_child(_body_scroll)
-	_body = HBoxContainer.new()
-	_body.add_theme_constant_override("separation", int(PANEL_GAP))
-	_body.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_body_scroll.add_child(_body)
-
-	_player_panel = HudInventoryContainerPanel.new()
-	_player_panel.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	# Keep both store panels aligned to the top. A short/empty cargo panel must
-	# not be vertically centered beside a fuller player inventory.
-	_player_panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	_body.add_child(_player_panel)
-
-	_panel_divider = Panel.new()
-	_panel_divider.theme_type_variation = &"HudDivider"
-	_panel_divider.custom_minimum_size = Vector2(1.0, 0.0)
-	_panel_divider.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_panel_divider.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_body.add_child(_panel_divider)
-
-	_target_panel = HudInventoryContainerPanel.new()
-	_target_panel.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	_target_panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	_body.add_child(_target_panel)
+	# No overrun trimming: a trimmable label reports a near-zero minimum width,
+	# so the expanding title next to it would eat the hint entirely.
+	_close_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	title_row.add_child(_close_hint)
 
 
 func _input(event: InputEvent) -> void:
@@ -278,8 +276,6 @@ func _apply_open_state() -> void:
 	if _panel == null:
 		return
 	_panel.visible = _open
-	if _close_hint != null:
-		_close_hint.visible = _open
 	if not _open:
 		call_deferred("_restore_gameplay_input_if_still_closed")
 		return
@@ -307,13 +303,10 @@ func _restore_gameplay_input() -> void:
 func _wire_peer_panels() -> void:
 	if _player_panel == null or _target_panel == null:
 		return
+	_right_column.visible = not _solo
 	if _solo:
-		_target_panel.visible = false
-		_panel_divider.visible = false
 		_player_panel.set_peer_store_id("")
 	else:
-		_target_panel.visible = true
-		_panel_divider.visible = true
 		_player_panel.set_peer_store_id(_target_store_id)
 		_target_panel.set_peer_store_id(PlayerIdentity.local_store_id())
 
@@ -337,7 +330,7 @@ func _refresh_panels() -> void:
 
 func _apply_factory_mode(target_snap: Dictionary) -> void:
 	var machine: Variant = target_snap.get("machine", null)
-	var is_recipe_machine := (
+	var is_recipe_machine: bool = (
 		bool(target_snap.get("is_machine", false))
 		and machine is Dictionary
 		and not (machine as Dictionary).get("recipes", []).is_empty()
@@ -391,118 +384,80 @@ func _refresh_factory() -> void:
 func _on_command_completed(_command_id: int, _result: Dictionary) -> void:
 	if _open:
 		_refresh_panels()
-		call_deferred("_update_panel_layout")
 
 
+## The window is a fixed rectangle centred in the screen-safe box: the columns
+## inside it stretch, so nothing here depends on how full a store happens to be.
 func _update_panel_layout() -> void:
-	if _panel == null or _body == null or not _open:
+	if _panel == null or not _open:
 		return
 	var vp := get_viewport_rect().size
 	var safe_rect := _safe_rect(vp)
-	var panel_count := 1 if _solo else 2
-	var body_width := _body_width_for_mode(panel_count, safe_rect.size.x)
-	var column_width := _column_width_for_mode(panel_count, body_width)
-
-	var slot_size := HudTokens.SLOT_SIZE
-	var max_body_h := _max_body_height(safe_rect.size.y)
-	if _machine_mode:
-		max_body_h = maxf(max_body_h - FACTORY_EXTRAS_HEIGHT - 6.0, 120.0)
-	var layout_ctx := {
-		"column_width": column_width,
-		"slot_size": slot_size,
-		"max_grid_height": max_body_h,
-	}
-	_player_panel.size_flags_horizontal = (
-		Control.SIZE_SHRINK_CENTER if _solo else Control.SIZE_EXPAND_FILL
+	var panel_size := Vector2(
+		minf(_preferred_size().x, safe_rect.size.x),
+		minf(_preferred_size().y, safe_rect.size.y)
 	)
-	_target_panel.size_flags_horizontal = (
-		Control.SIZE_SHRINK_CENTER if _solo else Control.SIZE_EXPAND_FILL
-	)
-	_player_panel.configure_layout(layout_ctx)
-	if not _solo and _target_panel.visible:
-		_target_panel.configure_layout(layout_ctx)
-
-	var body_h := _body.get_combined_minimum_size().y
-	body_h = minf(body_h, max_body_h)
-	_body.custom_minimum_size = Vector2(body_width, 0.0)
-	_body_scroll.custom_minimum_size = Vector2(body_width, body_h)
-	_body_scroll.size = Vector2(body_width, body_h)
-	_body_scroll.vertical_scroll_mode = (
-		ScrollContainer.SCROLL_MODE_AUTO
-		if _body.get_combined_minimum_size().y > body_h + 0.5
-		else ScrollContainer.SCROLL_MODE_DISABLED
-	)
-	var panel_w := body_width + PANEL_MARGIN_H * 2.0
-	var panel_h := PANEL_HEADER_V + PANEL_MARGIN_V * 2.0 + body_h
-	if _machine_mode:
-		var extras_w := CATALOG_MIN_WIDTH + QUEUE_MIN_WIDTH + PANEL_GAP + 1.0
-		panel_w = maxf(panel_w, extras_w + PANEL_MARGIN_H * 2.0)
-		panel_h += FACTORY_EXTRAS_HEIGHT + 6.0
-	panel_h = minf(panel_h, safe_rect.size.y)
-
-	var half_w := panel_w * 0.5
-	var half_h := panel_h * 0.5
-	var shift := _panel_center_shift(vp, safe_rect)
-	_panel.offset_left = -half_w + shift.x
-	_panel.offset_right = half_w + shift.x
-	_panel.offset_top = -half_h + shift.y
-	_panel.offset_bottom = half_h + shift.y
+	var center := safe_rect.position + safe_rect.size * 0.5
+	var offset := center - vp * 0.5
+	_panel.offset_left = offset.x - panel_size.x * 0.5
+	_panel.offset_right = offset.x + panel_size.x * 0.5
+	_panel.offset_top = offset.y - panel_size.y * 0.5
+	_panel.offset_bottom = offset.y + panel_size.y * 0.5
 	if _panel_overlay != null and _panel_overlay.material is ShaderMaterial:
 		(_panel_overlay.material as ShaderMaterial).set_shader_parameter(
 			"rect_size",
-			Vector2(panel_w, panel_h)
+			panel_size
 		)
+	_apply_column_widths(panel_size.x - PANEL_MARGIN * 2.0)
+
+
+func _apply_column_widths(content_width: float) -> void:
+	var slot_size := HudTokens.SLOT_SIZE
+	if _solo:
+		_player_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_player_panel.configure_layout({
+			"column_width": content_width,
+			"slot_size": slot_size,
+		})
+		return
+	# Two plain stores read as a pair — split them evenly. Only the factory
+	# window pins the player to a narrow column so the machine side gets the
+	# room its recipes and queue need.
+	var left := (content_width - COLUMN_GAP) * 0.5
+	if _machine_mode:
+		left = clampf(
+			LEFT_COLUMN,
+			LEFT_COLUMN_MIN,
+			maxf(content_width * LEFT_COLUMN_RATIO, LEFT_COLUMN_MIN)
+		)
+	var right := maxf(content_width - left - COLUMN_GAP, LEFT_COLUMN_MIN)
+	_player_panel.size_flags_horizontal = (
+		Control.SIZE_FILL if _machine_mode else Control.SIZE_EXPAND_FILL
+	)
+	_player_panel.configure_layout({
+		"column_width": left,
+		"slot_size": slot_size,
+	})
+	_target_panel.configure_layout({
+		"column_width": right,
+		"slot_size": slot_size,
+	})
+
+
+func _preferred_size() -> Vector2:
+	if _solo:
+		return SOLO_SIZE
+	return FACTORY_SIZE if _machine_mode else DUAL_SIZE
 
 
 func _safe_rect(viewport_size: Vector2) -> Rect2:
 	return Rect2(
-		Vector2(SAFE_LEFT, SAFE_TOP),
+		Vector2(SCREEN_MARGIN_H, SCREEN_MARGIN_TOP),
 		Vector2(
-			maxf(viewport_size.x - SAFE_LEFT - SAFE_RIGHT, 160.0),
-			maxf(viewport_size.y - SAFE_TOP - SAFE_BOTTOM, 160.0),
+			maxf(viewport_size.x - SCREEN_MARGIN_H * 2.0, 320.0),
+			maxf(
+				viewport_size.y - SCREEN_MARGIN_TOP - SCREEN_MARGIN_BOTTOM,
+				280.0
+			),
 		)
 	)
-
-
-func _body_width_for_mode(panel_count: int, safe_width: float) -> float:
-	var available := maxf(safe_width - PANEL_MARGIN_H * 2.0, SOLO_COLUMN_MIN)
-	if panel_count == 1:
-		return minf(SOLO_COLUMN_WIDTH, available)
-	var max_columns_width := maxf(
-		(available - PANEL_GAP * 2.0 - 1.0) * 0.5,
-		DUAL_COLUMN_MIN
-	)
-	var column_width := clampf(
-		DUAL_COLUMN_PREFERRED,
-		DUAL_COLUMN_MIN,
-		minf(DUAL_COLUMN_MAX, max_columns_width)
-	)
-	return column_width * 2.0 + PANEL_GAP * 2.0 + 1.0
-
-
-func _column_width_for_mode(panel_count: int, body_width: float) -> float:
-	if panel_count == 1:
-		return clampf(body_width, SOLO_COLUMN_MIN, SOLO_COLUMN_WIDTH)
-	return clampf(
-		(body_width - PANEL_GAP * 2.0 - 1.0) * 0.5,
-		DUAL_COLUMN_MIN,
-		DUAL_COLUMN_MAX
-	)
-
-
-func _max_body_height(safe_height: float) -> float:
-	var capped := minf(safe_height, _available_height() * MAX_HEIGHT_RATIO)
-	return maxf(capped - PANEL_HEADER_V - PANEL_MARGIN_V * 2.0, 96.0)
-
-
-func _panel_center_shift(viewport_size: Vector2, safe_rect: Rect2) -> Vector2:
-	var vp_center := viewport_size * 0.5
-	var safe_center := safe_rect.position + safe_rect.size * 0.5
-	return safe_center - vp_center
-
-
-func _available_height() -> float:
-	var viewport_h := get_viewport_rect().size.y
-	if size.y > 0.0:
-		return minf(viewport_h, size.y)
-	return viewport_h

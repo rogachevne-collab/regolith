@@ -333,6 +333,11 @@ debug_spawn_meteor={
 "events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":0,"physical_keycode":4194340,"key_label":0,"unicode":0,"location":0,"echo":false,"script":null)
 ]
 }
+debug_spawn_spoil={
+"deadzone": 0.5,
+"events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":0,"physical_keycode":79,"key_label":0,"unicode":111,"location":0,"echo":false,"script":null)
+]
+}
 piston_debug_toggle_overlay={
 "deadzone": 0.5,
 "events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":0,"physical_keycode":4194341,"key_label":0,"unicode":0,"location":0,"echo":false,"script":null)
@@ -372,7 +377,6 @@ common/physics_interpolation=true
 
 [rendering]
 
+lights_and_shadows/directional_shadow/soft_shadow_filter_quality=3
 textures/default_filters/anisotropic_filtering_level=4
 environment/defaults/default_clear_color=Color(0.45, 0.62, 0.82, 1)
-lights_and_shadows/directional_shadow/size=4096
-lights_and_shadows/directional_shadow/soft_shadow_filter_quality=3

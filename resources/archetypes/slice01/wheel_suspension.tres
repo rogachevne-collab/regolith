@@ -1,11 +1,11 @@
-[gd_resource type="Resource" script_class="ElementArchetype" format=3]
+[gd_resource type="Resource" script_class="ElementArchetype" format=3 uid="uid://dichnlhme4pis"]
 
-[ext_resource type="Script" path="res://scripts/simulation/resources/build_requirement.gd" id="1_req"]
-[ext_resource type="Script" path="res://scripts/simulation/resources/collider_definition.gd" id="2_col"]
-[ext_resource type="Script" path="res://scripts/simulation/resources/port_definition.gd" id="3_port"]
-[ext_resource type="Script" path="res://scripts/simulation/resources/suspension_definition.gd" id="4_susp"]
-[ext_resource type="Script" path="res://scripts/simulation/resources/structural_mount_pad.gd" id="5_pad"]
-[ext_resource type="Script" path="res://scripts/simulation/resources/element_archetype.gd" id="6_arch"]
+[ext_resource type="Script" uid="uid://c2p36g85wqkru" path="res://scripts/simulation/resources/build_requirement.gd" id="1_req"]
+[ext_resource type="Script" uid="uid://b6d2jhfw581hb" path="res://scripts/simulation/resources/collider_definition.gd" id="2_col"]
+[ext_resource type="Script" uid="uid://c4hgnuqnf2up8" path="res://scripts/simulation/resources/port_definition.gd" id="3_port"]
+[ext_resource type="Script" uid="uid://dxjvr18phvd54" path="res://scripts/simulation/resources/suspension_definition.gd" id="4_susp"]
+[ext_resource type="Script" uid="uid://bfuxth8e6lccw" path="res://scripts/simulation/resources/structural_mount_pad.gd" id="5_pad"]
+[ext_resource type="Script" uid="uid://bxidpb3tep3ih" path="res://scripts/simulation/resources/element_archetype.gd" id="6_arch"]
 
 [sub_resource type="Resource" id="Requirement"]
 script = ExtResource("1_req")
@@ -17,17 +17,6 @@ script = ExtResource("2_col")
 size = Vector3(0.5, 1, 0.5)
 offset_in_cell = Vector3(0.25, 0.5, 0.25)
 
-[sub_resource type="Resource" id="SuspensionDefinition"]
-script = ExtResource("4_susp")
-wheel_socket_face = 3
-suspension_travel_m = 0.6
-spring_stiffness_n_per_m = 1600.0
-spring_damping_n_s_per_m = 400.0
-max_suspension_force_n = 5000.0
-min_travel_m = 0.2
-max_travel_m = 1.0
-max_wheels_per_socket = 1
-
 [sub_resource type="Resource" id="Mount_frame"]
 script = ExtResource("5_pad")
 
@@ -36,15 +25,18 @@ script = ExtResource("5_pad")
 local_face = 3
 socket_tag = "wheel_socket"
 
+[sub_resource type="Resource" id="SuspensionDefinition"]
+script = ExtResource("4_susp")
+
 [resource]
 script = ExtResource("6_arch")
-archetype_id = "wheel_suspension"
-display_name = "Подвеска"
+archetype_id = "drive_wheel"
+display_name = "Колесо"
 roles = PackedStringArray("Support")
 mass_kg = 18.0
 footprint_cells = Array[Vector3i]([Vector3i(0, 0, 0), Vector3i(0, 1, 0)])
+colliders = Array[ExtResource("2_col")]([SubResource("Collider")])
 structural_surface_policy = 2
 structural_mount_pads = Array[ExtResource("5_pad")]([SubResource("Mount_frame"), SubResource("Mount_socket")])
-colliders = Array[ExtResource("2_col")]([SubResource("Collider")])
 build_requirements = Array[ExtResource("1_req")]([SubResource("Requirement")])
 suspension_definition = SubResource("SuspensionDefinition")

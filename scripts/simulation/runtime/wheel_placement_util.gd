@@ -3,11 +3,11 @@ extends RefCounted
 
 
 static func is_wheel_archetype(archetype: ElementArchetype) -> bool:
-	return archetype != null and archetype.archetype_id == "drive_wheel"
+	return archetype != null and archetype.is_wheel()
 
 
 static func is_suspension_archetype(archetype: ElementArchetype) -> bool:
-	return archetype != null and archetype.archetype_id == "wheel_suspension"
+	return archetype != null and archetype.is_suspension()
 
 
 static func validate_wheel_placement(
@@ -113,7 +113,7 @@ static func _diagnose_socket_placement(
 	var socket_match: Dictionary = {}
 	for existing_id: int in neighbour_ids:
 		var existing := world.get_element(existing_id)
-		if existing == null or existing.archetype_id != "wheel_suspension":
+		if existing == null or not is_suspension_archetype(existing.get_archetype()):
 			continue
 		nearby_suspensions.append(existing_id)
 		var connection := RuntimeConnectivity.find_rigid_connection(
@@ -160,7 +160,7 @@ static func _wheel_on_suspension(
 		else:
 			continue
 		var other := world.get_element(other_id)
-		if other != null and other.archetype_id == "drive_wheel":
+		if other != null and is_wheel_archetype(other.get_archetype()):
 			return other_id
 	return 0
 

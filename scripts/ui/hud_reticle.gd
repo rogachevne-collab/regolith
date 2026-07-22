@@ -52,6 +52,13 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	if _query == null:
 		return
+	# An open window owns the cursor; a crosshair drawn over its middle aims at
+	# nothing.
+	var modal_open := HudTokens.modal_window_open(self)
+	_reticle.visible = not modal_open
+	if modal_open:
+		_tline.visible = false
+		return
 	var hit := _query.current_hit
 	var color := (
 		HudTokens.COL_VALID

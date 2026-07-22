@@ -10,6 +10,12 @@ const WHEEL_SCENE := preload(
 const COCKPIT_SCENE := preload(
 	"res://scenes/presentation/cockpit_visual.tscn"
 )
+const SUSPENSION_SMALL_SCENE := preload(
+	"res://scenes/presentation/suspension_small_visual.tscn"
+)
+const WHEEL_MED_SCENE := preload(
+	"res://scenes/presentation/wheel_med_visual.tscn"
+)
 
 const DEFAULT_SUSPENSION_TRAVEL_M := 0.6
 const DEFAULT_WHEEL_RADIUS_M := 0.4
@@ -23,6 +29,8 @@ static func is_rover_module(archetype_id: String) -> bool:
 		archetype_id == "wheel_suspension"
 		or archetype_id == "drive_wheel"
 		or archetype_id == "cockpit"
+		or archetype_id == "suspension_small"
+		or archetype_id == "wheel_med"
 	)
 
 
@@ -34,6 +42,10 @@ static func scene_for(archetype_id: String) -> PackedScene:
 			return WHEEL_SCENE
 		"cockpit":
 			return COCKPIT_SCENE
+		"suspension_small":
+			return SUSPENSION_SMALL_SCENE
+		"wheel_med":
+			return WHEEL_MED_SCENE
 	return null
 
 
@@ -85,7 +97,7 @@ static func attach_runtime(
 		"root": visual,
 		"archetype_id": element.archetype_id,
 	}
-	if element.archetype_id == "drive_wheel":
+	if archetype.is_wheel():
 		record["steer_root"] = visual.get_node_or_null("SteerRoot") as Node3D
 		record["spin_root"] = (
 			visual.get_node_or_null("SteerRoot/SpinRoot") as Node3D
@@ -94,7 +106,45 @@ static func attach_runtime(
 			visual.get_node_or_null("SteerRoot/Hub") as Node3D
 		)
 		record["root_base_transform"] = visual.transform
+		record["press"] = _attach_ground_press(
+			record["hub_root"] as Node3D, visual, archetype
+		)
 	return record
+
+
+## Give a wheel the ability to push loose material down where it rolls.
+##
+## Hung on the hub rather than on the module root, because the root is the mount
+## on the body and the hub is where the wheel actually is: suspension travel is
+## up to `suspension_travel_m` — six-tenths of a metre on the stock rover — and
+## measured from the root the contact point would be wrong by the whole of it
+## exactly when the wheel is loaded, which is the only time it presses anything.
+##
+## The hub does not spin (that is `SpinRoot` below it) so nothing here turns.
+## It would not matter if it did — the press is a point, and it takes its
+## down from the gravity field rather than from any node's basis — but a child
+## that quietly spins at wheel speed is a trap for the next reader.
+##
+## Sized off the wheel itself: the contact patch is about half the tyre's width,
+## and the patch sits a radius below the hub. Both come from `WheelDefinition`
+## so a bigger wheel presses a bigger rut without anything here being touched.
+static func _attach_ground_press(
+	hub: Node3D,
+	fallback: Node3D,
+	archetype: ElementArchetype
+) -> GranularPressSource:
+	var wheel := archetype.wheel_definition
+	if wheel == null:
+		return null
+	var mount := hub if hub != null else fallback
+	if mount == null:
+		return null
+	var press := GranularPressSource.new()
+	press.name = "GranularPress"
+	press.radius_m = maxf(wheel.width_m * 0.5, 0.05)
+	press.contact_offset_m = wheel.radius_m
+	mount.add_child(press)
+	return press
 
 
 static func apply_preview_material(
@@ -128,7 +178,7 @@ static func build_placement_preview_nodes(
 		apply_preview_material(visual, body_material)
 		nodes.append(visual)
 	match archetype.archetype_id:
-		"wheel_suspension":
+		"wheel_suspension", "suspension_small":
 			nodes.append_array(
 				_build_suspension_gizmos(
 					origin_cell,
@@ -137,7 +187,7 @@ static func build_placement_preview_nodes(
 					valid
 				)
 			)
-		"drive_wheel":
+		"drive_wheel", "wheel_med":
 			nodes.append_array(
 				_build_wheel_gizmos(
 					origin_cell,
@@ -151,9 +201,9 @@ static func build_placement_preview_nodes(
 
 static func build_orientation_hint(archetype_id: String) -> String:
 	match archetype_id:
-		"wheel_suspension":
+		"wheel_suspension", "suspension_small":
 			return "↑ рама  ↓ гнездо"
-		"drive_wheel":
+		"drive_wheel", "wheel_med":
 			return "↑ подвеска  ↔ протектор = ход"
 		"cockpit":
 			return "↔ стекло = перед"
@@ -295,13 +345,13 @@ static func _wheel_steerable_default(archetype: ElementArchetype) -> bool:
 
 static func _preview_body_color(archetype_id: String, valid: bool) -> Color:
 	match archetype_id:
-		"wheel_suspension":
+		"wheel_suspension", "suspension_small":
 			return (
 				Color(0.18, 0.34, 0.58, 0.44)
 				if valid
 				else Color(0.45, 0.08, 0.06, 0.38)
 			)
-		"drive_wheel":
+		"drive_wheel", "wheel_med":
 			return (
 				Color(0.2, 0.22, 0.26, 0.46)
 				if valid
