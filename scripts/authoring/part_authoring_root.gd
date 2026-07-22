@@ -14,6 +14,21 @@ enum PartKind {
 	SUSPENSION,  ## a wheel mount (bolts to frame + one wheel socket)
 }
 
+enum MountGeneration {
+	FULL_SURFACE,  ## no markers at all — the whole outer surface bolts on
+	PER_SIDE,      ## one marker per side of the bounding box (6)
+	PER_CELL,      ## one marker per external cell face (a lot on big parts)
+}
+
+const _ALL_FACES: Array[OrientationUtil.Face] = [
+	OrientationUtil.Face.POS_X,
+	OrientationUtil.Face.NEG_X,
+	OrientationUtil.Face.POS_Y,
+	OrientationUtil.Face.NEG_Y,
+	OrientationUtil.Face.POS_Z,
+	OrientationUtil.Face.NEG_Z,
+]
+
 const FOOTPRINT_PREVIEW_NAME := "_EditorFootprintPreview"
 const VISUAL_PREVIEW_NAME := "_EditorVisualPreview"
 const AUTHORED_DIR := "res://resources/archetypes/authored/"
@@ -25,6 +40,13 @@ const AUTHORED_DIR := "res://resources/archetypes/authored/"
 @export var part_kind: PartKind = PartKind.PLAIN:
 	set(value):
 		part_kind = value
+		# Wheels/suspensions need tagged points, so "whole surface" makes no
+		# sense for them — move to per-side unless the author picked otherwise.
+		if (
+			part_kind != PartKind.PLAIN
+			and mount_generation == MountGeneration.FULL_SURFACE
+		):
+			mount_generation = MountGeneration.PER_SIDE
 		notify_property_list_changed()
 		_queue_preview_update()
 
@@ -42,6 +64,24 @@ const AUTHORED_DIR := "res://resources/archetypes/authored/"
 
 ## 0 = auto (from footprint size).
 @export var mass_kg: float = 0.0
+
+## How "Generate mounts" lays attach points out. FULL_SURFACE needs no markers.
+@export var mount_generation: MountGeneration = MountGeneration.FULL_SURFACE
+
+## Toggle: read the model's bounds and set size_cells to match.
+@export var fit_size_to_model_now: bool = false:
+	set(value):
+		fit_size_to_model_now = false
+		if value and Engine.is_editor_hint():
+			fit_size_to_model()
+
+## Toggle: (re)generate MountPadMarker children per mount_generation.
+## Generated markers are real, selectable, deletable nodes.
+@export var generate_mounts_now: bool = false:
+	set(value):
+		generate_mounts_now = false
+		if value and Engine.is_editor_hint():
+			generate_mounts()
 
 # --- Wheel fields (shown only when part_kind == WHEEL) ---
 @export var wheel_radius_m: float = 0.4
@@ -101,6 +141,166 @@ func collect_pad_markers() -> Array[MountPadMarker]:
 		if marker != null:
 			markers.append(marker)
 	return markers
+
+
+## Measure the model and set size_cells to the matching cell box.
+func fit_size_to_model() -> Dictionary:
+	last_bake_diagnostics = PackedStringArray()
+	if visual_scene == null:
+		last_bake_diagnostics.append("нет модели (visual_scene) — нечего мерить")
+		return {"ok": false}
+	var instance := visual_scene.instantiate()
+	var state: Dictionary = {}
+	_collect_aabb(instance, Transform3D.IDENTITY, state)
+	instance.free()
+	if not state.has("aabb"):
+		last_bake_diagnostics.append("в модели нет видимой геометрии")
+		return {"ok": false}
+	var bounds: AABB = state["aabb"]
+	if bounds.size.length() <= 0.0001:
+		last_bake_diagnostics.append("модель нулевого размера")
+		return {"ok": false}
+	size_cells = Vector3i(
+		maxi(ceili(bounds.size.x / GridMetric.CELL_SIZE_M), 1),
+		maxi(ceili(bounds.size.y / GridMetric.CELL_SIZE_M), 1),
+		maxi(ceili(bounds.size.z / GridMetric.CELL_SIZE_M), 1)
+	)
+	last_bake_diagnostics.append(
+		"модель %.2f×%.2f×%.2f м → %d×%d×%d клеток"
+		% [
+			bounds.size.x, bounds.size.y, bounds.size.z,
+			size_cells.x, size_cells.y, size_cells.z,
+		]
+	)
+	# Convention: cell (0,0,0) is the cube [0..0.5]³, so the model's minimum
+	# corner belongs at the origin. Say how far off it is instead of guessing.
+	if bounds.position.length() > 0.01:
+		last_bake_diagnostics.append(
+			"модель смещена на (%.2f, %.2f, %.2f) — сдвинь её в ноль"
+			% [bounds.position.x, bounds.position.y, bounds.position.z]
+		)
+	_queue_preview_update()
+	return {"ok": true, "size_cells": size_cells, "bounds": bounds}
+
+
+## (Re)create marker nodes on the candidate faces. Markers made by a previous
+## generate are replaced; ones you added by hand are left alone.
+func generate_mounts() -> int:
+	last_bake_diagnostics = PackedStringArray()
+	for marker: MountPadMarker in collect_pad_markers():
+		if bool(marker.get_meta("auto_generated", false)):
+			remove_child(marker)
+			marker.queue_free()
+	if mount_generation == MountGeneration.FULL_SURFACE:
+		last_bake_diagnostics.append(
+			"режим «вся поверхность» — маркеры не нужны, сразу Bake"
+		)
+		return 0
+	var created := 0
+	for face_data: Dictionary in _candidate_faces():
+		var cell: Vector3i = face_data["cell"]
+		var face: OrientationUtil.Face = face_data["face"]
+		var marker := MountPadMarker.new()
+		marker.socket_kind = _guess_socket_kind(face)
+		marker.name = "Mount_%s_%d_%d_%d" % [
+			_face_suffix(face), cell.x, cell.y, cell.z
+		]
+		add_child(marker)
+		marker.owner = _scene_owner()
+		marker.position = _face_center_local(cell, face)
+		marker.set_meta("auto_generated", true)
+		created += 1
+	last_bake_diagnostics.append(
+		"создано %d маркер(ов) — лишние удали, нужные подвинь" % created
+	)
+	return created
+
+
+func _candidate_faces() -> Array[Dictionary]:
+	var faces: Array[Dictionary] = []
+	var cells := footprint_cells()
+	if cells.is_empty():
+		return faces
+	if mount_generation == MountGeneration.PER_CELL:
+		var occupied: Dictionary = {}
+		for cell: Vector3i in cells:
+			occupied[cell] = true
+		for cell: Vector3i in cells:
+			for face: OrientationUtil.Face in _ALL_FACES:
+				if occupied.has(cell + OrientationUtil.face_to_vector(face)):
+					continue
+				faces.append({"cell": cell, "face": face})
+		return faces
+	# PER_SIDE — one marker at the middle of each bounding-box side.
+	var last := size_cells - Vector3i.ONE
+	var mid := Vector3i(int(last.x / 2), int(last.y / 2), int(last.z / 2))
+	faces.append({"cell": Vector3i(last.x, mid.y, mid.z), "face": OrientationUtil.Face.POS_X})
+	faces.append({"cell": Vector3i(0, mid.y, mid.z), "face": OrientationUtil.Face.NEG_X})
+	faces.append({"cell": Vector3i(mid.x, last.y, mid.z), "face": OrientationUtil.Face.POS_Y})
+	faces.append({"cell": Vector3i(mid.x, 0, mid.z), "face": OrientationUtil.Face.NEG_Y})
+	faces.append({"cell": Vector3i(mid.x, mid.y, last.z), "face": OrientationUtil.Face.POS_Z})
+	faces.append({"cell": Vector3i(mid.x, mid.y, 0), "face": OrientationUtil.Face.NEG_Z})
+	return faces
+
+
+## Best guess at what each generated face is for — you can retag any of them.
+func _guess_socket_kind(face: OrientationUtil.Face) -> MountPadMarker.SocketKind:
+	match part_kind:
+		PartKind.WHEEL:
+			if face == OrientationUtil.Face.POS_Y:
+				return MountPadMarker.SocketKind.WHEEL_PLUG
+		PartKind.SUSPENSION:
+			if face == OrientationUtil.Face.NEG_Y:
+				return MountPadMarker.SocketKind.WHEEL_SOCKET
+		PartKind.PLAIN:
+			pass
+	return MountPadMarker.SocketKind.STRUCTURAL
+
+
+func _face_center_local(cell: Vector3i, face: OrientationUtil.Face) -> Vector3:
+	return (
+		GridMetric.cell_center_meters(cell)
+		+ Vector3(OrientationUtil.face_to_vector(face)) * GridMetric.HALF_CELL_SIZE_M
+	)
+
+
+func _face_suffix(face: OrientationUtil.Face) -> String:
+	match face:
+		OrientationUtil.Face.POS_X:
+			return "px"
+		OrientationUtil.Face.NEG_X:
+			return "nx"
+		OrientationUtil.Face.POS_Y:
+			return "py"
+		OrientationUtil.Face.NEG_Y:
+			return "ny"
+		OrientationUtil.Face.POS_Z:
+			return "pz"
+		_:
+			return "nz"
+
+
+func _scene_owner() -> Node:
+	var tree := get_tree()
+	if tree != null and tree.edited_scene_root != null:
+		return tree.edited_scene_root
+	return self
+
+
+func _collect_aabb(node: Node, xform: Transform3D, state: Dictionary) -> void:
+	var current := xform
+	var spatial := node as Node3D
+	if spatial != null:
+		current = xform * spatial.transform
+	var visual := node as VisualInstance3D
+	if visual != null:
+		var box := current * visual.get_aabb()
+		if state.has("aabb"):
+			state["aabb"] = (state["aabb"] as AABB).merge(box)
+		else:
+			state["aabb"] = box
+	for child: Node in node.get_children():
+		_collect_aabb(child, current, state)
 
 
 ## Build a full archetype from the current node, validate it, and save it.
@@ -173,8 +373,15 @@ func _build_archetype(errors: Array[String]) -> ElementArchetype:
 	var socket_face_holder: Array = [OrientationUtil.Face.NEG_Y]
 	var pads := _build_pads(errors, socket_face_holder)
 
-	if part_kind == PartKind.PLAIN and pads.is_empty():
-		# A plain block with no markers = a frame: whole surface bolts on.
+	var whole_surface := (
+		part_kind == PartKind.PLAIN
+		and (
+			mount_generation == MountGeneration.FULL_SURFACE
+			or pads.is_empty()
+		)
+	)
+	if whole_surface:
+		# A plain block bolting on every side — no markers needed at all.
 		archetype.structural_surface_policy = (
 			ElementArchetype.StructuralSurfacePolicy.FULL_SURFACE
 		)
@@ -312,13 +519,14 @@ func _roles_for_kind() -> PackedStringArray:
 			return PackedStringArray(["Frame"])
 
 
-func _auto_colliders(cells: Array[Vector3i]) -> Array[ColliderDefinition]:
-	var colliders: Array[ColliderDefinition] = []
-	for cell: Vector3i in cells:
-		var collider := ColliderDefinition.new()
-		collider.local_cell = cell  # defaults cover the cell centre
-		colliders.append(collider)
-	return colliders
+## The footprint is always a solid box, so one box collider covers it. Emitting
+## one per cell would give a 2.5 m cube 125 shapes for no benefit.
+func _auto_colliders(_cells: Array[Vector3i]) -> Array[ColliderDefinition]:
+	var collider := ColliderDefinition.new()
+	collider.local_cell = Vector3i.ZERO
+	collider.size = Vector3(size_cells) * GridMetric.CELL_SIZE_M
+	collider.offset_in_cell = collider.size * 0.5
+	return [collider] as Array[ColliderDefinition]
 
 
 func _insert_pad(

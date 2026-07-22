@@ -1,0 +1,11 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/authoring/part_authoring_root.gd" id="1_root"]
+
+[node name="PartAuthoring" type="Node3D"]
+script = ExtResource("1_root")
+part_id = "my_block"
+display_name = "Мой блок"
+part_kind = 0
+size_cells = Vector3i(1, 1, 1)
+mount_generation = 0

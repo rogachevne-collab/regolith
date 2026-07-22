@@ -18,6 +18,9 @@ func _run_tests() -> void:
 		_test_wheel_needs_one_marker,
 		_test_forward_axis_auto_perpendicular,
 		_test_bake_saves_and_reloads,
+		_test_big_cube_full_surface,
+		_test_generate_mounts_per_side,
+		_test_generate_mounts_per_cell,
 	]
 	for test: Callable in tests:
 		if not bool(test.call()):
@@ -185,6 +188,71 @@ func _test_forward_axis_auto_perpendicular() -> bool:
 		return _fail("forward axis not perpendicular to +X plug: %s" % [forward])
 	if not wheel_errors.is_empty():
 		return _fail("auto forward axis failed validation: %s" % [wheel_errors])
+	return true
+
+
+## The user's case: a 2.5 m cube = 5x5x5 cells. No markers, whole surface
+## bolts on, and exactly ONE collider (not 125).
+func _test_big_cube_full_surface() -> bool:
+	var root := _make_root(PartAuthoringRoot.PartKind.PLAIN)
+	root.part_id = "test_cube"
+	root.size_cells = Vector3i(5, 5, 5)
+	root.mount_generation = PartAuthoringRoot.MountGeneration.FULL_SURFACE
+	var errors: Array[String] = []
+	var archetype := root._build_archetype(errors)
+	var generated := root.generate_mounts()
+	var validation := BlueprintValidator.validate_archetype(archetype)
+	root.free()
+	if not errors.is_empty():
+		return _fail("cube build errors: %s" % [errors])
+	if generated != 0:
+		return _fail("full-surface mode should need 0 markers, made %d" % generated)
+	if archetype.footprint_cells.size() != 125:
+		return _fail("2.5 m cube should be 125 cells, got %d" % archetype.footprint_cells.size())
+	if archetype.colliders.size() != 1:
+		return _fail("cube should get 1 box collider, got %d" % archetype.colliders.size())
+	if not validation.ok:
+		return _fail("cube archetype invalid: %s" % [validation.errors])
+	if (
+		archetype.structural_surface_policy
+		!= ElementArchetype.StructuralSurfacePolicy.FULL_SURFACE
+	):
+		return _fail("cube should use FULL_SURFACE policy")
+	return true
+
+
+func _test_generate_mounts_per_side() -> bool:
+	var root := _make_root(PartAuthoringRoot.PartKind.SUSPENSION)
+	root.part_id = "test_gen_side"
+	root.size_cells = Vector3i(1, 2, 1)
+	root.mount_generation = PartAuthoringRoot.MountGeneration.PER_SIDE
+	var generated := root.generate_mounts()
+	var markers := root.collect_pad_markers()
+	# The suspension guess must put a wheel socket on the bottom face.
+	var sockets := 0
+	for marker: MountPadMarker in markers:
+		if marker.socket_kind == MountPadMarker.SocketKind.WHEEL_SOCKET:
+			sockets += 1
+	root.free()
+	if generated != 6:
+		return _fail("per-side should make 6 markers, got %d" % generated)
+	if markers.size() != 6:
+		return _fail("expected 6 marker children, got %d" % markers.size())
+	if sockets != 1:
+		return _fail("suspension guess should tag 1 wheel socket, got %d" % sockets)
+	return true
+
+
+func _test_generate_mounts_per_cell() -> bool:
+	var root := _make_root(PartAuthoringRoot.PartKind.PLAIN)
+	root.part_id = "test_gen_cell"
+	root.size_cells = Vector3i(2, 1, 1)
+	root.mount_generation = PartAuthoringRoot.MountGeneration.PER_CELL
+	var generated := root.generate_mounts()
+	root.free()
+	# 2x1x1 box: 10 external cell faces (2 cells x 6 faces - 2 shared).
+	if generated != 10:
+		return _fail("per-cell on 2x1x1 should make 10 markers, got %d" % generated)
 	return true
 
 

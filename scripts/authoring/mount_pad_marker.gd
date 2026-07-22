@@ -29,8 +29,17 @@ enum SocketKind {
 		custom_tag = value
 		update_configuration_warnings()
 
-## Keep the marker glued to the nearest face while dragging in the editor.
-@export var snap_to_face: bool = true
+## ON  — grid block behaviour: the point snaps to the centre of the nearest
+##       cell face while you drag it.
+## OFF — precise part behaviour: the point stays exactly where you put it (the
+##       hub slot, the wheel centre). The cell/face are still derived from it
+##       automatically, so mating with other parts keeps working.
+@export var snap_to_face: bool = true:
+	set(value):
+		snap_to_face = value
+		if is_inside_tree():
+			resolve()
+			_queue_preview_update()
 
 var _resolved_cell: Vector3i = Vector3i.ZERO
 var _resolved_face: OrientationUtil.Face = OrientationUtil.Face.POS_Y
@@ -147,6 +156,10 @@ func to_pad() -> StructuralMountPad:
 	pad.local_cell = _resolved_cell
 	pad.local_face = _resolved_face
 	pad.socket_tag = socket_tag()
+	if not snap_to_face:
+		# Precise part: keep the point exactly where the author put it.
+		pad.exact_point = true
+		pad.local_position = position
 	return pad
 
 
