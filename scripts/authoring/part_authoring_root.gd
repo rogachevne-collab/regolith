@@ -51,10 +51,14 @@ const AUTHORED_DIR := "res://resources/archetypes/authored/"
 		_queue_preview_update()
 
 ## The part's mesh/scene, shown so markers land on real geometry.
+## Assigning it auto-fits size_cells — no toggle dance needed.
 @export var visual_scene: PackedScene:
 	set(value):
+		var changed := visual_scene != value
 		visual_scene = value
 		_queue_preview_update()
+		if changed and value != null and Engine.is_editor_hint() and is_inside_tree():
+			call_deferred("fit_size_to_model")
 
 ## Footprint is a simple box this many cells on each side (1 cell = 0.5 m).
 @export var size_cells: Vector3i = Vector3i.ONE:
@@ -65,10 +69,37 @@ const AUTHORED_DIR := "res://resources/archetypes/authored/"
 ## 0 = auto (from footprint size).
 @export var mass_kg: float = 0.0
 
+# --- Wheel fields (shown only when part_kind == WHEEL) ---
+@export var wheel_radius_m: float = 0.4
+@export var wheel_drive_torque_n_m: float = 65.0
+@export var wheel_steerable: bool = false
+
+# --- Suspension fields (shown only when part_kind == SUSPENSION) ---
+@export var suspension_travel_m: float = 0.6
+@export var suspension_stiffness_n_per_m: float = 1600.0
+
+## Стоимость постройки. Пусто = авто по типу детали (блок — plate_metal,
+## колесо/подвеска — mechanism, количество от размера).
+@export var build_requirements: Array[BuildRequirement] = []
+
+# Everything below is written by the wizard / fit; hand-editing is a
+# fallback for working without the Part Wizard dock.
+@export_group("Сервис — визард делает это сам", "")
+
+## Set by fit_size_to_model: shifts the visual so the model's minimum corner
+## lands on the origin no matter where its pivot is (hub-tip pivots are fine —
+## no re-export or manual nudging needed).
+@export var model_offset: Vector3 = Vector3.ZERO
+
 ## How "Generate mounts" lays attach points out. FULL_SURFACE needs no markers.
 @export var mount_generation: MountGeneration = MountGeneration.FULL_SURFACE
 
+## The ghost orientation the player starts with when selecting this part.
+## Set from the wizard's "player view" step; 0 = as authored in the scene.
+@export_range(0, 23) var default_orientation_index: int = 0
+
 ## Toggle: read the model's bounds and set size_cells to match.
+## (Happens automatically when visual_scene is assigned.)
 @export var fit_size_to_model_now: bool = false:
 	set(value):
 		fit_size_to_model_now = false
@@ -83,15 +114,6 @@ const AUTHORED_DIR := "res://resources/archetypes/authored/"
 		if value and Engine.is_editor_hint():
 			generate_mounts()
 
-# --- Wheel fields (shown only when part_kind == WHEEL) ---
-@export var wheel_radius_m: float = 0.4
-@export var wheel_drive_torque_n_m: float = 65.0
-@export var wheel_steerable: bool = false
-
-# --- Suspension fields (shown only when part_kind == SUSPENSION) ---
-@export var suspension_travel_m: float = 0.6
-@export var suspension_stiffness_n_per_m: float = 1600.0
-
 @export var bake_now: bool = false:
 	set(value):
 		bake_now = value
@@ -100,6 +122,12 @@ const AUTHORED_DIR := "res://resources/archetypes/authored/"
 			bake_now = false
 
 @export var last_bake_diagnostics: PackedStringArray = PackedStringArray()
+
+## Where the previous bake landed. Lets the wizard notice a part_id rename
+## and offer to delete the orphaned old .tres instead of leaving it around.
+@export var last_baked_path: String = ""
+
+@export_group("")
 
 ## Where baked .tres land. Authored parts go to the shared dir by default;
 ## tests point this at user:// so they never touch the project tree.
@@ -125,7 +153,13 @@ func _validate_property(property: Dictionary) -> void:
 
 
 ## Footprint cells (a box from size_cells), in part-local grid space.
+##
+## A WHEEL is the exception: it occupies only the cell its axle sits in. The
+## tyre hangs outside the grid the way the stock 1.5 m wheel does — otherwise
+## a wheel would claim a wall of cells and block every neighbour.
 func footprint_cells() -> Array[Vector3i]:
+	if part_kind == PartKind.WHEEL:
+		return [GridMetric.meters_to_cell_floor(_hub_point_local())]
 	var cells: Array[Vector3i] = []
 	for x: int in range(size_cells.x):
 		for y: int in range(size_cells.y):
@@ -160,10 +194,13 @@ func fit_size_to_model() -> Dictionary:
 	if bounds.size.length() <= 0.0001:
 		last_bake_diagnostics.append("модель нулевого размера")
 		return {"ok": false}
+	# Export/scale noise routinely makes a 2-cell model 1.001 m; without a
+	# tolerance a single "pixel" of overshoot buys a whole extra cell row.
+	const FIT_TOLERANCE_M := 0.02
 	size_cells = Vector3i(
-		maxi(ceili(bounds.size.x / GridMetric.CELL_SIZE_M), 1),
-		maxi(ceili(bounds.size.y / GridMetric.CELL_SIZE_M), 1),
-		maxi(ceili(bounds.size.z / GridMetric.CELL_SIZE_M), 1)
+		maxi(ceili((bounds.size.x - FIT_TOLERANCE_M) / GridMetric.CELL_SIZE_M), 1),
+		maxi(ceili((bounds.size.y - FIT_TOLERANCE_M) / GridMetric.CELL_SIZE_M), 1),
+		maxi(ceili((bounds.size.z - FIT_TOLERANCE_M) / GridMetric.CELL_SIZE_M), 1)
 	)
 	last_bake_diagnostics.append(
 		"модель %.2f×%.2f×%.2f м → %d×%d×%d клеток"
@@ -173,10 +210,12 @@ func fit_size_to_model() -> Dictionary:
 		]
 	)
 	# Convention: cell (0,0,0) is the cube [0..0.5]³, so the model's minimum
-	# corner belongs at the origin. Say how far off it is instead of guessing.
+	# corner belongs at the origin. Whatever the pivot is (hub tip, centre),
+	# compensate automatically instead of making the author re-export.
+	model_offset = -bounds.position
 	if bounds.position.length() > 0.01:
 		last_bake_diagnostics.append(
-			"модель смещена на (%.2f, %.2f, %.2f) — сдвинь её в ноль"
+			"пивот модели смещён на (%.2f, %.2f, %.2f) — скомпенсировал сам"
 			% [bounds.position.x, bounds.position.y, bounds.position.z]
 		)
 	_queue_preview_update()
@@ -346,11 +385,23 @@ func bake() -> Dictionary:
 		last_bake_diagnostics.append(
 			"baked '%s' -> %s%s" % [part_id, "OK " if errors.is_empty() else "with issues ", path]
 		)
+		var stale_path := ""
+		if (
+			not last_baked_path.is_empty()
+			and last_baked_path != path
+			and ResourceLoader.exists(last_baked_path)
+		):
+			stale_path = last_baked_path
+			last_bake_diagnostics.append(
+				"part_id сменился: старый файл остался — %s" % stale_path
+			)
+		last_baked_path = path
 		return {
 			"ok": errors.is_empty(),
 			"errors": errors,
 			"archetype": archetype,
 			"path": path,
+			"stale_path": stale_path,
 		}
 	return {"ok": false, "errors": errors, "archetype": archetype}
 
@@ -369,6 +420,21 @@ func _build_archetype(errors: Array[String]) -> ElementArchetype:
 	archetype.mass_kg = mass_kg if mass_kg > 0.0 else maxf(float(cells.size()) * 8.0, 1.0)
 	archetype.colliders = _auto_colliders(cells)
 	archetype.roles = _roles_for_kind()
+	# A part without a build cost is UNPLACEABLE: the command validator
+	# rejects it as invalid_target before matching even runs.
+	archetype.build_requirements = (
+		build_requirements
+		if not build_requirements.is_empty()
+		else _default_build_requirements(cells.size())
+	)
+	archetype.default_orientation_index = clampi(
+		default_orientation_index,
+		0,
+		OrientationUtil.ORIENTATION_COUNT - 1
+	)
+	if visual_scene != null and not visual_scene.resource_path.is_empty():
+		archetype.visual_scene_path = visual_scene.resource_path
+		archetype.visual_offset = model_offset
 
 	var socket_face_holder: Array = [OrientationUtil.Face.NEG_Y]
 	var pads := _build_pads(errors, socket_face_holder)
@@ -509,6 +575,18 @@ func _perpendicular_face(plug_face: OrientationUtil.Face) -> OrientationUtil.Fac
 	return OrientationUtil.Face.NEG_Z
 
 
+func _default_build_requirements(cell_count: int) -> Array[BuildRequirement]:
+	var requirement := BuildRequirement.new()
+	match part_kind:
+		PartKind.WHEEL, PartKind.SUSPENSION:
+			requirement.resource_id = "mechanism"
+			requirement.amount = maxf(2.0, roundf(float(cell_count) * 0.25))
+		_:
+			requirement.resource_id = "plate_metal"
+			requirement.amount = maxf(1.0, roundf(float(cell_count) * 0.5))
+	return [requirement] as Array[BuildRequirement]
+
+
 func _roles_for_kind() -> PackedStringArray:
 	match part_kind:
 		PartKind.WHEEL:
@@ -521,12 +599,33 @@ func _roles_for_kind() -> PackedStringArray:
 
 ## The footprint is always a solid box, so one box collider covers it. Emitting
 ## one per cell would give a 2.5 m cube 125 shapes for no benefit.
+##
+## A WHEEL is the exception: it is simulated as a suspension raycast, not as a
+## solid tyre, and its visual rides up and down with the spring. A collider the
+## size of the tyre would sit rigidly in the element's cells, plough into the
+## ground and leave the wheel looking sunk. Stock wheels carry a small stub at
+## the hub for mass and picking; do the same.
 func _auto_colliders(_cells: Array[Vector3i]) -> Array[ColliderDefinition]:
 	var collider := ColliderDefinition.new()
+	if part_kind == PartKind.WHEEL:
+		collider.local_cell = GridMetric.meters_to_cell_floor(_hub_point_local())
+		var stub := clampf(wheel_radius_m * 0.5, 0.1, GridMetric.CELL_SIZE_M)
+		collider.size = Vector3.ONE * stub
+		collider.offset_in_cell = Vector3.ONE * GridMetric.HALF_CELL_SIZE_M
+		return [collider] as Array[ColliderDefinition]
 	collider.local_cell = Vector3i.ZERO
 	collider.size = Vector3(size_cells) * GridMetric.CELL_SIZE_M
 	collider.offset_in_cell = collider.size * 0.5
 	return [collider] as Array[ColliderDefinition]
+
+
+## Where the wheel sits on its axle — the marked plug point, or the centre of
+## the footprint when nothing is marked yet.
+func _hub_point_local() -> Vector3:
+	for marker: MountPadMarker in collect_pad_markers():
+		if marker.socket_kind == MountPadMarker.SocketKind.WHEEL_PLUG:
+			return marker.position
+	return Vector3(size_cells) * GridMetric.CELL_SIZE_M * 0.5
 
 
 func _insert_pad(
@@ -594,6 +693,7 @@ func _update_preview() -> void:
 			node3d.name = VISUAL_PREVIEW_NAME
 			node3d.set_meta("_edit_lock_", true)
 			add_child(node3d, false, Node.INTERNAL_MODE_BACK)
+			node3d.position = model_offset
 		else:
 			instance.free()
 

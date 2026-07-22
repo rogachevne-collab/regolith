@@ -221,34 +221,109 @@ func _update_preview() -> void:
 	add_child(preview_root, false, Node.INTERNAL_MODE_BACK)
 
 	var color := _tag_color()
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = color
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	# Shaded + a touch of emission: readable depth while dragging, still
+	# visible in dark corners. The old flat unshaded cone read as a floating
+	# "spike to stab somewhere", which it never was.
+	var solid := StandardMaterial3D.new()
+	solid.albedo_color = Color(color.r, color.g, color.b, 1.0)
+	solid.emission_enabled = true
+	solid.emission = Color(color.r, color.g, color.b) * 0.35
+	solid.roughness = 0.5
 
-	# Disc on the face plane…
-	var disc := MeshInstance3D.new()
-	var disc_mesh := CylinderMesh.new()
-	disc_mesh.top_radius = GridMetric.HALF_CELL_SIZE_M * 0.7
-	disc_mesh.bottom_radius = disc_mesh.top_radius
-	disc_mesh.height = 0.02
-	disc.mesh = disc_mesh
-	disc.material_override = mat
 	var normal := Vector3(OrientationUtil.face_to_vector(_resolved_face))
-	disc.basis = _basis_aligning_up_to(normal)
-	preview_root.add_child(disc, false, Node.INTERNAL_MODE_BACK)
+	var along := _basis_aligning_up_to(normal)
 
-	# …and an arrow pointing outward along the face normal.
-	var arrow := MeshInstance3D.new()
-	var arrow_mesh := CylinderMesh.new()
-	arrow_mesh.top_radius = 0.0
-	arrow_mesh.bottom_radius = 0.06
-	arrow_mesh.height = 0.16
-	arrow.mesh = arrow_mesh
-	arrow.material_override = mat
-	arrow.basis = disc.basis
-	arrow.position = normal * 0.12
-	preview_root.add_child(arrow, false, Node.INTERNAL_MODE_BACK)
+	# The attach POINT itself — this is what mates with the other part.
+	var point := MeshInstance3D.new()
+	var point_mesh := SphereMesh.new()
+	point_mesh.radius = 0.045
+	point_mesh.height = 0.09
+	point.mesh = point_mesh
+	point.material_override = solid
+	preview_root.add_child(point, false, Node.INTERNAL_MODE_BACK)
+
+	# Crosshair through the centre: the CENTRE of the ball is the point that
+	# mates, the ball radius is pure cosmetics. Drawn on top of everything so
+	# it stays readable inside a hub.
+	var cross_mat := StandardMaterial3D.new()
+	cross_mat.albedo_color = Color(1.0, 1.0, 1.0, 0.95)
+	cross_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	cross_mat.no_depth_test = true
+	cross_mat.render_priority = 10
+	for axis: Vector3 in [Vector3.RIGHT, Vector3.UP, Vector3.BACK]:
+		var bar := MeshInstance3D.new()
+		var bar_mesh := CylinderMesh.new()
+		bar_mesh.top_radius = 0.005
+		bar_mesh.bottom_radius = 0.005
+		bar_mesh.height = 0.16
+		bar.mesh = bar_mesh
+		bar.material_override = cross_mat
+		bar.basis = _basis_aligning_up_to(axis)
+		preview_root.add_child(bar, false, Node.INTERNAL_MODE_BACK)
+
+	# Arrow OUTWARD along the mating direction: "the other part arrives from
+	# here". Shaft + head so it reads as an arrow, not a lone cone.
+	var shaft := MeshInstance3D.new()
+	var shaft_mesh := CylinderMesh.new()
+	shaft_mesh.top_radius = 0.015
+	shaft_mesh.bottom_radius = 0.015
+	shaft_mesh.height = 0.14
+	shaft.mesh = shaft_mesh
+	shaft.material_override = solid
+	shaft.basis = along
+	shaft.position = normal * 0.11
+	preview_root.add_child(shaft, false, Node.INTERNAL_MODE_BACK)
+	var head := MeshInstance3D.new()
+	var head_mesh := CylinderMesh.new()
+	head_mesh.top_radius = 0.0
+	head_mesh.bottom_radius = 0.045
+	head_mesh.height = 0.09
+	head.mesh = head_mesh
+	head.material_override = solid
+	head.basis = along
+	head.position = normal * 0.22
+	preview_root.add_child(head, false, Node.INTERNAL_MODE_BACK)
+
+	# Face disc only in grid-snap mode — precise points live off the face
+	# plane and the big disc just confused the picture there.
+	if snap_to_face:
+		var translucent := StandardMaterial3D.new()
+		translucent.albedo_color = Color(color.r, color.g, color.b, 0.35)
+		translucent.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		var disc := MeshInstance3D.new()
+		var disc_mesh := CylinderMesh.new()
+		disc_mesh.top_radius = GridMetric.HALF_CELL_SIZE_M * 0.7
+		disc_mesh.bottom_radius = disc_mesh.top_radius
+		disc_mesh.height = 0.01
+		disc.mesh = disc_mesh
+		disc.material_override = translucent
+		disc.basis = along
+		preview_root.add_child(disc, false, Node.INTERNAL_MODE_BACK)
+
+	# Name tag so the author never guesses which kind this point is.
+	var label := Label3D.new()
+	label.text = _kind_label()
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.no_depth_test = true
+	label.fixed_size = true
+	label.pixel_size = 0.0006
+	label.modulate = Color(color.r, color.g, color.b, 0.95)
+	label.outline_size = 8
+	label.position = normal * 0.3
+	preview_root.add_child(label, false, Node.INTERNAL_MODE_BACK)
+
+
+func _kind_label() -> String:
+	match socket_kind:
+		SocketKind.STRUCTURAL:
+			return "крепление"
+		SocketKind.WHEEL_SOCKET:
+			return "гнездо колеса"
+		SocketKind.WHEEL_PLUG:
+			return "ось колеса"
+		SocketKind.CUSTOM:
+			return custom_tag if not custom_tag.is_empty() else "свой тег"
+	return ""
 
 
 func _basis_aligning_up_to(direction: Vector3) -> Basis:
