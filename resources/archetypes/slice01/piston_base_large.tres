@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="ElementArchetype" format=3]
+[gd_resource type="Resource" script_class="ElementArchetype" format=3 uid="uid://cf4x000uf8jvb"]
 
 [ext_resource type="Script" uid="uid://c2p36g85wqkru" path="res://scripts/simulation/resources/build_requirement.gd" id="1"]
 [ext_resource type="Script" uid="uid://b6d2jhfw581hb" path="res://scripts/simulation/resources/collider_definition.gd" id="2"]
@@ -52,7 +52,6 @@ compatibility_tags = PackedStringArray("electric", "input")
 
 [sub_resource type="Resource" id="MountNy00"]
 script = ExtResource("5")
-local_cell = Vector3i(0, 0, 0)
 local_face = 3
 
 [sub_resource type="Resource" id="MountNy01"]
@@ -121,7 +120,6 @@ local_cell = Vector3i(2, 1, 2)
 
 [sub_resource type="Resource" id="MountNx00"]
 script = ExtResource("5")
-local_cell = Vector3i(0, 0, 0)
 local_face = 1
 
 [sub_resource type="Resource" id="MountNx01"]
@@ -181,7 +179,6 @@ local_face = 4
 
 [sub_resource type="Resource" id="MountNz00"]
 script = ExtResource("5")
-local_cell = Vector3i(0, 0, 0)
 local_face = 5
 
 [sub_resource type="Resource" id="MountNz01"]

@@ -233,8 +233,9 @@ func _refresh_from_hit(hit: InteractionHit) -> void:
 		return
 	_title.text = HudWheelTuneUtil.panel_title(hit)
 	var archetype_id := str(hit.metadata.get("archetype_id", ""))
-	_steer_row.visible = archetype_id == "drive_wheel"
-	if archetype_id == "drive_wheel":
+	var is_wheel := archetype_id == "drive_wheel" or archetype_id == "wheel_med"
+	_steer_row.visible = is_wheel
+	if is_wheel:
 		var powered := bool(hit.metadata.get("wheel_powered", false))
 		var status := StringName(
 			hit.metadata.get(

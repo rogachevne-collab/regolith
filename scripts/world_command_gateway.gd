@@ -70,6 +70,11 @@ var _material_field := MoonMaterialField.new()
 var _hand_drill_spawn_world := Vector3.ZERO
 var _hand_drill_last_bite_center: Variant = null
 var _hand_drill_last_bite_msec := 0
+## resource_id → kilograms the drill has freed but not yet dropped as a pile.
+## See `_route_hand_drill_yield`. Deliberately not persisted: a quit forfeits
+## less than one chunk, which is noise against what a minute of drilling moves,
+## and it is not worth the save-state to carry across.
+var _hand_drill_yield_buffer: Dictionary = {}
 ## element_id → world-space centre of that stationary drill's last carve, so the
 ## drill service can sample the material it actually cut (see
 ## `stationary_drill_carve_point`).
@@ -175,6 +180,8 @@ func _execute(command: Dictionary) -> Dictionary:
 			return _scoop_spoil(command, target)
 		&"dump_scoop":
 			return _dump_scoop(command, target)
+		&"debug_spawn_spoil":
+			return _debug_spawn_spoil(command, target)
 		&"damage_element":
 			return _damage_element(command, target)
 		&"place_block":
@@ -308,8 +315,14 @@ func _remove_voxel(
 				{material_id: 1.0}
 			)
 		)
+	# Path-sweep can remove volume even if the last bite hits a block that has
+	# not streamed to LOD0 yet (`terrain_unavailable`). Report success whenever
+	# anything was carved so the HUD does not flash a false failure.
+	var status := StringName(excavation["status"])
+	if removed_m3 > 0.000001:
+		status = &"ok"
 	return _result(
-		StringName(excavation["status"]),
+		status,
 		{
 			"point": target["point"],
 			"removed_volume_m3": removed_m3,
@@ -415,6 +428,32 @@ func _dump_scoop(
 	)
 
 
+## Debug: conjure loose material at the aim point, out of nothing.
+##
+## Loose material otherwise only exists where something dug or dumped, so a fresh
+## world has nothing for a blade or a scoop to work — and getting a heap the
+## honest way means standing there with the drill first. This is a test fixture,
+## not a mechanic: it credits no yield and costs nothing, and no gameplay path
+## reaches it.
+func _debug_spawn_spoil(
+	command: Dictionary,
+	target: Dictionary
+) -> Dictionary:
+	var granular := get_tree().get_first_node_in_group(&"granular_world")
+	if granular == null or not granular.has_method(&"dump_load"):
+		return _result(&"not_ready")
+	var parameters: Dictionary = command.get("parameters", {})
+	var volume := maxf(float(parameters.get("volume_m3", 0.0)), 0.0)
+	if volume <= 0.000001:
+		return _result(&"no_target", {"spawned_volume_m3": 0.0})
+	var contact_point := Vector3(target["point"])
+	var accepted := float(granular.call(&"dump_load", contact_point, volume))
+	return _result(
+		&"ok",
+		{"point": contact_point, "spawned_volume_m3": accepted}
+	)
+
+
 func _dig_terrain_debris(
 	_command: Dictionary,
 	target: Dictionary
@@ -465,42 +504,58 @@ func _dig_terrain_debris(
 	return _result(&"ok", {"point": contact, "destroyed": true})
 
 
+## Drop what the drill freed on the ground. Nothing goes straight into the
+## pack: what you dug by hand you pick up by hand, so carrying capacity is a
+## decision you make at the working face rather than a silent cap that turns
+## into litter the moment it is reached.
+##
+## A bite is ~0.1 m³ every 0.15 s, so one pile per bite left a trail of small
+## ones down the tunnel. Mass waits in `_hand_drill_yield_buffer` until it is
+## worth a discrete object instead.
 func _route_hand_drill_yield(
 	center: Vector3,
 	yields: Array[Dictionary]
 ) -> void:
 	if _session == null or _session.world == null:
 		return
-	var store := _session.world.get_resource_store(
-		PlayerIdentity.store_id(actor_uid)
-	)
 	for yield_entry: Dictionary in yields:
 		var resource_id := String(yield_entry.get("resource_id", ""))
-		var remaining_mass_kg := float(yield_entry.get("mass_kg", 0.0))
-		var unit_mass := ResourceCatalog.mass_per_unit_kg(resource_id)
-		if resource_id.is_empty() or remaining_mass_kg <= 0.000001:
+		var mass_kg := float(yield_entry.get("mass_kg", 0.0))
+		if resource_id.is_empty() or mass_kg <= 0.000001:
 			continue
-		if store != null and unit_mass > 0.000001:
-			var max_units := ResourceCatalog.max_addable_amount_player(
-				store,
-				resource_id
-			)
-			var credited_units := minf(
-				remaining_mass_kg / unit_mass,
-				max_units
-			)
-			if credited_units > 0.000001:
-				store.add(resource_id, credited_units)
-				remaining_mass_kg = maxf(
-					remaining_mass_kg - credited_units * unit_mass,
-					0.0
+		var pending := mass_kg + float(
+			_hand_drill_yield_buffer.get(resource_id, 0.0)
+		)
+		var quantum_kg := _hand_drill_emit_quantum_kg(resource_id)
+		if quantum_kg <= 0.000001:
+			# Nothing to quantise by — a resource with no mass or volume per
+			# unit. Drop it rather than accumulate it forever.
+			_session.world.add_world_loot_pile(center, resource_id, pending)
+			pending = 0.0
+		else:
+			while pending >= quantum_kg:
+				_session.world.add_world_loot_pile(
+					center,
+					resource_id,
+					quantum_kg
 				)
-		if remaining_mass_kg > 0.000001:
-			_session.world.add_world_loot_pile(
-				center,
-				resource_id,
-				remaining_mass_kg
-			)
+				pending -= quantum_kg
+		_hand_drill_yield_buffer[resource_id] = pending
+
+
+## Mass of `resource_id` that has to accumulate before a chunk drops. The
+## balance value is a volume, so chunks are a consistent size on the ground;
+## this converts it with the resource's own density.
+func _hand_drill_emit_quantum_kg(resource_id: String) -> float:
+	var unit_volume_l := ResourceCatalog.volume_per_unit_l(resource_id)
+	var unit_mass_kg := ResourceCatalog.mass_per_unit_kg(resource_id)
+	if unit_volume_l <= 0.000001 or unit_mass_kg <= 0.000001:
+		return 0.0
+	return (
+		IndustryArchetypeProfile.hand_drill_loot_emit_volume_l()
+		* unit_mass_kg
+		/ unit_volume_l
+	)
 
 
 func apply_terrain_carve(
@@ -857,9 +912,22 @@ func _dozer_blade_contact(element_id: int) -> Dictionary:
 		Vector3i.RIGHT,
 		element.orientation_index
 	)
-	var direction := (
+	# A blade works the material under its cutting edge, not the air in front of
+	# its middle. Drop the probe to the edge and tilt it down, or it only ever
+	# registers a heap standing taller than half the blade — and drops it again
+	# the moment the rover climbs its own spoil.
+	var local_down := OrientationUtil.rotate_direction(
+		Vector3i.DOWN,
+		element.orientation_index
+	)
+	var forward := (
 		working_frame.basis * Vector3(local_direction)
 	).normalized()
+	var down := (working_frame.basis * Vector3(local_down)).normalized()
+	var pitch := deg_to_rad(
+		IndustryArchetypeProfile.dozer_blade_probe_pitch_deg()
+	)
+	var direction := (forward * cos(pitch) + down * sin(pitch)).normalized()
 	var local_tip := (
 		GridPoseUtil.oriented_footprint_pivot(
 			element.get_archetype(),
@@ -868,6 +936,8 @@ func _dozer_blade_contact(element_id: int) -> Dictionary:
 		)
 		+ Vector3(local_direction)
 		* IndustryArchetypeProfile.dozer_blade_head_offset_m()
+		+ Vector3(local_down)
+		* IndustryArchetypeProfile.dozer_blade_edge_drop_m()
 	)
 	var tip := working_frame * local_tip
 	var reach := IndustryArchetypeProfile.dozer_blade_contact_reach_m()
@@ -1418,16 +1488,20 @@ func reset_construction_snap() -> void:
 	_snap_resolver.reset_sticky()
 
 
-func construction_resource_amount() -> float:
-	if _session == null:
-		return 0.0
+## Player carry load for the toolbar fill bar: the same volume the terminal
+## panel shows (stacks + tool instances), without building the entry list.
+func player_carry_load() -> Dictionary:
+	var capacity_l := IndustryStoreService.player_carry_capacity_l()
+	if _session == null or _session.world == null:
+		return {"used_l": 0.0, "capacity_l": capacity_l, "valid": false}
 	var store := _session.world.get_resource_store(
 		PlayerIdentity.store_id(actor_uid)
 	)
-	return (
-		store.amount("plate_metal")
-		if store != null else 0.0
-	)
+	var used_l := store.volume_l() if store != null else 0.0
+	var registry := _session.world.ensure_player_inventory()
+	if registry != null:
+		used_l += registry.volume_l()
+	return {"used_l": used_l, "capacity_l": capacity_l, "valid": true}
 
 
 ## Read-only accessor for presentation (HUD Inventory / StoreView). Returns the

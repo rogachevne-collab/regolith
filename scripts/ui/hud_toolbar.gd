@@ -72,6 +72,9 @@ class DropSlot:
 			highlight.visible = false
 
 
+const LOAD_BAR_WIDTH := 176.0
+const LOAD_REFRESH_INTERVAL := 0.2
+
 var _tools: ToolController
 var _gateway: WorldCommandGateway
 var _preview: ConstructionPreview
@@ -82,11 +85,16 @@ var _info: HBoxContainer
 var _lbl_page: Label
 var _lbl_selection: Label
 var _lbl_orientation: Label
-var _lbl_components: Label
+var _sep_orientation: Label
+var _load_row: HBoxContainer
+var _load_mat: ShaderMaterial
+var _load_value: Label
 var _lbl_snap: Label
 
 var _slots_signature := ""
 var _highlight_signature := -1
+var _load_accum := 0.0
+var _load_fill := -1.0
 
 
 func setup(ctx: Dictionary) -> void:
@@ -112,9 +120,22 @@ func _ready() -> void:
 	_lbl_selection = _add_info_label(HudTokens.COL_VALID, &"HudValue")
 	_add_info_sep()
 	_lbl_orientation = _add_info_label(HudTokens.COL_DIM)
-	_add_info_sep()
-	_lbl_components = _add_info_label(HudTokens.COL_OK, &"HudValue")
+	# The orientation entry only exists in build mode; its separator goes with
+	# it, otherwise the row reads "СТР 1/4 · БУР · · ИНВ".
+	_sep_orientation = _add_info_sep()
+	_build_load_bar()
 	_lbl_snap = _add_info_label(HudTokens.COL_DIM)
+
+
+## How full the suit is — the one inventory number worth carrying on the world
+## HUD, since running out of room silently stops every pickup and drill.
+func _build_load_bar() -> void:
+	var bar := HudTokens.make_progress_bar(LOAD_BAR_WIDTH, "ИНВ")
+	_load_row = bar["row"] as HBoxContainer
+	_load_mat = bar["mat"] as ShaderMaterial
+	_load_value = bar["value"] as Label
+	_load_row.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_info.add_child(_load_row)
 
 
 func _add_info_label(color: Color, variation: StringName = &"HudSmall") -> Label:
@@ -127,7 +148,7 @@ func _add_info_label(color: Color, variation: StringName = &"HudSmall") -> Label
 	return lbl
 
 
-func _add_info_sep() -> void:
+func _add_info_sep() -> Label:
 	var lbl := Label.new()
 	lbl.theme_type_variation = &"HudSmall"
 	lbl.add_theme_color_override("font_color", HudTokens.COL_DIM)
@@ -135,11 +156,16 @@ func _add_info_sep() -> void:
 	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_info.add_child(lbl)
+	return lbl
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if _tools == null:
 		return
+	_load_accum += delta
+	if _load_accum >= LOAD_REFRESH_INTERVAL:
+		_load_accum = 0.0
+		_update_load_bar()
 	var page := _tools.toolbar_page
 	var signature := "%d|%d|%s" % [
 		page,
@@ -270,9 +296,7 @@ func _update_info() -> void:
 		if not hint.is_empty():
 			_lbl_orientation.text += " · %s" % hint
 	_lbl_orientation.visible = is_build
-	_lbl_components.text = "%d КОМП" % int(round(
-		_gateway.construction_resource_amount()
-	))
+	_sep_orientation.visible = is_build
 	var snap := ""
 	if (
 		is_build
@@ -285,6 +309,26 @@ func _update_info() -> void:
 		]
 	_lbl_snap.text = snap
 	_lbl_snap.visible = not snap.is_empty()
+
+
+func _update_load_bar() -> void:
+	if _gateway == null or _load_mat == null:
+		return
+	var load_state := _gateway.player_carry_load()
+	var capacity_l := maxf(float(load_state.get("capacity_l", 0.0)), 0.000001)
+	var fill := clampf(float(load_state.get("used_l", 0.0)) / capacity_l, 0.0, 1.0)
+	if absf(fill - _load_fill) < 0.001:
+		return
+	_load_fill = fill
+	var color := HudTokens.COL_VALID
+	if fill >= 0.95:
+		color = HudTokens.COL_CRITICAL
+	elif fill >= 0.8:
+		color = HudTokens.COL_WARNING
+	_load_mat.set_shader_parameter("fill", fill)
+	_load_mat.set_shader_parameter("fill_color", color)
+	_load_value.text = "%d%%" % int(round(fill * 100.0))
+	_load_value.add_theme_color_override("font_color", color)
 
 
 func _selection_label() -> String:

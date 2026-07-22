@@ -6,9 +6,14 @@ extends Control
 ## Shift ×100. Presentation only: it reads the machine snapshot and submits
 ## typed `enqueue_recipe` commands; it never owns queue state.
 
-const CARD_MIN_WIDTH := 150.0
-const OUTPUT_ICON := 40.0
-const INPUT_ICON := 22.0
+const CARD_MIN_WIDTH := 168.0
+const CARD_MIN_HEIGHT := 56.0
+const CARD_TARGET_WIDTH := 200.0
+const GRID_COLUMNS_MAX := 3
+const OUTPUT_ICON := 36.0
+const INPUT_ICON := 20.0
+const INPUT_ICON_WIDTH := 30.0
+const INNER_MARGIN := 10
 const BATCH_CTRL := 10
 const BATCH_SHIFT := 100
 
@@ -45,26 +50,43 @@ func apply_machine(machine: Dictionary) -> void:
 	_rebuild()
 
 
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_RESIZED:
+		_update_columns()
+
+
 func _build() -> void:
+	var frame := PanelContainer.new()
+	frame.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	frame.add_theme_stylebox_override("panel", HudTokens.make_subpanel_style())
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(frame)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", INNER_MARGIN)
+	margin.add_theme_constant_override("margin_right", INNER_MARGIN)
+	margin.add_theme_constant_override("margin_top", INNER_MARGIN)
+	margin.add_theme_constant_override("margin_bottom", INNER_MARGIN)
+	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	frame.add_child(margin)
+
 	var vb := VBoxContainer.new()
-	vb.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	vb.add_theme_constant_override("separation", 4)
+	vb.add_theme_constant_override("separation", 6)
 	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(vb)
+	margin.add_child(vb)
 
-	var header := Label.new()
-	header.text = "РЕЦЕПТЫ"
-	header.theme_type_variation = &"HudSmall"
-	header.add_theme_color_override("font_color", HudTokens.COL_DIM)
-	header.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vb.add_child(header)
-
-	var hint := Label.new()
-	hint.text = "ЛКМ +1 · Ctrl +10 · Shift +100"
-	hint.theme_type_variation = &"HudSmall"
-	hint.add_theme_color_override("font_color", HudTokens.COL_DIM)
-	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vb.add_child(hint)
+	# Title and batch hint share one row: the catalog needs every pixel of
+	# height it can give the cards.
+	var header_row := HBoxContainer.new()
+	header_row.add_theme_constant_override("separation", 8)
+	header_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vb.add_child(header_row)
+	var header := HudTokens.make_section_header("РЕЦЕПТЫ")
+	header.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header_row.add_child(header)
+	var hint := HudTokens.make_section_header("ЛКМ +1 · Ctrl +10 · Shift +100")
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	header_row.add_child(hint)
 
 	vb.add_child(HudTokens.make_divider())
 
@@ -78,11 +100,24 @@ func _build() -> void:
 
 	_grid = GridContainer.new()
 	_grid.columns = 2
-	_grid.add_theme_constant_override("h_separation", 6)
-	_grid.add_theme_constant_override("v_separation", 6)
+	_grid.add_theme_constant_override("h_separation", 8)
+	_grid.add_theme_constant_override("v_separation", 8)
 	_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_scroll.add_child(_grid)
+
+
+## Card count per row follows the column the window gave us, so a card is never
+## squeezed below the width its icon + input chips need.
+func _update_columns() -> void:
+	if _grid == null:
+		return
+	var inner := size.x - float(INNER_MARGIN) * 2.0 - 16.0
+	if inner <= 0.0:
+		return
+	var cols := clampi(int(floor(inner / CARD_TARGET_WIDTH)), 1, GRID_COLUMNS_MAX)
+	if _grid.columns != cols:
+		_grid.columns = cols
 
 
 func _rebuild() -> void:
@@ -102,12 +137,13 @@ func _rebuild() -> void:
 	for recipe_id: Variant in _recipes:
 		var card := _make_card(str(recipe_id))
 		_grid.add_child(card)
+	_update_columns()
 
 
 func _make_card(recipe_id: String) -> Control:
 	var is_active := recipe_id == _active_recipe_id
 	var card := PanelContainer.new()
-	card.custom_minimum_size = Vector2(CARD_MIN_WIDTH, 0.0)
+	card.custom_minimum_size = Vector2(CARD_MIN_WIDTH, CARD_MIN_HEIGHT)
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	card.mouse_filter = Control.MOUSE_FILTER_STOP
 	card.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
@@ -166,8 +202,11 @@ func _make_output_icon(recipe_id: String) -> Control:
 
 
 func _make_input_chips(recipe_id: String) -> Control:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 6)
+	# Flow, not a fixed row: a three-input recipe wraps to a second line instead
+	# of running past the card border.
+	var row := HFlowContainer.new()
+	row.add_theme_constant_override("h_separation", 8)
+	row.add_theme_constant_override("v_separation", 2)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var inputs := RecipeCatalog.inputs(recipe_id)
 	if inputs.is_empty():
@@ -182,7 +221,9 @@ func _make_input_chips(recipe_id: String) -> Control:
 		var chip := HBoxContainer.new()
 		chip.add_theme_constant_override("separation", 2)
 		chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		chip.add_child(HudTokens.make_item_icon(str(resource_id), INPUT_ICON))
+		chip.add_child(
+			HudTokens.make_item_icon(str(resource_id), INPUT_ICON, INPUT_ICON_WIDTH)
+		)
 		var amount := Label.new()
 		amount.text = "×%s" % HudTokens.format_amount(float(inputs[resource_id]))
 		amount.theme_type_variation = &"HudSmall"

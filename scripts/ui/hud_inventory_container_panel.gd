@@ -2,10 +2,15 @@ class_name HudInventoryContainerPanel
 extends PanelContainer
 ## Terminal inventory side panel: title, volume/mass chrome, item grid, and optional
 ## machine controls. Reads StoreSnapshot via WorldCommandGateway; never owns amounts.
+## Framed block that fills the cell the window gives it — the grid scrolls inside
+## instead of growing the window.
 
 const PANEL_MIN_WIDTH := 232.0
+const PANEL_MIN_HEIGHT := 160.0
+const INNER_MARGIN := 10
 const MACHINE_PROGRESS_WIDTH := 148.0
 const VOLUME_BAR_WIDTH := 76.0
+const VOLUME_VALUE_WIDTH := 92.0
 
 var _gateway: WorldCommandGateway
 var _peer_store_id := ""
@@ -14,7 +19,6 @@ var _element_id := 0
 var _snapshot: Dictionary = {}
 var _column_width := 248.0
 var _slot_size := HudTokens.SLOT_SIZE
-var _max_grid_height := 0.0
 ## When false, the inline machine block (status/queue/recipes) is suppressed —
 ## the factory window renders those via dedicated catalog/queue widgets instead.
 var _machine_controls_visible := true
@@ -41,7 +45,8 @@ var _pending_command_ids: Dictionary = {}
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
-	add_theme_stylebox_override("panel", StyleBoxEmpty.new())
+	add_theme_stylebox_override("panel", HudTokens.make_subpanel_style())
+	custom_minimum_size.y = PANEL_MIN_HEIGHT
 	_build()
 	_apply_panel_width()
 
@@ -59,10 +64,9 @@ func setup(gateway: WorldCommandGateway) -> void:
 func configure_layout(ctx: Dictionary) -> void:
 	_column_width = float(ctx.get("column_width", _column_width))
 	_slot_size = ctx.get("slot_size", _slot_size)
-	_max_grid_height = float(ctx.get("max_grid_height", 0.0))
 	_apply_panel_width()
 	if _grid != null:
-		_grid.configure_layout(_column_width, _slot_size, _max_grid_height)
+		_grid.configure_layout(_column_width, _slot_size)
 
 
 func set_machine_controls_visible(visible_flag: bool) -> void:
@@ -85,7 +89,7 @@ func apply_snapshot(snapshot: Dictionary) -> void:
 		_grid.set_peer_store_id(_peer_store_id)
 		_grid.apply_snapshot(snapshot)
 		if _column_width > 0.0:
-			_grid.configure_layout(_column_width, _slot_size, _max_grid_height)
+			_grid.configure_layout(_column_width, _slot_size)
 	_refresh_machine_block()
 
 
@@ -105,18 +109,20 @@ func _apply_panel_width() -> void:
 
 func _build() -> void:
 	var margin := MarginContainer.new()
-	margin.add_theme_constant_override("margin_left", 0)
-	margin.add_theme_constant_override("margin_right", 0)
-	margin.add_theme_constant_override("margin_top", 0)
-	margin.add_theme_constant_override("margin_bottom", 0)
+	margin.add_theme_constant_override("margin_left", INNER_MARGIN)
+	margin.add_theme_constant_override("margin_right", INNER_MARGIN)
+	margin.add_theme_constant_override("margin_top", INNER_MARGIN)
+	margin.add_theme_constant_override("margin_bottom", INNER_MARGIN)
 	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(margin)
 
 	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", HudTokens.SECTION_GAP)
+	vb.add_theme_constant_override("separation", 6)
 	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	margin.add_child(vb)
 
+	# Header: name left, mass right — mass is informational, it must not cost a
+	# row of its own inside a fixed-height column.
 	var title_row := HBoxContainer.new()
 	title_row.add_theme_constant_override("separation", 6)
 	title_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -126,8 +132,19 @@ func _build() -> void:
 	_title_label.theme_type_variation = &"HudSmall"
 	_title_label.add_theme_color_override("font_color", HudTokens.COL_TITLE)
 	_title_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_title_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_title_label.clip_text = true
 	title_row.add_child(_title_label)
+
+	_mass_label = Label.new()
+	_mass_label.theme_type_variation = &"HudSmall"
+	_mass_label.add_theme_color_override("font_color", HudTokens.COL_DIM)
+	_mass_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_mass_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	# No clip_text here: a clipping label reports zero minimum width and the
+	# expanding title beside it would swallow the whole mass readout.
+	_mass_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	title_row.add_child(_mass_label)
 
 	vb.add_child(HudTokens.make_divider())
 
@@ -136,21 +153,14 @@ func _build() -> void:
 	_volume_mat = volume_row["mat"] as ShaderMaterial
 	_volume_value = volume_row["value"] as Label
 	_volume_bar = _volume_row.get_child(1) as ColorRect
-	_volume_bar.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	_volume_bar.custom_minimum_size.x = VOLUME_BAR_WIDTH
-	_volume_value.custom_minimum_size.x = 64.0
+	HudTokens.stretch_progress_bar(_volume_row, _volume_mat)
+	_volume_value.custom_minimum_size.x = VOLUME_VALUE_WIDTH
 	_volume_value.clip_text = true
 	vb.add_child(_volume_row)
 
-	_mass_label = Label.new()
-	_mass_label.theme_type_variation = &"HudSmall"
-	_mass_label.add_theme_color_override("font_color", HudTokens.COL_TEXT)
-	_mass_label.clip_text = true
-	_mass_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vb.add_child(_mass_label)
-
 	_grid = HudInventoryGrid.new()
-	_grid.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_grid.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_grid.set_fill_mode(true)
 	_grid.transfer_failed.connect(_on_grid_transfer_failed)
 	vb.add_child(_grid)
 

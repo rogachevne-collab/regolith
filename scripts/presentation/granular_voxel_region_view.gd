@@ -1,13 +1,18 @@
 class_name GranularVoxelRegionView
 extends Node3D
-## Draws and collides one `GranularVoxelRegion` by handing its material to a
-## second, finer `VoxelTerrain`.
+## Draws one `GranularVoxelRegion`: a `MeshInstance3D` per chunk, meshed by the
+## field's own native marching cubes (`GranularVoxelField.build_mesh_box`).
 ##
-## The plugin does the meshing and the collision in C++, which is the whole
-## reason loose material lives in a terrain rather than in a mesh built here:
-## a marching-cubes pass over a 0.25 m field in GDScript would not survive a
-## frame. All this node does is copy changed cells across and get out of the
-## way.
+## This used to hand the material to a second, finer `VoxelTerrain` and let the
+## plugin mesh it. That was the last granular cost standing after everything of
+## ours went native: every paste makes the plugin rebuild the chunk's Transvoxel
+## mesh on its own schedule, and a body moulding the field changes it every
+## flush — a wall of remeshes measured at ~7-11 ms a frame while moulding, with
+## our whole pipeline at ~2.6. The native mesher reads the same reconstructed
+## field the paste path encoded, marches the same iso level, and hands the
+## arrays straight to a mesh here — no encode, no paste, no plugin, no thread
+## handoff, and the surface can no longer lag the stones by someone else's
+## schedule.
 ##
 ## Presentation only. The region simulates with no view attached at all — that
 ## is how the radial behaviour is tested headless.
@@ -19,21 +24,24 @@ const _SURFACE_SHADER_PATH := "res://resources/granular_surface.gdshader"
 const _ALBEDO_PATH := "res://resources/textures/ground103/albedo.png"
 const _NORMAL_PATH := "res://resources/textures/ground103/normal.png"
 
-## Edge of the cube written in one paste. Matches the plugin's data block size,
-## so a paste lands on one block instead of straddling several and dirtying all
-## of them.
+## Edge of the cube one mesh covers, in cells. The unit the dirty list is
+## bucketed by: a cell that moves remeshes its chunk and nothing else.
 const FLUSH_CHUNK := 16
-## Spare blocks kept around the field's own extent, so the terrain has somewhere
-## to put the surface of material sitting right against the border.
-const BOUNDS_MARGIN_CELLS := 8
-## Frames to let the terrain stream its blocks in before the first write. A
-## paste into a block that has not loaded is dropped without a word, which
-## looked exactly like the simulation producing nothing at all.
-const STREAMING_WARMUP_FRAMES := 30
 ## Fill per second the chips move toward what the cell actually holds. The field
 ## itself steps in jumps — a sweep moves material by a fraction of a cell and
 ## sweeps are not frames — so following it exactly is following a staircase.
 const GRAIN_SETTLE_RATE := 2.5
+## Fill a growing cell must gain before its chips are laid again. The animation
+## still ticks every frame, but the expensive re-lay only happens on these
+## steps, so a cell grows in over about `1 / LAY_STEP` relays instead of one per
+## frame. This is the whole reason `lay` stopped being the dominant granular
+## cost; too large and the grow-in visibly steps, too small and the saving goes.
+const LAY_STEP := 0.12
+## The chip animation ticks at most this often — the flush rate, since the field
+## it follows changes no faster. At 200 fps this alone is a near-sevenfold cut
+## on how often the pass runs. Kept as a local constant rather than reaching for
+## `GranularVoxelWorld.MESH_FLUSH_HZ`, which the view does not depend on.
+const LAY_INTERVAL_S := 1.0 / 30.0
 
 ## How much a cell's fill must change before its chips are laid again. Nothing
 ## on the field moves the stones except this, so it is the whole of the answer
@@ -154,87 +162,111 @@ const SURFACE_ISO := 0.35
 ## mesher wants when it interpolates the crossing point along an edge. The blur
 ## spreads a full-to-empty step over about two cells, so undo that.
 const SDF_GAIN := 2.0
-## Units of the buffer's 16-bit SDF channel per unit of distance.
-##
-## Measured against the plugin, not assumed: writing 0.25 stores 16, 0.5 stores
-## 32 and 1.0 stores 65, and `int(value * 65.535)` is the only scale that
-## produces all three. A full box encoded this way and read back through
-## `get_voxel_f` returns the same distances to within 0.007, which is the
-## channel's own quantum — the per-voxel path had exactly the same error.
-##
-## Hand-encoding the channel is what allows the whole box to cross in one call,
-## and it is also the shape the native port wants: the C++ side fills the same
-## bytes, and nothing above it changes.
-const SDF_S16_SCALE := 65.535
 
-## Rebuild every box the old GDScript way as well and compare byte for byte.
+## Chunks remeshed in one flush.
 ##
-## Off. This is the switch that proved the native reconstruction correct, kept
-## because the proof has to be repeatable — the same arrangement as the field
-## and its script twin, where the slow implementation stays as the thing the
-## fast one is checked against. Turning it on costs the whole GDScript flush
-## again, which is precisely what was removed, so it is a deliberate check and
-## not a safety net.
-const VERIFY_NATIVE_SDF := false
-
-## Chunks written to the terrain in one flush.
+## A heap arriving all at once dirties a dozen chunks in one frame, and a
+## settling one keeps a handful hot at thirty flushes a second. Capping the
+## count turns that spike into a flat line. Nothing is dropped — chunks that
+## miss their turn stay in `_pending_chunks` and go next flush — so the cost is
+## that a chunk can be a frame or two behind the field, which no eye catches.
 ##
-## Every write makes the plugin remesh that chunk, and that is work this side
-## cannot see or measure — headless does no meshing at all, which is why a
-## per-bite breakdown came to 0.83 ms while the game still hitched. What the
-## breakdown could not show is the count: a heap arriving all at once dirties a
-## dozen chunks in one frame, and a settling one keeps a handful hot at sixty
-## flushes a second.
-##
-## Capping the count turns that spike into a flat line. Nothing is dropped —
-## chunks that miss their turn keep accumulating and go over next frame — so
-## the cost is that a chunk can be a frame or two behind the field. At sixty
-## frames a second that is invisible, and it is a far better trade than the
-## alternative of flushing less often, which would coarsen *everything*
-## including the settling the finer sweeps were bought for.
-##
-## Eight, not two. Two was tried against a hitch and did not touch it — and it
-## turned out to be quantising the picture instead: a heap covering ten chunks
-## had each of them rewritten once every five flushes, so every part of the
-## surface updated at about twelve hertz however fast the field was stepping.
-## That is exactly what "the settling still looks like ten hertz" was. The cap
-## stays only as a guard against a pathological burst.
+## Eight survives from the paste era for a different reason than it was set:
+## back then each unit was a handover to the plugin plus a Transvoxel remesh on
+## its thread; now it is one native `build_mesh_box` at tens of microseconds.
+## The cap stays only as a guard against a pathological burst.
 const MESH_CHUNKS_PER_FLUSH := 8
+
+## Flushes between surface remeshes. The chips refresh every flush; the surface
+## catches up every this-many. Left at 1 — the native mesher is cheap enough to
+## keep the surface exactly on the chips' clock, which is the whole point of
+## it. The mechanism stays for an emergency knob.
+const SURFACE_FLUSH_EVERY := 1
+
+## Shell cells reconsidered in one flush.
+##
+## The single most expensive thing in the granular renderer, and the only one
+## that was not already rationed. Measured on a rover dropped into a heap:
+## `flush 425.8 ms/s`, of which `chips` alone was 298.6 — against `sdf` at 7.1
+## and `paste` at 2.4. Worst frame 31.6 ms, sixteen frames a second.
+##
+## It is expensive per cell rather than in bulk: `_refresh_shell_cell` asks the
+## field for the cell's mass and then for six neighbours through `_is_open`,
+## each of those two more binding calls. Fifteen-odd crossings into native code
+## per cell, and a plunge dirties tens of thousands.
+##
+## At 512 a flush and thirty flushes a second, about fifteen thousand cells a
+## second get reconsidered — which holds the cost near forty milliseconds a
+## second instead of three hundred, and lets a violent collapse catch up over a
+## second or two rather than in one frame nobody sees anyway.
+##
+## Raise it if stones visibly trail the surface after a collapse; lower it if a
+## collapse still costs frames. The real fix is not this number — it is doing
+## the whole classification in one native call instead of fifteen per cell, and
+## then this budget stops mattering.
+const SHELL_CELLS_PER_FLUSH := 512
 
 ## Fully outside. Reads as air whatever the gain.
 ##
 ## Tempting to set this to what an empty cell reconstructs to
-## (`SURFACE_ISO * SDF_GAIN`) and then skip writing those cells, since the fill
-## would already hold the answer. Measured, it moved the surface half a cell:
-## the value is also what the *rock* cells this pass refuses to draw are left
-## holding, and how firmly they read as air decides where the crossing with the
-## material resting on them lands. Two different meanings, one constant — not
-## worth the three milliseconds.
+## (`SURFACE_ISO * SDF_GAIN`) and then skip those cells, since the fill would
+## already hold the answer. Measured (on the paste path, but the reconstruction
+## is the same), it moved the surface half a cell: the value is also what the
+## *rock* cells this pass refuses to draw are left holding, and how firmly they
+## read as air decides where the crossing with the material resting on them
+## lands.
 const AIR_SDF := 1.0
 
 var region: GranularVoxelRegion
 
-var _terrain: VoxelTerrain
-var _tool: VoxelTool
-## Blocks are streamed in over a few frames; a paste into a block that does not
-## exist yet writes nothing at all, silently. Everything is held back until the
-## terrain reports itself ready, then flushed in one go.
-var _streaming_ready := false
-var _frames_waited := 0
+## One `MeshInstance3D` per chunk that currently holds any surface, keyed by
+## chunk coordinate. Created when a chunk first meshes something, freed when it
+## meshes nothing — a region is mostly air and holds meshes only where the
+## material is.
+var _chunk_meshes: Dictionary = {}
+## The region-localised surface material, shared by every chunk instance.
+var _material: Material
 var _last_flush_ms := 0.0
+## The flush split, in microseconds, accumulated until read.
+##
+## `flush` was one number covering unrelated costs — rebuilding and marching
+## the field in C++, committing the arrays to meshes, and re-laying the chips
+## of every cell that moved. One number cannot say which of them to attack.
+var prof_sdf_us := 0
+var prof_mesh_us := 0
+var prof_shell_us := 0
+## The dirty-list bookkeeping: walking every cell that moved to queue its shell
+## and grow its chunk's bounds, before any SDF or chip work. Unbudgeted and, on
+## a collapse, the largest single cost — split out to confirm that.
+var prof_prep_us := 0
+## The per-frame chip-transform pass in `_process`, which is granular work but
+## runs outside `flush` and so is in none of the split numbers above.
+var prof_lay_us := 0
 var _last_flush_cells := 0
 var _last_flush_chunks := 0
 var _last_pending_chunks := 0
-## Chunks that have changed and not yet been written, against the box of them
-## that needs rewriting. Held rather than flushed the moment they are dirtied,
-## so a burst is spread over frames instead of landing in one.
+## Chunks that have changed and not yet been remeshed, as a set. Held rather
+## than remeshed the moment they are dirtied, so a burst is spread over frames
+## instead of landing in one. A chunk is remeshed whole, so unlike the paste
+## era there is no box to carry — membership is the whole of the debt.
 var _pending_chunks: Dictionary = {}
+## Flushes since the surface last remeshed, against `SURFACE_FLUSH_EVERY`.
+var _surface_flush_debt := 0
+## Shell cells that need reconsidering and have not had their turn: a queue and
+## a flag per cell, exactly the arrangement `GranularVoxelField` uses for its
+## own dirty list.
+##
+## This was a `Dictionary` keyed by cell index, and it cost more than the work
+## it was scheduling. Every dirty cell writes seven entries — itself and six
+## neighbours — and a collapse dirties thousands per flush, so the bookkeeping
+## alone was measured at about eighty milliseconds a second: more than the SDF
+## rebuild and the paste put together. A flag byte and an append are a couple of
+## instructions, and draining no longer needs the second pass a dictionary
+## needed to avoid erasing while iterating.
+var _shell_queue: PackedInt32Array = PackedInt32Array()
+var _shell_queued: PackedByteArray = PackedByteArray()
+var _shell_cursor := 0
 
-## Scratch for the reconstruction, all indexed over the same work box, grown to
-## the largest box seen and reused. The field is read into `_mass_box` and
-## `_solid_box` in bulk — a script call per cell was most of the cost of drawing
-## this at all — and the separable kernel ping-pongs `_occupancy` against
-## `_scratch` over three passes, so the result lands in `_scratch`.
 ## The grains, and which cells currently have chips laid on them, against the
 ## fill they were laid for.
 ##
@@ -250,23 +282,25 @@ var _shell: Dictionary = {}
 ## frame instead of snapping them to a new layout the moment the cell crosses a
 ## threshold — which is what made the crushed rock look twitchy.
 var _animating: Dictionary = {}
+## What each animating cell was last actually laid at, so the grow-in re-lays
+## only on meaningful steps rather than every frame. See `LAY_STEP`.
+var _laid: Dictionary = {}
+## Accumulated time since the chip animation last ran, so it ticks at the flush
+## rate rather than the frame rate. See `_process`.
+var _lay_debt := 0.0
 ## Shell cells currently drawn as backing — the plug layer behind the chips —
 ## rather than as chips. Membership is decided by `_refresh_shell_cell` from
 ## the field, and a cell flipping between the two kinds is re-laid even when
 ## its mass has not moved: same mass, entirely different picture.
 var _backing: Dictionary = {}
-
-## The SDF channel of the paste buffer, encoded by hand and handed over whole.
-## Kept between flushes so a settling heap is not reallocating it every frame.
-var _sdf_bytes: PackedByteArray = PackedByteArray()
-
-var _mass_box: PackedFloat32Array = PackedFloat32Array()
-var _solid_box: PackedByteArray = PackedByteArray()
-var _occupancy: PackedFloat32Array = PackedFloat32Array()
-var _scratch: PackedFloat32Array = PackedFloat32Array()
-## Which of the two the finished surface came to rest in, which depends on how
-## many passes ran.
-var _smoothed_in_scratch := false
+## The mesh surface patch near each drawn cell — a point (cell units) and its
+## outward normal — from `GranularVoxelField.sample_surface_patches`. Chips seat
+## on this so a stone lands on the marching-cubes surface at any facing, top or
+## wall, instead of on a per-cell fill height that rings a wall into layers.
+## Filled as a cell is drawn, dropped as it clears; a zero normal (or absent)
+## means "no trustworthy surface here — seat on the raw fill".
+var _surface_pos: Dictionary = {}
+var _surface_nrm: Dictionary = {}
 
 static var _surface_material: Material
 
@@ -280,17 +314,19 @@ func setup(
 	surface_material: Material = null
 ) -> void:
 	region = new_region
-	# The region's frame is the terrain's frame, so a field cell and a voxel of
-	# this terrain are the same thing and no coordinate maths is needed here.
+	# The region's frame is this node's frame, so a field cell and a mesh unit
+	# are the same thing and no coordinate maths is needed here.
 	transform = region.world_transform()
-	_build_terrain(surface_material)
+	_build_surface(surface_material)
 
 
-func _build_terrain(surface_material: Material) -> void:
+func _build_surface(surface_material: Material) -> void:
 	var material := (
 		surface_material if surface_material != null else _fallback_material()
 	)
 	if DRAW_GRAINS:
+		var field_cells := region.field.size
+		_shell_queued.resize(field_cells.x * field_cells.y * field_cells.z)
 		_grains = GranularGrainShell.new()
 		add_child(_grains)
 		# The chips are seated through the surface's own fill floor, so the two
@@ -299,134 +335,128 @@ func _build_terrain(surface_material: Material) -> void:
 		_grains.setup(region.up(), RENDER_MIN_FILL if DRAW_SURFACE_MESH else 0.0)
 	if not DRAW_SURFACE_MESH:
 		return
-	var field := region.field
-	_terrain = VoxelTerrain.new()
-	_terrain.scale = Vector3.ONE * field.cell_size
-	_terrain.mesher = VoxelMesherTransvoxel.new()
-	# Everything starts as air: this terrain holds only what the field puts in
-	# it, never any of the world's own rock.
-	var generator := VoxelGeneratorFlat.new()
-	generator.channel = VoxelBuffer.CHANNEL_SDF
-	generator.height = -100000.0
-	_terrain.generator = generator
-	# No collider. Loose material is a medium, not a surface: what carries a
-	# character is `GranularVoxelWorld.dust_at` and the sinking in
-	# `character_motor`, which can express "holds you up, and gives way under
-	# you" — a collision shape can only ever express the first half. Doing only
-	# the first half to a ten-centimetre scattering is what threw the player
-	# into the air every time they drilled under their own feet, and what put a
-	# solid wall between the drill and the rock it was aimed at.
-	#
-	# The mesh stays for now, as something to look at. It is a placeholder: this
-	# surface is what reads as a stone growth rather than as cuttings, and
-	# `GRANULAR-V1.md` replaces it with instanced grains.
-	_terrain.generate_collisions = false
-	_terrain.set_bounds(
-		AABB(
-			Vector3.ONE * -BOUNDS_MARGIN_CELLS,
-			Vector3(field.size) + Vector3.ONE * BOUNDS_MARGIN_CELLS * 2.0
-		)
-	)
-	_terrain.material_override = _localise(material)
-	add_child(_terrain)
-	var viewer := VoxelViewer.new()
-	viewer.view_distance = maxi(field.size.x, field.size.z) + BOUNDS_MARGIN_CELLS * 2
-	_terrain.add_child(viewer)
-	_tool = _terrain.get_voxel_tool()
-	_tool.channel = VoxelBuffer.CHANNEL_SDF
+	# No collider, deliberately, same as the terrain this replaces had none.
+	# Loose material is a medium, not a surface: what carries a character is
+	# `GranularVoxelWorld.dust_at` and the sinking in `character_motor`, which
+	# can express "holds you up, and gives way under you" — a collision shape
+	# can only ever express the first half. Doing only the first half to a
+	# ten-centimetre scattering is what threw the player into the air every
+	# time they drilled under their own feet, and what put a solid wall between
+	# the drill and the rock it was aimed at.
+	_material = _localise(material)
 
 
-## Push everything the field has changed into the terrain. Cheap when nothing
-## moved, which is most of the time: a settled heap reports no dirty cells at
-## all, however many cells it occupies.
+## Redraw everything the field has changed. Cheap when nothing moved, which is
+## most of the time: a settled heap reports no dirty cells at all, however many
+## cells it occupies.
 func flush() -> void:
-	# Only the mesh has to wait for the terrain to stream its blocks in. Grains
-	# are drawn by this node and can start on the first cell.
-	if DRAW_SURFACE_MESH and not _streaming_ready:
-		if _tool == null:
-			return
-		_frames_waited += 1
-		if _frames_waited < STREAMING_WARMUP_FRAMES:
-			return
-		_streaming_ready = true
-	var dirty := region.field.take_dirty()
-	if dirty.is_empty() and _pending_chunks.is_empty():
+	var started := Time.get_ticks_usec()
+	var t_prep := started
+	# The whole per-dirty-cell walk in one native pass: the shell expansion with
+	# its neighbour rings and dedup, and the per-chunk bounds. This was the
+	# largest single granular cost on a collapse (129 of 194 ms/s, more than the
+	# SDF rebuild and the paste put together) and all of it was integer
+	# bookkeeping the field can do over its own dirty list in C++. Clears the
+	# dirty list, so it stands in for take_dirty rather than following it.
+	var shell_radius := (2 if PLUGS_BEHIND_CHIPS else 1) if DRAW_GRAINS else 0
+	var prep: Dictionary = region.field.take_dirty_prep(FLUSH_CHUNK, shell_radius)
+	var shell: PackedInt32Array = prep["shell"]
+	var chunks: PackedInt32Array = prep["chunks"]
+	# The shell queue and pending chunks are work owed too. Without them a heap
+	# that comes to rest with cells still waiting would stall them there for
+	# good: nothing is dirty any more, so nothing would return to finish them.
+	if (
+		shell.is_empty()
+		and chunks.is_empty()
+		and _pending_chunks.is_empty()
+		and _shell_cursor >= _shell_queue.size()
+	):
 		_last_flush_cells = 0
 		_last_flush_chunks = 0
 		return
-	var started := Time.get_ticks_usec()
-	var size := region.field.size
-	var plane := size.x * size.z
-	# Group by chunk, but remember how much of each chunk actually moved. A
-	# whole 16-cube buffer is four thousand cells to read and hand over, and a
-	# settling heap usually touches a handful of them — paying the full cube
-	# per chunk was most of the cost of drawing this at all.
-	var bounds := {}
-	# A cell that moved changes whether its neighbours are still buried, and the
-	# shell reaches two cells in — chips, then the plug layer behind them — so
-	# the cells have to be reconsidered that far out as well. Only worth
-	# collecting when something draws them.
-	var touched := {}
-	for i: int in dirty:
-		var cell := Vector3i(i % size.x, i / plane, (i / size.x) % size.z)
-		if DRAW_GRAINS:
-			touched[i] = true
-			# One cell out, or two when there is a plug layer back there to
-			# reconsider. With the plugs off the second ring is six more cell
-			# tests per dirty cell for an answer nothing reads.
-			for step in ([1, 2] if PLUGS_BEHIND_CHIPS else [1]):
-				if cell.x >= step:
-					touched[i - step] = true
-				if cell.x < size.x - step:
-					touched[i + step] = true
-				if cell.z >= step:
-					touched[i - size.x * step] = true
-				if cell.z < size.z - step:
-					touched[i + size.x * step] = true
-				if cell.y >= step:
-					touched[i - plane * step] = true
-				if cell.y < size.y - step:
-					touched[i + plane * step] = true
-		if not DRAW_SURFACE_MESH:
-			continue
-		var chunk := Vector3i(
-			cell.x / FLUSH_CHUNK, cell.y / FLUSH_CHUNK, cell.z / FLUSH_CHUNK
-		)
-		if bounds.has(chunk):
-			var box: AABB = bounds[chunk]
-			bounds[chunk] = box.expand(Vector3(cell))
-		else:
-			bounds[chunk] = AABB(Vector3(cell), Vector3.ZERO)
-	# Merge this frame's chunks into whatever is still owed. A chunk waiting its
-	# turn keeps growing rather than being replaced, so nothing that moved is
-	# ever dropped — it is only ever drawn a frame or two later.
-	for chunk: Vector3i in bounds:
-		if _pending_chunks.has(chunk):
-			var held: AABB = _pending_chunks[chunk]
-			_pending_chunks[chunk] = held.merge(bounds[chunk])
-		else:
-			_pending_chunks[chunk] = bounds[chunk]
-	# Only so many chunks go over per frame. Each paste makes the plugin remesh
-	# that chunk, and a heap appearing all at once dirties a dozen of them in the
-	# same frame — which is the hitch reported as the spoil "spawning". Spreading
-	# them costs a chunk being a frame or two stale, which no eye can catch at
-	# sixty a second, and turns a spike into a flat line.
+	if DRAW_GRAINS:
+		# Native deduplicated within this flush; the flag dedups against cells
+		# still queued from earlier flushes that have not drained yet.
+		for index in shell:
+			if _shell_queued[index] == 0:
+				_shell_queued[index] = 1
+				_shell_queue.append(index)
+	if DRAW_SURFACE_MESH:
+		# Nine ints per chunk: chunk x,y,z, then the min and max cell that
+		# moved in it. Only the chunk matters now — the native mesher remeshes
+		# a chunk whole, so the box the prep still reports is left unused.
+		var c := 0
+		while c < chunks.size():
+			_pending_chunks[Vector3i(chunks[c], chunks[c + 1], chunks[c + 2])] = true
+			c += 9
+	prof_prep_us += Time.get_ticks_usec() - t_prep
+	_surface_flush_debt += 1
 	var done := 0
-	var drawn: Array[Vector3i] = []
-	for chunk: Vector3i in _pending_chunks:
-		if done >= MESH_CHUNKS_PER_FLUSH:
-			break
-		_flush_box(_pending_chunks[chunk])
-		drawn.append(chunk)
-		done += 1
-	for chunk in drawn:
-		_pending_chunks.erase(chunk)
+	if _surface_flush_debt >= SURFACE_FLUSH_EVERY:
+		_surface_flush_debt = 0
+		var drawn: Array[Vector3i] = []
+		for chunk: Vector3i in _pending_chunks:
+			if done >= MESH_CHUNKS_PER_FLUSH:
+				break
+			_mesh_chunk(chunk)
+			drawn.append(chunk)
+			done += 1
+		for chunk in drawn:
+			_pending_chunks.erase(chunk)
 	_last_flush_ms = float(Time.get_ticks_usec() - started) / 1000.0
-	_last_flush_cells = dirty.size()
+	_last_flush_cells = shell.size()
 	_last_flush_chunks = done
 	_last_pending_chunks = _pending_chunks.size()
-	for index: int in touched:
-		_refresh_shell_cell(index)
+	# Budgeted exactly like the chunks above, and for the same reason measured
+	# the same way. Re-laying chips was 298 of the 425 ms/s a big collapse cost
+	# — a worst frame of 31 ms and sixteen frames a second — because every cell
+	# reconsidered asks the field about itself and its six neighbours, and a
+	# plunge into a heap reconsiders tens of thousands of them in one go.
+	#
+	# Nothing is dropped: cells that miss their turn keep their place in the set
+	# and go next flush. The cost is that stones can be a moment behind the
+	# surface after something violent, which is the cheapest thing in the whole
+	# renderer to be wrong about — they are cosmetic, and the mesh under them
+	# carries the shape meanwhile.
+	var t_shell := Time.get_ticks_usec()
+	var stop := mini(_shell_cursor + SHELL_CELLS_PER_FLUSH, _shell_queue.size())
+	# This flush's budget of cells gathered once, so the field is asked about all
+	# of them in a single native call rather than a dozen binding calls each. The
+	# decision from the answer stays here, in cheap dictionary work — see
+	# `_apply_shell_cell`.
+	var batch := _shell_queue.slice(_shell_cursor, stop)
+	for index in batch:
+		_shell_queued[index] = 0
+	_shell_cursor = stop
+	if not batch.is_empty():
+		var sampled: Dictionary = region.field.sample_shell(
+			batch, PLUGS_BEHIND_CHIPS
+		)
+		var masses: PackedFloat32Array = sampled["mass"]
+		var opens: PackedFloat32Array = sampled["open"]
+		var backs: PackedFloat32Array = sampled["back"]
+		# The mesh surface as an oriented patch (point + normal) near each cell,
+		# from the same reconstruction the mesher marches, so chips seat on the
+		# surface at any facing — top or wall. One batched native call beside the
+		# shell sample, not one per cell.
+		var patches: Dictionary = (
+			region.field.sample_surface_patches(
+				batch, RENDER_MIN_FILL, SMOOTH_CENTRE, SURFACE_ISO
+			) if DRAW_SURFACE_MESH else {}
+		)
+		var patch_pos: PackedVector3Array = patches.get("pos", PackedVector3Array())
+		var patch_nrm: PackedVector3Array = patches.get("normal", PackedVector3Array())
+		var have_patch := not patch_nrm.is_empty()
+		for k in batch.size():
+			var back_open := backs[k] if PLUGS_BEHIND_CHIPS else 1e9
+			var sp := patch_pos[k] if have_patch else Vector3.ZERO
+			var sn := patch_nrm[k] if have_patch else Vector3.ZERO
+			_apply_shell_cell(batch[k], masses[k], opens[k], back_open, sp, sn)
+	# Drained: drop the whole run at once rather than erasing entry by entry.
+	if _shell_cursor >= _shell_queue.size():
+		_shell_queue.clear()
+		_shell_cursor = 0
+	prof_shell_us += Time.get_ticks_usec() - t_shell
 
 
 ## Walk the chips toward what the field holds, a step a frame.
@@ -437,37 +467,72 @@ func flush() -> void:
 func _process(delta: float) -> void:
 	if _animating.is_empty() or _grains == null:
 		return
-	var step := GRAIN_SETTLE_RATE * delta
+	# The chips follow the field, and the field only changes at the flush rate.
+	# Re-laying faster than that is redrawing the same answer: at 200 fps the
+	# animation ran nearly seven times per field update for nothing. Gated to the
+	# flush rate, the whole accumulated interval is handed to `move_toward` so the
+	# grow-in covers the same ground in fewer, larger steps.
+	_lay_debt += delta
+	if _lay_debt < LAY_INTERVAL_S:
+		return
+	var lay_delta := _lay_debt
+	_lay_debt = 0.0
+	# Timed because it is a pass over every animating cell laying up to a dozen
+	# instances each, and it is in none of the flush numbers. If the granular
+	# flush is small but a plunge still drops frames, this is where to look.
+	var t_lay := Time.get_ticks_usec()
+	var step := GRAIN_SETTLE_RATE * lay_delta
 	var settled: Array[int] = []
 	for index: int in _animating:
 		var target: float = _animating[index]
 		var shown: float = move_toward(float(_shell.get(index, 0.0)), target, step)
 		_shell[index] = shown
-		_grains.lay(region, index, shown, _backing.has(index))
-		if is_equal_approx(shown, target):
+		var done := is_equal_approx(shown, target)
+		# Re-lay only when the chips have actually grown by a visible amount, not
+		# every frame the animation ticks. The stones' positions are a hash of
+		# the cell and slot and do not move as a cell fills — only their count
+		# and height do — so re-laying on a fill change of a hair recomputes an
+		# identical layout dozens of times as a cell grows in. That was the whole
+		# of the `lay` cost: at 288 ms/s it was the single most expensive thing in
+		# the granular renderer, a cell settling over 24 to 80 frames re-laid
+		# every one of them. Laying on quantised steps grows a cell in over a
+		# handful of relays and looks the same in motion. The final step is always
+		# laid, so a cell always lands exactly on its target.
+		var last: float = _laid.get(index, -1.0)
+		if done or last < 0.0 or absf(shown - last) >= LAY_STEP:
+			_grains.lay(
+				region, index, shown, _backing.has(index),
+				_surface_pos.get(index, Vector3.ZERO),
+				_surface_nrm.get(index, Vector3.ZERO)
+			)
+			_laid[index] = shown
+		if done:
 			settled.append(index)
 	for index in settled:
 		_animating.erase(index)
+		_laid.erase(index)
+	prof_lay_us += Time.get_ticks_usec() - t_lay
 
 
-## Decide what one cell's chips should be now, and touch the grains only if the
-## answer changed.
+## Decide what one cell's chips should be now, from facts the field already
+## handed over, and touch the grains only if the answer changed.
+##
+## `mass` is the cell's own fill. `open` and `back` are the smallest neighbour
+## fill one and two cells out, from `GranularVoxelField.sample_shell` — the
+## field queries that used to be a dozen binding calls per cell are that one
+## batched call now, and what is left here is the cheap stateful decision.
 ##
 ## The fill threshold matters as much as the membership test: a cell whose
 ## material shifted by a hair would otherwise have its stones re-laid, and
 ## stones that jump a millimetre every frame are the flicker seen from a
 ## distance. Material genuinely on the move crosses it and is re-laid; material
 ## settling by fractions is left alone.
-func _refresh_shell_cell(index: int) -> void:
+func _apply_shell_cell(
+	index: int, mass: float, open: float, back: float,
+	surface_pos: Vector3, surface_nrm: Vector3
+) -> void:
 	if _grains == null:
 		return
-	var field := region.field
-	var size := field.size
-	var plane := size.x * size.z
-	var x := index % size.x
-	var y := index / plane
-	var z := (index / size.x) % size.z
-	var mass := field.mass_at(x, y, z)
 	# A cell that already has stones on it judges "am I still exposed" by a
 	# slacker rule than one deciding to grow them. Without that gap the test is
 	# a knife edge: a *neighbour* drifting either side of `OPEN_MIN_MASS` flips
@@ -477,15 +542,31 @@ func _refresh_shell_cell(index: int) -> void:
 	# while the heap around them lies still. The relay delta above cannot catch
 	# it because this cell's own mass never moved at all.
 	var held := _shell.has(index)
-	var facing := _faces_open(x, y, z, held)
-	if mass < GranularGrainShell.MIN_CELL_MASS or (
-		not facing and not (PLUGS_BEHIND_CHIPS and _backs_open(x, y, z))
+	var facing := open < (OPEN_MIN_MASS_HELD if held else OPEN_MIN_MASS)
+	# No mesh surface here means nothing for a chip to lie on. This is the fringe:
+	# cells holding between the chip floor and `RENDER_MIN_FILL`, where the mesh
+	# has pulled back and left no isosurface — so the field hands back a zero
+	# normal. Drawing a chip there seats it at its raw cell position, up to a
+	# whole cell (0.25 m) proud of where the mesh actually ends. Head-on that is
+	# foreshortened to "a little high"; at the silhouette it is seen edge-on and
+	# reads as stones hanging in the air off the heap. So a cell with no surface
+	# draws nothing, and every chip that is drawn has a surface under it.
+	var no_surface := DRAW_SURFACE_MESH and surface_nrm == Vector3.ZERO
+	if no_surface or mass < GranularGrainShell.MIN_DRAWN_MASS or (
+		not facing and not (PLUGS_BEHIND_CHIPS and back < OPEN_MIN_MASS)
 	):
 		_animating.erase(index)
+		_laid.erase(index)
 		_backing.erase(index)
+		_surface_pos.erase(index)
+		_surface_nrm.erase(index)
 		if _shell.erase(index):
 			_grains.clear_cell(index)
 		return
+	# The mesh surface patch near this cell, kept for the chip lay in `_process`
+	# (which runs on its own clock and cannot re-query the field).
+	_surface_pos[index] = surface_pos
+	_surface_nrm[index] = surface_nrm
 	# Chips if anything open touches this cell, the plug behind them if open is
 	# only two away. The kind changing is a full relay even at identical mass —
 	# a cell buried under fresh spoil trades its twenty chips for one plug.
@@ -502,43 +583,6 @@ func _refresh_shell_cell(index: int) -> void:
 	elif was_backing == is_backing and absf(mass - laid) < GRAIN_RELAY_MASS_DELTA:
 		return
 	_animating[index] = mass
-
-
-## Whether this cell touches anything open — the chip layer.
-##
-## The shell is still two cells deep, but the layers are no longer the same
-## thing drawn twice. The outer one is chips. The one behind it is a single
-## plug per cell, standing where the gaps in the chips land: stones behind the
-## stones, at a twenty-first of the instances the second layer of chips spent
-## on that job — and unlike a second layer of chips it cannot itself have gaps.
-##
-## Cells deeper than that stay undrawn, which is what keeps this in the
-## thousands of instances rather than the millions.
-## `held` says this cell already has stones laid, which slackens the test — see
-## `_refresh_shell_cell` for why the two answers must differ.
-func _faces_open(x: int, y: int, z: int, held := false) -> bool:
-	var limit := OPEN_MIN_MASS_HELD if held else OPEN_MIN_MASS
-	return (
-		_is_open(x + 1, y, z, limit)
-		or _is_open(x - 1, y, z, limit)
-		or _is_open(x, y + 1, z, limit)
-		or _is_open(x, y - 1, z, limit)
-		or _is_open(x, y, z + 1, limit)
-		or _is_open(x, y, z - 1, limit)
-	)
-
-
-## Whether anything open sits two away — the plug layer, when nothing is open
-## nearer. Never seen except through the gaps in the chips standing in front.
-func _backs_open(x: int, y: int, z: int) -> bool:
-	return (
-		_is_open(x + 2, y, z, OPEN_MIN_MASS)
-		or _is_open(x - 2, y, z, OPEN_MIN_MASS)
-		or _is_open(x, y + 2, z, OPEN_MIN_MASS)
-		or _is_open(x, y - 2, z, OPEN_MIN_MASS)
-		or _is_open(x, y, z + 2, OPEN_MIN_MASS)
-		or _is_open(x, y, z - 2, OPEN_MIN_MASS)
-	)
 
 
 ## Mass below which a cell counts as open for the exposure test. Deliberately
@@ -569,42 +613,27 @@ const OPEN_MIN_MASS_HELD := 0.09
 const PLUGS_BEHIND_CHIPS := not DRAW_SURFACE_MESH
 
 
-## Open means neither material nor rock — past the edge of the region counts,
-## so a heap against the border still gets a face.
-func _is_open(x: int, y: int, z: int, limit: float) -> bool:
-	return (
-		region.field.mass_at(x, y, z) < limit
-		and not region.field.is_solid(x, y, z)
-	)
-
-
-## Write back the part of the field that moved, rebuilt as a surface rather
-## than copied across as occupancy.
+## Rebuild one chunk's mesh from the field, whole.
 ##
-## The written box is padded past the cells that actually changed — by the
-## mesher's one-cell overlap plus the kernel's reach, because a cell that moved
-## changes the reconstructed surface everywhere the kernel can see it. That pad
-## used to be clamped back inside the chunk, which left the border cells of the
-## neighbouring chunk holding a surface built from material that had since gone:
-## straight-edged seams across a heap, running along block boundaries. Crossing
-## into the next block costs a remesh there, and that remesh is the point.
-func _flush_box(dirty_box: AABB) -> void:
+## Whole, not just the cells that moved: a mesh replaces, it cannot paste. The
+## native mesher reads its own padding past the chunk — the marching overlap
+## plus the kernel's reach — so a cell that moved on the border reshapes the
+## surface in the neighbouring chunk too; that neighbour is in the dirty list
+## in its own right (the prep expands by the shell radius), and two chunks
+## evaluating the same border cells from the same field land on bit-identical
+## seam vertices. The straight-edged seams the paste path once had cannot come
+## back by construction.
+func _mesh_chunk(chunk: Vector3i) -> void:
 	var size := region.field.size
-	var pad := 1 + SMOOTH_RADIUS
-	var lo := (Vector3i(dirty_box.position) - Vector3i.ONE * pad).clamp(
-		Vector3i.ZERO, size - Vector3i.ONE
-	)
-	var hi := (Vector3i(dirty_box.end) + Vector3i.ONE * pad).clamp(
-		Vector3i.ZERO, size - Vector3i.ONE
-	)
-	var extent := hi - lo + Vector3i.ONE
-	# The whole reconstruction in one native call: occupancy, the separable
-	# blur, and the encode into the buffer's 16-bit channel. This is what the
-	# frame was going into — measured on a one-and-a-half cubic metre collapse,
-	# the field's sweeps cost 0.106 ms a frame and this cost 3.450, worst frame
-	# 15.69. Ninety-seven per cent of the granular frame, all of it per-voxel
-	# GDScript, none of it reachable by a better choice of API.
-	var bytes: PackedByteArray = region.field.build_sdf_box(
+	var lo := chunk * FLUSH_CHUNK
+	var extent := (size - lo).min(Vector3i.ONE * FLUSH_CHUNK)
+	if extent.x <= 0 or extent.y <= 0 or extent.z <= 0:
+		return
+	# Reconstruction and marching cubes in one native call, arrays out. What
+	# used to be here — encode to a 16-bit channel, paste, and a Transvoxel
+	# remesh on the plugin's thread that no timer of ours could see — is gone.
+	var t_sdf := Time.get_ticks_usec()
+	var arrays: Array = region.field.build_mesh_box(
 		lo,
 		extent,
 		SMOOTH_PASSES,
@@ -612,187 +641,33 @@ func _flush_box(dirty_box: AABB) -> void:
 		RENDER_MIN_FILL,
 		SURFACE_ISO,
 		SDF_GAIN,
-		AIR_SDF,
-		SDF_S16_SCALE
+		AIR_SDF
 	)
-	if VERIFY_NATIVE_SDF:
-		_verify_against_script_path(lo, extent, bytes)
-	var buffer := VoxelBuffer.new()
-	buffer.create(extent.x, extent.y, extent.z)
-	buffer.set_channel_from_byte_array(VoxelBuffer.CHANNEL_SDF, bytes)
-	_tool.paste(lo, buffer, 1 << VoxelBuffer.CHANNEL_SDF)
-
-
-## Rebuild the same box the old way and complain if a single byte differs.
-##
-## Off in play, and the reason the script path below is still here rather than
-## deleted: it is the specification the native reconstruction was written
-## against, the same arrangement as `GranularVoxelField` and its script twin.
-## Turning this on costs the whole GDScript flush again, so it is a check to
-## run deliberately, not a safety net to leave on.
-func _verify_against_script_path(
-	lo: Vector3i,
-	extent: Vector3i,
-	native_bytes: PackedByteArray
-) -> void:
-	var work_extent := extent + Vector3i.ONE * (SMOOTH_RADIUS * 2)
-	_reconstruct(lo - Vector3i.ONE * SMOOTH_RADIUS, work_extent)
-	_encode_reconstructed(lo, extent, work_extent)
-	if _sdf_bytes == native_bytes:
+	prof_sdf_us += Time.get_ticks_usec() - t_sdf
+	# The commit: handing the arrays to the mesh, which uploads to the GPU.
+	var t_mesh := Time.get_ticks_usec()
+	var instance: MeshInstance3D = _chunk_meshes.get(chunk)
+	if arrays.is_empty():
+		# A chunk the surface has left entirely — most of a region, most of the
+		# time. No node at all, rather than an empty mesh.
+		if instance != null:
+			_chunk_meshes.erase(chunk)
+			instance.queue_free()
+		prof_mesh_us += Time.get_ticks_usec() - t_mesh
 		return
-	var differing := 0
-	for i in mini(_sdf_bytes.size(), native_bytes.size()):
-		if _sdf_bytes[i] != native_bytes[i]:
-			differing += 1
-	push_error(
-		"native SDF differs from the script path at %s extent %s: %d of %d bytes"
-		% [str(lo), str(extent), differing, _sdf_bytes.size()]
-	)
-
-
-## Low-pass the occupancy over a box into something with a gradient worth
-## reading. Result is indexed over `work_extent` and lands in whichever array
-## `_smoothed_in_scratch` names.
-##
-## Rock is asked for here and memoised by the field, so a region pays for the
-## ground under a heap once, over the cells material has actually reached.
-func _reconstruct(work_lo: Vector3i, work_extent: Vector3i) -> void:
-	var field := region.field
-	var total := work_extent.x * work_extent.y * work_extent.z
-	if _occupancy.size() < total:
-		_occupancy.resize(total)
-		_scratch.resize(total)
-	_mass_box = field.copy_mass_box(work_lo, work_extent)
-	_solid_box = field.copy_solid_box(work_lo, work_extent)
-	# Rock counts as full. Without it the low-pass thins the heap out exactly
-	# where it meets the ground, and material ends in a feathered lip hanging
-	# over the rock instead of sitting in it — the dark line drawn around every
-	# pile.
-	var floor_scale := 1.0 / (1.0 - RENDER_MIN_FILL)
-	for i in total:
-		if _solid_box[i] != 0:
-			_occupancy[i] = 1.0
-		else:
-			_occupancy[i] = maxf(_mass_box[i] - RENDER_MIN_FILL, 0.0) * floor_scale
-	# Separable: passes of three taps each, never one pass of twenty-seven.
-	var strides := [1, work_extent.x, work_extent.x * work_extent.z]
-	var axis_sizes := [work_extent.x, work_extent.z, work_extent.y]
-	# Each pass writes into the other array, so after an odd number of them the
-	# answer is in `_scratch` and after an even number it is back in
-	# `_occupancy`. Tracked rather than assumed — the pass count is a knob.
-	_smoothed_in_scratch = false
-	for _round in SMOOTH_PASSES:
-		for axis in 3:
-			if _smoothed_in_scratch:
-				_blur_axis(
-					_scratch, _occupancy, total, strides[axis], axis_sizes[axis]
-				)
-			else:
-				_blur_axis(
-					_occupancy, _scratch, total, strides[axis], axis_sizes[axis]
-				)
-			_smoothed_in_scratch = not _smoothed_in_scratch
-
-
-## One pass of the separable kernel along whichever axis `stride` steps. Ends
-## are clamped rather than wrapped, which is why the work box carries a ring the
-## written box does not use.
-##
-## Walked line by line rather than by computing each cell's coordinate back out
-## of its index, which cost a divide and a modulo per cell — and this runs three
-## times over every cell of every box that moves.
-func _blur_axis(
-	source: PackedFloat32Array,
-	target: PackedFloat32Array,
-	total: int,
-	stride: int,
-	axis_size: int
-) -> void:
-	var scale := 1.0 / (SMOOTH_CENTRE + 2.0)
-	var span := stride * axis_size
-	var tail := (axis_size - 1) * stride
-	for base in range(0, total, span):
-		for offset in stride:
-			var start := base + offset
-			var last := start + tail
-			var i := start
-			while i <= last:
-				var sum := source[i] * SMOOTH_CENTRE
-				sum += source[i - stride] if i > start else source[i]
-				sum += source[i + stride] if i < last else source[i]
-				target[i] = sum * scale
-				i += stride
-
-
-## Turn the reconstructed field into the bytes of a 16-bit SDF channel.
-##
-## Kept as the reference the native path is checked against, not as the path
-## anything runs. See `_verify_against_script_path`.
-func _encode_reconstructed(
-	lo: Vector3i,
-	extent: Vector3i,
-	work_extent: Vector3i
-) -> void:
-	var smoothed := _scratch if _smoothed_in_scratch else _occupancy
-	var stride_z := work_extent.x
-	var stride_y := work_extent.x * work_extent.z
-	# The whole channel is built here and handed over in one call, where it used
-	# to go voxel by voxel through `set_voxel_f`.
-	#
-	# This buys nothing today, and the measurement saying so is the reason to
-	# keep it. Over eight thousand voxels: the bare loop costs 0.17 ms, the loop
-	# with its array reads and arithmetic 0.38, `encode_s16` per voxel takes it
-	# to 0.66 and `set_voxel_f` per voxel to 0.99 — while handing the finished
-	# channel over whole costs 0.0005. Swapping the write is therefore a wash,
-	# because in GDScript the loop *is* the cost and no choice of API touches it.
-	#
-	# What it changes is the ceiling for the native port. With the loop in C++
-	# at hundredths of a millisecond, eight thousand binding calls would be a
-	# floor of six tenths — the port would be capped by the very last thing it
-	# could not move. One handover has no such floor, and the bytes it wants are
-	# the bytes built here.
-	var total := extent.x * extent.y * extent.z
-	if _sdf_bytes.size() != total * 2:
-		_sdf_bytes.resize(total * 2)
-	# Every voxel is written, air included, so cells the field has emptied are
-	# cleared rather than left holding whatever was written last time. That is
-	# what the `fill_f` before the walk used to do.
-	var air := int(AIR_SDF * SDF_S16_SCALE)
-	for y in extent.y:
-		for z in extent.z:
-			# The written box sits inside the work box by the kernel's radius,
-			# so walking one row of it is walking one row of the scratch.
-			var wi := (
-				(y + SMOOTH_RADIUS) * stride_y
-				+ (z + SMOOTH_RADIUS) * stride_z
-				+ SMOOTH_RADIUS
-			)
-			# The buffer's own layout, which is not the field's: y runs fastest,
-			# then x, then z. Measured against the plugin rather than assumed.
-			var vi := (y + extent.y * extent.x * z) * 2
-			for x in extent.x:
-				# Rock belongs to the world's own terrain, which already draws
-				# it; claiming it here too would be a second surface in the same
-				# place. The exception is rock directly under material, which
-				# this one does claim, so a heap's underside is buried in the
-				# ground rather than stopping exactly at it — an edge that lands
-				# on the rock is an edge with a shadow under it.
-				#
-				# Under, and only under. Claiming rock beside material as well
-				# put a solid cell where the cell above it is air, so its top
-				# face got drawn — at the cell boundary, which is up to half a
-				# cell above the ground the metre-scale terrain actually shows.
-				# That was a lip one cell wide ringing every heap, quantised to
-				# the grid: the sawtooth along the rim.
-				var encoded := air
-				if _solid_box[wi] == 0 or _mass_box[wi + stride_y] > 0.0:
-					var distance := clampf(
-						(SURFACE_ISO - smoothed[wi]) * SDF_GAIN, -1.0, 1.0
-					)
-					encoded = int(distance * SDF_S16_SCALE)
-				_sdf_bytes.encode_s16(vi, encoded)
-				wi += 1
-				vi += extent.y * 2
+	if instance == null:
+		instance = MeshInstance3D.new()
+		instance.mesh = ArrayMesh.new()
+		instance.material_override = _material
+		# Vertices arrive in cell units of the region's frame; the scale is the
+		# only transform a chunk needs.
+		instance.scale = Vector3.ONE * region.field.cell_size
+		add_child(instance)
+		_chunk_meshes[chunk] = instance
+	var mesh := instance.mesh as ArrayMesh
+	mesh.clear_surfaces()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	prof_mesh_us += Time.get_ticks_usec() - t_mesh
 
 
 func flush_report() -> String:
@@ -849,5 +724,17 @@ static func _fallback_material() -> Material:
 	material.shader = load(_SURFACE_SHADER_PATH) as Shader
 	material.set_shader_parameter("u_albedo", load(_ALBEDO_PATH) as Texture2D)
 	material.set_shader_parameter("u_normal", load(_NORMAL_PATH) as Texture2D)
+	# The same warp and detail the game's material carries
+	# (`spoil_material_grain.tres`), so a bench shows what the game shows.
+	#
+	# POM is off: its parallax recesses the visible surface inward, more at
+	# grazing angles, and the instanced chips sit on the true geometry — so with
+	# POM on the stones float above the apparent surface, worst at the
+	# silhouette. The pebble field still shades as cobbles through the normal;
+	# only the view-dependent depth (which the chips cannot follow) is gone.
+	material.set_shader_parameter("u_pom_steps", 0)
+	material.set_shader_parameter("u_warp_amp", 0.3)
+	material.set_shader_parameter("u_warp_freq", 0.7)
+	material.set_shader_parameter("u_detail_amount", 0.5)
 	_surface_material = material
 	return _surface_material

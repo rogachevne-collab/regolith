@@ -43,6 +43,14 @@ func is_hinge_base() -> bool:
 	return hinge_definition != null
 
 
+func is_wheel() -> bool:
+	return wheel_definition != null
+
+
+func is_suspension() -> bool:
+	return suspension_definition != null
+
+
 func is_thruster() -> bool:
 	return thruster_definition != null
 

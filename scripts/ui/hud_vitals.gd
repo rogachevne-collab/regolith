@@ -1,19 +1,32 @@
 extends Control
-## "СИСТЕМЫ СКАФАНДРА" suit-systems panel (bottom-left). Presentation only: reads
-## the authoritative SuitState (health / oxygen / hydrogen) via its `changed`
-## signal and renders three vital bars with the frozen hud_bar shader + HudTokens
-## palette. Colour follows the state language: steel-blue normal → amber warning →
-## red critical as the fraction drops. Never writes SuitState (see HUD-UI-01).
+## Suit telemetry cluster (bottom-left). Presentation only: reads the
+## authoritative SuitState (health / oxygen / hydrogen) via its `changed` signal
+## and renders three vital bars with the frozen hud_bar shader + HudTokens
+## palette. Never writes SuitState (see HUD-UI-01).
+##
+## Ambient by design. Vitals sit at 100% for most of a session, so the nominal
+## state is the one worth optimising: the numerals recede to COL_DIM and only a
+## degraded channel lights up (amber → red, with a stronger glow at critical) to
+## claim attention. Frameless — no panel fill, border or overlay — so the cluster
+## stays subordinate to the world; an outline on the text keeps it legible over
+## bright regolith without the weight of a box, and a single hairline rule binds
+## the three rows into one instrument instead of three floating readouts.
 
-const PANEL_SIZE := Vector2(252, 112)
-const BAR_LEN := 140.0
+const BAR_LEN := 92.0
+const BAR_H := 6.0
+# Width reserved for the numerals so the cluster's right edge does not jitter
+# as values step 100 → 99 → 9.
+const VALUE_COL := 34.0
 
 # Fraction thresholds for the state palette (drops trigger warning then critical).
 const WARN_FRACTION := 0.5
 const CRIT_FRACTION := 0.25
 
+# Glow rises on critical so a failing channel reads urgent, not merely red.
+const GLOW_NOMINAL := 0.14
+const GLOW_CRITICAL := 0.34
+
 var _suit: Node
-var _panel: Panel
 # channel key -> {"mat": ShaderMaterial, "value": Label}
 var _bars: Dictionary = {}
 
@@ -33,84 +46,57 @@ func _ready() -> void:
 
 
 func _build() -> void:
-	_panel = Panel.new()
-	_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	# Anchor bottom-left so it stays clear of the top-left target panel and the
-	# bottom-centre toolbar.
-	_panel.anchor_top = 1.0
-	_panel.anchor_bottom = 1.0
-	_panel.offset_left = HudTokens.PANEL_MARGIN
-	_panel.offset_right = HudTokens.PANEL_MARGIN + PANEL_SIZE.x
-	_panel.offset_top = -(PANEL_SIZE.y + HudTokens.PANEL_MARGIN)
-	_panel.offset_bottom = -HudTokens.PANEL_MARGIN
-	add_child(_panel)
+	var cluster := HBoxContainer.new()
+	cluster.add_theme_constant_override("separation", 9)
+	cluster.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(cluster)
+	# Collapse the rect onto the bottom-left corner at the shared panel margin and
+	# let it grow up/right to whatever the rows need. Growth directions rather
+	# than a MINSIZE preset: the preset would bake in the minimum size measured at
+	# call time (zero, before the rows exist), while these re-resolve on every
+	# layout pass — so there is no hand-kept panel size to drift out of sync.
+	cluster.anchor_left = 0.0
+	cluster.anchor_right = 0.0
+	cluster.anchor_top = 1.0
+	cluster.anchor_bottom = 1.0
+	cluster.offset_left = HudTokens.PANEL_MARGIN
+	cluster.offset_right = HudTokens.PANEL_MARGIN
+	cluster.offset_top = -HudTokens.PANEL_MARGIN
+	cluster.offset_bottom = -HudTokens.PANEL_MARGIN
+	cluster.grow_horizontal = Control.GROW_DIRECTION_END
+	cluster.grow_vertical = Control.GROW_DIRECTION_BEGIN
 
-	var margin := MarginContainer.new()
-	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	margin.add_theme_constant_override("margin_left", 12)
-	margin.add_theme_constant_override("margin_right", 12)
-	margin.add_theme_constant_override("margin_top", 9)
-	margin.add_theme_constant_override("margin_bottom", 9)
-	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_panel.add_child(margin)
+	# Hairline rule: the only chrome left, standing in for the old frame.
+	var rule := ColorRect.new()
+	rule.color = Color(HudTokens.COL_OK, 0.5)
+	rule.custom_minimum_size = Vector2(1, 0)
+	rule.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cluster.add_child(rule)
 
-	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 5)
-	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	margin.add_child(vb)
+	# Grid, not stacked rows: a GridContainer sizes each column to the widest
+	# cell it actually contains, so the three bars share one true left edge no
+	# matter how "ЗДР" / "О₂" / "Н₂" differ in rendered width.
+	var grid := GridContainer.new()
+	grid.columns = 3
+	grid.add_theme_constant_override("h_separation", 8)
+	grid.add_theme_constant_override("v_separation", 6)
+	grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cluster.add_child(grid)
 
-	# Compact single-line header: vitals stay subordinate to the world and never
-	# compete with the bottom-centre toolbar.
-	var title_row := HBoxContainer.new()
-	title_row.add_theme_constant_override("separation", 6)
-	title_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vb.add_child(title_row)
-
-	title_row.add_child(HudTokens.make_emblem(14.0))
-
-	var title := Label.new()
-	title.text = "СКАФАНДР"
-	title.theme_type_variation = &"HudSmall"
-	title.add_theme_color_override("font_color", HudTokens.COL_TITLE)
-	title.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	title_row.add_child(title)
-
-	var spacer := Control.new()
-	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	title_row.add_child(spacer)
-
-	var online := Label.new()
-	online.text = "В СЕТИ"
-	online.theme_type_variation = &"HudSmall"
-	online.add_theme_color_override("font_color", HudTokens.COL_OK)
-	online.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	online.size_flags_horizontal = Control.SIZE_SHRINK_END
-	title_row.add_child(online)
-
-	# --- Vital bars: health (ЗДР) / oxygen (О₂) / hydrogen (Н₂) ---
-	_add_bar(vb, "health", "ЗДР")
-	_add_bar(vb, "oxygen", "О\u2082")
-	_add_bar(vb, "hydrogen", "Н\u2082")
-
-	# Glow / border / scanline overlay on top of the fill.
-	_panel.add_child(HudTokens.make_panel_overlay(PANEL_SIZE))
+	_add_bar(grid, "health", "ЗДР")
+	_add_bar(grid, "oxygen", "О₂")
+	_add_bar(grid, "hydrogen", "Н₂")
 
 
-func _add_bar(parent_node: Node, key: String, label_text: String) -> void:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 6)
-	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	parent_node.add_child(row)
-
+func _add_bar(grid: GridContainer, key: String, label_text: String) -> void:
 	var name_label := Label.new()
 	name_label.text = label_text
 	name_label.theme_type_variation = &"HudSmall"
-	name_label.custom_minimum_size = Vector2(24, 0)
 	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	row.add_child(name_label)
+	_outline(name_label)
+	grid.add_child(name_label)
 
-	var bar_size := Vector2(BAR_LEN, HudTokens.BAR_SIZE.y)
+	var bar_size := Vector2(BAR_LEN, BAR_H)
 	var bar := ColorRect.new()
 	bar.color = Color(1, 1, 1, 1)
 	bar.custom_minimum_size = bar_size
@@ -121,21 +107,30 @@ func _add_bar(parent_node: Node, key: String, label_text: String) -> void:
 	mat.set_shader_parameter("rect_size", bar_size)
 	mat.set_shader_parameter("fill", 1.0)
 	mat.set_shader_parameter("fill_color", HudTokens.COL_OK)
-	mat.set_shader_parameter("segments", 24.0)
-	mat.set_shader_parameter("gap_ratio", 0.16)
-	mat.set_shader_parameter("glow_strength", 0.22)
-	mat.set_shader_parameter("lead_strength", 0.35)
+	mat.set_shader_parameter("segments", 16.0)
+	mat.set_shader_parameter("gap_ratio", 0.18)
+	mat.set_shader_parameter("glow_strength", GLOW_NOMINAL)
+	mat.set_shader_parameter("lead_strength", 0.24)
 	bar.material = mat
-	row.add_child(bar)
+	grid.add_child(bar)
 
 	var value_label := Label.new()
 	value_label.theme_type_variation = &"HudValue"
-	value_label.custom_minimum_size = Vector2(32, 0)
+	value_label.add_theme_font_size_override("font_size", 12)
+	value_label.custom_minimum_size = Vector2(VALUE_COL, 0)
 	value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	value_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	row.add_child(value_label)
+	_outline(value_label)
+	grid.add_child(value_label)
 
 	_bars[key] = {"mat": mat, "value": value_label}
+
+
+# Frameless text needs its own contrast: a tight dark outline keeps the cluster
+# readable against sunlit regolith without reintroducing a panel behind it.
+func _outline(label: Label) -> void:
+	label.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 0.75))
+	label.add_theme_constant_override("outline_size", 3)
 
 
 func _refresh() -> void:
@@ -154,9 +149,18 @@ func _update_bar(key: String, fraction: float) -> void:
 	var mat: ShaderMaterial = refs["mat"]
 	mat.set_shader_parameter("fill", fraction)
 	mat.set_shader_parameter("fill_color", col)
+	mat.set_shader_parameter(
+		"glow_strength",
+		GLOW_CRITICAL if fraction <= CRIT_FRACTION else GLOW_NOMINAL
+	)
 	var value: Label = refs["value"]
 	value.text = "%d%%" % int(round(fraction * 100.0))
-	value.add_theme_color_override("font_color", col)
+	# Nominal readings stay quiet; a degraded channel is the only thing that
+	# earns a lit numeral.
+	value.add_theme_color_override(
+		"font_color",
+		HudTokens.COL_DIM if fraction > WARN_FRACTION else col
+	)
 
 
 func _color_for_fraction(fraction: float) -> Color:

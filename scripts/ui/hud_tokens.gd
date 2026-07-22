@@ -32,6 +32,7 @@ const TICK_RED := Color(0.780, 0.239, 0.239, 0.5)    # #C73D3D
 const PANEL_MARGIN := 48        # panel↔screen (48–52px)
 const SECTION_GAP := 11         # row/section gap
 const BAR_SIZE := Vector2(232, 10)
+const SEGMENT_PITCH_PX := 8.0   # one bar tick per ~8 px, any bar length
 const SLOT_SIZE := Vector2(52, 52)
 const SLOT_GAP := 10
 const TOOLBAR_BOTTOM := 48
@@ -64,6 +65,8 @@ const TOOL_CODES := {
 	"rover_frame": "RFR",
 	"wheel_suspension": "SUS",
 	"drive_wheel": "WHL",
+	"suspension_small": "SUS",
+	"wheel_med": "WHL",
 	"cockpit": "CPT",
 	"power_battery_small": "BAT",
 	"power_distributor_small": "DST",
@@ -101,6 +104,8 @@ const ARCHETYPE_LABELS := {
 	"hinge_top": "ПЛАТФОРМА ШАРНИРА",
 	"wheel_suspension": "ПОДВЕСКА",
 	"drive_wheel": "КОЛЕСО",
+	"suspension_small": "ПОДВЕСКА S",
+	"wheel_med": "КОЛЕСО M",
 	"cockpit": "КОКПИТ",
 	"power_battery_small": "БАТАРЕЯ М",
 	"power_distributor_small": "РАСПРЕД М",
@@ -113,6 +118,8 @@ const ARCHETYPE_LABELS := {
 const ROVER_ORIENTATION_HINTS := {
 	"wheel_suspension": "↑ рама  ↓ гнездо",
 	"drive_wheel": "↑ подвеска  ↔ протектор = ход",
+	"suspension_small": "↑ рама  ↓ гнездо",
+	"wheel_med": "↑ подвеска  ↔ протектор = ход",
 	"cockpit": "↔ стекло = перед",
 }
 
@@ -423,8 +430,14 @@ static func item_color(item_id: String) -> Color:
 
 ## Colored plate with a short item code. API is bound to item_id so future PNG
 ## art can replace the primitive without changing terminal transfer contracts.
-static func make_item_icon(item_id: String, size: float = SLOT_SIZE.x) -> Control:
-	var icon_size := Vector2(size, size)
+## `min_width` widens the plate without making it taller — small square plates
+## clip three-letter codes.
+static func make_item_icon(
+	item_id: String,
+	size: float = SLOT_SIZE.x,
+	min_width: float = 0.0
+) -> Control:
+	var icon_size := Vector2(maxf(size, min_width), size)
 	var holder := Control.new()
 	holder.custom_minimum_size = icon_size
 	holder.size = icon_size
@@ -542,6 +555,43 @@ static func make_national_tick() -> Control:
 	return holder
 
 
+## True while any sibling HUD window (terminal / actuator / wheel / map) is open.
+## The world-facing chrome — target readout, E-prompt, reticle — steps aside for
+## a window instead of drawing under it and repeating what it already shows.
+static func modal_window_open(widget: Node) -> bool:
+	var parent_node := widget.get_parent()
+	if parent_node == null:
+		return false
+	for sibling: Node in parent_node.get_children():
+		if sibling == widget or not sibling.has_method("is_open"):
+			continue
+		if bool(sibling.call("is_open")):
+			return true
+	return false
+
+
+## Framed sub-panel fill used by the blocks inside a terminal / factory window
+## (store panels, recipe catalog, production queue). One frame language for all
+## of them: faint fill + hairline border, no glow — the window owns the glow.
+static func make_subpanel_style() -> StyleBoxFlat:
+	var box := StyleBoxFlat.new()
+	box.bg_color = Color(0.043, 0.067, 0.094, 0.55)
+	box.set_corner_radius_all(2)
+	box.set_border_width_all(1)
+	box.border_color = COL_BORDER
+	return box
+
+
+## Dim uppercase section caption used above the blocks of a window.
+static func make_section_header(text: String) -> Label:
+	var header := Label.new()
+	header.text = text
+	header.theme_type_variation = &"HudSmall"
+	header.add_theme_color_override("font_color", COL_DIM)
+	header.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return header
+
+
 static func make_gap(h: int) -> Control:
 	var c := Control.new()
 	c.custom_minimum_size = Vector2(0, h)
@@ -556,6 +606,13 @@ static func make_divider() -> Panel:
 	div.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	div.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return div
+
+
+## Segment count for a bar of `width`: one segment per ~SEGMENT_PITCH_PX, so
+## every bar in the HUD keeps the same tick spacing whatever its length. A fixed
+## count instead stretches ticks on a wide bar and crushes them on a short one.
+static func segments_for_width(width: float) -> float:
+	return maxf(roundf(width / SEGMENT_PITCH_PX), 4.0)
 
 
 ## Segmented progress bar matching the suit vitals chrome. Returns
@@ -586,7 +643,7 @@ static func make_progress_bar(
 	mat.set_shader_parameter("rect_size", bar_size)
 	mat.set_shader_parameter("fill", 0.0)
 	mat.set_shader_parameter("fill_color", COL_VALID)
-	mat.set_shader_parameter("segments", 28.0)
+	mat.set_shader_parameter("segments", segments_for_width(width))
 	mat.set_shader_parameter("gap_ratio", 0.14)
 	mat.set_shader_parameter("glow_strength", 0.34)
 	mat.set_shader_parameter("lead_strength", 0.55)
@@ -601,3 +658,20 @@ static func make_progress_bar(
 	row.add_child(value_label)
 
 	return {"row": row, "mat": mat, "value": value_label}
+
+
+## Let a progress bar row stretch with its container instead of holding a frozen
+## pixel width. The shader draws segments in local pixels, so rect_size has to
+## follow the real width — a fixed-width bar inside a resizable window either
+## leaves a gap or overruns its column.
+static func stretch_progress_bar(row: HBoxContainer, mat: ShaderMaterial) -> void:
+	var bar := row.get_child(1) as ColorRect
+	if bar == null or mat == null:
+		return
+	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bar.custom_minimum_size.x = 40.0
+	bar.resized.connect(
+		func() -> void:
+			mat.set_shader_parameter("rect_size", Vector2(bar.size.x, BAR_SIZE.y))
+			mat.set_shader_parameter("segments", segments_for_width(bar.size.x))
+	)

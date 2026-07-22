@@ -75,7 +75,12 @@ func _sync_piles(rows: Array[Dictionary]) -> void:
 		else:
 			var body := _make_pile(row)
 			if body != null:
+				# global_position only resolves once the node is inside the
+				# tree. Setting it in _make_pile() asserted every frame and
+				# silently left the body at the projection origin, so a drop
+				# never landed where the simulation put it.
 				add_child(body)
+				body.global_position = _row_position(row)
 				_bodies[pile_id] = body
 	for pile_id_variant: Variant in _bodies.keys():
 		var pile_id := int(pile_id_variant)
@@ -93,9 +98,7 @@ func _update_body(body: RigidBody3D, row: Dictionary) -> void:
 	var resource_id := str(row.get("resource_id", ""))
 	var amount_kg := float(row.get("amount_kg", 0.0))
 	_apply_mass_and_visual(body, amount_kg)
-	var source_position := _CODEC.vector3_from_variant(
-		row.get("position", Vector3.ZERO)
-	)
+	var source_position := _row_position(row)
 	if source_position.distance_squared_to(body.global_position) > MERGE_TELEPORT_DISTANCE_SQ:
 		body.global_position = source_position
 	body.set_meta("interaction_metadata", {
@@ -103,6 +106,10 @@ func _update_body(body: RigidBody3D, row: Dictionary) -> void:
 		"resource_id": resource_id,
 		"amount_kg": amount_kg,
 	})
+
+
+func _row_position(row: Dictionary) -> Vector3:
+	return _CODEC.vector3_from_variant(row.get("position", Vector3.ZERO))
 
 
 func _make_pile(row: Dictionary) -> RigidBody3D:
@@ -114,10 +121,6 @@ func _make_pile(row: Dictionary) -> RigidBody3D:
 
 	var body := RigidBody3D.new()
 	body.name = "WorldLootPile_%d" % pile_id
-	var source_position := _CODEC.vector3_from_variant(
-		row.get("position", Vector3.ZERO)
-	)
-	body.global_position = source_position
 	body.collision_layer = LOOT_COLLISION_LAYER
 	body.collision_mask = LOOT_COLLISION_MASK
 	body.continuous_cd = true

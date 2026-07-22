@@ -1,9 +1,9 @@
-[gd_resource type="Resource" script_class="ElementArchetype" format=3]
+[gd_resource type="Resource" script_class="ElementArchetype" format=3 uid="uid://cd2ydubmmes43"]
 
 [ext_resource type="Script" uid="uid://c2p36g85wqkru" path="res://scripts/simulation/resources/build_requirement.gd" id="1"]
 [ext_resource type="Script" uid="uid://b6d2jhfw581hb" path="res://scripts/simulation/resources/collider_definition.gd" id="2"]
 [ext_resource type="Script" uid="uid://c4hgnuqnf2up8" path="res://scripts/simulation/resources/port_definition.gd" id="3"]
-[ext_resource type="Script" path="res://scripts/simulation/resources/hinge_definition.gd" id="4"]
+[ext_resource type="Script" uid="uid://b8fqr3bpm7ydo" path="res://scripts/simulation/resources/hinge_definition.gd" id="4"]
 [ext_resource type="Script" uid="uid://bfuxth8e6lccw" path="res://scripts/simulation/resources/structural_mount_pad.gd" id="5"]
 [ext_resource type="Script" uid="uid://bxidpb3tep3ih" path="res://scripts/simulation/resources/element_archetype.gd" id="6"]
 
@@ -19,19 +19,8 @@ size = Vector3(0.4, 0.4, 0.4)
 [sub_resource type="Resource" id="HingeDefinition"]
 script = ExtResource("4")
 top_archetype_id = "hinge_top"
-axis_face = 2
-top_offset_cells = 1
-bend_axis_face = 0
 min_angle_rad = -1.5707963267949
 max_angle_rad = 1.5707963267949
-default_speed_limit_rad_s = 0.5
-forward_velocity_rad_s = 1.0
-reverse_velocity_rad_s = 1.0
-torque_limit_nm = 3000.0
-max_velocity_rad_s = 2.0
-max_torque_limit_nm = 20000.0
-damping_nm_s_per_rad = 50.0
-power_draw_w = 800.0
 
 [sub_resource type="Resource" id="DrivePort"]
 script = ExtResource("3")

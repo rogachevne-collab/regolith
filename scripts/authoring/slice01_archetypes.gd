@@ -6,6 +6,8 @@ const ROVER_IDS: PackedStringArray = [
 	"rover_frame",
 	"wheel_suspension",
 	"drive_wheel",
+	"suspension_small",
+	"wheel_med",
 	"cockpit",
 	"power_battery_small",
 	"power_distributor_small",
@@ -216,6 +218,14 @@ static func wheel_suspension() -> ElementArchetype:
 
 static func drive_wheel() -> ElementArchetype:
 	return load_required("drive_wheel")
+
+
+static func suspension_small() -> ElementArchetype:
+	return load_required("suspension_small")
+
+
+static func wheel_med() -> ElementArchetype:
+	return load_required("wheel_med")
 
 
 static func cockpit() -> ElementArchetype:

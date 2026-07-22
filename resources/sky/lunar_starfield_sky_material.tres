@@ -13,3 +13,7 @@ shader_parameter/plane_width = 0.1
 shader_parameter/dust_strength = 0.75
 shader_parameter/bulge_strength = 0.6
 shader_parameter/bulge_warm = Color(1, 0.86, 0.72, 1)
+shader_parameter/sun_color = Color(1, 0.96, 0.88, 1)
+shader_parameter/sun_angular_diameter_deg = 2.0
+shader_parameter/sun_core_energy = 10.0
+shader_parameter/sun_corona_energy = 1.8

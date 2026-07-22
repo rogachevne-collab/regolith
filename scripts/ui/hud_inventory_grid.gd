@@ -15,8 +15,10 @@ var _peer_store_id := ""
 var _snapshot: Dictionary = {}
 var _column_width := 248.0
 var _slot_size := HudTokens.SLOT_SIZE
-var _max_height := 0.0
 var _slot_gap: float = float(HudTokens.SLOT_GAP)
+## Fill mode: the grid takes the height its container gives it and scrolls
+## inside. Off, it grows with its content (legacy shrink-wrapped panels).
+var _fill_mode := false
 
 var _scroll: ScrollContainer
 var _grid: GridContainer
@@ -27,9 +29,11 @@ var _pending_command_ids: Dictionary = {}
 
 func _ready() -> void:
 	size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	if not _fill_mode:
+		size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	_build()
+	_apply_fill_mode()
 
 
 func setup(gateway: WorldCommandGateway) -> void:
@@ -40,14 +44,29 @@ func setup(gateway: WorldCommandGateway) -> void:
 		_gateway.command_completed.connect(_on_command_completed)
 
 
+## Height comes from the container in fill mode; the grid only ever scrolls.
+func set_fill_mode(on: bool) -> void:
+	_fill_mode = on
+	if on:
+		size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_apply_fill_mode()
+
+
+func _apply_fill_mode() -> void:
+	if _scroll == null or not _fill_mode:
+		return
+	_scroll.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_scroll.custom_minimum_size.y = 0.0
+	_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	custom_minimum_size.y = 0.0
+
+
 func configure_layout(
 	column_width: float,
-	slot_size: Vector2,
-	max_height: float = 0.0
+	slot_size: Vector2
 ) -> void:
 	_column_width = column_width
 	_slot_size = slot_size
-	_max_height = max_height
 	_slot_gap = (
 		8.0 if slot_size.x < HudTokens.SLOT_SIZE.x else float(HudTokens.SLOT_GAP)
 	)
@@ -155,7 +174,10 @@ func _rebuild_grid() -> void:
 func _update_columns() -> void:
 	if _grid == null:
 		return
-	var inner_w := maxf(_column_width - 20.0, _slot_size.x)
+	# Once laid out, the real width wins: the caller's column estimate is only a
+	# seed for the first frame. Reserve the scrollbar either way.
+	var width := (size.x - 14.0) if size.x > 1.0 else (_column_width - 20.0)
+	var inner_w := maxf(width, _slot_size.x)
 	var cell_w := _slot_size.x + _slot_gap
 	var cols := clampi(int(floor((inner_w + _slot_gap) / cell_w)), GRID_COLUMNS_MIN, GRID_COLUMNS_MAX)
 	if _grid.columns != cols:
@@ -172,22 +194,18 @@ func _content_height() -> float:
 
 
 func _apply_height_budget() -> void:
-	if _scroll == null:
+	if _scroll == null or _fill_mode:
 		return
-	var content_h := _content_height()
-	var budget := content_h
-	if _max_height > 0.0:
-		budget = minf(content_h, _max_height)
+	var budget := _content_height()
 	_scroll.custom_minimum_size.y = budget
 	_scroll.size.y = budget
-	_scroll.vertical_scroll_mode = (
-		ScrollContainer.SCROLL_MODE_AUTO
-		if content_h > budget + 0.5
-		else ScrollContainer.SCROLL_MODE_DISABLED
-	)
+	_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 
 
 func _update_minimum_size() -> void:
+	if _fill_mode:
+		custom_minimum_size.y = 0.0
+		return
 	custom_minimum_size.y = _scroll.custom_minimum_size.y if _scroll != null else 0.0
 
 

@@ -26,9 +26,9 @@ static func rows_for_hit(hit: InteractionHit) -> Array[Dictionary]:
 		return []
 	var archetype_id := str(hit.metadata.get("archetype_id", ""))
 	match archetype_id:
-		"drive_wheel":
+		"drive_wheel", "wheel_med":
 			return WHEEL_ROWS
-		"wheel_suspension":
+		"wheel_suspension", "suspension_small":
 			return SUSPENSION_ROWS
 	return []
 
@@ -36,9 +36,9 @@ static func rows_for_hit(hit: InteractionHit) -> Array[Dictionary]:
 static func panel_title(hit: InteractionHit) -> String:
 	var archetype_id := str(hit.metadata.get("archetype_id", ""))
 	match archetype_id:
-		"drive_wheel":
+		"drive_wheel", "wheel_med":
 			return "КОЛЕСО"
-		"wheel_suspension":
+		"wheel_suspension", "suspension_small":
 			return "ПОДВЕСКА"
 	return "МОДУЛЬ"
 
@@ -105,9 +105,9 @@ static func next_value(meta: Dictionary, field: String, delta: float) -> float:
 static func configure_kind_for_hit(hit: InteractionHit) -> StringName:
 	var archetype_id := str(hit.metadata.get("archetype_id", ""))
 	match archetype_id:
-		"drive_wheel":
+		"drive_wheel", "wheel_med":
 			return &"configure_wheel"
-		"wheel_suspension":
+		"wheel_suspension", "suspension_small":
 			return &"configure_suspension"
 	return &""
 

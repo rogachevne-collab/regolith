@@ -146,10 +146,10 @@ func _calibrate() -> void:
 				probe.set_voxel_f(v, x, y, z, CHANNEL)
 				i += 1
 
-	var reference: PackedByteArray = probe.get_channel_as_byte_array(CHANNEL)
-	if reference.size() != values.size() * 2:
+	var channel_bytes: PackedByteArray = probe.get_channel_as_byte_array(CHANNEL)
+	if channel_bytes.size() != values.size() * 2:
 		push_warning(
-			"MoonNativeSdfGenerator: unexpected channel byte size %d" % reference.size()
+			"MoonNativeSdfGenerator: unexpected channel byte size %d" % channel_bytes.size()
 		)
 		return
 
@@ -161,7 +161,7 @@ func _calibrate() -> void:
 		scale = KNOWN_SDF16_SCALE
 
 	var encoded: PackedByteArray = _baker.call("encode_values_s16", values, scale)
-	var max_err := _max_s16_error(reference, encoded)
+	var max_err := _max_s16_error(channel_bytes, encoded)
 	if max_err < 0:
 		push_warning("MoonNativeSdfGenerator: calibration size mismatch")
 		return
@@ -211,6 +211,7 @@ func _max_s16_error(a: PackedByteArray, b: PackedByteArray) -> int:
 	if a.size() != b.size():
 		return -1
 	var max_err := 0
+	@warning_ignore("integer_division")
 	var count := a.size() / 2
 	for i in count:
 		var err := absi(a.decode_s16(i * 2) - b.decode_s16(i * 2))

@@ -1,0 +1,16 @@
+[gd_scene format=3 uid="uid://cn1mrw3sddsnx"]
+
+[ext_resource type="PackedScene" uid="uid://dor6ihexf41m7" path="res://resources/models/wheel_med.fbx" id="1_shpss"]
+
+[node name="WheelMedVisual" type="Node3D" unique_id=958063611]
+
+[node name="SteerRoot" type="Node3D" parent="." unique_id=1166632023]
+
+[node name="SpinRoot" type="Node3D" parent="SteerRoot" unique_id=2098797297]
+
+[node name="Model" type="Node3D" parent="SteerRoot/SpinRoot" unique_id=648270474 instance=ExtResource("1_shpss")]
+transform = Transform3D(6.123233995736766e-17, 0, 1, 0, 1, 0, -1, 0, 6.123233995736766e-17, 0, 0, 0)
+
+[node name="HubPivot" type="Marker3D" parent="SteerRoot/SpinRoot/Model" unique_id=2070575263]
+
+[node name="Hub" type="Node3D" parent="SteerRoot" unique_id=1219953949]

@@ -10,3 +10,7 @@ shader = ExtResource("1")
 shader_parameter/u_albedo = ExtResource("2")
 shader_parameter/u_normal = ExtResource("3")
 shader_parameter/u_radial_up = 1.0
+shader_parameter/u_pom_steps = 0
+shader_parameter/u_warp_amp = 0.3
+shader_parameter/u_warp_freq = 0.7
+shader_parameter/u_detail_amount = 0.5

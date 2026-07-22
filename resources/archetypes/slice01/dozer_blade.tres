@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="ElementArchetype" format=3 uid="uid://d0zerbladeslc01"]
+[gd_resource type="Resource" script_class="ElementArchetype" format=3 uid="uid://c2mx4u4ikig1a"]
 
 [ext_resource type="Script" uid="uid://c2p36g85wqkru" path="res://scripts/simulation/resources/build_requirement.gd" id="1_20tgf"]
 [ext_resource type="Script" uid="uid://b6d2jhfw581hb" path="res://scripts/simulation/resources/collider_definition.gd" id="2_hlghb"]
@@ -9,12 +9,37 @@
 [sub_resource type="Resource" id="Resource_mech"]
 script = ExtResource("1_20tgf")
 resource_id = "mechanism"
-amount = 6.0
+amount = 12.0
 
-[sub_resource type="Resource" id="Resource_body"]
+[sub_resource type="Resource" id="Resource_moldboard"]
 script = ExtResource("2_hlghb")
-size = Vector3(0.5, 0.4, 1.0)
-offset_in_cell = Vector3(0.25, 0.2, 0.5)
+size = Vector3(0.28, 0.8, 2.0)
+offset_in_cell = Vector3(0.24, 0.6, 1.0)
+
+[sub_resource type="Resource" id="Resource_lip"]
+script = ExtResource("2_hlghb")
+size = Vector3(0.4, 0.18, 2.0)
+offset_in_cell = Vector3(0.3, 0.09, 1.0)
+
+[sub_resource type="Resource" id="Resource_wing_a"]
+script = ExtResource("2_hlghb")
+size = Vector3(0.4, 0.65, 0.1)
+offset_in_cell = Vector3(0.3, 0.375, 0.05)
+
+[sub_resource type="Resource" id="Resource_wing_b"]
+script = ExtResource("2_hlghb")
+size = Vector3(0.4, 0.65, 0.1)
+offset_in_cell = Vector3(0.3, 0.375, 1.95)
+
+[sub_resource type="Resource" id="Resource_arm_a"]
+script = ExtResource("2_hlghb")
+size = Vector3(0.12, 0.25, 0.2)
+offset_in_cell = Vector3(0.06, 0.475, 0.55)
+
+[sub_resource type="Resource" id="Resource_arm_b"]
+script = ExtResource("2_hlghb")
+size = Vector3(0.12, 0.25, 0.2)
+offset_in_cell = Vector3(0.06, 0.475, 1.45)
 
 [sub_resource type="Resource" id="Resource_power_in"]
 script = ExtResource("3_in4ho")
@@ -27,9 +52,48 @@ compatibility_tags = PackedStringArray("electric")
 script = ExtResource("3_in4ho")
 port_id = "cargo_out"
 kind = 7
-local_cell = Vector3i(0, 0, 1)
+local_cell = Vector3i(0, 0, 3)
 local_face = 4
 compatibility_tags = PackedStringArray("cargo")
+
+[sub_resource type="Resource" id="Mount_nx00"]
+script = ExtResource("5_pad")
+local_face = 1
+
+[sub_resource type="Resource" id="Mount_nx01"]
+script = ExtResource("5_pad")
+local_cell = Vector3i(0, 0, 1)
+local_face = 1
+
+[sub_resource type="Resource" id="Mount_nx02"]
+script = ExtResource("5_pad")
+local_cell = Vector3i(0, 0, 2)
+local_face = 1
+
+[sub_resource type="Resource" id="Mount_nx03"]
+script = ExtResource("5_pad")
+local_cell = Vector3i(0, 0, 3)
+local_face = 1
+
+[sub_resource type="Resource" id="Mount_nx10"]
+script = ExtResource("5_pad")
+local_cell = Vector3i(0, 1, 0)
+local_face = 1
+
+[sub_resource type="Resource" id="Mount_nx11"]
+script = ExtResource("5_pad")
+local_cell = Vector3i(0, 1, 1)
+local_face = 1
+
+[sub_resource type="Resource" id="Mount_nx12"]
+script = ExtResource("5_pad")
+local_cell = Vector3i(0, 1, 2)
+local_face = 1
+
+[sub_resource type="Resource" id="Mount_nx13"]
+script = ExtResource("5_pad")
+local_cell = Vector3i(0, 1, 3)
+local_face = 1
 
 [sub_resource type="Resource" id="Mount_ny0"]
 script = ExtResource("5_pad")
@@ -40,19 +104,25 @@ script = ExtResource("5_pad")
 local_cell = Vector3i(0, 0, 1)
 local_face = 3
 
-[sub_resource type="Resource" id="Mount_nz"]
+[sub_resource type="Resource" id="Mount_ny2"]
 script = ExtResource("5_pad")
-local_face = 5
+local_cell = Vector3i(0, 0, 2)
+local_face = 3
+
+[sub_resource type="Resource" id="Mount_ny3"]
+script = ExtResource("5_pad")
+local_cell = Vector3i(0, 0, 3)
+local_face = 3
 
 [resource]
 script = ExtResource("4_rwnby")
 archetype_id = "dozer_blade"
 display_name = "Отвал"
 roles = PackedStringArray("Tool")
-mass_kg = 120.0
-footprint_cells = Array[Vector3i]([Vector3i(0, 0, 0), Vector3i(0, 0, 1)])
-colliders = Array[ExtResource("2_hlghb")]([SubResource("Resource_body")])
+mass_kg = 320.0
+footprint_cells = Array[Vector3i]([Vector3i(0, 0, 0), Vector3i(0, 0, 1), Vector3i(0, 0, 2), Vector3i(0, 0, 3), Vector3i(0, 1, 0), Vector3i(0, 1, 1), Vector3i(0, 1, 2), Vector3i(0, 1, 3)])
+colliders = Array[ExtResource("2_hlghb")]([SubResource("Resource_moldboard"), SubResource("Resource_lip"), SubResource("Resource_wing_a"), SubResource("Resource_wing_b"), SubResource("Resource_arm_a"), SubResource("Resource_arm_b")])
 ports = Array[ExtResource("3_in4ho")]([SubResource("Resource_power_in"), SubResource("Resource_cargo_out")])
 structural_surface_policy = 2
-structural_mount_pads = Array[ExtResource("5_pad")]([SubResource("Mount_ny0"), SubResource("Mount_ny1"), SubResource("Mount_nz")])
+structural_mount_pads = Array[ExtResource("5_pad")]([SubResource("Mount_nx00"), SubResource("Mount_nx01"), SubResource("Mount_nx02"), SubResource("Mount_nx03"), SubResource("Mount_nx10"), SubResource("Mount_nx11"), SubResource("Mount_nx12"), SubResource("Mount_nx13"), SubResource("Mount_ny0"), SubResource("Mount_ny1"), SubResource("Mount_ny2"), SubResource("Mount_ny3")])
 build_requirements = Array[ExtResource("1_20tgf")]([SubResource("Resource_mech")])

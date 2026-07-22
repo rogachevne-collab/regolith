@@ -48,6 +48,22 @@ extends Node3D
 ## `CAPACITY_PER_VARIANT`), so a fringe cell was paying for twenty-one instances
 ## to draw three. Measured: 2283 cells came to 47943 submitted instances at
 ## eighty primitives each. At eight the same cells come to 20547.
+##
+## Back up to twelve, spending what the skirt handed back. `DRAW_FINES` off
+## stops the whole 0.02–0.04 band being drawn, and those cells were reserving a
+## full `SLOTS_PER_CELL` each like any other — a fresh scatter is mostly that
+## band, so the cells saved are many. Eight was picked against a shell that
+## still carried them; thirteen slots against one that does not is a smaller
+## bill than nine slots was, and twelve covers a cell properly where the chips
+## are the only thing drawing it.
+##
+## Down to eight, because the chips are no longer what makes the heap read as
+## dense. The surface shader's parallax pebbles carry the packed-stone crust now
+## (see [[granular-crunchy-crust-stack]]), so the chips are accents on it — the
+## coarse stones and the broken silhouette — not the substance itself. Twelve
+## covered a cell as if it were the whole picture; eight scatters accents over a
+## crust that is already dense, and cuts a third off both the slot bill and the
+## per-cell lay.
 const MAX_GRAINS_PER_CELL := 8
 ## One extra slot per cell holds the plug: a single lump filling a *buried*
 ## cell one layer behind the chips. Chips at any count cannot be opaque — a
@@ -70,6 +86,33 @@ const SLOTS_PER_CELL := MAX_GRAINS_PER_CELL + 1
 ## end, so this is the rare one, not the average.
 const GRAIN_SIZE_M := 0.13
 const GRAIN_SIZE_MIN_FRACTION := 0.35
+## Extra sink of a chip toward the mesh under it, as a fraction of a cell — the
+## fallback seating for cells with no mesh under them (the fringe).
+##
+## This was the whole seating correction once, and it was a fudge: putting the
+## chips through the surface's own fill floor (`_seat_floor`) got most of the
+## way, and this measured bias was "the rest of the way" — the low-pass and the
+## iso level pulling the reconstructed surface off the raw fill height by a
+## fraction of a cell, with no closed form worth writing.
+##
+## It does have a closed form: it is the surface `build_mesh_box` draws, and
+## `lay` now receives that surface as a patch (`surface_pos`/`surface_nrm`) for
+## every cell that has mesh near it and seats the chips on it. So this bias only
+## applies on the fringe, where `RENDER_MIN_FILL` leaves no mesh and the stones
+## lie on the raw fill — scaled by the seated fill so a fringe chip is not
+## pushed into the rock.
+const SEAT_SINK_CELLS := 0.16
+## Nestle of a chip into the mesh crust it sits on, as a fraction of a cell, when
+## the surface patch is known. Small and constant — the stone rests a little into
+## the packed cobbles rather than perched on the highest one. Raise it if stones
+## still float above the surface, lower it if they sink into it.
+const SEAT_NESTLE_CELLS := 0.06
+## How far, in cells, a cell's chips scatter across its surface patch's tangent
+## plane. Kept under a cell: the patch is one point with one normal, and its flat
+## tangent plane only matches the real (curved) surface close in — scatter wide
+## and the outer stones float off the curvature onto air. Just under a cell still
+## overlaps a neighbour's patch enough to read as continuous, without the float.
+const PATCH_SPREAD_CELLS := 0.8
 ## A cell with less than this in it gets nothing at all. Low on purpose — the
 ## thin outer fraction of a heap is drawn as the fines skirt, and cutting the
 ## skirt off early is what made piles end in a hard line against clean ground.
@@ -84,6 +127,32 @@ const MIN_CELL_MASS := 0.02
 ## thirty per cent fill, and half of it flipped from chips to flat flakes: a
 ## pool of pancakes where the cuttings had been.
 const FINES_MASS := 0.04
+
+## Whether the fines skirt is drawn at all.
+##
+## Off. The skirt was invented when chips were the entire renderer and a pile
+## had to be talked down into the ground by something, because nothing else was
+## drawing the contact. That job now belongs to the surface mesh, which beds
+## into the rock properly, so the skirt is no longer buying the thing it was
+## built for.
+##
+## And it was never sound. `_lay_fines` puts its flakes on the floor of their
+## own cell — `float(y) * cell_size` — without asking what, if anything, is
+## underneath: it takes no fill and no support. A cell anywhere in the fines
+## band gets its discs wherever it happens to be, including in mid-air, and the
+## band is 0.02 to 0.04 where material is still moving. That is the pale flat
+## flakes that drift about and hang in the air. Wearing full dust colour, which
+## is what makes them read as white, is the last touch.
+##
+## Turning them on again means giving `_lay_fines` the seated fill and a support
+## test first. The knob is here rather than the code deleted because the skirt
+## is a real idea — a heap really does thin out to dust at its edge — and what
+## is wrong with it is the placement, not the intent.
+const DRAW_FINES := false
+## Mass below which a cell is drawn as nothing at all, and so never takes slots.
+## With the skirt off this rises to the fines threshold, because the band below
+## it now has no picture to draw.
+const MIN_DRAWN_MASS := FINES_MASS if not DRAW_FINES else MIN_CELL_MASS
 
 ## The occasional real boulder, a landmark among the chips. Rare by design:
 ## one stone two to three cells wide sells the size hierarchy of the whole
@@ -168,6 +237,18 @@ func setup(local_up: Vector3, seat_floor := 0.0) -> void:
 		var node := MultiMeshInstance3D.new()
 		node.multimesh = multimesh
 		node.material_override = chip
+		# Off, because the chips are laid from `_process`, not from physics.
+		#
+		# With interpolation on, the engine keeps a previous and a current
+		# transform for every instance and blends them each rendered frame, so it
+		# can smooth motion sampled at the physics rate. Chips are not sampled at
+		# the physics rate — they are written directly whenever a cell's fill
+		# changes — so there is nothing to interpolate, and writing them from
+		# outside physics is exactly what the "MultiMesh interpolation triggered
+		# from outside physics process" warning was flagging. Turning it off ends
+		# the warning and drops the per-instance blend the engine was doing for
+		# nothing.
+		node.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 		# Off, and this is the single most expensive line in the granular
 		# renderer when it is on. Measured on the stand, one region holding
 		# 63 m3 as 47943 chips: 15358103 primitives a frame with chip shadows,
@@ -218,8 +299,16 @@ func setup(local_up: Vector3, seat_floor := 0.0) -> void:
 ## `backing` marks a buried cell one layer behind the chips: it gets the plug
 ## and no chips at all, since nothing of it is ever seen but what shows
 ## through the gaps in the layer in front.
+## `surface_pos` / `surface_nrm` are the mesh surface patch near this cell — a
+## point in cell units and its outward normal — from
+## `GranularVoxelField.sample_surface_patches`. The chips seat on this patch, so
+## they cling to the surface at any facing: bedded into the top, clinging to a
+## wall, hanging under an overhang. A zero normal (the default, and what the
+## fringe reports) means the field could not orient a surface here, and the
+## stones fall back to the raw-fill seating along +Y.
 func lay(
-	region: GranularVoxelRegion, index: int, mass: float, backing := false
+	region: GranularVoxelRegion, index: int, mass: float, backing := false,
+	surface_pos := Vector3.ZERO, surface_nrm := Vector3.ZERO
 ) -> void:
 	if _multimeshes.is_empty():
 		return
@@ -266,6 +355,21 @@ func lay(
 		maxf(held - _seat_floor, 0.0) / maxf(1.0 - _seat_floor, 0.001)
 	)
 	var fill := seated * cell_size
+	# The surface patch the stones seat on. When the field could orient a surface
+	# here, the chips scatter across it on its own tangent plane and poke out
+	# along its normal — so a wall's stones cling to the wall instead of laddering
+	# up it in per-cell rings. On the fringe, where there is no mesh, `on_patch`
+	# is false and the stones fall back to the cell's own fill top along +Y.
+	var on_patch := surface_nrm != Vector3.ZERO
+	var pos_m := surface_pos * cell_size
+	var tan_a := Vector3.ZERO
+	var tan_b := Vector3.ZERO
+	if on_patch:
+		# Any two axes spanning the surface: cross the normal with whichever
+		# world axis it is least aligned to, so the basis never degenerates.
+		var ref := Vector3.UP if absf(surface_nrm.y) < 0.9 else Vector3.RIGHT
+		tan_a = surface_nrm.cross(ref).normalized()
+		tan_b = surface_nrm.cross(tan_a)
 	if backing:
 		if held < PLUG_MIN_MASS:
 			multimesh.set_instance_transform(base, _EMPTY)
@@ -278,6 +382,14 @@ func lay(
 		_last_write_ms += float(Time.get_ticks_usec() - started) / 1000.0
 		return
 	if held < FINES_MASS:
+		# The view stops offering these cells when the skirt is off, so this is
+		# belt and braces — but cheap, and the alternative if one ever slipped
+		# through is flakes hanging in the air.
+		if not DRAW_FINES:
+			for g in SLOTS_PER_CELL:
+				multimesh.set_instance_transform(base + g, _EMPTY)
+			_last_write_ms += float(Time.get_ticks_usec() - started) / 1000.0
+			return
 		_lay_fines(multimesh, base, index, x, y, z, cell_size, mesh_scale, mesh_offset)
 		_last_write_ms += float(Time.get_ticks_usec() - started) / 1000.0
 		return
@@ -285,7 +397,10 @@ func lay(
 	# is this material"; a boulder answers "how big does it come", and a heap
 	# with only one answer in it is what read as cheap.
 	if held >= BOULDER_MIN_MASS and _unit(index * 29 + 1) < BOULDER_CHANCE:
-		_lay_boulder(multimesh, base, index, x, y, z, cell_size, fill, mesh_scale, mesh_offset)
+		_lay_boulder(
+			multimesh, base, index, x, y, z, cell_size, fill,
+			pos_m, surface_nrm, mesh_scale, mesh_offset
+		)
 	else:
 		multimesh.set_instance_transform(base, _EMPTY)
 	# Character of this patch of ground, sampled coarser than the cell grid.
@@ -331,7 +446,6 @@ func lay(
 		# rather than as a pile. Biased upward, because the exposed face usually
 		# is up, but never only there.
 		var rise := _unit(seed * 3 + 4)
-		var height := fill * (1.0 - rise * rise)
 		# How deep in the material this chip is lying, which is what the shader
 		# turns into a dust coating. Deep chips merge into the mass, proud ones
 		# stay stones — that is what makes a dense cluster cohere without making
@@ -340,17 +454,36 @@ func lay(
 			slot,
 			Color(held * rise * rise, 0.0, _unit(seed * 11 + 9), 0.0)
 		)
-		# Sunk in, but never deeper than there is material to sink into: a big
-		# chip lying on a thin dusting really does stand proud of it.
-		#
-		# Spread past the cell's own border by a seventh either side. Confined
-		# chips never cross the wall between cells, and twenty walls a metre is
-		# a grid whether or not anything else lines up.
-		var origin := Vector3(
-			(float(x) - 0.15 + 1.3 * _unit(seed * 3 + 0)) * cell_size,
-			float(y) * cell_size + height - minf(size * 0.45, fill * 0.6),
-			(float(z) - 0.15 + 1.3 * _unit(seed * 3 + 1)) * cell_size
-		)
+		var origin: Vector3
+		if on_patch:
+			# Scattered across the surface patch on its own tangent plane, then
+			# pushed out along its normal — some stones proud, some half-buried
+			# (`rise`), all clinging to the surface whichever way it faces. This
+			# is what stops a wall's chips laddering into per-cell rings: there is
+			# no per-cell height any more, only the one continuous surface.
+			var a := (_unit(seed * 3 + 0) - 0.5) * PATCH_SPREAD_CELLS * cell_size
+			var b := (_unit(seed * 3 + 1) - 0.5) * PATCH_SPREAD_CELLS * cell_size
+			# The stone's centre sits *below* the surface, so it lies half-buried
+			# in the crust with only its top out — never perched on top. Deeper by
+			# `rise`, so a cell is a bed of stones sunk to varying depth, not a
+			# layer floating at one height. Nothing is pushed proud of the surface.
+			var sink := size * (0.15 + 0.35 * rise) + SEAT_NESTLE_CELLS * cell_size
+			origin = pos_m + tan_a * a + tan_b * b - surface_nrm * sink
+		else:
+			# Fringe fallback: no mesh under the cell, so seat on the raw fill
+			# top along +Y with the old measured bias. Spread past the cell's own
+			# border by a seventh either side.
+			var sink := SEAT_SINK_CELLS * seated * cell_size
+			origin = Vector3(
+				(float(x) - 0.15 + 1.3 * _unit(seed * 3 + 0)) * cell_size,
+				(
+					float(y) * cell_size
+					+ fill * (1.0 - rise * rise)
+					- minf(size * 0.45, fill * 0.6)
+					- sink
+				),
+				(float(z) - 0.15 + 1.3 * _unit(seed * 3 + 1)) * cell_size
+			)
 		var basis := Basis(
 			Quaternion(
 				Vector3(
@@ -477,6 +610,8 @@ func _lay_boulder(
 	z: int,
 	cell_size: float,
 	fill: float,
+	pos_m: Vector3,
+	surface_nrm: Vector3,
 	mesh_scale: float,
 	mesh_offset: Vector3
 ) -> void:
@@ -501,11 +636,18 @@ func _lay_boulder(
 			size * (0.75 + 0.35 * _unit(index * 29 + 23))
 		) * mesh_scale
 	)
-	var origin := Vector3(
-		(float(x) + 0.2 + 0.6 * _unit(index * 29 + 27)) * cell_size,
-		float(y) * cell_size + fill - size * 0.28,
-		(float(z) + 0.2 + 0.6 * _unit(index * 29 + 31)) * cell_size
-	)
+	# Sunk to its waist in the surface: its centre a bit inside the patch along
+	# the normal, so a bit over a quarter of it stands proud whichever way the
+	# surface faces. On the fringe (no patch) it falls back to the fill top.
+	var origin: Vector3
+	if surface_nrm != Vector3.ZERO:
+		origin = pos_m - surface_nrm * (size * 0.28)
+	else:
+		origin = Vector3(
+			(float(x) + 0.2 + 0.6 * _unit(index * 29 + 27)) * cell_size,
+			float(y) * cell_size + fill - size * 0.28,
+			(float(z) + 0.2 + 0.6 * _unit(index * 29 + 31)) * cell_size
+		)
 	multimesh.set_instance_transform(
 		base, Transform3D(basis, origin + basis * mesh_offset)
 	)

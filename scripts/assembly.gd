@@ -24,6 +24,23 @@ var _element_material: StandardMaterial3D
 func _ready() -> void:
 	add_to_group("assemblies")
 	_ensure_resources()
+	_ensure_granular_body()
+
+
+## Every assembly stands in loose material the same way — rover, dozer, fragment
+## broken off one. Attached here rather than per archetype because the coupling
+## is a property of being a body in a medium, not of what the body is for: it
+## reads the collision shapes and nothing else.
+##
+## Idle where there is no material, and self-configuring: the component waits
+## for `build_from` to give this body its shapes before it measures anything.
+func _ensure_granular_body() -> void:
+	for child in get_children():
+		if child is GranularBody:
+			return
+	var coupling := GranularBody.new()
+	coupling.name = "GranularBody"
+	add_child(coupling)
 
 
 func build_from(cells: Array[Vector3i]) -> void:

@@ -7,6 +7,7 @@ extends Control
 
 const OUTPUT_ICON := 34.0
 const PROGRESS_WIDTH := 132.0
+const INNER_MARGIN := 10
 
 signal command_submitted(command_id: int)
 
@@ -50,22 +51,32 @@ func apply_machine(machine: Dictionary) -> void:
 
 
 func _build() -> void:
+	var frame := PanelContainer.new()
+	frame.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	frame.add_theme_stylebox_override("panel", HudTokens.make_subpanel_style())
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(frame)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", INNER_MARGIN)
+	margin.add_theme_constant_override("margin_right", INNER_MARGIN)
+	margin.add_theme_constant_override("margin_top", INNER_MARGIN)
+	margin.add_theme_constant_override("margin_bottom", INNER_MARGIN)
+	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	frame.add_child(margin)
+
 	var vb := VBoxContainer.new()
-	vb.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	vb.add_theme_constant_override("separation", 6)
 	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(vb)
+	margin.add_child(vb)
 
 	var header := HBoxContainer.new()
 	header.add_theme_constant_override("separation", 6)
 	header.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vb.add_child(header)
-	var title := Label.new()
-	title.text = "ОЧЕРЕДЬ"
-	title.theme_type_variation = &"HudSmall"
-	title.add_theme_color_override("font_color", HudTokens.COL_DIM)
+	var title := HudTokens.make_section_header("ОЧЕРЕДЬ")
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	header.add_child(title)
 	_clear_btn = Button.new()
 	_clear_btn.text = "Очистить"
@@ -80,6 +91,8 @@ func _build() -> void:
 	_status_label = Label.new()
 	_status_label.theme_type_variation = &"HudSmall"
 	_status_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_status_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_status_label.clip_text = true
 	_status_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	status_row.add_child(_status_label)
 	_enabled_btn = Button.new()
@@ -119,12 +132,16 @@ func _build() -> void:
 	(_active_progress_row.get_child(0) as Label).custom_minimum_size = Vector2(0, 0)
 	_active_progress_mat = progress["mat"] as ShaderMaterial
 	_active_progress_value = progress["value"] as Label
+	HudTokens.stretch_progress_bar(_active_progress_row, _active_progress_mat)
 	active_info.add_child(_active_progress_row)
 
 	_empty_label = Label.new()
 	_empty_label.text = "ПРОСТОЙ · очередь пуста"
 	_empty_label.theme_type_variation = &"HudSmall"
 	_empty_label.add_theme_color_override("font_color", HudTokens.COL_DIM)
+	_empty_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_empty_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_empty_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_empty_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vb.add_child(_empty_label)
 

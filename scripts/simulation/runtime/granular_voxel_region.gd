@@ -97,6 +97,12 @@ var _voxel_tool: VoxelTool
 ## this stays high while digging, `prime_rock` is missing the box that is
 ## actually being touched, which no timing on its own would reveal.
 var oracle_calls := 0
+## Cells answered while the terrain under them had not streamed in, as one box.
+## Held so the answers can be thrown away and asked again — see
+## `retry_unknown_rock`.
+var _unknown_rock := false
+var _unknown_lo := Vector3i.ZERO
+var _unknown_hi := Vector3i.ZERO
 
 
 ## Build a region centred on a world point, with local up taken from the
@@ -105,7 +111,7 @@ var oracle_calls := 0
 ## headless tests use.
 static func create(
 	centre_world: Vector3,
-	up: Vector3,
+	up_dir: Vector3,
 	terrain: Node3D = null,
 	voxel_tool: VoxelTool = null,
 	cells: int = DEFAULT_CELLS,
@@ -114,7 +120,7 @@ static func create(
 	var region: GranularVoxelRegion = _SCRIPT.new()
 	var span := maxi(cells, 1)
 	region.anchor = GranularAnchor.create(
-		centre_world, up, span, span, cell_size
+		centre_world, up_dir, span, span, cell_size
 	)
 	region.field = GranularVoxelField.create(
 		Vector3i(span, span, span), cell_size
@@ -124,13 +130,14 @@ static func create(
 	region.field.fall_rate *= STEP_FINENESS
 	region.field.spread_rate *= STEP_FINENESS
 	region.field.lateral_rate *= STEP_FINENESS
+	@warning_ignore("integer_division")
 	region._centre_cell = Vector3i(span / 2, span / 2, span / 2)
 	if terrain != null and voxel_tool != null:
 		region._terrain = terrain
 		region._voxel_tool = voxel_tool
 		region.field.solid_query = func(cell: Vector3i) -> bool:
 			region.oracle_calls += 1
-			return region._cell_is_rock(cell, terrain, voxel_tool)
+			return region._cell_is_rock(cell, region._terrain, region._voxel_tool)
 	return region
 
 
@@ -396,7 +403,28 @@ func mass_at_world(world_point: Vector3) -> float:
 
 ## Points a push spreads what it moved over. A ring rather than one spot: a bit
 ## working into a heap parts it, it does not build a second heap on one side.
-const PUSH_RING_SAMPLES := 6
+##
+## Ten rather than six. Six landings around a ring are six lumps, and a lump is
+## a deposit of its own — the bit was visibly throwing the heap into a handful
+## of piles rather than parting it.
+const PUSH_RING_SAMPLES := 10
+## How far outside the bite the parted material is set down, in cells.
+##
+## Was two cells — half a metre clear of the contact, which is a throw, not a
+## parting. At three quarters of a cell the material is set down against the
+## bite instead of beyond it, and the field's own spreading takes it from there.
+## That spreading is what should be shaping a worked heap; every centimetre this
+## moves material by hand is a centimetre the simulation did not get to decide.
+const PUSH_RING_CELLS := 0.75
+## Share of what stands in the bite that a push relocates at all.
+##
+## Half was the whole of the "the drill blows heaps apart" complaint. Taking
+## half the material out of the sphere and setting it down elsewhere is not a
+## bit working into a heap, it is an explosion with conserved volume. At a fifth
+## the great majority stays where it is and is merely disturbed, which is what a
+## bit does to loose material: it compacts and parts it locally, and the heap
+## slumps into the bite under its own weight rather than being flung out of it.
+const PUSH_SHARE := 0.2
 
 
 ## Shove material aside instead of destroying it. Takes a share out of a sphere
@@ -405,7 +433,39 @@ const PUSH_RING_SAMPLES := 6
 ##
 ## Volume is conserved exactly — this is the tool that makes spoil something you
 ## manage rather than something you delete. Returns how much was moved.
-func push_at(world_point: Vector3, radius_m: float, share := 0.5) -> float:
+## `keep_fill` is what a cell may not be pushed below, and it is what stands in
+## for compaction. The field has no density: a cell holds a fill fraction and
+## nothing more, so material cannot be *squeezed*, only moved. Left at zero, a
+## load pressing the same spot twice displaces what is left both times, and a
+## rover driving back and forth would excavate a trench down to the rock. Real
+## ground stops giving after the first pass or two, and a floor is the cheap way
+## to say so: everything above it is loose enough to move aside, everything
+## below is bedded in and stays.
+func push_at(
+	world_point: Vector3,
+	radius_m: float,
+	share := PUSH_SHARE,
+	keep_fill := 0.0
+) -> float:
+	var gathered := take_sphere(world_point, radius_m, share, keep_fill)
+	if gathered <= 0.0:
+		return 0.0
+	place_ring(world_point, gathered, radius_m)
+	return gathered
+
+
+## The taking half of a push: lift a share out of a sphere and hand it back
+## without putting it anywhere. The caller owes the volume somewhere — this is
+## the only way the field stays honest about how much material exists.
+##
+## Separate so a shaped load can take from many spheres and set the total down
+## once. See `place_ring`.
+func take_sphere(
+	world_point: Vector3,
+	radius_m: float,
+	share := PUSH_SHARE,
+	keep_fill := 0.0
+) -> float:
 	var centre := world_to_cell(world_point)
 	var reach := int(ceil(radius_m / field.cell_size))
 	var gathered := 0.0
@@ -414,25 +474,50 @@ func push_at(world_point: Vector3, radius_m: float, share := 0.5) -> float:
 			for dx in range(-reach, reach + 1):
 				if dx * dx + dy * dy + dz * dz > reach * reach:
 					continue
+				var cx := centre.x + dx
+				var cy := centre.y + dy
+				var cz := centre.z + dz
+				if keep_fill <= 0.0:
+					gathered += field.take_fraction(cx, cy, cz, share)
+					continue
+				var here := field.mass_at(cx, cy, cz)
+				if here <= keep_fill:
+					continue
+				# Only the part standing above the floor is available to move,
+				# so the share is taken of that rather than of the whole cell.
 				gathered += field.take_fraction(
-					centre.x + dx, centre.y + dy, centre.z + dz, share
+					cx, cy, cz, share * (here - keep_fill) / here
 				)
-	if gathered <= 0.0:
+	return gathered
+
+
+## Set a volume down in a ring just outside a point, grounded, so the field
+## settles it into the shape a parted heap has.
+##
+## Split out of `push_at` because a load with a *shape* — a chassis, a blade —
+## has to take from many points and put down once. Ringing each point
+## separately made neighbours throw material into each other's cells: work that
+## fights itself, and material that ends up back under the machine instead of
+## heaped at its edges where displaced material belongs. It was also ten column
+## deposits per sample, which is where the cost of moulding actually lived.
+func place_ring(world_point: Vector3, volume_m3: float, radius_m: float) -> float:
+	if volume_m3 <= 0.0:
 		return 0.0
 	# Around the contact in the tangent plane, so material goes sideways rather
 	# than up: the bit parts a heap, it does not launch it.
 	var side := anchor.basis.x
 	var other := anchor.basis.z
-	var ring := radius_m + field.cell_size * 2.0
-	var each := gathered / float(PUSH_RING_SAMPLES)
+	var ring := radius_m + field.cell_size * PUSH_RING_CELLS
+	var each := volume_m3 / float(PUSH_RING_SAMPLES)
+	var placed := 0.0
 	for k in PUSH_RING_SAMPLES:
 		var angle := TAU * float(k) / float(PUSH_RING_SAMPLES)
-		deposit_landing_at(
+		placed += deposit_landing_at(
 			world_point + (side * cos(angle) + other * sin(angle)) * ring,
 			each,
 			1
 		)
-	return gathered
+	return placed
 
 
 ## Clear loose material in a sphere — a bucket, a drill, a pickup. Returns the
@@ -532,8 +617,10 @@ func sinter_into_terrain() -> float:
 		var m := mass[i]
 		if m <= 0.0:
 			continue
+		@warning_ignore("integer_division")
 		var y := i / plane
 		var rem := i - y * plane
+		@warning_ignore("integer_division")
 		var z := rem / sx
 		var x := rem - z * sx
 		var cell := Vector3i(x, y, z)
@@ -736,6 +823,15 @@ func prime_rock_cells(lo: Vector3i, extent: Vector3i) -> void:
 		return
 	if v_size.x * v_size.y * v_size.z > PRIME_MAX_VOXELS:
 		return
+	# The same trap as the per-cell oracle, and worse for being wholesale: a
+	# copy over blocks that have not streamed in comes back as zeros, zero is
+	# `sdf <= 0`, and the whole box would be recorded as rock and never asked
+	# again. Priming *is* the memo, so a prime run too early bakes a slab of
+	# imaginary ground. Better to prime nothing and let the per-cell path answer
+	# as material actually reaches those cells — it now knows how to say "not
+	# yet" rather than "yes".
+	if not _voxel_tool.is_area_editable(AABB(Vector3(v_lo), Vector3(v_size))):
+		return
 	var buffer := VoxelBuffer.new()
 	buffer.create(v_size.x, v_size.y, v_size.z)
 	_voxel_tool.copy(v_lo, buffer, 1 << VoxelBuffer.CHANNEL_SDF, false)
@@ -755,8 +851,11 @@ func prime_rock_cells(lo: Vector3i, extent: Vector3i) -> void:
 ## slower, but never a stall of its own making.
 const PRIME_MAX_VOXELS := 262144
 ## Units of the terrain's 16-bit SDF channel per unit of distance. Measured
-## against the plugin; see `GranularVoxelRegionView.SDF_S16_SCALE`, which is the
-## same number for the same reason.
+## against the plugin, not assumed: writing 0.25 stores 16, 0.5 stores 32 and
+## 1.0 stores 65, and `int(value * 65.535)` is the only scale that produces all
+## three. (The granular surface itself no longer encodes SDF at all — its view
+## meshes natively — so this is the one place the number still matters: reading
+## and priming the *world* terrain's rock.)
 const SDF_S16_SCALE := 65.535
 
 
@@ -765,6 +864,31 @@ func _cell_is_rock(
 	terrain: Node3D,
 	voxel_tool: VoxelTool
 ) -> bool:
+	# Terrain that has not streamed in yet is not rock, and this is the whole of
+	# a bug that took a while to find.
+	#
+	# `get_voxel_f` over an unloaded block returns zero, and the test below is
+	# `sdf <= 0` — so *unknown* read as *solid*, and the field memoises the
+	# answer for good. A region is created at the moment digging starts, which
+	# is exactly when the terrain is still streaming, and its box reaches
+	# sixteen metres above the cut. Whatever had not arrived yet was recorded as
+	# a slab of rock in the sky. Material then came to rest on it perfectly
+	# correctly, with no mesh there and none coming — once the blocks did load
+	# the terrain showed air, but the field already knew better. That is the
+	# stones left hanging metres up.
+	#
+	# Air is the safe wrong answer where the truth is unknown: material falls
+	# through and settles lower, instead of hovering forever. The cell is also
+	# remembered as unresolved so the answer can be thrown away and asked again
+	# once the terrain is actually there — see `retry_unknown_rock`.
+	if not _area_loaded(cell):
+		_note_unknown_rock(cell)
+		return false
+	# Same "unknown reads as air" rule as above: a terrain freed out from under
+	# a stale query (e.g. a region outliving a scene reload) is unknown too.
+	if terrain == null or not is_instance_valid(terrain) or voxel_tool == null:
+		_note_unknown_rock(cell)
+		return false
 	# Solid is `occupancy >= 0.5`, and occupancy is `0.5 - sdf`, so this is
 	# exactly `sdf <= 0` — the mesher's own inside/outside test.
 	#
@@ -783,6 +907,48 @@ func cell_centre_world(cell: Vector3i) -> Vector3:
 	return world_transform() * (
 		(Vector3(cell) + Vector3.ONE * 0.5) * field.cell_size
 	)
+
+
+## Whether the eight voxels the trilinear read touches are actually present.
+##
+## Unloaded blocks answer every read with zero, and zero means solid, so this
+## is the difference between "there is rock here" and "nobody has told us yet".
+func _area_loaded(cell: Vector3i) -> bool:
+	if _voxel_tool == null or _terrain == null:
+		return true
+	var local := VoxelSpaceUtil.world_to_local(
+		_terrain, cell_centre_world(cell)
+	)
+	var base := Vector3(floori(local.x), floori(local.y), floori(local.z))
+	return _voxel_tool.is_area_editable(AABB(base, Vector3.ONE * 2.0))
+
+
+## Remember that a cell was answered from terrain that had not arrived, as one
+## growing box. A box rather than a list because the only thing ever done with
+## it is to forget it again, and `invalidate_solid` already takes one.
+func _note_unknown_rock(cell: Vector3i) -> void:
+	if _unknown_rock:
+		_unknown_lo = _unknown_lo.min(cell)
+		_unknown_hi = _unknown_hi.max(cell)
+		return
+	_unknown_rock = true
+	_unknown_lo = cell
+	_unknown_hi = cell
+
+
+## Throw away every answer that was given while the terrain was missing, so it
+## gets asked again now that it may not be.
+##
+## Cheap when there is nothing to do, which is almost always: a region only
+## collects these in the first seconds of its life, while the world streams in
+## around a fresh cut. `invalidate_solid` also wakes any material standing in
+## the box, which is the point — material that settled onto terrain that was
+## never there has to be given the chance to fall.
+func retry_unknown_rock() -> void:
+	if not _unknown_rock:
+		return
+	_unknown_rock = false
+	field.invalidate_solid(_unknown_lo, _unknown_hi)
 
 
 func _sampled_sdf(

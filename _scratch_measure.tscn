@@ -1,0 +1,11 @@
+[gd_scene format=3 uid="uid://dqmetcj3sqge6"]
+
+[ext_resource type="PackedScene" uid="uid://v2pofduopg6d" path="res://resources/models/suspension_small.fbx" id="1_sw2ja"]
+[ext_resource type="PackedScene" uid="uid://dor6ihexf41m7" path="res://resources/models/wheel_med.fbx" id="2_m747e"]
+
+[node name="Scratch" type="Node3D" unique_id=1011783091]
+
+[node name="Susp" type="Node3D" parent="." unique_id=1015551350 instance=ExtResource("1_sw2ja")]
+
+[node name="Wheel" type="Node3D" parent="." unique_id=648270474 instance=ExtResource("2_m747e")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 0, 0)

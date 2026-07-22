@@ -29,7 +29,7 @@ var cell_size: float = GranularPatch.DEFAULT_CELL_SIZE_M
 
 static func create(
 	new_center_world: Vector3,
-	up: Vector3,
+	up_dir: Vector3,
 	new_width: int,
 	new_depth: int,
 	new_cell_size: float = GranularPatch.DEFAULT_CELL_SIZE_M,
@@ -37,7 +37,7 @@ static func create(
 ) -> GranularAnchor:
 	var anchor: GranularAnchor = _SCRIPT.new()
 	anchor.center_world = new_center_world
-	anchor.basis = tangent_basis(up, hint_forward)
+	anchor.basis = tangent_basis(up_dir, hint_forward)
 	anchor.width = maxi(new_width, 1)
 	anchor.depth = maxi(new_depth, 1)
 	anchor.cell_size = maxf(new_cell_size, 0.01)
@@ -49,10 +49,10 @@ static func create(
 ## rather than from anything frame-dependent, or two peers would build
 ## different grids for the same hole.
 static func tangent_basis(
-	up: Vector3,
+	up_dir: Vector3,
 	hint_forward: Vector3 = Vector3.FORWARD
 ) -> Basis:
-	var y := up
+	var y := up_dir
 	if y.length_squared() <= EPSILON:
 		y = Vector3.UP
 	y = y.normalized()

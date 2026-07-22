@@ -84,8 +84,11 @@ overlay-панели (inventory, palette). Логики симуляции не 
   выбранного слота, индикатор страницы (`[` / `]`);
 - индикатор **24-ориентации** (`selected_orientation_index`,
   `OrientationUtil.ORIENTATION_COUNT = 24`) в build-режиме;
-- счётчик `construction_component` через
-  `WorldCommandGateway.construction_resource_amount()`;
+- бар заполненности инвентаря игрока (`ИНВ`, % от `player_carry_capacity_l`)
+  через `WorldCommandGateway.player_carry_load()` — те же литры, что показывает
+  терминал (стеки + tool instances); cyan → amber ≥ 80% → red ≥ 95%.
+  Счётчик `N КОМП` убран: переполненный ранец молча ломает сбор и бур, а
+  количество одного компонента читается в терминале;
 - выбор слота и поворот **не** вызываются напрямую — Toolbar только визуализирует;
   ввод обрабатывает `ToolController` (`toolbar_slot_*`, `[`/`]`, `C`/`V`/`B`).
 
@@ -95,6 +98,12 @@ overlay-панели (inventory, palette). Логики симуляции не 
 - три бара: `health` (hp), `oxygen` (O₂), `hydrogen` (H₂);
 - каждый бар рисуется по нормализованной доле (`value / max`); цвет по палитре:
   steel-blue при норме, amber при предупреждении, red при критическом уровне;
+- **ambient-режим:** норма — состояние по умолчанию почти всю сессию, поэтому
+  при `> 0.5` числа уходят в `COL_DIM`, и только просевший канал зажигается
+  (amber → red, с усиленным glow на критическом);
+- **без рамки:** ни фона, ни бордера, ни `make_panel_overlay` — кластер не
+  спорит с миром; читаемость поверх освещённого реголита даёт обводка текста,
+  а не подложка. Единственный chrome — 1px вертикальная линия слева;
 - Vitals **только читает** `SuitState` и никогда его не меняет.
 
 ### VehiclePower (кабина транспорта)
@@ -264,8 +273,12 @@ HUD переиспользует язык цветов состояний из `
 - `hud_panel` (blend_add): `border_width 1.0`, `glow_width 6`, `glow_strength 0.14`,
   `corner_len 14`, `corner_strength 0.4`, `scanline_strength 0.02`,
   `sweep_strength 0.0`;
-- `hud_bar`: `segments 24`, `gap_ratio 0.16`, `glow_strength 0.22`,
-  `lead_strength 0.35` (статичный), размер 232×10;
+- `hud_bar`: `gap_ratio 0.16`, `glow_strength 0.22`, `lead_strength 0.35`
+  (статичный), базовый размер 232×10. `segments` — **не фиксированное число**:
+  один сегмент на ~8 px реальной ширины (`HudTokens.segments_for_width`), чтобы
+  шаг насечки был одинаковым у бара любой длины. Разрывы считаются в локальных
+  пикселях со сглаживанием в 1 px — UV-шаг ронял их на дробные пиксели, и на
+  коротком баре часть насечек пропадала, а соседние удваивались;
 - `hud_reticle` (blend_add): `gap 6`, `len 9`, `thick 1.0`, `dot_size 1.0`,
   `bracket_strength 0.0`, `glow_strength 0.15`, размер 64×64;
 - `hud_emblem`: `radius 0.58`, `line_w 0.06`, `color = state.valid`;
@@ -312,8 +325,8 @@ HUD переиспользует язык цветов состояний из `
   `ToolController`/`Drill`). Три канала `health`/`oxygen`/`hydrogen` (`current` +
   `max` + доля `*_fraction()`), сигнал `changed`, плюс минимальный tunable
   drain/regen-стаб (`tick()`), явно помеченный как заглушка до доменной системы
-  баланса. Виджет `Vitals` (`scripts/ui/hud_vitals.gd`) — панель «СИСТЕМЫ
-  СКАФАНДРА» слева-снизу: три бара на шейдере `hud_bar` + `HudTokens`, подписи
+  баланса. Виджет `Vitals` (`scripts/ui/hud_vitals.gd`) — компактный кластер
+  слева-снизу: три бара на шейдере `hud_bar` + `HudTokens`, подписи
   `ЗДР` (health), `О₂` (oxygen), `Н₂` (hydrogen). Цвет по доле: steel-blue при
   норме (`> 0.5`), amber при предупреждении (`≤ 0.5`), red при критическом уровне
   (`≤ 0.25`). Vitals только читает `SuitState` через `changed`, никогда не пишет.
