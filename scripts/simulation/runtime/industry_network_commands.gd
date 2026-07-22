@@ -161,9 +161,17 @@ static func connect_rope(world,
 				command.element_b_id,
 				command.attach_b
 			),
-			"rest_length_m": CableAnchorUtil.rest_length_m(
-				span_m,
-				command.slack
+			# The slack wheel prices the rope off the STRAIGHT span, but the
+			# player laid it along `routed_m` — around a block that path is
+			# metres longer than the chord. Built shorter than its own path the
+			# rope is born overstretched, and the tension solver takes the
+			# phantom stretch out of the machine it is tied to: a sustained
+			# multi-kN pull out of nowhere, usually ending in the rope snapping.
+			# The routed length is the floor; for an unobstructed rope the
+			# preview's routed length ≈ span·slack and this is a no-op.
+			"rest_length_m": maxf(
+				CableAnchorUtil.rest_length_m(span_m, command.slack),
+				command.routed_m
 			),
 		}
 	)

@@ -132,15 +132,9 @@ static func _build_node(
 	else:
 		node["category"] = _category_for(element)
 		if WheelPlacementUtil.is_wheel_archetype(element.get_archetype()):
-			var wheel := world.ensure_wheel_instance_state(element_id)
 			node["kind"] = "wheel"
 			node["category"] = "actuator"
-			node["detail"] = {
-				"steerable": wheel.steerable,
-				"drive_inverted": wheel.drive_inverted,
-				"drive_torque_scale": wheel.drive_torque_scale,
-				"brake_torque_n_m": wheel.brake_torque_n_m,
-			}
+			node["detail"] = _wheel_detail(world, element)
 		elif WheelPlacementUtil.is_suspension_archetype(element.get_archetype()):
 			node["kind"] = "suspension"
 			node["category"] = "actuator"
@@ -157,6 +151,34 @@ static func _build_node(
 		node["status"] = construction
 	node["severity"] = _severity_for(StringName(node["status"]))
 	return node
+
+
+## `brake_torque_n_m` хранится с сентинелом −1 = «как в архетипе» — точно как у
+## подвески; без резолва пульт показал бы «−1 Н·м», что бессмысленно оператору.
+## Заодно тащим живую телеметрию колеса (грунт/пробуксовка/питание) вместо
+## дублирования тумблеров поворотности из блока уставок ниже.
+static func _wheel_detail(world: SimulationWorld, element: SimulationElement) -> Dictionary:
+	var element_id := element.element_id
+	var definition: WheelDefinition = element.get_archetype().wheel_definition
+	var state := world.ensure_wheel_instance_state(element_id)
+	var runtime := world.ensure_industry_element_runtime(element_id)
+	var wheel_runtime := world.get_wheel_runtime(element_id)
+	return {
+		"steerable": state.steerable,
+		"drive_inverted": state.drive_inverted,
+		"drive_torque_scale": state.drive_torque_scale,
+		"brake_torque_n_m": (
+			state.brake_torque_n_m
+			if state.brake_torque_n_m >= 0.0
+			else (definition.brake_torque_n_m if definition != null else 0.0)
+		),
+		"max_brake_torque_n_m": (
+			definition.brake_torque_n_m if definition != null else 0.0
+		),
+		"powered": runtime.machine_enabled and runtime.powered,
+		"grounded": bool(wheel_runtime.get("grounded", false)),
+		"slip_speed_mps": float(wheel_runtime.get("slip_speed_mps", 0.0)),
+	}
 
 
 ## Уставки подвески хранятся с сентинелом −1 = «как в архетипе». Пульт обязан
@@ -192,7 +214,7 @@ static func _suspension_detail(
 	}
 
 
-## Вид привода определяет, какие уставки и команды показывать в фейсплейте.
+## Вид привода определяет, какие параметры и команды показывать в фейсплейте.
 static func _actuator_kind(joint_kind: SimulationJoint.Kind) -> String:
 	match joint_kind:
 		SimulationJoint.Kind.PISTON:

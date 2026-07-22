@@ -28,6 +28,8 @@ enum StructuralSurfacePolicy {
 @export var piston_definition: PistonDefinition
 @export var rotor_definition: RotorDefinition
 @export var hinge_definition: HingeDefinition
+@export var battery_definition: BatteryDefinition
+@export var power_source_definition: PowerSourceDefinition
 @export var suspension_definition: SuspensionDefinition
 @export var wheel_definition: WheelDefinition
 @export var thruster_definition: ThrusterDefinition

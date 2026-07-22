@@ -204,12 +204,17 @@ static func _voxel_supports_point(
 	)
 	if voxel_tool.get_voxel_f(cell) <= SUPPORT_EPSILON:
 		return true
+	# Short contact-range raycast only: this must match "is the surface touching
+	# the point", not "is there ground somewhere nearby". A long-range probe
+	# here would report contact for a block left floating a couple meters
+	# above the ground after its support was removed (e.g. a short pole),
+	# because it would still see solid terrain further below.
 	var up := GravityField.resolve_up(terrain, world_point)
 	var hit: VoxelRaycastResult = VoxelSpaceUtil.raycast_world(
 		voxel_tool,
 		terrain,
-		world_point + up * 2.0,
+		world_point + up * SUPPORT_EPSILON,
 		-up,
-		2.0 + SUPPORT_EPSILON
+		SUPPORT_EPSILON * 2.0
 	)
 	return hit != null

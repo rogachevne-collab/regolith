@@ -62,6 +62,8 @@ func try_open_on_target(hit: InteractionHit) -> bool:
 		return false
 	if not HudActuatorTuneUtil.is_actuator_meta(hit.metadata):
 		return false
+	if not UIWindowStack.push(self, Callable(self, "close")):
+		return false
 	_target_hit = hit
 	_open = true
 	_apply_open_state()
@@ -74,6 +76,7 @@ func close() -> void:
 	_open = false
 	_target_hit = InteractionHit.empty()
 	_apply_open_state()
+	UIWindowStack.remove(self)
 
 
 func close_for_interact() -> void:
@@ -373,23 +376,6 @@ func _on_command_completed(command_id: int, result: Dictionary) -> void:
 		push_warning(
 			"configure_actuator failed: %s" % HudTokens.status_label(reason)
 		)
-
-
-func _input(event: InputEvent) -> void:
-	if _open and _is_close_event(event):
-		if event.is_action_pressed("interact"):
-			close_for_interact()
-		else:
-			close()
-		get_viewport().set_input_as_handled()
-
-
-func _is_close_event(event: InputEvent) -> bool:
-	return (
-		event.is_action_pressed("interact")
-		or event.is_action_pressed("release_mouse")
-		or event.is_action_pressed("ui_cancel")
-	)
 
 
 func _apply_open_state() -> void:

@@ -11,10 +11,18 @@ extends Node3D
 const PREVIEW_NODE_NAME := "_EditorMountPadPreview"
 
 enum SocketKind {
-	STRUCTURAL,   ## bolts onto a frame / another structural face (empty tag)
-	WHEEL_SOCKET, ## a wheel plugs into here
-	WHEEL_PLUG,   ## this is a wheel's plug
-	CUSTOM,       ## use custom_tag verbatim
+	STRUCTURAL,    ## bolts onto a frame / another structural face (empty tag)
+	WHEEL_SOCKET,  ## a wheel plugs into here
+	WHEEL_PLUG,    ## this is a wheel's plug
+	CUSTOM,        ## use custom_tag verbatim
+	ELECTRIC_PORT, ## optional electrical connection point (not every part needs one)
+}
+
+## Only meaningful when socket_kind == ELECTRIC_PORT.
+enum PortRole {
+	BIDIRECTIONAL, ## can send or receive power
+	IN,            ## draws power only
+	OUT,           ## supplies power only
 }
 
 @export var socket_kind: SocketKind = SocketKind.STRUCTURAL:
@@ -22,12 +30,19 @@ enum SocketKind {
 		socket_kind = value
 		_queue_preview_update()
 		update_configuration_warnings()
+		notify_property_list_changed()
 
 ## Only used when socket_kind == CUSTOM.
 @export var custom_tag: String = "":
 	set(value):
 		custom_tag = value
 		update_configuration_warnings()
+
+## Only used when socket_kind == ELECTRIC_PORT.
+@export var port_role: PortRole = PortRole.BIDIRECTIONAL:
+	set(value):
+		port_role = value
+		_queue_preview_update()
 
 ## ON  — grid block behaviour: the point snaps to the centre of the nearest
 ##       cell face while you drag it.
@@ -68,6 +83,18 @@ func _get_configuration_warnings() -> PackedStringArray:
 	return get_diagnostics()
 
 
+func _validate_property(property: Dictionary) -> void:
+	var prop_name := str(property.name)
+	if prop_name == "custom_tag" and socket_kind != SocketKind.CUSTOM:
+		property.usage &= ~PROPERTY_USAGE_EDITOR
+	if prop_name == "port_role" and socket_kind != SocketKind.ELECTRIC_PORT:
+		property.usage &= ~PROPERTY_USAGE_EDITOR
+
+
+func is_electric() -> bool:
+	return socket_kind == SocketKind.ELECTRIC_PORT
+
+
 ## Socket tag written to the baked StructuralMountPad.
 func socket_tag() -> String:
 	match socket_kind:
@@ -79,6 +106,8 @@ func socket_tag() -> String:
 			return "wheel_plug"
 		SocketKind.CUSTOM:
 			return custom_tag
+		SocketKind.ELECTRIC_PORT:
+			return "electric"
 	return ""
 
 
@@ -148,8 +177,11 @@ func resolved_face() -> OrientationUtil.Face:
 	return _resolved_face
 
 
-## Build the StructuralMountPad this marker represents, or null if unresolved.
+## Build the StructuralMountPad this marker represents, or null if unresolved
+## or if this marker is an electrical port (see to_port() for those).
 func to_pad() -> StructuralMountPad:
+	if is_electric():
+		return null
 	if not resolve():
 		return null
 	var pad := StructuralMountPad.new()
@@ -161,6 +193,39 @@ func to_pad() -> StructuralMountPad:
 		pad.exact_point = true
 		pad.local_position = position
 	return pad
+
+
+## Build the PortDefinition this marker represents, or null if unresolved or
+## if this marker isn't an electrical port. `port_id` is assigned by the
+## authoring root so multiple electric markers on one part stay unique;
+## direction ("_in"/"_out"/"_io" suffix) is read from it at runtime by
+## IndustryElectricPortUtil.electric_direction().
+func to_port(port_id: String) -> PortDefinition:
+	if not is_electric():
+		return null
+	if not resolve():
+		return null
+	var port := PortDefinition.new()
+	port.port_id = port_id
+	port.kind = PortDefinition.Kind.ELECTRIC
+	port.local_cell = _resolved_cell
+	port.local_face = _resolved_face
+	# Every electric port needs the "electric" tag to conduct at all
+	# (IndustryElectricPortUtil._electric_tags_compatible) — not an authoring
+	# choice, just what makes the port a port.
+	port.compatibility_tags = PackedStringArray(["electric"])
+	return port
+
+
+## Suffix that encodes port_role for IndustryElectricPortUtil.electric_direction().
+func port_role_suffix() -> String:
+	match port_role:
+		PortRole.IN:
+			return "in"
+		PortRole.OUT:
+			return "out"
+		_:
+			return "io"
 
 
 func get_diagnostics() -> PackedStringArray:
@@ -197,6 +262,8 @@ func _tag_color() -> Color:
 			return Color(0.95, 0.60, 0.20, 0.85)
 		SocketKind.CUSTOM:
 			return Color(0.75, 0.40, 0.90, 0.85)
+		SocketKind.ELECTRIC_PORT:
+			return Color(0.95, 0.90, 0.15, 0.9)
 	return Color.WHITE
 
 
@@ -323,6 +390,14 @@ func _kind_label() -> String:
 			return "ось колеса"
 		SocketKind.CUSTOM:
 			return custom_tag if not custom_tag.is_empty() else "свой тег"
+		SocketKind.ELECTRIC_PORT:
+			match port_role:
+				PortRole.IN:
+					return "⚡ вход"
+				PortRole.OUT:
+					return "⚡ выход"
+				_:
+					return "⚡ вход/выход"
 	return ""
 
 

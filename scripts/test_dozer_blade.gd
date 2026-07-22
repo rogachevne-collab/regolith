@@ -117,9 +117,13 @@ func _test_loads_loose_into_buffer() -> bool:
 			"working blade expected reason ok, got %s"
 			% str(element.industry_status_reason())
 		)
-	if int(counters["plow"]) != 0:
+	# 26cd9ec: loading alone moved one tick budget out of a 1.5 m ball — nothing
+	# against a real heap, so the blade also plows every working tick even when
+	# it has buffer room (dozer_blade_service.gd _tick_blade). Plowing costs no
+	# volume, only relocates it, so this is additive to the load, not instead of it.
+	if int(counters["plow"]) != 1:
 		world.free()
-		return _fail("blade with buffer room must load, not plow")
+		return _fail("blade with buffer room must both load and plow each working tick")
 	world.free()
 	return true
 

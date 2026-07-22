@@ -489,7 +489,7 @@
     }
   },
   "industry": {
-    "player_carry_capacity_l": 10000.0,
+    "player_carry_capacity_l": 100.0,
     "queue_max_depth": 200,
     "keyed_store_capacity_l": {
       "cargo_store": 2000.0
@@ -860,9 +860,10 @@
     },
     "wheel.drive_torque": {
       "label": "Тяга привода",
-      "unit": "×",
+      "unit": "%",
       "step": 0.1,
-      "precision": 2,
+      "precision": 0,
+      "display_scale": 100,
       "command": "configure_wheel",
       "field": "drive_torque_scale",
       "target": "element",
@@ -906,6 +907,15 @@
         {
           "resource_id": "plate_metal",
           "amount": 8.0
+        }
+      ]
+    },
+    "dozer_blade": {
+      "mass_kg": 320.0,
+      "build_requirements": [
+        {
+          "resource_id": "mechanism",
+          "amount": 12.0
         }
       ]
     },

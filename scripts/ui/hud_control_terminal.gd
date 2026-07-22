@@ -52,12 +52,15 @@ const SLOT_ACTIONS: Array[StringName] = [
 const PAGE_COUNT := 9
 const SLOTS_PER_PAGE := 9
 
-## Перетаскиваемая команда/уставка. Payload несёт всё, что нужно слоту, чтобы
-## потом собрать команду без обратных ссылок на UI.
+## Перетаскиваемая команда/параметр. Payload несёт всё, что нужно слоту, чтобы
+## потом собрать команду без обратных ссылок на UI. Не кликается: единственный
+## сигнал «это можно перетащить» — подсветка под курсором (см. set_hover_style).
 class DragSource:
 	extends PanelContainer
 
 	var payload: Dictionary = {}
+	var _normal_style: StyleBox
+	var _hover_style: StyleBox
 
 	func _get_drag_data(_at_position: Vector2) -> Variant:
 		if payload.is_empty():
@@ -68,8 +71,27 @@ class DragSource:
 		set_drag_preview(preview)
 		return payload
 
+	func set_hover_style(normal: StyleBox, hover: StyleBox) -> void:
+		_normal_style = normal
+		_hover_style = hover
+		add_theme_stylebox_override("panel", normal)
+		if payload.is_empty():
+			return
+		mouse_default_cursor_shape = Control.CURSOR_DRAG
+		if not mouse_entered.is_connected(_on_hover_enter):
+			mouse_entered.connect(_on_hover_enter)
+			mouse_exited.connect(_on_hover_exit)
 
-## Клавиша пульта: принимает и команду, и уставку.
+	func _on_hover_enter() -> void:
+		if _hover_style != null:
+			add_theme_stylebox_override("panel", _hover_style)
+
+	func _on_hover_exit() -> void:
+		if _normal_style != null:
+			add_theme_stylebox_override("panel", _normal_style)
+
+
+## Клавиша пульта: принимает и команду, и параметр.
 class DropKey:
 	extends PanelContainer
 
@@ -85,6 +107,41 @@ class DropKey:
 	func _drop_data(_at_position: Vector2, data: Variant) -> void:
 		if terminal != null and data is Dictionary:
 			terminal.call("bind_slot", slot_index, data)
+
+
+## Трек параметра — физическая шкала, не картинка: клик и протяг по нему пишут
+## абсолютное значение (param.set) прямо во время движения, как реальный
+## слайдер на приборной панели, а не только после отпускания.
+class SliderTrack:
+	extends Control
+
+	var terminal: Node
+	var param_id: String = ""
+	var _dragging := false
+
+	func _gui_input(event: InputEvent) -> void:
+		if event is InputEventMouseButton:
+			var mouse := event as InputEventMouseButton
+			if mouse.button_index != MOUSE_BUTTON_LEFT:
+				return
+			accept_event()
+			if mouse.pressed:
+				_dragging = true
+				_apply(mouse.position.x)
+			elif _dragging:
+				_dragging = false
+				if terminal != null:
+					terminal.call("_end_slider_drag")
+		elif _dragging and event is InputEventMouseMotion:
+			accept_event()
+			_apply((event as InputEventMouseMotion).position.x)
+
+	func _apply(local_x: float) -> void:
+		if terminal == null or param_id.is_empty() or size.x <= 0.0:
+			return
+		terminal.call(
+			"_apply_slider_ratio", param_id, clampf(local_x / size.x, 0.0, 1.0)
+		)
 
 
 var _frame: PanelContainer
@@ -126,6 +183,12 @@ var _search_edit: LineEdit
 var _rename_edit: LineEdit
 var _renaming := false
 var _seg_row: HBoxContainer
+## Живые хэндлы ползунков текущего фейсплейта: param_id → {fill, knob, value}.
+## Нужны, чтобы двигать шкалу во время протяга без полной пересборки (иначе
+## пересборка убивает захват мыши по перетаскиваемому SliderTrack на середине
+## жеста).
+var _slider_rows: Dictionary = {}
+var _slider_drag_active := false
 ## Сборка, к которой прицепился пульт при открытии. Держим защёлку: после
 ## открытия курсор свободен, прицел больше не двигается, и перерезолв по
 ## наведению просто гасил бы панель.
@@ -139,7 +202,7 @@ var _fault_left := 0.0
 var _fault_text := ""
 var _fault_cell: Label
 
-## Какие уставки показывать для вида узла (id из ParameterCatalog).
+## Какие параметры показывать для вида узла (id из ParameterCatalog).
 const SETPOINTS := {
 	"piston": [
 		"piston.extend_velocity", "piston.retract_velocity", "piston.force",
@@ -230,6 +293,11 @@ func blocks_world_interact() -> bool:
 
 
 func close_for_interact() -> void:
+	# `interact` (E) is polled from the raw Input singleton by ToolController,
+	# bypassing whatever the GUI focus consumed — so typing the letter "e" into
+	# a field here would otherwise close the whole terminal mid-keystroke.
+	if get_viewport().gui_get_focus_owner() is LineEdit:
+		return
 	_interact_release_latch = true
 	close()
 
@@ -243,6 +311,8 @@ func toggle() -> void:
 
 func open() -> void:
 	if _open:
+		return
+	if not UIWindowStack.push(self, Callable(self, "close"), Callable(self, "_on_stack_escape")):
 		return
 	_open = true
 	# Цель фиксируется один раз, на открытии: дальше игрок работает мышью и
@@ -259,6 +329,15 @@ func close() -> void:
 	_open = false
 	_release_holds()
 	_apply_open_state()
+	UIWindowStack.remove(self)
+
+
+## Esc сначала отменяет правку имени и только потом закрывает окно.
+func _on_stack_escape() -> void:
+	if _renaming:
+		_cancel_rename()
+	else:
+		close()
 
 
 func _apply_open_state() -> void:
@@ -298,8 +377,10 @@ func _process(delta: float) -> void:
 func _refresh() -> void:
 	if _gateway == null or not _gateway.has_method("control_terminal_snapshot"):
 		return
-	# Пока тащат — не перестраиваем: иначе drag-источник освободится под курсором.
-	if get_viewport().gui_is_dragging():
+	# Пока тащат (drag-drop или протяг ползунка) — не перестраиваем: иначе
+	# drag-источник освободится под курсором либо SliderTrack посреди жеста
+	# уедет вместе со своим захватом мыши.
+	if get_viewport().gui_is_dragging() or _slider_drag_active:
 		return
 	var snap: Dictionary = _gateway.call(
 		"control_terminal_snapshot",
@@ -345,20 +426,6 @@ func _aimed_element_id() -> int:
 	return int(meta.get("element_id", 0))
 
 
-## Закрытие идёт через `_input`, а не `_unhandled_input`: Esc (`release_mouse`)
-## иначе перехватывает оверлей настроек и открывает своё окно поверх пульта.
-## Тот же приём, что в hud_actuator_panel.
-func _input(event: InputEvent) -> void:
-	if not _open or not event.is_action_pressed("release_mouse"):
-		return
-	# Esc сначала отменяет правку имени и только потом закрывает окно.
-	if _renaming:
-		_cancel_rename()
-	else:
-		close()
-	get_viewport().set_input_as_handled()
-
-
 func _unhandled_input(event: InputEvent) -> void:
 	# Открытие — через InputMap-действие (physical K), чтобы биндилось как всё
 	# остальное управление и не зависело от раскладки.
@@ -391,31 +458,23 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 
 
+## Срабатывает на ОТПУСКАНИЕ, не на нажатие. Это не стиль, а необходимость:
+## элементы, что кликабельны, часто же и перетаскиваются (DragSource). Годот
+## распознаёт drag только после нажатия, поэтому нажатие ещё не значит клик.
+## Если жест стал перетаскиванием, control вообще не получает событие
+## отпускания (viewport забирает мышь под DnD) — то есть клик просто не
+## сработает, ровно как нужно. Огонь на нажатии стрелял бы всегда, ещё до
+## того, как понятно, тащит игрок или кликает.
 func _on_click(event: InputEvent, action: Callable) -> void:
 	if (
 		event is InputEventMouseButton
-		and event.pressed
+		and not event.pressed
 		and event.button_index == MOUSE_BUTTON_LEFT
 	):
 		action.call()
 
 
-## Кнопка команды в фейсплейте: «удерж» держится нажатой кнопкой мыши, всё
-## остальное срабатывает разово.
-func _on_command_input(event: InputEvent, payload: Dictionary) -> void:
-	if not event is InputEventMouseButton:
-		return
-	var mouse := event as InputEventMouseButton
-	if mouse.button_index != MOUSE_BUTTON_LEFT:
-		return
-	if mouse.pressed:
-		_begin_hold("mouse", payload)
-		_run_action(payload, true)
-	elif _held.erase("mouse"):
-		_run_action(payload, false)
-
-
-## Единственная точка отправки уставки в симуляцию: её используют и клик по ±,
+## Единственная точка отправки параметра в симуляцию: её используют и клик по ±,
 ## и слот `param.*`, и будущий ввод числа с клавиатуры.
 func _submit(command_kind: String, element_id: int, params: Dictionary) -> void:
 	if _gateway == null or command_kind.is_empty():
@@ -475,6 +534,24 @@ func _submit_param(
 	_submit(command_kind, element_id, params)
 
 
+## Часть уставок клампится не постоянным диапазоном каталога, а фактическим
+## паспортом конкретного узла (предел хода этой подвески, тормозной момент
+## этой модели колеса) — каталог даёт разумный дефолт, живой снапшот, если
+## несёт точные границы этого экземпляра, их переопределяет. Без этого шаг
+## либо упирался бы в чужой лимит раньше времени, либо разрешал то, что
+## authoritative-сторона всё равно отклонит.
+func _effective_bounds(param_id: String, detail: Dictionary, entry: Dictionary) -> Vector2:
+	var lo := float(entry.get("soft_min", 0.0))
+	var hi := float(entry.get("soft_max", 1.0))
+	match param_id:
+		"suspension.travel":
+			lo = float(detail.get("min_travel_m", lo))
+			hi = float(detail.get("max_travel_m", hi))
+		"wheel.brake_torque":
+			hi = float(detail.get("max_brake_torque_n_m", hi))
+	return Vector2(lo, hi)
+
+
 ## Клик по «−»/«+»: шаг из каталога от текущего живого значения, кламп по
 ## soft-диапазону. Авторитетный кламп всё равно за симуляцией.
 func _apply_param_step(param_id: String, direction: int) -> void:
@@ -484,10 +561,11 @@ func _apply_param_step(param_id: String, direction: int) -> void:
 	var node := _selected_node()
 	var detail: Dictionary = node.get("detail", {})
 	var field := str(entry.get("field", ""))
+	var bounds := _effective_bounds(param_id, detail, entry)
 	var value := clampf(
 		float(detail.get(field, 0.0)) + float(entry.get("step", 0.0)) * direction,
-		float(entry.get("soft_min", 0.0)),
-		float(entry.get("soft_max", 1.0))
+		bounds.x,
+		bounds.y
 	)
 	_submit_param(
 		param_id,
@@ -608,14 +686,16 @@ func _run_param_action(spec: Dictionary, element_id: int, joint_id: int) -> void
 	var action := str(spec.get("action_id", ""))
 	var value := float(spec.get("value", 0.0))
 	if action != "param.set":
+		var detail := _live_detail(element_id, joint_id)
 		var delta := float(spec.get("delta", 0.0))
 		if action == "param.decrease":
 			delta = -delta
 		var field := str(entry.get("field", ""))
+		var bounds := _effective_bounds(param_id, detail, entry)
 		value = clampf(
-			float(_live_detail(element_id, joint_id).get(field, 0.0)) + delta,
-			float(entry.get("soft_min", 0.0)),
-			float(entry.get("soft_max", 1.0))
+			float(detail.get(field, 0.0)) + delta,
+			bounds.x,
+			bounds.y
 		)
 	_submit_param(param_id, value, element_id, joint_id)
 
@@ -1290,6 +1370,17 @@ func _eq_row(node: Dictionary, idx: int, selected: bool) -> Control:
 	wrap.gui_input.connect(
 		_on_row_input.bind(int(node.get("element_id", 0)))
 	)
+	# Наведение — не только курсор меняется, ряд обязан подсветиться: это
+	# кликабельная таблица, а не статичный текст.
+	if not selected:
+		var hover_sbox := _sbox(_hover_bg(bg), 0, 0, 0, 1, TXT2)
+		var normal_sbox := _sbox(bg, 0, 0, 0, 1, TXT2)
+		wrap.mouse_entered.connect(
+			func(): wrap.add_theme_stylebox_override("panel", hover_sbox)
+		)
+		wrap.mouse_exited.connect(
+			func(): wrap.add_theme_stylebox_override("panel", normal_sbox)
+		)
 	var h := _hbox(0)
 	var m := MarginContainer.new()
 	m.add_theme_constant_override("margin_left", 12)
@@ -1325,8 +1416,8 @@ func _build_faceplate() -> Control:
 	return _fp_box
 
 
-## Перестройка фейсплейта под выбранный узел: шапка, показания, уставки (по
-## ParameterCatalog для вида узла), команды. Для колеса уставки начинаются с
+## Перестройка фейсплейта под выбранный узел: шапка, показания, параметры (по
+## ParameterCatalog для вида узла), команды. Для колеса параметры начинаются с
 ## булевых тумблеров (поворотность и направление привода).
 func _fill_faceplate() -> void:
 	if _fp_box == null:
@@ -1338,6 +1429,7 @@ func _fill_faceplate() -> void:
 	for child: Node in _fp_box.get_children():
 		_fp_box.remove_child(child)
 		child.queue_free()
+	_slider_rows.clear()
 
 	var node := _selected_node()
 	if node.is_empty():
@@ -1354,7 +1446,7 @@ func _fill_faceplate() -> void:
 	var setpoints := _fp_setpoints(kind, detail)
 	if setpoints != null:
 		_fp_box.add_child(_fp_section(
-			"УСТАВКИ · ПЕРЕТАЩИ СТРОКУ НА КЛАВИШУ (УСТАНОВИТЬ / ±ШАГ)",
+			"ПАРАМЕТРЫ · ПЕРЕТАЩИ СТРОКУ НА КЛАВИШУ (УСТАНОВИТЬ / ±ШАГ)",
 			setpoints
 		))
 
@@ -1451,23 +1543,26 @@ func _on_rename_submitted(text: String) -> void:
 func _fp_readings(node: Dictionary, kind: String, detail: Dictionary) -> Control:
 	var v := _vbox(0)
 	if kind == "wheel":
+		# Поворотность/направление уже показаны тумблерами в «Уставках» ниже —
+		# дублировать те же два бита здесь нечем, тут только то, чего там нет:
+		# живая телеметрия контакта с грунтом.
 		v.add_child(_pv_row(
-			"Поворотное",
-			"да" if bool(detail.get("steerable", false)) else "нет",
-			""
+			"Питание", "есть" if bool(detail.get("powered", false)) else "нет", ""
 		))
 		v.add_child(_pv_row(
-			"Направление",
-			"назад" if bool(detail.get("drive_inverted", false)) else "вперёд",
-			""
+			"Опора", "на грунте" if bool(detail.get("grounded", false)) else "в воздухе", ""
+		))
+		v.add_child(_pv_row(
+			"Пробуксовка",
+			"%.2f" % float(detail.get("slip_speed_mps", 0.0)),
+			"м/с"
 		))
 		return v
 	if kind == "suspension":
+		# «Ход» тут был бы тем же числом, что «Ход подвески» в параметрах ниже —
+		# живой телеметрии сжатия у подвески нет, дублировать нечего.
 		v.add_child(_pv_row(
-			"Ход", "%.2f" % float(detail.get("travel_m", 0.0)), "м"
-		))
-		v.add_child(_pv_row(
-			"Предел хода",
+			"Допустимый ход",
 			"%.2f…%.2f" % [
 				float(detail.get("min_travel_m", 0.0)),
 				float(detail.get("max_travel_m", 0.0)),
@@ -1535,7 +1630,7 @@ func _fp_setpoints(kind: String, detail: Dictionary) -> Control:
 	return v
 
 
-## Строка уставки из ParameterCatalog: живое значение из detail, шаг/подпись/
+## Строка параметра из ParameterCatalog: живое значение из detail, шаг/подпись/
 ## единица/точность — из баланса, положение ползунка — по soft-диапазону.
 func _sp_row_from(param_id: String, detail: Dictionary) -> Control:
 	var entry := GameBalance.parameter_entry(param_id)
@@ -1544,8 +1639,9 @@ func _sp_row_from(param_id: String, detail: Dictionary) -> Control:
 	var field := str(entry.get("field", ""))
 	var raw := float(detail.get(field, 0.0))
 	var scale := float(entry.get("display_scale", 1.0))
-	var lo := float(entry.get("soft_min", 0.0))
-	var hi := float(entry.get("soft_max", 1.0))
+	var bounds := _effective_bounds(param_id, detail, entry)
+	var lo := bounds.x
+	var hi := bounds.y
 	var ratio := 0.0
 	if hi - lo > 0.000001:
 		ratio = clampf((raw - lo) / (hi - lo), 0.0, 1.0)
@@ -1588,7 +1684,7 @@ func _sp_row_from(param_id: String, detail: Dictionary) -> Control:
 	}, param_id)
 
 
-## Булева уставка (поворотность, направление): двухсегментный тумблер вместо
+## Булев параметр (поворотность, направление): двухсегментный тумблер вместо
 ## ползунка — это не число, шаг к нему неприменим.
 func _sw_row(
 	label: String,
@@ -1743,18 +1839,28 @@ func _sp_row(
 	var kl := _lbl(k, DIM, 13)
 	kl.custom_minimum_size = Vector2(90, 0)
 	h.add_child(kl)
-	h.add_child(_slider(ratio))
+	h.add_child(_slider(ratio, param_id))
 	h.add_child(_edit_field(val, unit, focus, payloads, param_id))
 	return h
 
 
-func _slider(ratio: float) -> Control:
-	var box := Control.new()
-	box.custom_minimum_size = Vector2(0, 12)
+## Живой трек: клик/протяг по нему пишет абсолютное значение через
+## `_apply_slider_ratio` (см. класс SliderTrack). Дочерние Panel — только
+## отрисовка, поэтому все — MOUSE_FILTER_IGNORE, иначе они бы сами глотали
+## клик поверх трека и он бы никогда не доходил до `_gui_input`.
+func _slider(ratio: float, param_id: String = "") -> Control:
+	var box := SliderTrack.new()
+	box.terminal = self
+	box.param_id = param_id
+	box.custom_minimum_size = Vector2(0, 16)
 	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	box.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	box.mouse_filter = Control.MOUSE_FILTER_STOP
+	if not param_id.is_empty():
+		box.mouse_default_cursor_shape = Control.CURSOR_HSPLIT
 
 	var track := Panel.new()
+	track.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	track.add_theme_stylebox_override("panel", _sbox(LINE))
 	track.set_anchors_preset(Control.PRESET_CENTER_LEFT)
 	track.anchor_right = 1.0
@@ -1765,6 +1871,7 @@ func _slider(ratio: float) -> Control:
 	box.add_child(track)
 
 	var fill := Panel.new()
+	fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	fill.add_theme_stylebox_override("panel", _sbox(TXT2))
 	fill.anchor_left = 0.0
 	fill.anchor_right = ratio
@@ -1775,6 +1882,7 @@ func _slider(ratio: float) -> Control:
 	box.add_child(fill)
 
 	var knob := Panel.new()
+	knob.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	knob.add_theme_stylebox_override("panel", _sbox(TXT))
 	knob.anchor_left = ratio
 	knob.anchor_right = ratio
@@ -1785,7 +1893,55 @@ func _slider(ratio: float) -> Control:
 	knob.offset_top = -4
 	knob.offset_bottom = 5
 	box.add_child(knob)
+
+	if not param_id.is_empty():
+		_slider_rows[param_id] = {"fill": fill, "knob": knob}
 	return box
+
+
+## Ратио → значение → команда, вызывается на каждое движение SliderTrack (не
+## только на отпускание) — шкала обязана ехать вместе с курсором, как у
+## настоящего прибора. Значение и подпись поля обновляются тут же, без
+## ожидания следующего тика снапшота (тот всё равно подавлен, см. _refresh).
+func _apply_slider_ratio(param_id: String, ratio: float) -> void:
+	_slider_drag_active = true
+	var entry := GameBalance.parameter_entry(param_id)
+	if entry.is_empty():
+		return
+	var node := _selected_node()
+	var detail: Dictionary = node.get("detail", {})
+	var bounds := _effective_bounds(param_id, detail, entry)
+	var value := lerpf(bounds.x, bounds.y, ratio)
+	_submit_param(
+		param_id, value, int(node.get("element_id", 0)), int(node.get("joint_id", 0))
+	)
+	var row: Dictionary = _slider_rows.get(param_id, {})
+	if row.is_empty():
+		return
+	var fill: Panel = row.get("fill")
+	if fill != null:
+		fill.anchor_right = ratio
+	var knob: Panel = row.get("knob")
+	if knob != null:
+		knob.anchor_left = ratio
+		knob.anchor_right = ratio
+	var value_label: Label = row.get("value")
+	if value_label != null:
+		value_label.text = String.num(
+			value * float(entry.get("display_scale", 1.0)),
+			int(entry.get("precision", 2))
+		)
+
+
+func _end_slider_drag() -> void:
+	_slider_drag_active = false
+
+
+## Более тёплый оттенок в сторону цвета выделения — единственный сигнал
+## «сюда можно бросить» теперь, когда клик по этим панелям больше не стреляет
+## командой напрямую (см. _on_click).
+func _hover_bg(base: Color) -> Color:
+	return base.lerp(SEL, 0.6)
 
 
 ## PanelContainer, который можно утащить на клавишу пульта.
@@ -1800,12 +1956,15 @@ func _drag_panel(
 ) -> DragSource:
 	var p := DragSource.new()
 	p.payload = payload
-	p.add_theme_stylebox_override("panel", _sbox(bg, bl, bt, br, bb, bc))
 	p.mouse_filter = Control.MOUSE_FILTER_STOP
+	p.set_hover_style(
+		_sbox(bg, bl, bt, br, bb, bc),
+		_sbox(_hover_bg(bg), bl, bt, br, bb, bc)
+	)
 	return p
 
 
-## Поле уставки — три независимых drag-источника: «−шаг», «установить текущее»,
+## Поле параметра — три независимых drag-источника: «−шаг», «установить текущее»,
 ## «+шаг». Так игрок тащит на клавишу ровно тот вариант, который хочет, без
 ## всплывающего выбора после броска.
 func _edit_field(
@@ -1841,29 +2000,36 @@ func _edit_field(
 		)
 	h.add_child(plus)
 	box.add_child(h)
+	if not param_id.is_empty():
+		if not _slider_rows.has(param_id):
+			_slider_rows[param_id] = {}
+		_slider_rows[param_id]["value"] = vl
 	return box
 
 
+## Чистый drag-источник — эта кнопка НЕ исполняется кликом (глагол пробуется
+## только через слот пульта, куда её перетащили). Клик-и-старт-жеста иначе
+## конфликтует с началом перетаскивания: нажатие уходило бы в исполнение
+## раньше, чем Godot успеет понять, что это drag. Подсветка при наведении —
+## единственный сигнал «это можно перетащить».
 func _cmd(glyph: String, text: String, kind: String, payload: Dictionary = {}) -> Control:
-	var s := StyleBoxFlat.new()
-	s.anti_aliasing = false
-	s.bg_color = CELL
-	s.border_color = LINE2
-	s.set_border_width_all(1)
-	s.content_margin_left = 10
-	s.content_margin_right = 10
-	s.content_margin_top = 6
-	s.content_margin_bottom = 6
+	var normal := StyleBoxFlat.new()
+	normal.anti_aliasing = false
+	normal.bg_color = CELL
+	normal.border_color = LINE2
+	normal.set_border_width_all(1)
+	normal.content_margin_left = 10
+	normal.content_margin_right = 10
+	normal.content_margin_top = 6
+	normal.content_margin_bottom = 6
+	var hover := normal.duplicate() as StyleBoxFlat
+	hover.bg_color = _hover_bg(CELL)
 	var box := DragSource.new()
 	box.payload = payload
-	box.add_theme_stylebox_override("panel", s)
 	box.mouse_filter = Control.MOUSE_FILTER_STOP
 	box.custom_minimum_size = Vector2(0, 34)
 	box.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	# Кнопка не только перетаскивается на клавишу, но и работает по клику:
-	# иначе проверить глагол можно было бы только через привязку.
-	if not payload.is_empty():
-		box.gui_input.connect(_on_command_input.bind(payload))
+	box.set_hover_style(normal, hover)
 	var h := _hbox(7)
 	h.alignment = BoxContainer.ALIGNMENT_CENTER
 	h.add_child(_icon(glyph, TXT2, 15))
@@ -2090,7 +2256,7 @@ func _fill_slots() -> void:
 			_strip.add_child(_vrule())
 
 
-## Привязка брошенной команды/уставки к клавише. Слот хранит только данные
+## Привязка брошенной команды/параметра к клавише. Слот хранит только данные
 ## (цель + глагол + аргументы), поэтому переживает перестройку UI.
 func bind_slot(index: int, payload: Dictionary) -> void:
 	if index < 0 or index >= SLOTS_PER_PAGE or payload.is_empty():
@@ -2137,7 +2303,7 @@ func _soft_key(index: int, slot: Dictionary) -> Control:
 	box.custom_minimum_size = Vector2(0, 56)
 	box.mouse_filter = Control.MOUSE_FILTER_STOP
 	box.tooltip_text = (
-		"Перетащи сюда команду или уставку"
+		"Перетащи сюда команду или параметр"
 		if empty
 		else "%s · %s\nЛКМ или клавиша %d — выполнить, ПКМ — снять" % [
 			str(slot.get("label", "")), str(slot.get("node_name", "")), index + 1

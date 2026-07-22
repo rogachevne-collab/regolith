@@ -12,9 +12,10 @@ const SUSTAINED_V_EPS := 0.05
 ## body is frozen (~0.5s at 60Hz).
 const PARK_FREEZE_SETTLE_FRAMES := 30
 const WAKE_DIG_MARGIN_M := 3.0
-## Rope particles allowed to run world collision per physics tick, across all
-## ropes. One rope always fits; a forest of them degrades to every-other-tick
-## collision instead of eating the frame.
+## Rope particles allowed to run shape-query collision per physics tick, across
+## all ropes. One rope always fits; a forest of them degrades to sweep-only
+## ticks (rays always run — see CableRopeSolver.step) instead of eating the
+## frame.
 const CABLE_ROPE_COLLISION_BUDGET := 320
 ## Ground-anchor upkeep: how often a world-nailed rope end checks that it still
 ## has ground, and how much ground has to disappear before it tears loose.
@@ -1628,6 +1629,9 @@ func _tick_cable_ropes(delta: float) -> void:
 		var collides := space_state != null and collision_budget >= particles
 		if collides:
 			collision_budget -= particles
+		# Past the budget the rope loses only its shape queries; the space state
+		# still goes in so the anti-tunnel sweep runs every tick. Starving a rope
+		# of collision wholesale is how they ended up inside driving machines.
 		CableRopeSolver.step(
 			state,
 			anchor_a,
@@ -1635,7 +1639,8 @@ func _tick_cable_ropes(delta: float) -> void:
 			link.rest_length_m,
 			gravity,
 			delta,
-			space_state if collides else null
+			space_state,
+			collides
 		)
 		live[link.link_id] = state
 	_rope_states = live
@@ -1683,11 +1688,17 @@ func _tick_cable_tension(delta: float) -> void:
 			# Draped over a rock the rope runs longer than the straight span and
 			# hits its limit sooner, and it pulls along its own first segment —
 			# toward what it is draped over, not through it.
+			# Deadbanded, like the pull itself: a rope resting on the world
+			# reports a few centimetres of solver noise, and treating that as
+			# load kept thawing parked machines forever.
 			_wake_roped_bodies(
 				link.link_id,
 				body_a,
 				body_b,
-				CableRopeSolver.routed_length_m(state) - link.rest_length_m
+				CableTensionUtil.effective_overshoot_m(
+					CableRopeSolver.routed_length_m(state),
+					link.rest_length_m
+				)
 			)
 			tension_n = CableTensionUtil.solve_routed(
 				anchor_a,
@@ -1708,7 +1719,10 @@ func _tick_cable_tension(delta: float) -> void:
 				link.link_id,
 				body_a,
 				body_b,
-				anchor_a.distance_to(anchor_b) - link.rest_length_m
+				CableTensionUtil.effective_overshoot_m(
+					anchor_a.distance_to(anchor_b),
+					link.rest_length_m
+				)
 			)
 			tension_n = CableTensionUtil.solve(
 				anchor_a,

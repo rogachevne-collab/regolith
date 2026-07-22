@@ -21,6 +21,9 @@ func _run_tests() -> void:
 		_test_big_cube_full_surface,
 		_test_generate_mounts_per_side,
 		_test_generate_mounts_per_cell,
+		_test_battery_bakes_valid,
+		_test_power_source_bakes_valid,
+		_test_battery_needs_electric_port,
 	]
 	for test: Callable in tests:
 		if not bool(test.call()):
@@ -53,6 +56,26 @@ func _add_marker(
 	marker.socket_kind = kind
 	root.add_child(marker)
 	marker.position = _face_center(cell, face)
+
+
+func _add_electric_marker(
+	root: PartAuthoringRoot,
+	role: MountPadMarker.PortRole,
+	cell: Vector3i,
+	face: OrientationUtil.Face
+) -> void:
+	var marker := MountPadMarker.new()
+	marker.socket_kind = MountPadMarker.SocketKind.ELECTRIC_PORT
+	marker.port_role = role
+	root.add_child(marker)
+	marker.position = _face_center(cell, face)
+
+
+func _find_port(archetype: ElementArchetype, port_id: String) -> PortDefinition:
+	for port: PortDefinition in archetype.ports:
+		if port.port_id == port_id:
+			return port
+	return null
 
 
 func _face_center(cell: Vector3i, face: OrientationUtil.Face) -> Vector3:
@@ -281,4 +304,101 @@ func _test_bake_saves_and_reloads() -> bool:
 	if reloaded.archetype_id != "tmp_saved_wheel":
 		return _fail("saved wheel id mismatch: %s" % reloaded.archetype_id)
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	return true
+
+
+func _test_battery_bakes_valid() -> bool:
+	var root := _make_root(PartAuthoringRoot.PartKind.BATTERY)
+	root.part_id = "test_battery"
+	root.size_cells = Vector3i(2, 3, 2)
+	root.battery_capacity_kwh = 6.0
+	root.battery_charge_w = 300.0
+	root.battery_discharge_w = 400.0
+	_add_electric_marker(
+		root,
+		MountPadMarker.PortRole.IN,
+		Vector3i(0, 1, 0),
+		OrientationUtil.Face.NEG_Z
+	)
+	_add_electric_marker(
+		root,
+		MountPadMarker.PortRole.OUT,
+		Vector3i(0, 1, 1),
+		OrientationUtil.Face.POS_Z
+	)
+	var errors: Array[String] = []
+	var archetype := root._build_archetype(errors)
+	if not errors.is_empty():
+		root.free()
+		return _fail("battery build errors: %s" % [errors])
+	if archetype == null:
+		root.free()
+		return _fail("battery build returned null")
+	var validation := BlueprintValidator.validate_archetype(archetype)
+	var battery_errors := archetype.battery_definition.validate(archetype)
+	var power_in := _find_port(archetype, "power_in")
+	var power_out := _find_port(archetype, "power_out")
+	root.free()
+	if not validation.ok:
+		return _fail("battery archetype invalid: %s" % [validation.errors])
+	if not battery_errors.is_empty():
+		return _fail("battery definition invalid: %s" % [battery_errors])
+	if not archetype.roles.has("Tank"):
+		return _fail("battery should have role 'Tank', got %s" % [archetype.roles])
+	if power_in == null or power_in.kind != PortDefinition.Kind.ELECTRIC:
+		return _fail("battery missing electric power_in port")
+	if power_out == null or power_out.kind != PortDefinition.Kind.ELECTRIC:
+		return _fail("battery missing electric power_out port")
+	if not is_equal_approx(archetype.battery_definition.capacity_kwh, 6.0):
+		return _fail("battery capacity not carried through")
+	return true
+
+
+func _test_power_source_bakes_valid() -> bool:
+	var root := _make_root(PartAuthoringRoot.PartKind.POWER_SOURCE)
+	root.part_id = "test_power_source"
+	root.size_cells = Vector3i(3, 3, 3)
+	root.source_output_w = 1500.0
+	_add_electric_marker(
+		root,
+		MountPadMarker.PortRole.OUT,
+		Vector3i(1, 1, 2),
+		OrientationUtil.Face.POS_Z
+	)
+	var errors: Array[String] = []
+	var archetype := root._build_archetype(errors)
+	if not errors.is_empty():
+		root.free()
+		return _fail("power source build errors: %s" % [errors])
+	var validation := BlueprintValidator.validate_archetype(archetype)
+	var source_errors := archetype.power_source_definition.validate(archetype)
+	var power_out := _find_port(archetype, "power_out")
+	root.free()
+	if not validation.ok:
+		return _fail("power source archetype invalid: %s" % [validation.errors])
+	if not source_errors.is_empty():
+		return _fail("power source definition invalid: %s" % [source_errors])
+	if not archetype.roles.has("Source"):
+		return _fail("power source should have role 'Source', got %s" % [archetype.roles])
+	if power_out == null or power_out.kind != PortDefinition.Kind.ELECTRIC:
+		return _fail("power source missing electric power_out port")
+	if not is_equal_approx(archetype.power_source_definition.output_w, 1500.0):
+		return _fail("power source output_w not carried through")
+	return true
+
+
+func _test_battery_needs_electric_port() -> bool:
+	var root := _make_root(PartAuthoringRoot.PartKind.BATTERY)
+	root.part_id = "test_battery_no_port"
+	root.size_cells = Vector3i(2, 3, 2)
+	var errors: Array[String] = []
+	var archetype := root._build_archetype(errors)
+	var battery_errors := (
+		archetype.battery_definition.validate(archetype)
+		if archetype != null and archetype.battery_definition != null
+		else ["no battery_definition built"]
+	)
+	root.free()
+	if battery_errors.is_empty():
+		return _fail("battery with no electric marker should fail validation")
 	return true

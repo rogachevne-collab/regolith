@@ -232,6 +232,12 @@ var _rope_anchor_element_id := 0
 var _rope_anchor_local := Vector3.ZERO
 ## Wheel knob: 0 внатяг … 1 болтается. Kept between ropes, like a tool setting.
 var _rope_slack := CableAnchorUtil.DEFAULT_SLACK
+## Length of the rope-in-hand as it actually lies in the world, reported by the
+## routing preview every frame. Zero when no preview is running (headless, HUD
+## off). The straight span understates a rope routed around a block, and a rope
+## built shorter than its own path is born overstretched — the tension solver
+## then takes the phantom stretch out of the machine's joints.
+var _rope_routed_hint_m := 0.0
 var _recipe_cursor_by_element: Dictionary = {}
 var _inventory_revision := -1
 var _last_drill_excavation_msec := -1
@@ -288,28 +294,11 @@ func _ready() -> void:
 func _physics_process(delta: float) -> void:
 	_sync_inventory_toolbar_if_needed()
 	_cooldown = maxf(_cooldown - delta, 0.0)
-	if _ui_modal_blocks_world_interact():
+	if UIWindowStack.any_open():
 		if Input.is_action_just_pressed(&"interact"):
-			if _actuator_panel_is_open():
-				if _actuator_panel.has_method("close_for_interact"):
-					_actuator_panel.call("close_for_interact")
-				else:
-					_actuator_panel.call("close")
-			elif _wheel_panel_is_open():
-				if _wheel_panel.has_method("close_for_interact"):
-					_wheel_panel.call("close_for_interact")
-				else:
-					_wheel_panel.call("close")
-			elif _terminal_is_open():
-				if _terminal.has_method("close_for_interact"):
-					_terminal.call("close_for_interact")
-				else:
-					_terminal.call("close")
-			elif _control_terminal_is_open():
-				if _control_terminal.has_method("close_for_interact"):
-					_control_terminal.call("close_for_interact")
-				else:
-					_control_terminal.call("close")
+			var top := UIWindowStack.top_window()
+			if top != null and top.has_method("close_for_interact"):
+				top.call("close_for_interact")
 		return
 	if _query == null:
 		return
@@ -333,7 +322,10 @@ func _physics_process(delta: float) -> void:
 			_handle_connect_click(_query.current_hit)
 		if Input.is_action_just_pressed(&"tool_secondary"):
 			_cancel_rope_routing()
-		if Input.is_action_just_pressed(&"interact"):
+		# `interact` (E) also means "roll right" while piloting a flight-capable
+		# assembly (roll_right action, same physical key) — must not double-fire
+		# a context interaction on top of the roll input.
+		if not in_vehicle and Input.is_action_just_pressed(&"interact"):
 			_try_emit_context_interaction(_query.current_hit)
 		return
 	var requested_action := _pressed_action()
@@ -1104,6 +1096,7 @@ func _handle_connect_click(hit: InteractionHit) -> void:
 			"element_b_id": element_id,
 			"attach_b": world_point,
 			"slack": _rope_slack,
+			"routed_m": _rope_routed_hint_m,
 		},
 	})
 	_reset_connect_route()
@@ -1154,6 +1147,13 @@ func rope_slack() -> float:
 	return _rope_slack
 
 
+## The routing preview calls this every frame with the solved length of the
+## rope in hand. Presentation feeding presentation-measured intent back into
+## the build command — the same way the click points themselves are.
+func report_rope_routed_m(routed_m: float) -> void:
+	_rope_routed_hint_m = routed_m if is_finite(routed_m) else 0.0
+
+
 ## Wheel while a rope is being pulled: tight ↔ loose. Nothing else in gameplay
 ## uses the wheel, so it needs no modifier.
 func _unhandled_input(event: InputEvent) -> void:
@@ -1185,6 +1185,7 @@ func _reset_connect_route() -> void:
 	_rope_pending = false
 	_rope_anchor_element_id = 0
 	_rope_anchor_local = Vector3.ZERO
+	_rope_routed_hint_m = 0.0
 
 
 func _simulation_world() -> SimulationWorld:
@@ -1291,44 +1292,7 @@ func _try_emit_context_interaction(hit: InteractionHit) -> bool:
 
 
 func _ui_modal_blocks_world_interact() -> bool:
-	return (
-		_terminal_blocks_world_interact()
-		or _actuator_panel_blocks_world_interact()
-		or _wheel_panel_blocks_world_interact()
-		or _control_terminal_blocks_world_interact()
-	)
-
-
-func _control_terminal_is_open() -> bool:
-	return (
-		_control_terminal != null
-		and _control_terminal.has_method("is_open")
-		and bool(_control_terminal.call("is_open"))
-	)
-
-
-func _control_terminal_blocks_world_interact() -> bool:
-	return (
-		_control_terminal != null
-		and _control_terminal.has_method("blocks_world_interact")
-		and bool(_control_terminal.call("blocks_world_interact"))
-	)
-
-
-func _actuator_panel_is_open() -> bool:
-	return (
-		_actuator_panel != null
-		and _actuator_panel.has_method("is_open")
-		and bool(_actuator_panel.call("is_open"))
-	)
-
-
-func _actuator_panel_blocks_world_interact() -> bool:
-	return (
-		_actuator_panel != null
-		and _actuator_panel.has_method("blocks_world_interact")
-		and bool(_actuator_panel.call("blocks_world_interact"))
-	)
+	return UIWindowStack.any_open()
 
 
 func _try_open_actuator_panel(hit: InteractionHit) -> bool:
@@ -1336,25 +1300,7 @@ func _try_open_actuator_panel(hit: InteractionHit) -> bool:
 		return false
 	if _ui_modal_blocks_world_interact():
 		return false
-	if _actuator_panel.has_method("is_open") and bool(_actuator_panel.call("is_open")):
-		return false
 	return bool(_actuator_panel.call("try_open_on_target", hit))
-
-
-func _wheel_panel_is_open() -> bool:
-	return (
-		_wheel_panel != null
-		and _wheel_panel.has_method("is_open")
-		and bool(_wheel_panel.call("is_open"))
-	)
-
-
-func _wheel_panel_blocks_world_interact() -> bool:
-	return (
-		_wheel_panel != null
-		and _wheel_panel.has_method("blocks_world_interact")
-		and bool(_wheel_panel.call("blocks_world_interact"))
-	)
 
 
 func _try_open_wheel_panel(hit: InteractionHit) -> bool:
@@ -1362,36 +1308,13 @@ func _try_open_wheel_panel(hit: InteractionHit) -> bool:
 		return false
 	if _ui_modal_blocks_world_interact():
 		return false
-	if _wheel_panel.has_method("is_open") and bool(_wheel_panel.call("is_open")):
-		return false
 	return bool(_wheel_panel.call("try_open_on_target", hit))
-
-
-func _terminal_is_open() -> bool:
-	return (
-		_terminal != null
-		and _terminal.has_method("is_open")
-		and bool(_terminal.call("is_open"))
-	)
-
-
-func _terminal_blocks_world_interact() -> bool:
-	return (
-		_terminal != null
-		and _terminal.has_method("blocks_world_interact")
-		and bool(_terminal.call("blocks_world_interact"))
-	)
 
 
 func _try_open_terminal(hit: InteractionHit) -> bool:
 	if _terminal == null or not _terminal.has_method("try_open_on_target"):
 		return false
-	if (
-		_terminal.has_method("blocks_world_interact")
-		and bool(_terminal.call("blocks_world_interact"))
-	):
-		return false
-	if _terminal.has_method("is_open") and bool(_terminal.call("is_open")):
+	if _ui_modal_blocks_world_interact():
 		return false
 	return bool(_terminal.call("try_open_on_target", hit))
 

@@ -13,6 +13,13 @@ class_name DayNightCycle
 @export var cycle_duration_sec := 600.0
 ## Fallback before spawn alignment; bootstrap calls align_noon_above().
 @export_range(0.0, 1.0, 0.001) var start_phase := 0.8
+## Offset from local noon applied by align_noon_above(), in orbit fractions.
+## 0.0 lands the sun near the local zenith — the flattest light there is, no
+## relief and no cast shadows. +0.13 drops it to ~33 deg: the working area
+## stays lit while slopes and objects get readable shadows. Past ~0.16 the
+## ground the player stands on falls into shade. Negative offsets mirror the
+## azimuth and read as front light (flat again).
+@export_range(-0.5, 0.5, 0.001) var noon_phase_offset := 0.0
 ## Orbit axis in world space (sun sweeps the plane perpendicular to this).
 @export var orbit_axis := Vector3(0.35, 0.0, 0.94)
 ## Noon direction at phase ~0 (will be orthogonalized against orbit_axis).
@@ -103,8 +110,8 @@ func align_noon_above(world_up: Vector3) -> void:
 		if d > best_dot:
 			best_dot = d
 			best_phase = p
-	start_phase = best_phase
-	phase = best_phase
+	start_phase = fposmod(best_phase + noon_phase_offset, 1.0)
+	phase = start_phase
 	_elapsed = 0.0
 	_apply()
 

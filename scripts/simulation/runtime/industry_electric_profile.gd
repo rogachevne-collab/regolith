@@ -38,6 +38,13 @@ static func for_element(element: SimulationElement) -> Dictionary:
 		for key: Variant in archetype_defaults.keys():
 			profile[key] = archetype_defaults[key]
 	_apply_role_fallback(archetype.roles, profile)
+	# A baked battery/source carries its own definition — same reasoning as
+	# _has_powered_mechanism below: don't make "is battery" depend on the
+	# archetype id being listed in game_balance.json.
+	if not bool(profile["is_battery"]) and archetype.battery_definition != null:
+		profile["is_battery"] = true
+	if not bool(profile["is_source"]) and archetype.power_source_definition != null:
+		profile["is_source"] = true
 	# A part that drives, thrusts or spins burns power by definition. Without
 	# this, being a consumer depended on the archetype id being listed in
 	# game_balance.json — so any authored wheel silently stayed unpowered and
@@ -93,6 +100,10 @@ static func is_battery(element: SimulationElement) -> bool:
 
 
 static func output_w(element: SimulationElement) -> float:
+	if element != null:
+		var archetype := element.get_archetype()
+		if archetype != null and archetype.power_source_definition != null:
+			return archetype.power_source_definition.output_w
 	return float(for_element(element).get("output_w", 0.0))
 
 
@@ -118,6 +129,10 @@ static func supply_radius_m(element: SimulationElement) -> float:
 
 
 static func battery_max_kwh(element: SimulationElement) -> float:
+	if element != null:
+		var archetype := element.get_archetype()
+		if archetype != null and archetype.battery_definition != null:
+			return archetype.battery_definition.capacity_kwh
 	return float(
 		for_element(element).get(
 			"max_kwh",
@@ -127,6 +142,10 @@ static func battery_max_kwh(element: SimulationElement) -> float:
 
 
 static func battery_charge_w(element: SimulationElement) -> float:
+	if element != null:
+		var archetype := element.get_archetype()
+		if archetype != null and archetype.battery_definition != null:
+			return archetype.battery_definition.charge_w
 	return float(
 		for_element(element).get(
 			"charge_w",
@@ -136,6 +155,10 @@ static func battery_charge_w(element: SimulationElement) -> float:
 
 
 static func battery_discharge_w(element: SimulationElement) -> float:
+	if element != null:
+		var archetype := element.get_archetype()
+		if archetype != null and archetype.battery_definition != null:
+			return archetype.battery_definition.discharge_w
 	return float(
 		for_element(element).get(
 			"discharge_w",
@@ -186,6 +209,10 @@ static func _apply_role_fallback(
 			"Tank":
 				if not profile["is_source"]:
 					profile["is_battery"] = true
+			"Hub":
+				profile["is_distributor"] = true
+				if float(profile["supply_radius_m"]) <= 0.0:
+					profile["supply_radius_m"] = _default_float("supply_radius_m", 12.0)
 			"Processor", "Fabricator", "Tool":
 				profile["is_consumer"] = true
 

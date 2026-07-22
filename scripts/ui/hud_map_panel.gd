@@ -94,9 +94,6 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("toggle_map"):
 		_toggle()
 		get_viewport().set_input_as_handled()
-	elif _open and event.is_action_pressed("release_mouse"):
-		_close()
-		get_viewport().set_input_as_handled()
 	elif _open and event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_DELETE or event.physical_keycode == KEY_DELETE:
 			_delete_selected_marker()
@@ -111,6 +108,8 @@ func _toggle() -> void:
 
 
 func _open_map() -> void:
+	if not UIWindowStack.push(self, Callable(self, "_close")):
+		return
 	_open = true
 	_planetoid = not WorldPersistence.save_path_override.is_empty()
 	_load_user_markers()
@@ -138,6 +137,7 @@ func _close() -> void:
 	if _globe != null:
 		_globe.set_active(false)
 	_apply_open_state()
+	UIWindowStack.remove(self)
 
 
 func _apply_open_state() -> void:

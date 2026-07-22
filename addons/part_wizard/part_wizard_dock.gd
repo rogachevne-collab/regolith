@@ -28,6 +28,7 @@ var _pose_viewport: SubViewport
 var _pose_camera: Camera3D
 var _place_button: Button
 var _socket_option: OptionButton
+var _port_role_option: OptionButton
 var _kind_option: OptionButton
 var _part_id_edit: LineEdit
 var _display_name_edit: LineEdit
@@ -74,6 +75,8 @@ func place_connector_at(
 ) -> void:
 	var marker := MountPadMarker.new()
 	marker.socket_kind = _selected_socket_kind()
+	if marker.is_electric():
+		marker.port_role = _selected_port_role()
 	# The clicked point IS the mount: whatever bit of the model the author
 	# picked (the tip of a stub axle, a bracket ear) is what will touch the
 	# target. The grid decides where the part goes, this decides what of the
@@ -151,7 +154,15 @@ func _build_ui() -> void:
 	_socket_option.add_item("Обычное крепление")
 	_socket_option.add_item("Ось колеса (на ступице)")
 	_socket_option.add_item("Гнездо колеса (на подвеске)")
+	_socket_option.add_item("⚡ Электроточка (опционально)")
+	_socket_option.item_selected.connect(_on_socket_kind_selected)
 	_steps_box.add_child(_socket_option)
+	_port_role_option = OptionButton.new()
+	_port_role_option.add_item("Вход и выход")
+	_port_role_option.add_item("Только вход (потребитель)")
+	_port_role_option.add_item("Только выход (источник)")
+	_port_role_option.visible = false
+	_steps_box.add_child(_port_role_option)
 	var place_hint := Label.new()
 	place_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	place_hint.text = (
@@ -180,6 +191,8 @@ func _build_ui() -> void:
 	_kind_option.add_item("Блок / рама")
 	_kind_option.add_item("Колесо")
 	_kind_option.add_item("Подвеска")
+	_kind_option.add_item("Батарея")
+	_kind_option.add_item("Источник энергии")
 	_kind_option.item_selected.connect(_on_kind_selected)
 	_steps_box.add_child(_kind_option)
 	_part_id_edit = LineEdit.new()
@@ -192,7 +205,11 @@ func _build_ui() -> void:
 	_steps_box.add_child(_display_name_edit)
 	var params_hint := Label.new()
 	params_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	params_hint.text = "Тонкая настройка (радиус, жёсткость…) — в инспекторе корня."
+	params_hint.text = (
+		"Тонкая настройка (радиус, жёсткость, ёмкость батареи…) — в инспекторе корня.\n"
+		+ "Для батареи/источника не забудь поставить электроточки на шаге 3"
+		+ " (⚡, роль вход/выход)."
+	)
 	_steps_box.add_child(params_hint)
 	var bake := Button.new()
 	bake.text = "🔥 Испечь деталь"
@@ -394,8 +411,24 @@ func _selected_socket_kind() -> MountPadMarker.SocketKind:
 			return MountPadMarker.SocketKind.WHEEL_PLUG
 		2:
 			return MountPadMarker.SocketKind.WHEEL_SOCKET
+		3:
+			return MountPadMarker.SocketKind.ELECTRIC_PORT
 		_:
 			return MountPadMarker.SocketKind.STRUCTURAL
+
+
+func _selected_port_role() -> MountPadMarker.PortRole:
+	match _port_role_option.selected:
+		1:
+			return MountPadMarker.PortRole.IN
+		2:
+			return MountPadMarker.PortRole.OUT
+		_:
+			return MountPadMarker.PortRole.BIDIRECTIONAL
+
+
+func _on_socket_kind_selected(index: int) -> void:
+	_port_role_option.visible = index == 3
 
 
 func _on_rotate_pressed(axis: Vector3) -> void:

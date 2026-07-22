@@ -53,6 +53,8 @@ func _run() -> void:
 		return
 	if not await _test_rope_wakes_a_parked_body():
 		return
+	if not _test_rope_rest_length_respects_routed_path():
+		return
 	if not await _test_rope_carries_the_actuator_rating():
 		return
 	if not await _test_ground_anchor_tears_out_with_the_ground():
@@ -60,6 +62,8 @@ func _run() -> void:
 	if not await _test_rope_lies_on_the_world():
 		return
 	if not await _test_rope_does_not_saw_through_a_thin_beam():
+		return
+	if not await _test_rope_is_never_born_inside_geometry():
 		return
 	if not _test_render_spline_subdivides_where_it_bends():
 		return
@@ -1361,6 +1365,75 @@ func _test_rope_wakes_a_parked_body() -> bool:
 	return true
 
 
+## A rope routed AROUND something is longer than the straight line between its
+## ends, and the build command must honour that: rest length is floored by the
+## routed length the player actually laid (CABLE-ROPE-V0 `routed_m`). Built off
+## the chord alone the rope was born metres overstretched, and the tension
+## solver spent that phantom stretch yanking the machine — which is how a wire
+## bent around a block tore itself off on placement. The floor must also never
+## SHORTEN a rope: a generous slack setting wins over a smaller routed hint.
+func _test_rope_rest_length_respects_routed_path() -> bool:
+	var fixture: Dictionary = _new_fixture()
+	var world: SimulationWorld = fixture["world"]
+	var spawned: StructuralCommandResult = _spawn(
+		world,
+		_single_blueprint(Slice01Archetypes.frame()),
+		GridTransform.identity()
+	)
+	if not spawned.is_ok():
+		_free_fixture(fixture)
+		return _fail("routed-rest rope spawn failed: %s" % spawned.reason)
+	var element_id: int = int(spawned.data["element_ids"][0])
+	var origin := world.element_world_transform(element_id).origin
+	# Wrapped case: laid path is far longer than the chord — the routed length
+	# must become the rest length, so the rope is born with zero tension.
+	var wrapped_anchor := origin + Vector3(4.0, 0.0, 0.0)
+	var wrapped_routed := 9.5
+	var wrapped := world.connect_rope(
+		element_id,
+		origin,
+		0,
+		wrapped_anchor,
+		0.0,
+		wrapped_routed
+	)
+	if not wrapped.is_ok():
+		_free_fixture(fixture)
+		return _fail("wrapped rope failed: %s" % str(wrapped.reason))
+	var wrapped_rest := float(wrapped.data["rest_length_m"])
+	if not is_equal_approx(wrapped_rest, wrapped_routed):
+		_free_fixture(fixture)
+		return _fail(
+			"wrapped rope must be born its routed length: rest %.2f, routed %.2f"
+			% [wrapped_rest, wrapped_routed]
+		)
+	# Slack case: the wheel asked for more rope than the routed hint — the hint
+	# must not cinch it down.
+	var slack_anchor := origin + Vector3(0.0, 0.0, 4.0)
+	var slack_span := origin.distance_to(slack_anchor)
+	var slack := world.connect_rope(
+		element_id,
+		origin,
+		0,
+		slack_anchor,
+		1.0,
+		slack_span * 1.05
+	)
+	if not slack.is_ok():
+		_free_fixture(fixture)
+		return _fail("slack rope failed: %s" % str(slack.reason))
+	var slack_rest := float(slack.data["rest_length_m"])
+	var wheel_rest := CableAnchorUtil.rest_length_m(slack_span, 1.0)
+	if not is_equal_approx(slack_rest, wheel_rest):
+		_free_fixture(fixture)
+		return _fail(
+			"routed hint must never shorten a slack rope: rest %.2f, wheel %.2f"
+			% [slack_rest, wheel_rest]
+		)
+	_free_fixture(fixture)
+	return true
+
+
 ## A crane is as strong as its winch, not as its hook. A rope on a piston
 ## carriage pulls against the machine the piston is bolted to and is capped by
 ## what the motor is rated for. Solved as a free 20 kg hook — which is all the
@@ -1724,6 +1797,91 @@ func _test_rope_does_not_saw_through_a_thin_beam() -> bool:
 		)
 	root.queue_free()
 	return true
+
+
+## The seed curve is drawn between the anchors knowing nothing about what is in
+## the way, so a rope tied from one side of a block to the other used to be born
+## straight through it — and a particle that starts inside cannot be rescued: it
+## shakes about until the depenetration happens to spit it out of the far face.
+## Nothing between the anchors may start inside solid matter, and it must stay
+## out afterwards.
+func _test_rope_is_never_born_inside_geometry() -> bool:
+	var root := Node3D.new()
+	add_child(root)
+	var block := StaticBody3D.new()
+	block.collision_layer = 1
+	block.collision_mask = 0
+	var shape := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(2.5, 2.5, 2.5)
+	shape.shape = box
+	block.add_child(shape)
+	root.add_child(block)
+	block.global_position = Vector3(0.0, 1.25, 0.0)
+	await get_tree().physics_frame
+	# Anchors on opposite faces at mid-height: the straight line between them
+	# runs through the middle of the block, which is the case that broke.
+	var anchor_a := Vector3(-2.2, 1.25, 0.0)
+	var anchor_b := Vector3(2.2, 1.25, 0.0)
+	var rest_length := anchor_a.distance_to(anchor_b) * 1.2
+	var space_state := get_viewport().get_world_3d().direct_space_state
+	var state := CableRopeSolver.create_state(
+		anchor_a,
+		anchor_b,
+		rest_length,
+		Vector3.UP,
+		space_state
+	)
+	var born_inside := _rope_points_inside_block(
+		CableRopeSolver.path(state), 1.25, 1.25
+	)
+	if born_inside > 0:
+		root.queue_free()
+		return _fail(
+			"rope seeded inside the block at %d points" % born_inside
+		)
+	for _step: int in range(180):
+		CableRopeSolver.step(
+			state,
+			anchor_a,
+			anchor_b,
+			rest_length,
+			Vector3(0.0, -1.62, 0.0),
+			1.0 / 60.0,
+			space_state
+		)
+		await get_tree().physics_frame
+	var settled_inside := _rope_points_inside_block(
+		CableRopeSolver.path(state), 1.25, 1.25
+	)
+	root.queue_free()
+	if settled_inside > 0:
+		return _fail(
+			"rope ended up inside the block at %d points" % settled_inside
+		)
+	return true
+
+
+## Particles strictly inside an origin-centred box of the given half extents
+## (the block sits at y = half_height, so its interior is 0 < y < 2·half).
+func _rope_points_inside_block(
+	path: PackedVector3Array,
+	half_width: float,
+	half_height: float
+) -> int:
+	var inside := 0
+	# A hair of tolerance: a particle correctly seated ON a face sits one
+	# rope radius clear of it, so anything this far in is genuinely buried.
+	var margin := 0.02
+	for point: Vector3 in path:
+		if (
+			absf(point.x) < half_width - margin
+			and absf(point.z) < half_width - margin
+			and point.y > margin
+			and point.y < half_height * 2.0 - margin
+		):
+			inside += 1
+	return inside
 
 
 ## Adaptive belongs in the mesh, not in the simulation: the drawn spline must

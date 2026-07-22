@@ -12,6 +12,15 @@ const ROPE_SEGMENTS := 20
 ## Fallback reach when nothing is aimed at; the real limit is the tool's own
 ## throw range, so the rope trails as far as the throw would land.
 const FALLBACK_AIM_DISTANCE := 4.0
+## Verlet assumes a constant timestep — gravity is a delta² term and velocity
+## carry-over between sub-steps is only valid at the step size it was derived
+## for. Render delta jitters (vsync hiccups, frame spikes), so the solver is
+## fed a fixed step from an accumulator instead of raw per-frame delta.
+const SOLVER_STEP_S := 1.0 / 60.0
+## Bound on solver sub-steps per render frame. Without this, a stalled frame
+## (alt-tab, hitch) would dump a huge accumulated delta into the loop and the
+## rope would try to catch up in one go instead of just resuming smoothly.
+const MAX_SOLVER_STEPS_PER_FRAME := 3
 
 @export var query_path: NodePath = NodePath("../InteractionQuery")
 @export var tool_controller_path: NodePath = NodePath("../ToolController")
@@ -23,6 +32,8 @@ var _material: StandardMaterial3D
 ## Verlet state of the rope in hand — the same solver the built ropes use, so
 ## what trails the cursor drapes over the ground instead of sinking through it.
 var _rope_state: Dictionary = {}
+## Leftover render delta not yet consumed by a fixed solver step.
+var _step_accumulator: float = 0.0
 
 
 func _ready() -> void:
@@ -50,7 +61,13 @@ func _process(delta: float) -> void:
 		return
 	if _tools.active_tool != &"connect" or not _tools.rope_routing_active():
 		_mesh_instance.visible = false
+		# Drop the mesh along with the state: the rebuild is gated on "a solver
+		# step ran OR there is no mesh yet", and a kept mesh would flash the
+		# PREVIOUS rope for a frame when the next routing starts.
+		_mesh_instance.mesh = null
 		_rope_state = {}
+		_step_accumulator = 0.0
+		_tools.report_rope_routed_m(0.0)
 		return
 	var anchor := _tools.rope_anchor_world_position()
 	if not anchor.is_finite():
@@ -74,23 +91,47 @@ func _process(delta: float) -> void:
 			-gravity.normalized() if gravity.length_squared() > 0.0 else Vector3.UP,
 			get_world_3d().direct_space_state
 		)
-	CableRopeSolver.step(
-		_rope_state,
-		anchor,
-		free_end,
-		rest_length,
-		gravity,
-		delta,
-		get_world_3d().direct_space_state
-	)
-	var path := CableRopeSolver.path(_rope_state)
-	if path.size() < 2:
-		_mesh_instance.visible = false
-		return
-	_mesh_instance.mesh = CableCurveUtil.build_tube_mesh(
-		CableCurveUtil.smooth_adaptive(path),
-		ROPE_RADIUS
-	)
+	# Advance the solver in fixed SOLVER_STEP_S increments regardless of how
+	# ragged the render delta is; anchor/free_end/gravity are frame-constant
+	# inputs so every sub-step this frame sees the same targets.
+	var space_state := get_world_3d().direct_space_state
+	_step_accumulator += delta
+	var steps_run := 0
+	while _step_accumulator >= SOLVER_STEP_S and steps_run < MAX_SOLVER_STEPS_PER_FRAME:
+		CableRopeSolver.step(
+			_rope_state,
+			anchor,
+			free_end,
+			rest_length,
+			gravity,
+			SOLVER_STEP_S,
+			space_state
+		)
+		_step_accumulator -= SOLVER_STEP_S
+		steps_run += 1
+	if steps_run == MAX_SOLVER_STEPS_PER_FRAME:
+		# A hitch dumped more than MAX_SOLVER_STEPS_PER_FRAME worth of delta
+		# on us — drop the remainder rather than let the loop spiral trying
+		# to catch up over several frames.
+		_step_accumulator = 0.0
+	# The build command needs the length of the rope as LAID, not the straight
+	# span: routed around a block the path is longer, and a rope built shorter
+	# than its own path is born overstretched and yanks whatever it is tied to.
+	_tools.report_rope_routed_m(CableRopeSolver.routed_length_m(_rope_state))
+	# Anchor/free_end are only ever consumed by a solver step, never read
+	# directly into the mesh, so a render frame that ran zero solver steps has
+	# an identical path to the last one that did — re-meshing it is wasted
+	# work. Rebuild only when steps_run actually moved the path, or on the
+	# first frame after activation when there is no mesh yet to show.
+	if steps_run > 0 or _mesh_instance.mesh == null:
+		var path := CableRopeSolver.path(_rope_state)
+		if path.size() < 2:
+			_mesh_instance.visible = false
+			return
+		_mesh_instance.mesh = CableCurveUtil.build_tube_mesh(
+			CableCurveUtil.smooth_adaptive(path),
+			ROPE_RADIUS
+		)
 	_mesh_instance.visible = true
 
 

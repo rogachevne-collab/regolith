@@ -103,7 +103,13 @@ func blocks_world_interact() -> bool:
 	return _open or _interact_release_latch
 
 
+func _begin_open() -> bool:
+	return UIWindowStack.push(self, Callable(self, "close"))
+
+
 func open_solo() -> void:
+	if not _begin_open():
+		return
 	_solo = true
 	_target_store_id = ""
 	_open = true
@@ -112,6 +118,8 @@ func open_solo() -> void:
 
 func open_dual(target_store_id: String) -> void:
 	if target_store_id.is_empty():
+		return
+	if not _begin_open():
 		return
 	_solo = false
 	_target_store_id = target_store_id
@@ -125,6 +133,7 @@ func close() -> void:
 	_open = false
 	_target_store_id = ""
 	_apply_open_state()
+	UIWindowStack.remove(self)
 
 
 func close_for_interact() -> void:
@@ -246,30 +255,14 @@ func _build_header() -> void:
 	title_row.add_child(_close_hint)
 
 
-func _input(event: InputEvent) -> void:
-	if _open and _is_close_event(event):
-		if event.is_action_pressed("interact"):
-			close_for_interact()
-		else:
-			close()
-		get_viewport().set_input_as_handled()
-
-
 func _unhandled_input(event: InputEvent) -> void:
-	if not _open:
-		if event.is_action_pressed("toggle_inventory"):
-			open_solo()
-			get_viewport().set_input_as_handled()
+	if not event.is_action_pressed("toggle_inventory"):
 		return
-
-
-func _is_close_event(event: InputEvent) -> bool:
-	return (
-		event.is_action_pressed("toggle_inventory")
-		or event.is_action_pressed("interact")
-		or event.is_action_pressed("release_mouse")
-		or event.is_action_pressed("ui_cancel")
-	)
+	if _open:
+		close()
+	else:
+		open_solo()
+	get_viewport().set_input_as_handled()
 
 
 func _apply_open_state() -> void:

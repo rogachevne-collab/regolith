@@ -38,6 +38,42 @@ const MAX_LEVER_ARM_M := 120.0
 ## Ceiling on the speed a rope believes it has to arrest. Point velocity is
 ## v + ω × r, so a bad frame with a long lever arm reads as hundreds of m/s.
 const MAX_ARREST_SPEED := 60.0
+## How much of the measured length is written off as solver noise rather than
+## believed as stretch, as a fraction of the rope's rest length.
+##
+## The length comes from a verlet rope that is pushed around by the world every
+## tick; it is an estimate, not a measurement, and it sits a little above rest
+## for any rope that touches anything. Believed to the millimetre, that residue
+## became a permanent reel-in: a few centimetres of phantom stretch on a rope
+## tied to a two-tonne machine is still kilonewtons, applied every tick for as
+## long as the rope exists, which is what dragged machines across the ground
+## and tore them apart. A rope that is genuinely loaded runs out by far more
+## than a percent, so nothing real is lost.
+##
+## Only the reel-in is deadbanded. Arresting a separation stays instant, since
+## that term is driven by relative velocity and is therefore zero at rest —
+## it can catch a falling load without ever pulling on a resting one.
+##
+## Two percent because a rope draped over a block and pooled on the ground was
+## measured reporting up to 1.16% of phantom stretch once the solved length is
+## read instead of the collision-inflated one; the band sits clear of that.
+const SLACK_TOLERANCE_FRACTION := 0.02
+
+
+## Overshoot worth acting on: what is left of the stretch after the solver's own
+## noise floor is written off. Also what decides whether a rope is loaded enough
+## to be worth waking a parked body for.
+static func effective_overshoot_m(
+	measured_length_m: float,
+	rest_length_m: float
+) -> float:
+	if rest_length_m <= 0.0:
+		return 0.0
+	return maxf(
+		measured_length_m - rest_length_m
+		- rest_length_m * SLACK_TOLERANCE_FRACTION,
+		0.0
+	)
 
 
 ## What actually resists a pull at one end, when that is not the end's own mass.
@@ -123,6 +159,7 @@ static func solve(
 		body_b,
 		-direction,
 		length - rest_length_m,
+		effective_overshoot_m(length, rest_length_m),
 		delta,
 		link_break_force_n,
 		backing_a,
@@ -177,6 +214,7 @@ static func solve_routed(
 		body_b,
 		pull_dir_b,
 		overshoot,
+		effective_overshoot_m(routed_length_m, rest_length_m),
 		delta,
 		link_break_force_n,
 		backing_a,
@@ -196,6 +234,7 @@ static func _pull(
 	body_b: RigidBody3D,
 	pull_dir_b: Vector3,
 	overshoot_m: float,
+	reel_in_overshoot_m: float,
 	delta: float,
 	link_break_force_n: float,
 	backing_a: Dictionary = {},
@@ -222,10 +261,15 @@ static func _pull(
 	if movable_b:
 		separating_speed -= _point_velocity(body_b, anchor_b).dot(pull_dir_b)
 	var arrest_speed := minf(maxf(separating_speed, 0.0), MAX_ARREST_SPEED)
-	var recovery_speed := minf(
-		overshoot_m / (RECOVERY_TICKS * delta),
-		MAX_RECOVERY_SPEED
-	)
+	# Reel-in works off the deadbanded overshoot, arrest off the raw one: see
+	# SLACK_TOLERANCE_FRACTION. A rope lying still therefore pulls with exactly
+	# nothing, while one being run out still stops the load the moment it moves.
+	var recovery_speed := 0.0
+	if reel_in_overshoot_m > 0.0:
+		recovery_speed = minf(
+			reel_in_overshoot_m / (RECOVERY_TICKS * delta),
+			MAX_RECOVERY_SPEED
+		)
 	var impulse_ns := (
 		RELAXATION * (arrest_speed + recovery_speed) / inverse_mass_sum
 	)

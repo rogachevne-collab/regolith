@@ -204,6 +204,11 @@ static func apply_element(archetype: ElementArchetype) -> void:
 		entry.get("thruster", {})
 	)
 	_apply_definition_overlay(archetype.gyro_definition, entry.get("gyro", {}))
+	_apply_definition_overlay(archetype.battery_definition, entry.get("battery", {}))
+	_apply_definition_overlay(
+		archetype.power_source_definition,
+		entry.get("power_source", {})
+	)
 	_applied_archetype_ids[archetype_id] = true
 
 

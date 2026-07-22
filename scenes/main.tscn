@@ -8,29 +8,14 @@
 [ext_resource type="PackedScene" path="res://scenes/simulation_session.tscn" id="11"]
 [ext_resource type="Script" uid="uid://bay7tnuum4xx6" path="res://scripts/simulation/runtime/gravity_field.gd" id="12"]
 [ext_resource type="PackedScene" uid="uid://cdgwh0kuuyve3" path="res://scenes/lunar_sky_decor.tscn" id="14"]
-[ext_resource type="Material" path="res://resources/sky/lunar_starfield_sky_material.tres" id="15"]
+[ext_resource type="Environment" path="res://resources/environment/moon_surface_env.tres" id="21"]
+[ext_resource type="CameraAttributesPractical" path="res://resources/environment/moon_camera_attributes.tres" id="22"]
+[ext_resource type="Script" path="res://scripts/tools/environment_tuner.gd" id="23"]
 [ext_resource type="VoxelInstanceLibrary" path="res://resources/moon_boulder_instance_library.tres" id="16"]
 [ext_resource type="Script" path="res://scripts/meteorite_system.gd" id="17"]
 [ext_resource type="Script" path="res://scripts/granular_voxel_world.gd" id="18"]
 [ext_resource type="PackedScene" uid="uid://solarskydecor001" path="res://scenes/solar_sky_decor.tscn" id="19"]
 [ext_resource type="Script" path="res://scripts/day_night_cycle.gd" id="20"]
-
-[sub_resource type="Sky" id="Sky_env"]
-sky_material = ExtResource("15")
-
-[sub_resource type="Environment" id="Environment_moon"]
-background_mode = 2
-sky = SubResource("Sky_env")
-ambient_light_source = 2
-ambient_light_color = Color(0.16, 0.18, 0.26, 1)
-ambient_light_sky_contribution = 0.7
-ambient_light_energy = 0.42
-tonemap_mode = 2
-tonemap_exposure = 0.92
-ssao_enabled = true
-ssao_radius = 1.2
-ssao_intensity = 0.65
-ssao_power = 1.4
 
 [sub_resource type="SphereShape3D" id="SphereShape_gravity"]
 radius = 675.0
@@ -43,7 +28,9 @@ enable_boulder_instancer = true
 boulder_density_scale = -1.0
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1964025307]
-environment = SubResource("Environment_moon")
+environment = ExtResource("21")
+camera_attributes = ExtResource("22")
+script = ExtResource("23")
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=1814655263]
 transform = Transform3D(0.866025, -0.25, 0.433013, 0, 0.866025, 0.5, -0.5, -0.433013, 0.75, 0, 600, 0)
@@ -81,6 +68,11 @@ distance_m = 12000.0
 
 [node name="DayNightCycle" type="Node" parent="."]
 script = ExtResource("20")
+enabled = false
+noon_phase_offset = 0.13
+day_ambient_energy = 1.0
+flat_day_ambient_energy = 0.67
+flat_night_ambient_energy = 0.29
 sun_light_path = NodePath("../DirectionalLight3D")
 earthshine_light_path = NodePath("../Earthshine")
 lunar_sky_decor_path = NodePath("../LunarSkyDecor")

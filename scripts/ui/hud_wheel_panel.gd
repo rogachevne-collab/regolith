@@ -7,6 +7,7 @@ const KEY_COL := HudTokens.INFO_KEY_COL
 
 var _gateway: WorldCommandGateway
 var _query: InteractionQuery
+var _player: Node
 
 var _panel: PanelContainer
 var _panel_overlay: ColorRect
@@ -25,6 +26,7 @@ var _interact_release_latch := false
 func setup(ctx: Dictionary) -> void:
 	_gateway = ctx.get("gateway")
 	_query = ctx.get("query")
+	_player = ctx.get("player")
 	if (
 		_gateway != null
 		and not _gateway.command_completed.is_connected(_on_command_completed)
@@ -52,6 +54,8 @@ func try_open_on_target(hit: InteractionHit) -> bool:
 		return false
 	if HudWheelTuneUtil.rows_for_hit(hit).is_empty():
 		return false
+	if not UIWindowStack.push(self, Callable(self, "close")):
+		return false
 	_target_hit = hit
 	_open = true
 	_apply_open_state()
@@ -66,6 +70,7 @@ func close() -> void:
 	_open = false
 	_target_hit = InteractionHit.empty()
 	_apply_open_state()
+	UIWindowStack.remove(self)
 
 
 func close_for_interact() -> void:
@@ -323,6 +328,10 @@ func _on_command_completed(command_id: int, result: Dictionary) -> void:
 func _apply_open_state() -> void:
 	_panel.visible = _open
 	if _open:
+		if _player != null and _player.has_method("set_gameplay_input_enabled"):
+			_player.call("set_gameplay_input_enabled", false)
 		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	else:
+		if _player != null and _player.has_method("set_gameplay_input_enabled"):
+			_player.call("set_gameplay_input_enabled", true)
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)

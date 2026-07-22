@@ -1,0 +1,57 @@
+[gd_scene format=3 uid="uid://ubtib6ro16it"]
+
+[ext_resource type="Script" uid="uid://dgr075qc34e5" path="res://scripts/authoring/part_authoring_root.gd" id="1_v5wv3"]
+[ext_resource type="PackedScene" uid="uid://dor6ihexf41m7" path="res://resources/models/wheel_med.fbx" id="2_7u6vi"]
+[ext_resource type="Script" uid="uid://bwsx0ndumvttw" path="res://scripts/authoring/mount_pad_marker.gd" id="3_wbcke"]
+
+[node name="PartAuthoring" type="Node3D" unique_id=928619132]
+script = ExtResource("1_v5wv3")
+part_id = "Test_Battery"
+display_name = "Тест Батарея"
+part_kind = 3
+visual_scene = ExtResource("2_7u6vi")
+size_cells = Vector3i(2, 3, 3)
+mass_kg = 40.0
+wheel_radius_m = 0.75
+wheel_drive_torque_n_m = 250.0
+model_offset = Vector3(0.7327766603221566, 0.75000001279264, 0.7386058044433595)
+mount_generation = 1
+default_orientation_index = 16
+last_bake_diagnostics = PackedStringArray("baked \'Test_Battery\' -> OK res://resources/archetypes/authored/Test_Battery.tres")
+last_baked_path = "res://resources/archetypes/authored/Test_Battery.tres"
+
+[node name="Mount_px_1_1_1" type="Node3D" parent="." unique_id=116557112]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0.75, 0.75)
+script = ExtResource("3_wbcke")
+metadata/auto_generated = true
+
+[node name="Mount_nx_0_1_1" type="Node3D" parent="." unique_id=350496262]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.75, 0.75)
+script = ExtResource("3_wbcke")
+metadata/auto_generated = true
+
+[node name="Mount_py_0_2_1" type="Node3D" parent="." unique_id=1659065249]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.25, 1.5, 0.75)
+script = ExtResource("3_wbcke")
+metadata/auto_generated = true
+
+[node name="Mount_ny_0_0_1" type="Node3D" parent="." unique_id=644040039]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.25, 0, 0.75)
+script = ExtResource("3_wbcke")
+metadata/auto_generated = true
+
+[node name="Mount_pz_0_1_2" type="Node3D" parent="." unique_id=2010578129]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.25, 0.75, 1.5)
+script = ExtResource("3_wbcke")
+metadata/auto_generated = true
+
+[node name="Mount_nz_0_1_0" type="Node3D" parent="." unique_id=2032368996]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.25, 0.75, 0)
+script = ExtResource("3_wbcke")
+metadata/auto_generated = true
+
+[node name="Mount_1" type="Node3D" parent="." unique_id=1531105555]
+transform = Transform3D(-1, 0, -1.2246467991473532e-16, 0, 1, 0, 1.2246467991473532e-16, 0, -1, 0.7498001413729376, 0.7494631894205508, 0.739103819097552)
+script = ExtResource("3_wbcke")
+socket_kind = 4
+snap_to_face = false

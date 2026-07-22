@@ -25,6 +25,11 @@ var attach_b: Vector3 = Vector3.ZERO
 ## Wheel knob at build time: 0 внатяг … 1 болтается. Rest length is derived
 ## from the span at execution, so the rope is built exactly as it was dragged.
 var slack: float = CableAnchorUtil.DEFAULT_SLACK
+## Length of the rope-in-hand as the routing preview actually laid it through
+## the world, metres. Zero = unknown (headless, scripted call). A rope routed
+## around an obstacle is longer than its chord; this is the floor under the
+## rest length so it is not born overstretched.
+var routed_m: float = 0.0
 
 
 func is_rope() -> bool:
@@ -50,4 +55,5 @@ func execution_copy() -> StructuralCommand:
 	copy.attach_a = attach_a
 	copy.attach_b = attach_b
 	copy.slack = slack
+	copy.routed_m = routed_m
 	return copy

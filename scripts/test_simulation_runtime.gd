@@ -29,6 +29,7 @@ func _run_tests() -> void:
 		_test_dual_anchor_and_rejections,
 		_test_split_reconciles_ground_anchors,
 		_test_placement_anchors_every_touching_block,
+		_test_dismantle_support_pole_drops_elevated_structure,
 		_test_custom_archetype_snapshot_restore,
 		_test_unified_grid_edge_surface_joint,
 		_test_unified_grid_middle_surface_joint,
@@ -387,6 +388,74 @@ func _test_placement_anchors_every_touching_block() -> bool:
 	if not world.assembly_has_anchor(assembly_id):
 		world.free()
 		return _fail("remaining construction lost its terrain anchor")
+	world.free()
+	return true
+
+
+func _test_dismantle_support_pole_drops_elevated_structure() -> bool:
+	# Reproduces the reported bug: a static structure built on top of a support
+	# pole, where only the pole touches the ground. Dismantling the pole must
+	# leave the elevated structure anchor-free (so it becomes a RigidBody3D and
+	# falls), not stuck reporting an anchor it no longer physically has.
+	var world := SimulationWorld.new()
+	world.ensure_resource_store(PlayerIdentity.store_id("player"))
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_metal", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "girder", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "mechanism", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "conduit", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "sintered_basalt", 100.0)
+	world.set_resource_amount(PlayerIdentity.store_id("player"), "plate_alloy", 100.0)
+	# Realistic probe: only the block at grid cell x==0 (the "pole") is actually
+	# touching terrain. Everything built on top of it (x>0) is elevated and
+	# must never be reported as touching ground.
+	world.set_terrain_contact_probe(
+		func(_a: SimulationAssembly, elements: Array[SimulationElement]) -> Array[int]:
+			var touching: Array[int] = []
+			for element: SimulationElement in elements:
+				if element.origin_cell == Vector3i.ZERO:
+					touching.append(element.element_id)
+			return touching
+	)
+	var pole := _place_frame(world, 0, -1, Vector3i.ZERO, GridTransform.identity())
+	if not pole.is_ok():
+		world.free()
+		return _fail("pole placement failed")
+	var assembly_id := int(pole.data["assembly_id"])
+	var pole_id := int(pole.data["element_id"])
+	var structure := _place_frame(
+		world,
+		assembly_id,
+		int(pole.data["topology_revision"]),
+		Vector3i(1, 0, 0),
+		GridTransform.identity()
+	)
+	if not structure.is_ok():
+		world.free()
+		return _fail("elevated structure placement failed")
+	if not world.assembly_has_anchor(assembly_id):
+		world.free()
+		return _fail("assembly should start anchored via the pole")
+	print("[ANCHOR-DBG] --- dismantling pole element=%d ---" % pole_id)
+	var dismantle := DismantleElementCommand.new()
+	dismantle.element_id = pole_id
+	dismantle.expected_assembly_revision = (
+		world.get_assembly_raw(assembly_id).topology_revision
+	)
+	dismantle.store_id = PlayerIdentity.store_id("player")
+	var result := world.apply_structural_command_now(dismantle)
+	if not result.is_ok():
+		world.free()
+		return _fail("dismantle of pole failed")
+	# The pole is gone; the surviving structure never touches ground per the
+	# probe above. It must have lost its anchor.
+	if world.assembly_has_anchor(assembly_id):
+		world.free()
+		return _fail(
+			"BUG REPRODUCED: elevated structure still reports a terrain anchor "
+			+ "after its support pole was dismantled -- it will stay static "
+			+ "instead of falling"
+		)
 	world.free()
 	return true
 

@@ -9,9 +9,11 @@ extends Node3D
 ## you. No separate .tres editing, no sub-resources, no orientation math.
 
 enum PartKind {
-	PLAIN,       ## a structural block / frame; bolts on its faces
-	WHEEL,       ## a driven wheel (one attach point = the hub)
-	SUSPENSION,  ## a wheel mount (bolts to frame + one wheel socket)
+	PLAIN,        ## a structural block / frame; bolts on its faces
+	WHEEL,        ## a driven wheel (one attach point = the hub)
+	SUSPENSION,   ## a wheel mount (bolts to frame + one wheel socket)
+	BATTERY,      ## stores power; needs at least one electric marker
+	POWER_SOURCE, ## generates power; needs at least one electric marker
 }
 
 enum MountGeneration {
@@ -42,8 +44,10 @@ const AUTHORED_DIR := "res://resources/archetypes/authored/"
 		part_kind = value
 		# Wheels/suspensions need tagged points, so "whole surface" makes no
 		# sense for them — move to per-side unless the author picked otherwise.
+		# Batteries/sources bolt on like a plain block (only their electric
+		# markers are special), so FULL_SURFACE stays valid for them.
 		if (
-			part_kind != PartKind.PLAIN
+			(part_kind == PartKind.WHEEL or part_kind == PartKind.SUSPENSION)
 			and mount_generation == MountGeneration.FULL_SURFACE
 		):
 			mount_generation = MountGeneration.PER_SIDE
@@ -77,6 +81,14 @@ const AUTHORED_DIR := "res://resources/archetypes/authored/"
 # --- Suspension fields (shown only when part_kind == SUSPENSION) ---
 @export var suspension_travel_m: float = 0.6
 @export var suspension_stiffness_n_per_m: float = 1600.0
+
+# --- Battery fields (shown only when part_kind == BATTERY) ---
+@export var battery_capacity_kwh: float = 10.0
+@export var battery_charge_w: float = 500.0
+@export var battery_discharge_w: float = 500.0
+
+# --- Power source fields (shown only when part_kind == POWER_SOURCE) ---
+@export var source_output_w: float = 2000.0
 
 ## Стоимость постройки. Пусто = авто по типу детали (блок — plate_metal,
 ## колесо/подвеска — mechanism, количество от размера).
@@ -146,9 +158,15 @@ func _validate_property(property: Dictionary) -> void:
 	var prop_name := str(property.name)
 	var is_wheel := prop_name.begins_with("wheel_")
 	var is_susp := prop_name.begins_with("suspension_")
+	var is_battery := prop_name.begins_with("battery_")
+	var is_source := prop_name.begins_with("source_")
 	if is_wheel and part_kind != PartKind.WHEEL:
 		property.usage &= ~PROPERTY_USAGE_EDITOR
 	if is_susp and part_kind != PartKind.SUSPENSION:
+		property.usage &= ~PROPERTY_USAGE_EDITOR
+	if is_battery and part_kind != PartKind.BATTERY:
+		property.usage &= ~PROPERTY_USAGE_EDITOR
+	if is_source and part_kind != PartKind.POWER_SOURCE:
 		property.usage &= ~PROPERTY_USAGE_EDITOR
 
 
@@ -173,6 +191,26 @@ func collect_pad_markers() -> Array[MountPadMarker]:
 	for child: Node in get_children():
 		var marker := child as MountPadMarker
 		if marker != null:
+			markers.append(marker)
+	return markers
+
+
+## Structural mount markers only — electric ports are collected separately
+## (see collect_electric_markers) since they bake into archetype.ports, not
+## structural_mount_pads.
+func collect_structural_markers() -> Array[MountPadMarker]:
+	var markers: Array[MountPadMarker] = []
+	for marker: MountPadMarker in collect_pad_markers():
+		if not marker.is_electric():
+			markers.append(marker)
+	return markers
+
+
+## Optional electrical connection points — most parts have none.
+func collect_electric_markers() -> Array[MountPadMarker]:
+	var markers: Array[MountPadMarker] = []
+	for marker: MountPadMarker in collect_pad_markers():
+		if marker.is_electric():
 			markers.append(marker)
 	return markers
 
@@ -373,6 +411,14 @@ func bake() -> Dictionary:
 		for message: String in archetype.suspension_definition.validate(archetype):
 			errors.append("подвеска: %s" % message)
 			last_bake_diagnostics.append(errors[-1])
+	if archetype.battery_definition != null:
+		for message: String in archetype.battery_definition.validate(archetype):
+			errors.append("батарея: %s" % message)
+			last_bake_diagnostics.append(errors[-1])
+	if archetype.power_source_definition != null:
+		for message: String in archetype.power_source_definition.validate(archetype):
+			errors.append("источник энергии: %s" % message)
+			last_bake_diagnostics.append(errors[-1])
 
 	if not part_id.is_empty():
 		var path := "%s%s.tres" % [save_dir, part_id]
@@ -438,9 +484,16 @@ func _build_archetype(errors: Array[String]) -> ElementArchetype:
 
 	var socket_face_holder: Array = [OrientationUtil.Face.NEG_Y]
 	var pads := _build_pads(errors, socket_face_holder)
+	var ports := _build_ports(errors)
+	if not ports.is_empty():
+		archetype.ports = ports
 
 	var whole_surface := (
-		part_kind == PartKind.PLAIN
+		(
+			part_kind == PartKind.PLAIN
+			or part_kind == PartKind.BATTERY
+			or part_kind == PartKind.POWER_SOURCE
+		)
 		and (
 			mount_generation == MountGeneration.FULL_SURFACE
 			or pads.is_empty()
@@ -464,6 +517,10 @@ func _build_archetype(errors: Array[String]) -> ElementArchetype:
 			archetype.suspension_definition = _build_suspension_definition(
 				socket_face_holder[0]
 			)
+		PartKind.BATTERY:
+			archetype.battery_definition = _build_battery_definition()
+		PartKind.POWER_SOURCE:
+			archetype.power_source_definition = _build_power_source_definition()
 		PartKind.PLAIN:
 			pass
 	return archetype
@@ -475,7 +532,7 @@ func _build_pads(
 	errors: Array[String],
 	socket_face_holder: Array
 ) -> Array[StructuralMountPad]:
-	var markers := collect_pad_markers()
+	var markers := collect_structural_markers()
 	var by_key: Dictionary = {}
 	var pads: Array[StructuralMountPad] = []
 
@@ -527,6 +584,29 @@ func _build_pads(
 	return pads
 
 
+## Optional electrical ports — most parts have none. Each marker's port_role
+## picks the "_in"/"_out"/"_io" suffix IndustryElectricPortUtil reads the
+## direction from; a second marker of the same role gets a numbered id
+## (power2_in) so the suffix — and therefore the direction — stays intact.
+func _build_ports(errors: Array[String]) -> Array[PortDefinition]:
+	var ports: Array[PortDefinition] = []
+	var role_counts: Dictionary = {}
+	for marker: MountPadMarker in collect_electric_markers():
+		var suffix := marker.port_role_suffix()
+		var count: int = role_counts.get(suffix, 0) + 1
+		role_counts[suffix] = count
+		var port_id := "power_%s" % suffix if count == 1 else "power%d_%s" % [count, suffix]
+		var port := marker.to_port(port_id)
+		if port == null:
+			errors.append(
+				"электроточка «%s» не удалось привязать к грани — придвинь к модели"
+				% marker.name
+			)
+			continue
+		ports.append(port)
+	return ports
+
+
 func _build_wheel_definition(
 	pads: Array[StructuralMountPad]
 ) -> WheelDefinition:
@@ -556,6 +636,20 @@ func _build_suspension_definition(
 	return definition
 
 
+func _build_battery_definition() -> BatteryDefinition:
+	var definition := BatteryDefinition.new()
+	definition.capacity_kwh = battery_capacity_kwh
+	definition.charge_w = battery_charge_w
+	definition.discharge_w = battery_discharge_w
+	return definition
+
+
+func _build_power_source_definition() -> PowerSourceDefinition:
+	var definition := PowerSourceDefinition.new()
+	definition.output_w = source_output_w
+	return definition
+
+
 ## Any axis face perpendicular to `plug_face` — this is the drive/forward axis.
 ## Guarantees the "forward must be perpendicular to plug" rule automatically.
 func _perpendicular_face(plug_face: OrientationUtil.Face) -> OrientationUtil.Face:
@@ -581,6 +675,12 @@ func _default_build_requirements(cell_count: int) -> Array[BuildRequirement]:
 		PartKind.WHEEL, PartKind.SUSPENSION:
 			requirement.resource_id = "mechanism"
 			requirement.amount = maxf(2.0, roundf(float(cell_count) * 0.25))
+		PartKind.BATTERY:
+			requirement.resource_id = "conduit"
+			requirement.amount = maxf(4.0, roundf(float(cell_count) * 0.5))
+		PartKind.POWER_SOURCE:
+			requirement.resource_id = "plate_metal"
+			requirement.amount = maxf(8.0, roundf(float(cell_count) * 0.3))
 		_:
 			requirement.resource_id = "plate_metal"
 			requirement.amount = maxf(1.0, roundf(float(cell_count) * 0.5))
@@ -593,6 +693,10 @@ func _roles_for_kind() -> PackedStringArray:
 			return PackedStringArray(["Support", "Actuator"])
 		PartKind.SUSPENSION:
 			return PackedStringArray(["Support"])
+		PartKind.BATTERY:
+			return PackedStringArray(["Tank"])
+		PartKind.POWER_SOURCE:
+			return PackedStringArray(["Source"])
 		_:
 			return PackedStringArray(["Frame"])
 

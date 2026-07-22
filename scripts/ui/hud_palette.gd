@@ -237,13 +237,23 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("toggle_palette"):
 		_toggle()
 		get_viewport().set_input_as_handled()
-	elif _open and event.is_action_pressed("release_mouse"):
-		_toggle()
-		get_viewport().set_input_as_handled()
+
+
+func _close() -> void:
+	if not _open:
+		return
+	_open = false
+	_apply_open_state()
+	UIWindowStack.remove(self)
 
 
 func _toggle() -> void:
-	_open = not _open
+	if _open:
+		_close()
+		return
+	if not UIWindowStack.push(self, Callable(self, "_close")):
+		return
+	_open = true
 	_apply_open_state()
 
 

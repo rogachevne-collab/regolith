@@ -259,7 +259,8 @@ func connect_rope(
 	attach_a: Vector3,
 	element_b_id: int,
 	attach_b: Vector3,
-	slack: float = CableAnchorUtil.DEFAULT_SLACK
+	slack: float = CableAnchorUtil.DEFAULT_SLACK,
+	routed_m: float = 0.0
 ) -> StructuralCommandResult:
 	var command := ConnectNetworkCommand.new()
 	command.element_a_id = element_a_id
@@ -269,6 +270,7 @@ func connect_rope(
 	command.attach_a = attach_a
 	command.attach_b = attach_b
 	command.slack = slack
+	command.routed_m = routed_m
 	return apply_structural_command_now(command)
 
 func disconnect_network(
