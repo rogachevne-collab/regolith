@@ -676,6 +676,211 @@
       "girder": 40.0
     }
   },
+  "parameters": {
+    "piston.extend_velocity": {
+      "label": "Скорость выдв.",
+      "unit": "м/с",
+      "step": 0.05,
+      "precision": 2,
+      "command": "configure_actuator",
+      "field": "extend_velocity_mps",
+      "target": "joint",
+      "soft_min": 0,
+      "soft_max": 1.0
+    },
+    "piston.retract_velocity": {
+      "label": "Скорость втяг.",
+      "unit": "м/с",
+      "step": 0.05,
+      "precision": 2,
+      "command": "configure_actuator",
+      "field": "retract_velocity_mps",
+      "target": "joint",
+      "soft_min": 0,
+      "soft_max": 1.0
+    },
+    "piston.force": {
+      "label": "Усилие",
+      "unit": "кН",
+      "step": 5000.0,
+      "precision": 1,
+      "command": "configure_actuator",
+      "field": "force_limit_n",
+      "target": "joint",
+      "display_scale": 0.001,
+      "soft_min": 0,
+      "soft_max": 100000.0
+    },
+    "piston.lower_limit": {
+      "label": "Ниж. предел",
+      "unit": "м",
+      "step": 0.1,
+      "precision": 2,
+      "command": "configure_actuator",
+      "field": "lower_limit_m",
+      "target": "joint",
+      "soft_min": 0,
+      "soft_max": 2.0
+    },
+    "piston.upper_limit": {
+      "label": "Верх. предел",
+      "unit": "м",
+      "step": 0.1,
+      "precision": 2,
+      "command": "configure_actuator",
+      "field": "upper_limit_m",
+      "target": "joint",
+      "soft_min": 0,
+      "soft_max": 2.0
+    },
+    "rotor.forward_velocity": {
+      "label": "Скорость впер.",
+      "unit": "рад/с",
+      "step": 0.1,
+      "precision": 2,
+      "command": "configure_actuator",
+      "field": "extend_velocity_mps",
+      "target": "joint",
+      "soft_min": 0,
+      "soft_max": 3.14
+    },
+    "rotor.reverse_velocity": {
+      "label": "Скорость назад",
+      "unit": "рад/с",
+      "step": 0.1,
+      "precision": 2,
+      "command": "configure_actuator",
+      "field": "retract_velocity_mps",
+      "target": "joint",
+      "soft_min": 0,
+      "soft_max": 3.14
+    },
+    "rotor.torque": {
+      "label": "Момент",
+      "unit": "кН·м",
+      "step": 1000.0,
+      "precision": 1,
+      "command": "configure_actuator",
+      "field": "force_limit_n",
+      "target": "joint",
+      "display_scale": 0.001,
+      "soft_min": 0,
+      "soft_max": 20000.0
+    },
+    "hinge.forward_velocity": {
+      "label": "Скорость впер.",
+      "unit": "рад/с",
+      "step": 0.1,
+      "precision": 2,
+      "command": "configure_actuator",
+      "field": "extend_velocity_mps",
+      "target": "joint",
+      "soft_min": 0,
+      "soft_max": 2.0
+    },
+    "hinge.reverse_velocity": {
+      "label": "Скорость назад",
+      "unit": "рад/с",
+      "step": 0.1,
+      "precision": 2,
+      "command": "configure_actuator",
+      "field": "retract_velocity_mps",
+      "target": "joint",
+      "soft_min": 0,
+      "soft_max": 2.0
+    },
+    "hinge.torque": {
+      "label": "Момент",
+      "unit": "кН·м",
+      "step": 1000.0,
+      "precision": 1,
+      "command": "configure_actuator",
+      "field": "force_limit_n",
+      "target": "joint",
+      "display_scale": 0.001,
+      "soft_min": 0,
+      "soft_max": 20000.0
+    },
+    "hinge.lower_limit": {
+      "label": "Ниж. угол",
+      "unit": "°",
+      "step": 0.087266,
+      "precision": 0,
+      "command": "configure_actuator",
+      "field": "lower_limit_m",
+      "target": "joint",
+      "display_scale": 57.29578,
+      "soft_min": -1.570796,
+      "soft_max": 1.570796
+    },
+    "hinge.upper_limit": {
+      "label": "Верх. угол",
+      "unit": "°",
+      "step": 0.087266,
+      "precision": 0,
+      "command": "configure_actuator",
+      "field": "upper_limit_m",
+      "target": "joint",
+      "display_scale": 57.29578,
+      "soft_min": -1.570796,
+      "soft_max": 1.570796
+    },
+    "suspension.stiffness": {
+      "label": "Жёсткость",
+      "unit": "Н/м",
+      "step": 50.0,
+      "precision": 0,
+      "command": "configure_suspension",
+      "field": "spring_stiffness_n_per_m",
+      "target": "element",
+      "soft_min": 0,
+      "soft_max": 60000.0
+    },
+    "suspension.damping": {
+      "label": "Демпфирование",
+      "unit": "Н·с/м",
+      "step": 25.0,
+      "precision": 0,
+      "command": "configure_suspension",
+      "field": "spring_damping_n_s_per_m",
+      "target": "element",
+      "soft_min": 0,
+      "soft_max": 5000.0
+    },
+    "suspension.travel": {
+      "label": "Ход подвески",
+      "unit": "м",
+      "step": 0.02,
+      "precision": 2,
+      "command": "configure_suspension",
+      "field": "travel_m",
+      "target": "element",
+      "soft_min": 0,
+      "soft_max": 0.6
+    },
+    "wheel.drive_torque": {
+      "label": "Тяга привода",
+      "unit": "×",
+      "step": 0.1,
+      "precision": 2,
+      "command": "configure_wheel",
+      "field": "drive_torque_scale",
+      "target": "element",
+      "soft_min": 0,
+      "soft_max": 1.0
+    },
+    "wheel.brake_torque": {
+      "label": "Тормоз",
+      "unit": "Н·м",
+      "step": 100.0,
+      "precision": 0,
+      "command": "configure_wheel",
+      "field": "brake_torque_n_m",
+      "target": "element",
+      "soft_min": 0,
+      "soft_max": 500.0
+    }
+  },
   "elements": {
     "cargo_pipe": {
       "mass_kg": 30.0,
