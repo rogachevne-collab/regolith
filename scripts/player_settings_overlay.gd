@@ -36,22 +36,26 @@ func _ready() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("release_mouse"):
-		if visible:
-			close()
-		else:
-			open()
-		get_viewport().set_input_as_handled()
+	if event.is_action_pressed("release_mouse") and not visible:
+		if open():
+			get_viewport().set_input_as_handled()
 	elif event.is_action_pressed("capture_mouse") and visible:
 		close()
 		get_viewport().set_input_as_handled()
 
 
-func open() -> void:
+func is_open() -> bool:
+	return visible
+
+
+func open() -> bool:
+	if not UIWindowStack.push(self, Callable(self, "close")):
+		return false
 	visible = true
 	_player.call("set_gameplay_input_enabled", false)
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	_close_button.grab_focus()
+	return true
 
 
 func close() -> void:
@@ -59,6 +63,8 @@ func close() -> void:
 	_player.call("set_gameplay_input_enabled", true)
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 	_panel.release_focus()
+	UIWindowStack.remove(self)
+	get_viewport().set_input_as_handled()
 
 
 func _on_sensitivity_changed(value: float) -> void:

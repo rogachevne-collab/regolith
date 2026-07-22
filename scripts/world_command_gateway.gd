@@ -1231,8 +1231,6 @@ func _enter_rover_seat(
 	)
 	if body == null or not is_instance_valid(body):
 		return _result(&"not_ready")
-	if player.has_method("set_gameplay_input_enabled"):
-		player.call("set_gameplay_input_enabled", false)
 	if player.has_method("enter_vehicle"):
 		player.call("enter_vehicle", body, seat_offset)
 	if player.has_method("set_vehicle_flight_controls"):
@@ -2079,7 +2077,8 @@ func apply_connect_rope(
 	attach_a: Vector3,
 	element_b_id: int,
 	attach_b: Vector3,
-	slack: float = CableAnchorUtil.DEFAULT_SLACK
+	slack: float = CableAnchorUtil.DEFAULT_SLACK,
+	routed_m: float = 0.0
 ) -> Dictionary:
 	if _session == null:
 		return _result(&"not_ready")
@@ -2091,6 +2090,7 @@ func apply_connect_rope(
 	command.attach_a = attach_a
 	command.attach_b = attach_b
 	command.slack = slack
+	command.routed_m = maxf(routed_m, 0.0) if is_finite(routed_m) else 0.0
 	var result := _session.world.apply_structural_command_now(command)
 	if result == null:
 		return _result(&"not_ready")
@@ -2110,7 +2110,8 @@ func _connect_network(
 			parameters.get("attach_a", Vector3.ZERO),
 			int(parameters.get("element_b_id", 0)),
 			parameters.get("attach_b", Vector3.ZERO),
-			float(parameters.get("slack", CableAnchorUtil.DEFAULT_SLACK))
+			float(parameters.get("slack", CableAnchorUtil.DEFAULT_SLACK)),
+			float(parameters.get("routed_m", 0.0))
 		)
 	return apply_connect_network(
 		int(parameters.get("element_a_id", 0)),
