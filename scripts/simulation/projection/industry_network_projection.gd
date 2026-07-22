@@ -7,6 +7,8 @@ const WIRE_MESH_PREFIX := "IndustryWire_"
 const WIRE_RADIUS := 0.022
 ## Aim-collider radius: fatter than the visual so the grinder can target a wire.
 const WIRE_AIM_RADIUS := 0.09
+## Capsules per cable for the aim ray, however many points the shape has.
+const AIM_SEGMENT_LIMIT := 12
 ## Physics layer 4 — interaction-ray only; nothing moves or collides on it.
 const WIRE_COLLISION_LAYER := 8
 ## Decorative sag per polyline span (fraction of span length, capped). Kept
@@ -14,20 +16,23 @@ const WIRE_COLLISION_LAYER := 8
 const WIRE_SAG_FRACTION := 0.04
 const WIRE_SAG_MAX_M := 0.15
 const WIRE_SAG_SUBDIVISIONS := 4
-## Tube extrusion along the smoothed spline: sample spacing and ring detail.
+## Spline resampling for stiff port wires; rope shape comes from CableCurveUtil.
 const TUBE_BAKE_INTERVAL_M := 0.3
-const TUBE_RING_SEGMENTS := 6
 ## Black insulated cable with a slight sheen.
 const WIRE_COLOR := Color(0.07, 0.07, 0.08, 1.0)
 ## Dormant wire (endpoint damaged/incomplete or cable overstretched): the link
 ## persists in state and keeps rendering, faded, until the condition clears.
 const WIRE_DORMANT_COLOR := Color(0.46, 0.44, 0.4, 1.0)
+## Rope that was never meant to conduct — tied to terrain or to a portless
+## block. It is mechanical hardware, not a dead wire, so it reads as fibre.
+const ROPE_COLOR := Color(0.31, 0.27, 0.22, 1.0)
 
 var _world: SimulationWorld
 var _physics_projection: SimulationPhysicsProjection
 var _links_root: Node3D
 var _wire_material: StandardMaterial3D
 var _wire_dormant_material: StandardMaterial3D
+var _rope_material: StandardMaterial3D
 var _cached_network_revision := -1
 var _event_bound := false
 ## link_id → last sampled tube path; skips remeshing static cables.
@@ -49,6 +54,8 @@ func bind(
 		_wire_material = _create_wire_material()
 	if _wire_dormant_material == null:
 		_wire_dormant_material = _create_dormant_material()
+	if _rope_material == null:
+		_rope_material = _create_rope_material()
 	if _world != null and not _event_bound:
 		_world.structural_event.connect(_on_structural_event)
 		_event_bound = true
@@ -99,9 +106,7 @@ func _on_structural_event(event: Dictionary) -> void:
 ## A wire renders as a polyline: port anchor → routed скобы → port anchor,
 ## each span subdivided with a light catenary-style sag.
 func _make_wire_body(link: IndustryElectricLink) -> StaticBody3D:
-	var element_a := _world.get_element(link.element_a)
-	var element_b := _world.get_element(link.element_b)
-	if element_a == null or element_b == null:
+	if not IndustryElectricPortUtil.link_endpoints_exist(_world, link):
 		return null
 	var body := StaticBody3D.new()
 	body.name = "%s%d" % [WIRE_MESH_PREFIX, link.link_id]
@@ -125,23 +130,50 @@ func _update_wire_body(
 		_set_segments_disabled(body, true)
 		return
 	body.visible = true
-	var display := _display_points(points)
-	# The visual is ONE smooth tube mesh extruded along a Catmull-Rom spline
-	# through the routed points; invisible capsules only serve the aim ray.
-	var path := _smooth_polyline(display)
-	_update_wire_colliders(body, display)
-	var mesh_instance := _ensure_tube_mesh_instance(body)
-	mesh_instance.material_override = (
-		_wire_material
-		if IndustryElectricPortUtil.link_still_valid(_world, link)
-		else _wire_dormant_material
+	var display := _display_points(points, link)
+	# The visual is ONE smooth tube mesh extruded along the routed points;
+	# invisible capsules only serve the aim ray. A rope is already sampled as a
+	# smooth hanging curve, so only stiff port wires need the spline pass.
+	# A rope is simulated coarse and drawn fine: the mesh spline subdivides by
+	# curvature, so an elbow reads round without the solver paying for it.
+	var path := (
+		CableCurveUtil.smooth_adaptive(display)
+		if link.is_rope()
+		else _smooth_polyline(display)
 	)
+	_update_wire_colliders(body, _aim_path(display))
+	var mesh_instance := _ensure_tube_mesh_instance(body)
+	mesh_instance.material_override = _material_for(link)
 	if _tube_path_changed(link.link_id, path):
-		mesh_instance.mesh = _build_tube_mesh(path)
+		mesh_instance.mesh = CableCurveUtil.build_tube_mesh(path, WIRE_RADIUS)
 		_tube_path_cache[link.link_id] = path
 
-## Rebuild the tube only when the sampled path actually moved (anchors follow
-## their assemblies; скобы are world-pinned and static).
+
+## Three readings: a cable carrying current, a cable that should carry current
+## but cannot right now (damaged endpoint), and a rope that was never wired to
+## conduct at all — tied to terrain or to a block without electric ports.
+func _material_for(link: IndustryElectricLink) -> StandardMaterial3D:
+	if IndustryElectricPortUtil.link_still_valid(_world, link):
+		return _wire_material
+	if _link_can_conduct(link):
+		return _wire_dormant_material
+	return _rope_material
+
+
+func _link_can_conduct(link: IndustryElectricLink) -> bool:
+	if link.element_a <= 0 or link.element_b <= 0:
+		return false
+	var element_a := _world.get_element(link.element_a)
+	var element_b := _world.get_element(link.element_b)
+	if element_a == null or element_b == null:
+		return false
+	return (
+		not IndustryElectricPortUtil.list_electric_ports(element_a).is_empty()
+		and not IndustryElectricPortUtil.list_electric_ports(element_b).is_empty()
+	)
+
+## Rebuild the tube only when the sampled path actually moved (port anchors and
+## block-clipped скобы follow their bodies; terrain скобы are world-pinned).
 func _tube_path_changed(link_id: int, path: PackedVector3Array) -> bool:
 	var cached: PackedVector3Array = _tube_path_cache.get(
 		link_id,
@@ -182,64 +214,20 @@ func _smooth_polyline(points: PackedVector3Array) -> PackedVector3Array:
 	var baked := curve.get_baked_points()
 	return baked if baked.size() >= 2 else points
 
-## Single continuous tube (ring extrusion with parallel-transport frames, so
-## the section never twists through bends).
-func _build_tube_mesh(path: PackedVector3Array) -> ArrayMesh:
-	var surface := SurfaceTool.new()
-	surface.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var rings: Array[PackedVector3Array] = []
-	var ring_normals: Array[PackedVector3Array] = []
-	var normal := Vector3.UP
-	var first_tangent := (path[1] - path[0]).normalized()
-	if absf(first_tangent.dot(normal)) > 0.95:
-		normal = Vector3.RIGHT
-	for index: int in range(path.size()):
-		var previous := path[maxi(index - 1, 0)]
-		var next := path[mini(index + 1, path.size() - 1)]
-		var tangent := next - previous
-		if tangent.length_squared() < 0.0000001:
-			tangent = first_tangent
-		tangent = tangent.normalized()
-		normal = (normal - tangent * normal.dot(tangent))
-		if normal.length_squared() < 0.0001:
-			normal = tangent.cross(Vector3.UP)
-			if normal.length_squared() < 0.0001:
-				normal = tangent.cross(Vector3.RIGHT)
-		normal = normal.normalized()
-		var binormal := tangent.cross(normal).normalized()
-		var ring := PackedVector3Array()
-		var normals := PackedVector3Array()
-		for segment: int in range(TUBE_RING_SEGMENTS):
-			var angle := TAU * float(segment) / float(TUBE_RING_SEGMENTS)
-			var offset := normal * cos(angle) + binormal * sin(angle)
-			ring.append(path[index] + offset * WIRE_RADIUS)
-			normals.append(offset)
-		rings.append(ring)
-		ring_normals.append(normals)
-	for ring_index: int in range(rings.size() - 1):
-		for segment: int in range(TUBE_RING_SEGMENTS):
-			var next_segment := (segment + 1) % TUBE_RING_SEGMENTS
-			var a := rings[ring_index][segment]
-			var b := rings[ring_index][next_segment]
-			var c := rings[ring_index + 1][next_segment]
-			var d := rings[ring_index + 1][segment]
-			var na := ring_normals[ring_index][segment]
-			var nb := ring_normals[ring_index][next_segment]
-			var nc := ring_normals[ring_index + 1][next_segment]
-			var nd := ring_normals[ring_index + 1][segment]
-			surface.set_normal(na)
-			surface.add_vertex(a)
-			surface.set_normal(nb)
-			surface.add_vertex(b)
-			surface.set_normal(nc)
-			surface.add_vertex(c)
-			surface.set_normal(na)
-			surface.add_vertex(a)
-			surface.set_normal(nc)
-			surface.add_vertex(c)
-			surface.set_normal(nd)
-			surface.add_vertex(d)
-	return surface.commit()
+## The grinder ray only needs a rough sleeve around the cable, so a solved rope
+## (up to 40 particles, every frame) is decimated before it becomes capsules.
+func _aim_path(path: PackedVector3Array) -> PackedVector3Array:
+	if path.size() <= AIM_SEGMENT_LIMIT + 1:
+		return path
+	var stride := int(ceil(float(path.size() - 1) / float(AIM_SEGMENT_LIMIT)))
+	var result := PackedVector3Array()
+	var index := 0
+	while index < path.size() - 1:
+		result.append(path[index])
+		index += stride
+	result.append(path[path.size() - 1])
+	return result
+
 
 ## Invisible aim capsules along the un-smoothed display polyline — enough for
 ## the grinder ray, no need to hug the spline exactly.
@@ -267,33 +255,56 @@ func _update_wire_colliders(
 			(start + end) * 0.5
 		)
 
-## Authoritative polyline: anchor_a → link.waypoints → anchor_b.
+## Authoritative polyline: anchor_a → resolved скобы → anchor_b. Every kind of
+## endpoint resolves the same way — port face, free attach on a block, or a
+## point nailed to the world.
 func _wire_points(link: IndustryElectricLink) -> PackedVector3Array:
-	var element_a := _world.get_element(link.element_a)
-	var element_b := _world.get_element(link.element_b)
-	if element_a == null or element_b == null:
+	if not IndustryElectricPortUtil.link_endpoints_exist(_world, link):
 		return PackedVector3Array()
 	var points := PackedVector3Array()
 	points.append(
-		IndustryElectricPortUtil.port_anchor_world_position(
+		CableAnchorUtil.endpoint_world_position(
 			_world,
-			element_a,
-			link.port_a
+			link.element_a,
+			link.port_a,
+			link.attach_a
 		)
 	)
-	points.append_array(link.waypoints)
+	points.append_array(
+		IndustryElectricPortUtil.resolved_waypoints(_world, link)
+	)
 	points.append(
-		IndustryElectricPortUtil.port_anchor_world_position(
+		CableAnchorUtil.endpoint_world_position(
 			_world,
-			element_b,
-			link.port_b
+			link.element_b,
+			link.port_b,
+			link.attach_b
 		)
 	)
 	return points
 
-## Decorative sag: each span is subdivided and dipped parabolically. The dip
-## scales with the horizontal share of the span so vertical runs stay straight.
-func _display_points(points: PackedVector3Array) -> PackedVector3Array:
+## Hanging shape. A rope hangs by its rest length — that is the slack the
+## player dialled in, and the same curve the tension solver treats as free.
+## Legacy port wires (no rest length) keep their shallow decorative sag.
+func _display_points(
+	points: PackedVector3Array,
+	link: IndustryElectricLink
+) -> PackedVector3Array:
+	if link.is_rope():
+		# The rope the physics solved is the rope the player sees — it is the
+		# one that drapes over obstacles and lies on the ground. The analytic
+		# curve is only the fallback before the first physics step (and in
+		# headless tests, where nothing is stepping).
+		if _physics_projection != null:
+			var solved := _physics_projection.rope_path(link.link_id)
+			if solved.size() >= 2:
+				return solved
+		return CableCurveUtil.sample_route(
+			points,
+			link.rest_length_m,
+			GravityField.resolve_up(self, points[0]),
+			WIRE_SAG_SUBDIVISIONS * 3
+		)
 	var result := PackedVector3Array()
 	result.append(points[0])
 	for span_index: int in range(points.size() - 1):
@@ -357,6 +368,14 @@ func _create_wire_material() -> StandardMaterial3D:
 	mat.metallic = 0.3
 	mat.roughness = 0.5
 	return mat
+
+func _create_rope_material() -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = ROPE_COLOR
+	mat.metallic = 0.0
+	mat.roughness = 0.95
+	return mat
+
 
 func _create_dormant_material() -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()

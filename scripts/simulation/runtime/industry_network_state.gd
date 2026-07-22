@@ -39,7 +39,22 @@ func has_pair(
 		element_b_id,
 		port_b_id
 	)
-	return _pair_keys.has(probe.canonical_pair_key())
+	var key := probe.canonical_pair_key()
+	return not key.is_empty() and _pair_keys.has(key)
+
+
+## Only port wires are deduplicated; a rope has no pair identity (see
+## IndustryElectricLink.canonical_pair_key).
+func _register_pair_key(link: IndustryElectricLink) -> void:
+	var key := link.canonical_pair_key()
+	if not key.is_empty():
+		_pair_keys[key] = link.link_id
+
+
+func _erase_pair_key(link: IndustryElectricLink) -> void:
+	var key := link.canonical_pair_key()
+	if not key.is_empty():
+		_pair_keys.erase(key)
 
 
 func add_link(
@@ -48,7 +63,9 @@ func add_link(
 	port_a_id: String,
 	element_b_id: int,
 	port_b_id: String,
-	waypoints: PackedVector3Array = PackedVector3Array()
+	waypoints: PackedVector3Array = PackedVector3Array(),
+	waypoint_anchors: PackedInt32Array = PackedInt32Array(),
+	rope: Dictionary = {}
 ) -> IndustryElectricLink:
 	var link := IndustryElectricLink.new_link(
 		link_id,
@@ -56,11 +73,13 @@ func add_link(
 		port_a_id,
 		element_b_id,
 		port_b_id,
-		waypoints
+		waypoints,
+		waypoint_anchors,
+		rope
 	)
 	_links.append(link)
 	_link_by_id[link_id] = link
-	_pair_keys[link.canonical_pair_key()] = link_id
+	_register_pair_key(link)
 	return link
 
 
@@ -70,7 +89,7 @@ func remove_link(link_id: int) -> IndustryElectricLink:
 		return null
 	_links.erase(link)
 	_link_by_id.erase(link_id)
-	_pair_keys.erase(link.canonical_pair_key())
+	_erase_pair_key(link)
 	return link
 
 
@@ -103,7 +122,7 @@ func prune_dangling_links(world: SimulationWorld) -> bool:
 			survivors.append(link)
 			continue
 		_link_by_id.erase(link.link_id)
-		_pair_keys.erase(link.canonical_pair_key())
+		_erase_pair_key(link)
 		removed = true
 	_links = survivors
 	if removed:
@@ -167,7 +186,7 @@ func load_from_dict(data: Dictionary) -> void:
 				continue
 			_links.append(link)
 			_link_by_id[link.link_id] = link
-			_pair_keys[link.canonical_pair_key()] = link.link_id
+			_register_pair_key(link)
 	_cached_active_signature = "\n"
 	_cached_network_revision = -1
 

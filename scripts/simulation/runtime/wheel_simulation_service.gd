@@ -125,6 +125,8 @@ static func apply_configure_wheel(
 		return {"status": &"failed", "reason": &"invalid_reference"}
 	if command.steerable_set:
 		state.steerable = command.steerable
+	if command.invert_drive_set:
+		state.drive_inverted = command.invert_drive
 	if command.drive_torque_scale >= 0.0:
 		if (
 			not is_finite(command.drive_torque_scale)
@@ -336,6 +338,7 @@ static func _tick_context(
 	).normalized()
 	context["steerable"] = wheel_state.steerable
 	context["drive_torque_scale"] = wheel_state.drive_torque_scale
+	context["drive_inverted"] = wheel_state.drive_inverted
 	if wheel_state.brake_torque_n_m >= 0.0:
 		context["configured_brake_torque"] = wheel_state.brake_torque_n_m
 	context["wheel_speed"] = float(runtime.get("wheel_speed", 0.0))

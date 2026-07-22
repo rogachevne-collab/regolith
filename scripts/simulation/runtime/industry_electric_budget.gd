@@ -26,12 +26,19 @@ static func apply_tick(world: SimulationWorld, dt: float) -> void:
 		if bool(component_network["supplied"]):
 			supplied_networks.append(component_network)
 
-	# Consumers never enter the cable graph (wires connect only power
-	# infrastructure); they are powered spatially by a supplied distributor.
+	# A consumer wired straight into a supplied network is powered by the cable
+	# (CABLE-ROPE-V0). Distributor radius stays as the wireless convenience for
+	# everything nobody bothered to wire.
 	for consumer: SimulationElement in consumers:
 		var runtime := world.ensure_industry_element_runtime(consumer.element_id)
 		if not runtime.machine_enabled:
 			_set_consumer_power(world, consumer, false, &"disabled")
+			continue
+		var wired_index := _wired_network_index(consumer, supplied_networks)
+		if wired_index >= 0:
+			(supplied_networks[wired_index]["consumers"] as Array).append(
+				consumer
+			)
 			continue
 		var radius_index := _nearest_covering_network(
 			world,
@@ -241,6 +248,19 @@ static func _solve_supplied_network(
 	var surplus_w := maxf(effective_supply_w - raw_demand_w, 0.0)
 	if surplus_w > 0.000001:
 		_charge_batteries(world, batteries, surplus_w, dt)
+
+
+## Index of the supplied network this consumer is physically cabled into, −1
+## when it hangs on no cable at all.
+static func _wired_network_index(
+	consumer: SimulationElement,
+	networks: Array[Dictionary]
+) -> int:
+	for network_index: int in range(networks.size()):
+		var component: Array = networks[network_index]["component"]
+		if component.has(consumer.element_id):
+			return network_index
+	return -1
 
 
 static func _nearest_covering_network(

@@ -37,18 +37,56 @@ static func snap_transform_to_grid(relative: Transform3D) -> GridTransform:
 
 static func element_local_transform(
 	origin_cell: Vector3i,
-	orientation_index: int
+	orientation_index: int,
+	pose_offset: Transform3D = Transform3D.IDENTITY
 ) -> Transform3D:
-	return Transform3D(
+	var grid := Transform3D(
 		OrientationUtil.orientation_basis(orientation_index),
 		GridMetric.cell_to_meters(origin_cell)
 	)
+	if pose_offset == Transform3D.IDENTITY:
+		return grid
+	return element_pose_delta(origin_cell, orientation_index, pose_offset) * grid
+
+
+## Part-local metres -> assembly-local metres. Pivots on the origin cell's
+## centre: a corner pivot would shift metric points by ±half a cell under
+## the 12 orientations with negative axes, while cell topology stays put.
+static func element_metric_transform(
+	origin_cell: Vector3i,
+	orientation_index: int,
+	pose_offset: Transform3D = Transform3D.IDENTITY
+) -> Transform3D:
+	var basis := OrientationUtil.orientation_basis(orientation_index)
+	var metric := Transform3D(
+		basis,
+		GridMetric.cell_center_meters(origin_cell)
+		- basis * GridMetric.CELL_CENTER_OFFSET_M
+	)
+	if pose_offset == Transform3D.IDENTITY:
+		return metric
+	return metric * pose_offset
+
+
+## Assembly-local delta an element's pose_offset produces. The offset is
+## authored in the part-local metric frame; conjugation moves it out so it
+## can be applied left of any grid-derived transform.
+static func element_pose_delta(
+	origin_cell: Vector3i,
+	orientation_index: int,
+	pose_offset: Transform3D
+) -> Transform3D:
+	if pose_offset == Transform3D.IDENTITY:
+		return Transform3D.IDENTITY
+	var metric := element_metric_transform(origin_cell, orientation_index)
+	return metric * pose_offset * metric.affine_inverse()
 
 
 static func collider_local_transform(
 	element_origin: Vector3i,
 	element_orientation_index: int,
-	collider: ColliderDefinition
+	collider: ColliderDefinition,
+	pose_offset: Transform3D = Transform3D.IDENTITY
 ) -> Transform3D:
 	var basis := OrientationUtil.orientation_basis(element_orientation_index)
 	var cell_center := element_cell_center(
@@ -65,7 +103,13 @@ static func collider_local_transform(
 			collider.offset_in_cell - GridMetric.CELL_CENTER_OFFSET_M
 		)
 	)
-	return Transform3D(basis, local_position)
+	var transform := Transform3D(basis, local_position)
+	if pose_offset == Transform3D.IDENTITY:
+		return transform
+	return (
+		element_pose_delta(element_origin, element_orientation_index, pose_offset)
+		* transform
+	)
 
 
 static func element_cell_center(

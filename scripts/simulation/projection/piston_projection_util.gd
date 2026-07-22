@@ -103,10 +103,15 @@ static func port_anchor_assembly_local(
 			element.origin_cell
 			+ OrientationUtil.rotate_cell(port.local_cell, element.orientation_index)
 		)
-		return (
+		var anchor := (
 			GridMetric.cell_center_meters(world_cell)
 			+ Vector3(face_vec) * GridMetric.HALF_CELL_SIZE_M
 		)
+		return GridPoseUtil.element_pose_delta(
+			element.origin_cell,
+			element.orientation_index,
+			element.pose_offset
+		) * anchor
 	return element_center_assembly_local(element)
 
 
@@ -122,7 +127,13 @@ static func piston_axis_assembly_local(
 		definition.head_axis_offset_cell(),
 		base_element.orientation_index
 	)
-	return Vector3(axis_cell).normalized()
+	return (
+		GridPoseUtil.element_pose_delta(
+			base_element.origin_cell,
+			base_element.orientation_index,
+			base_element.pose_offset
+		).basis * Vector3(axis_cell)
+	).normalized()
 
 
 static func basis_from_axis(axis: Vector3) -> Basis:

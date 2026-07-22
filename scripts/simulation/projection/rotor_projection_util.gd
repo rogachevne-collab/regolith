@@ -19,7 +19,13 @@ static func rotor_axis_assembly_local(
 		definition.top_axis_offset_cell(),
 		base_element.orientation_index
 	)
-	return Vector3(axis_cell).normalized()
+	return (
+		GridPoseUtil.element_pose_delta(
+			base_element.origin_cell,
+			base_element.orientation_index,
+			base_element.pose_offset
+		).basis * Vector3(axis_cell)
+	).normalized()
 
 
 static func configure_hinge_joint(joint: Generic6DOFJoint3D) -> void:

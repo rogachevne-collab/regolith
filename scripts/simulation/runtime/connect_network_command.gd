@@ -12,6 +12,23 @@ var port_b_id: String = ""
 ## Optional player-routed cable path (world-space, a→b order). The cable
 ## length limit applies to the whole polyline.
 var waypoints: PackedVector3Array = PackedVector3Array()
+## Optional per-waypoint mount, parallel to `waypoints`: element_id the скоба
+## is clipped to, 0 = world-pinned. Stored on the link in block-local space so
+## the cable follows machines that later drive away.
+var waypoint_anchors: PackedInt32Array = PackedInt32Array()
+## Rope form (CABLE-ROPE-V0), used when either port id is empty: the ends are
+## free attach points instead of ports. `attach_*` are world-space here — the
+## command is authored from world clicks, storage localizes them.
+## `element_*_id` may be 0, meaning "nailed to this point in the world".
+var attach_a: Vector3 = Vector3.ZERO
+var attach_b: Vector3 = Vector3.ZERO
+## Wheel knob at build time: 0 внатяг … 1 болтается. Rest length is derived
+## from the span at execution, so the rope is built exactly as it was dragged.
+var slack: float = CableAnchorUtil.DEFAULT_SLACK
+
+
+func is_rope() -> bool:
+	return port_a_id.is_empty() or port_b_id.is_empty()
 
 
 func kind() -> StringName:
@@ -29,4 +46,8 @@ func execution_copy() -> StructuralCommand:
 	copy.element_b_id = element_b_id
 	copy.port_b_id = port_b_id
 	copy.waypoints = waypoints.duplicate()
+	copy.waypoint_anchors = waypoint_anchors.duplicate()
+	copy.attach_a = attach_a
+	copy.attach_b = attach_b
+	copy.slack = slack
 	return copy

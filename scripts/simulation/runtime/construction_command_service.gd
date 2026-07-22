@@ -58,6 +58,7 @@ static func place_element(world,
 		command.orientation_index,
 		{resource_id: resource_amount}
 	)
+	element.pose_offset = command.pose_offset
 	var joint_ids: Array[int] = []
 	if new_assembly:
 		# A first block placed on terrain rests on the surface by construction
@@ -696,6 +697,7 @@ static func place_driven_element(world,
 		command.orientation_index,
 		{resource_id: resource_amount}
 	)
+	base_element.pose_offset = command.pose_offset
 	var head_origin: Vector3i
 	if is_rotor:
 		head_origin = RotorPlacementUtil.top_origin_cell(

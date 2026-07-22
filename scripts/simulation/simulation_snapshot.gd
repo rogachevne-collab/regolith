@@ -488,17 +488,25 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 	var max_link_id := 0
 	var electric_pair_keys: Dictionary = {}
 	for link: IndustryElectricLink in industry_network.list_links():
-		if (
-			link.link_id <= 0
-			or not elements.has(link.element_a)
-			or not elements.has(link.element_b)
-		):
+		if link.link_id <= 0:
 			return false
+		# A rope end may be nailed to the world (element 0); a block end must
+		# still name a real element.
+		if link.element_a > 0 and not elements.has(link.element_a):
+			return false
+		if link.element_b > 0 and not elements.has(link.element_b):
+			return false
+		if link.element_a <= 0 and link.element_b <= 0:
+			return false
+		max_link_id = maxi(max_link_id, link.link_id)
+		if link.is_rope():
+			# Ropes have no ports, no pair identity and no compatibility rule —
+			# any number of them may hang between the same two blocks.
+			continue
 		var pair_key := link.canonical_pair_key()
 		if electric_pair_keys.has(pair_key):
 			return false
 		electric_pair_keys[pair_key] = true
-		max_link_id = maxi(max_link_id, link.link_id)
 		var element_a: SimulationElement = elements[link.element_a]
 		var element_b: SimulationElement = elements[link.element_b]
 		var port_a := IndustryElectricPortUtil.find_port(element_a, link.port_a)
@@ -506,10 +514,6 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 		if (
 			not IndustryElectricPortUtil.is_electric_port(port_a)
 			or not IndustryElectricPortUtil.is_electric_port(port_b)
-			or not IndustryElectricPortUtil.electric_directions_compatible(
-				port_a,
-				port_b
-			)
 		):
 			return false
 

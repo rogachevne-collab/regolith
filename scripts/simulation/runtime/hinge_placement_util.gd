@@ -30,7 +30,13 @@ static func bend_axis_assembly_local(
 		OrientationUtil.face_to_vector(definition.bend_axis_face),
 		base_element.orientation_index
 	)
-	return Vector3(axis_cell).normalized()
+	return (
+		GridPoseUtil.element_pose_delta(
+			base_element.origin_cell,
+			base_element.orientation_index,
+			base_element.pose_offset
+		).basis * Vector3(axis_cell)
+	).normalized()
 
 
 ## Bend pivot in assembly-local space: the hinge_top cell center, so the top
@@ -44,7 +50,11 @@ static func pivot_assembly_local(
 		base_element.orientation_index,
 		definition
 	)
-	return GridMetric.cell_center_meters(top_cell)
+	return GridPoseUtil.element_pose_delta(
+		base_element.origin_cell,
+		base_element.orientation_index,
+		base_element.pose_offset
+	) * GridMetric.cell_center_meters(top_cell)
 
 
 static func validate_hinge_archetype(

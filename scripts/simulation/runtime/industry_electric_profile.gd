@@ -38,6 +38,14 @@ static func for_element(element: SimulationElement) -> Dictionary:
 		for key: Variant in archetype_defaults.keys():
 			profile[key] = archetype_defaults[key]
 	_apply_role_fallback(archetype.roles, profile)
+	# A part that drives, thrusts or spins burns power by definition. Without
+	# this, being a consumer depended on the archetype id being listed in
+	# game_balance.json — so any authored wheel silently stayed unpowered and
+	# its drive command was zeroed every tick.
+	if not bool(profile["is_consumer"]) and _has_powered_mechanism(archetype):
+		profile["is_consumer"] = true
+		if float(profile["idle_w"]) <= 0.0:
+			profile["idle_w"] = _mechanism_idle_w(archetype)
 	if (
 		profile["is_consumer"]
 		and float(profile["idle_w"]) <= 0.0
@@ -48,6 +56,24 @@ static func for_element(element: SimulationElement) -> Dictionary:
 	):
 		profile["idle_w"] = _default_float("idle_w", 50.0)
 	return profile
+
+
+static func _has_powered_mechanism(archetype: ElementArchetype) -> bool:
+	return (
+		archetype.wheel_definition != null
+		or archetype.thruster_definition != null
+		or archetype.gyro_definition != null
+	)
+
+
+static func _mechanism_idle_w(archetype: ElementArchetype) -> float:
+	if archetype.wheel_definition != null:
+		return archetype.wheel_definition.idle_w
+	if archetype.thruster_definition != null:
+		return archetype.thruster_definition.idle_w
+	if archetype.gyro_definition != null:
+		return archetype.gyro_definition.idle_w
+	return 0.0
 
 
 static func is_power_consumer(element: SimulationElement) -> bool:

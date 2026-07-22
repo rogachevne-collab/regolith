@@ -64,6 +64,24 @@ static func packed_vector3_array_to_array(
 	return rows
 
 
+static func packed_int32_array_from_variant(value: Variant) -> PackedInt32Array:
+	var result := PackedInt32Array()
+	if value is PackedInt32Array:
+		return (value as PackedInt32Array).duplicate()
+	if not value is Array:
+		return result
+	for row: Variant in value:
+		result.append(int(row))
+	return result
+
+
+static func packed_int32_array_to_array(value: PackedInt32Array) -> Array:
+	var rows: Array = []
+	for entry: int in value:
+		rows.append(entry)
+	return rows
+
+
 static func _parse_vector_text(text: String, as_int: bool) -> Variant:
 	var cleaned := text.strip_edges()
 	if not cleaned.begins_with("(") or not cleaned.ends_with(")"):

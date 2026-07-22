@@ -9,10 +9,19 @@ var assembly_id: int = 0
 var archetype_id: String = ""
 var origin_cell: Vector3i = Vector3i.ZERO
 var orientation_index: int = 0
+## Sub-cell precision on top of the grid pose, in the part-local metric
+## frame (translation + roll around a connector axis). Topology (occupancy,
+## connectivity) never reads it: (origin_cell, orientation_index) stay the
+## source of truth there.
+var pose_offset: Transform3D = Transform3D.IDENTITY
 var build_progress: float = 1.0
 var integrity: float = 0.0
 var condition: float = 1.0
 var state_revision: int = 0
+## Имя экземпляра, заданное оператором в терминале управления (CONTROL-ACTIONS-V0).
+## Пусто = показывать display_name архетипа + авто-тег. Instance-состояние: едет
+## в snapshot вместе с элементом, в Blueprint не пекётся.
+var custom_name: String = ""
 var installed_materials: Dictionary = {}
 ## Structural integrity at placement (1% of max_integrity).
 const PLACEMENT_STRUCTURAL_FRACTION := 0.01
@@ -42,6 +51,7 @@ static func from_placement(
 	element.archetype_id = placement.archetype.archetype_id
 	element.origin_cell = placement.origin_cell
 	element.orientation_index = placement.orientation_index
+	element.pose_offset = placement.pose_offset
 	element._archetype = placement.archetype
 	element.install_all_required_materials()
 	element.integrity = placement.archetype.max_integrity
@@ -276,6 +286,17 @@ func to_dict() -> Dictionary:
 		"terrain_contact": terrain_contact,
 		"installed_materials": installed_materials.duplicate(true),
 	}
+	if not custom_name.is_empty():
+		row["custom_name"] = custom_name
+	if pose_offset != Transform3D.IDENTITY:
+		row["pose_offset"] = {
+			"origin": _CODEC.vector3_to_array(pose_offset.origin),
+			"basis": [
+				_CODEC.vector3_to_array(pose_offset.basis.x),
+				_CODEC.vector3_to_array(pose_offset.basis.y),
+				_CODEC.vector3_to_array(pose_offset.basis.z),
+			],
+		}
 	if industry_functional_reason != &"ok":
 		row["industry_functional_reason"] = industry_functional_reason
 	if industry_buffer != null and not industry_buffer.resource_ids().is_empty():
@@ -299,7 +320,22 @@ static func from_dict(data: Dictionary) -> SimulationElement:
 	element.integrity = float(data.get("integrity", 0.0))
 	element.condition = float(data.get("condition", 1.0))
 	element.state_revision = int(data.get("state_revision", 0))
+	element.custom_name = str(data.get("custom_name", ""))
 	element.terrain_contact = bool(data.get("terrain_contact", false))
+	var offset_data: Variant = data.get("pose_offset", {})
+	if offset_data is Dictionary and not offset_data.is_empty():
+		var basis_rows: Variant = offset_data.get("basis", [])
+		if basis_rows is Array and basis_rows.size() == 3:
+			element.pose_offset = Transform3D(
+				Basis(
+					_CODEC.vector3_from_variant(basis_rows[0]),
+					_CODEC.vector3_from_variant(basis_rows[1]),
+					_CODEC.vector3_from_variant(basis_rows[2]),
+				),
+				_CODEC.vector3_from_variant(
+					offset_data.get("origin", Vector3.ZERO)
+				),
+			)
 	var functional_reason: Variant = data.get("industry_functional_reason", &"ok")
 	if functional_reason is StringName:
 		element.industry_functional_reason = functional_reason

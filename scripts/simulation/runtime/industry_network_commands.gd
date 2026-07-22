@@ -1,9 +1,11 @@
 class_name IndustryNetworkCommands
 extends RefCounted
 
-static func connect_network(world, 
+static func connect_network(world,
 	command: ConnectNetworkCommand
 ) -> StructuralCommandResult:
+	if command.is_rope():
+		return connect_rope(world, command)
 	var validation: StructuralCommandResult = IndustryElectricPortUtil.validate_connect_endpoints(
 		world,
 		command.element_a_id,
@@ -67,6 +69,22 @@ static func connect_network(world,
 		return StructuralCommandResult.failed(
 			StructuralCommandResult.REASON_DUPLICATE_CONNECTION
 		)
+	# Validation ran on the world-space clicks; storage keeps each скоба in the
+	# frame of the block it was clipped to, so it rides that block afterwards.
+	var stored_anchors: PackedInt32Array = (
+		IndustryElectricPortUtil.sanitized_waypoint_anchors(
+			world,
+			command.waypoints,
+			command.waypoint_anchors
+		)
+	)
+	var stored_waypoints: PackedVector3Array = (
+		IndustryElectricPortUtil.localize_waypoints(
+			world,
+			command.waypoints,
+			stored_anchors
+		)
+	)
 	var link_id: int = world._allocator.allocate_link_id()
 	var link: IndustryElectricLink = world._industry_network.add_link(
 		link_id,
@@ -74,7 +92,8 @@ static func connect_network(world,
 		command.port_a_id,
 		command.element_b_id,
 		command.port_b_id,
-		command.waypoints
+		stored_waypoints,
+		stored_anchors
 	)
 	world._industry_network.bump_revision()
 	world._emit_structural_event({
@@ -102,7 +121,84 @@ static func connect_network(world,
 		"distance_m": validation.data["distance_m"],
 	})
 
-static func disconnect_network(world, 
+## Rope form: two free anchors, no ports, no requirements. The rest length is
+## derived here from the span the player actually dragged, so what was on the
+## screen is what gets stored.
+static func connect_rope(world,
+	command: ConnectNetworkCommand
+) -> StructuralCommandResult:
+	var validation: StructuralCommandResult = (
+		IndustryElectricPortUtil.validate_rope_endpoints(
+			world,
+			command.element_a_id,
+			command.attach_a,
+			command.element_b_id,
+			command.attach_b
+		)
+	)
+	if not validation.is_ok():
+		return validation
+	var span_m := float(validation.data["distance_m"])
+	var link_id: int = world._allocator.allocate_link_id()
+	var link: IndustryElectricLink = world._industry_network.add_link(
+		link_id,
+		command.element_a_id,
+		"",
+		command.element_b_id,
+		"",
+		PackedVector3Array(),
+		PackedInt32Array(),
+		{
+			# Клик — в мире, хранение — в системе координат блока: канат едет
+			# вместе с тем, к чему привязан.
+			"attach_a": CableAnchorUtil.localize(
+				world,
+				command.element_a_id,
+				command.attach_a
+			),
+			"attach_b": CableAnchorUtil.localize(
+				world,
+				command.element_b_id,
+				command.attach_b
+			),
+			"rest_length_m": CableAnchorUtil.rest_length_m(
+				span_m,
+				command.slack
+			),
+		}
+	)
+	world._industry_network.bump_revision()
+	var assembly_a_id := int(validation.data.get("assembly_a_id", 0))
+	var assembly_b_id := int(validation.data.get("assembly_b_id", 0))
+	var event_assembly_id := (
+		assembly_a_id if assembly_a_id > 0 else assembly_b_id
+	)
+	world._emit_structural_event({
+		"kind": &"electric_link_added",
+		"command_id": command.command_id,
+		"assembly_id": event_assembly_id,
+		"assembly_a_id": assembly_a_id,
+		"assembly_b_id": assembly_b_id,
+		"industry_network_revision": world._industry_network.industry_network_revision,
+		"link_id": link.link_id,
+		"element_a_id": link.element_a,
+		"port_a_id": link.port_a,
+		"element_b_id": link.element_b,
+		"port_b_id": link.port_b,
+		"rest_length_m": link.rest_length_m,
+	})
+	return StructuralCommandResult.ok({
+		"command_id": command.command_id,
+		"assembly_id": event_assembly_id,
+		"assembly_a_id": assembly_a_id,
+		"assembly_b_id": assembly_b_id,
+		"industry_network_revision": world._industry_network.industry_network_revision,
+		"link_id": link.link_id,
+		"distance_m": span_m,
+		"rest_length_m": link.rest_length_m,
+	})
+
+static func disconnect_network(world,
 	command: DisconnectNetworkCommand
 ) -> StructuralCommandResult:
 	var link: IndustryElectricLink = null
@@ -119,12 +215,18 @@ static func disconnect_network(world,
 		return StructuralCommandResult.failed(
 			StructuralCommandResult.REASON_INVALID_REFERENCE
 		)
-	var element_a: SimulationElement = world.get_element(link.element_a)
-	if element_a == null:
+	# A rope may hang off a world anchor, so the reference assembly is whichever
+	# end is an element at all.
+	var reference_element: SimulationElement = world.get_element(link.element_a)
+	if reference_element == null:
+		reference_element = world.get_element(link.element_b)
+	if reference_element == null:
 		return StructuralCommandResult.failed(
 			StructuralCommandResult.REASON_INVALID_REFERENCE
 		)
-	var assembly: SimulationAssembly = world.get_assembly_raw(element_a.assembly_id)
+	var assembly: SimulationAssembly = world.get_assembly_raw(
+		reference_element.assembly_id
+	)
 	if assembly == null or assembly.tombstoned:
 		return StructuralCommandResult.failed(
 			StructuralCommandResult.REASON_INVALID_REFERENCE

@@ -93,6 +93,35 @@ static func elements() -> Dictionary:
 	return _section("elements")
 
 
+## ParameterCatalog (CONTROL-ACTIONS-V0): статичная мета настраиваемых уставок —
+## подпись, единица, шаг нуджа, точность, куда писать. Границы (min/max) НЕ здесь:
+## они per-instance и берутся живыми из состояния элемента (authored-лимиты).
+static func parameters() -> Dictionary:
+	return _section("parameters")
+
+
+static func parameter_entry(param_id: String) -> Dictionary:
+	if param_id.is_empty():
+		return {}
+	var entry: Variant = parameters().get(param_id, {})
+	return entry if entry is Dictionary else {}
+
+
+static func parameter_step(param_id: String, fallback: float) -> float:
+	var entry := parameter_entry(param_id)
+	if entry.is_empty():
+		return fallback
+	return float(entry.get("step", fallback))
+
+
+## Множитель отображения: внутренняя единица → показанная (Н → кН, рад → °).
+static func parameter_display_scale(param_id: String) -> float:
+	var entry := parameter_entry(param_id)
+	if entry.is_empty():
+		return 1.0
+	return float(entry.get("display_scale", 1.0))
+
+
 static func element_entry(archetype_id: String) -> Dictionary:
 	if archetype_id.is_empty():
 		return {}
@@ -230,6 +259,32 @@ static func validate() -> PackedStringArray:
 						"recipe '%s' references unknown item '%s'"
 						% [str(recipe_id), str(resource_id)]
 					)
+	const PARAMETER_COMMANDS := [
+		"configure_actuator",
+		"configure_wheel",
+		"configure_suspension",
+	]
+	for param_id: Variant in parameters().keys():
+		var param_variant: Variant = parameters()[param_id]
+		if not param_variant is Dictionary:
+			errors.append("parameter '%s' must be an object" % str(param_id))
+			continue
+		var param: Dictionary = param_variant
+		for key: String in ["label", "unit", "step", "command", "field", "target"]:
+			if not param.has(key):
+				errors.append("parameter '%s' missing %s" % [str(param_id), key])
+		if float(param.get("step", 0.0)) <= 0.0:
+			errors.append("parameter '%s' step must be > 0" % str(param_id))
+		var command := str(param.get("command", ""))
+		if not command.is_empty() and not command in PARAMETER_COMMANDS:
+			errors.append(
+				"parameter '%s' unknown command '%s'" % [str(param_id), command]
+			)
+		var target := str(param.get("target", ""))
+		if not target.is_empty() and not target in ["joint", "element"]:
+			errors.append(
+				"parameter '%s' target must be joint|element" % str(param_id)
+			)
 	for archetype_id: Variant in elements().keys():
 		var element_variant: Variant = elements()[archetype_id]
 		if not element_variant is Dictionary:

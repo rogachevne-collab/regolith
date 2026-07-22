@@ -15,7 +15,7 @@ const _BOTTOM_SAMPLES: Array[Vector2] = [
 
 static func is_construction_archetype(archetype_id: String) -> bool:
 	return (
-		ToolController.CONSTRUCTION_ARCHETYPES.has(archetype_id)
+		ToolController.construction_archetype_ids().has(archetype_id)
 		or archetype_id == "foundation"
 	)
 
@@ -125,6 +125,27 @@ static func _physics_overlaps_terrain(
 		if _is_terrain_collider(hit.get("collider"), terrain):
 			return true
 	return false
+
+
+## Is there still solid ground within `radius` of this point? Layer 1 is the
+## terrain layer, so no collider there means the ground was dug away (or blown
+## up) — a rope anchor sitting here has nothing left to hold on to.
+static func point_has_ground_support(
+	space_state: PhysicsDirectSpaceState3D,
+	world_point: Vector3,
+	radius: float = SUPPORT_PROBE_RADIUS
+) -> bool:
+	if space_state == null:
+		return false
+	var shape := SphereShape3D.new()
+	shape.radius = maxf(radius, 0.01)
+	var params := PhysicsShapeQueryParameters3D.new()
+	params.shape = shape
+	params.transform = Transform3D(Basis.IDENTITY, world_point)
+	params.collision_mask = 1
+	params.collide_with_bodies = true
+	params.collide_with_areas = false
+	return not space_state.intersect_shape(params, 1).is_empty()
 
 
 ## Physics ray along `direction` that hits voxel terrain only (layer 1 default).

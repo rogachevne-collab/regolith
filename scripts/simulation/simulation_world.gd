@@ -239,7 +239,8 @@ func connect_network(
 	element_b_id: int,
 	port_b_id: String,
 	expected_assembly_revision: int = -1,
-	waypoints: PackedVector3Array = PackedVector3Array()
+	waypoints: PackedVector3Array = PackedVector3Array(),
+	waypoint_anchors: PackedInt32Array = PackedInt32Array()
 ) -> StructuralCommandResult:
 	var command := ConnectNetworkCommand.new()
 	command.element_a_id = element_a_id
@@ -248,6 +249,26 @@ func connect_network(
 	command.port_b_id = port_b_id
 	command.expected_assembly_revision = expected_assembly_revision
 	command.waypoints = waypoints
+	command.waypoint_anchors = waypoint_anchors
+	return apply_structural_command_now(command)
+
+## Free-attached rope (CABLE-ROPE-V0). `attach_*` are world-space points;
+## `element_*_id` 0 nails that end to the world. No placement requirements.
+func connect_rope(
+	element_a_id: int,
+	attach_a: Vector3,
+	element_b_id: int,
+	attach_b: Vector3,
+	slack: float = CableAnchorUtil.DEFAULT_SLACK
+) -> StructuralCommandResult:
+	var command := ConnectNetworkCommand.new()
+	command.element_a_id = element_a_id
+	command.element_b_id = element_b_id
+	command.port_a_id = ""
+	command.port_b_id = ""
+	command.attach_a = attach_a
+	command.attach_b = attach_b
+	command.slack = slack
 	return apply_structural_command_now(command)
 
 func disconnect_network(
@@ -283,6 +304,31 @@ func apply_set_machine_enabled(
 	return (_industry_runner as IndustrySimulation).apply_set_machine_enabled(
 		command
 	)
+
+## Переименование экземпляра: instance-состояние, не топология. Меняет только
+## `state_revision` элемента (как weld/damage/repair), поэтому пересчёт связности,
+## compound collider и `Assembly.revision` не трогаются.
+func apply_set_element_name(command: SetElementNameCommand) -> Dictionary:
+	if command == null or command.element_id <= 0:
+		return {"reason": &"invalid_target"}
+	var element := get_element(command.element_id)
+	if element == null:
+		return {"reason": &"invalid_target"}
+	var clean := SetElementNameCommand.sanitize(command.element_name)
+	if element.custom_name == clean:
+		return {
+			"reason": &"ok",
+			"element_id": command.element_id,
+			"custom_name": clean,
+		}
+	element.custom_name = clean
+	element.bump_state_revision()
+	return {
+		"reason": &"ok",
+		"element_id": command.element_id,
+		"custom_name": clean,
+	}
+
 
 func apply_set_actuator_target(
 	command: SetActuatorTargetCommand
@@ -818,7 +864,8 @@ func element_world_transform(element_id: int) -> Transform3D:
 		element_group_transform(element_id)
 		* GridPoseUtil.element_local_transform(
 			element.origin_cell,
-			element.orientation_index
+			element.orientation_index,
+			element.pose_offset
 		)
 	)
 

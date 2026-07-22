@@ -242,6 +242,7 @@ static func _seat_offset_local(element: SimulationElement) -> Vector3:
 	)
 	var local := GridPoseUtil.element_local_transform(
 		element.origin_cell,
-		element.orientation_index
+		element.orientation_index,
+		element.pose_offset
 	)
 	return pivot + local.basis.y * GridMetric.HALF_CELL_SIZE_M * 0.5

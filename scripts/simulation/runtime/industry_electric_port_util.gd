@@ -81,11 +81,6 @@ static func diagnose_electric_pair(
 	var element_b := world.get_element(element_b_id)
 	if element_a == null or element_b == null:
 		return {"pair": {}, "reason": &"invalid_target"}
-	if (
-		not is_wireable_element(element_a)
-		or not is_wireable_element(element_b)
-	):
-		return {"pair": {}, "reason": &"endpoint_not_wireable"}
 	var ports_a := list_electric_ports(element_a)
 	var ports_b := list_electric_ports(element_b)
 	if not requested_port_a_id.is_empty():
@@ -143,6 +138,82 @@ static func diagnose_electric_pair(
 			"max_distance_m": MAX_CABLE_LENGTH_M,
 		}
 	return {"pair": {}, "reason": &"incompatible_connection"}
+
+
+## World-space скобы of a stored link. World-pinned points pass through;
+## block-clipped ones ride their element's current body-group transform, so a
+## cable routed over a machine keeps its shape when that machine drives off.
+## A скоба whose block no longer exists drops out of the route — the clip fell
+## off with the block, the neighbouring spans close over it.
+static func resolved_waypoints(
+	world: SimulationWorld,
+	link: IndustryElectricLink
+) -> PackedVector3Array:
+	if link == null:
+		return PackedVector3Array()
+	if world == null:
+		return link.waypoints.duplicate()
+	var resolved := PackedVector3Array()
+	for index: int in range(link.waypoints.size()):
+		var anchor_element_id := link.waypoint_anchor(index)
+		if anchor_element_id <= 0:
+			resolved.append(link.waypoints[index])
+			continue
+		if world.get_element(anchor_element_id) == null:
+			continue
+		resolved.append(
+			world.element_group_transform(anchor_element_id)
+			* link.waypoints[index]
+		)
+	return resolved
+
+
+## Inverse of `resolved_waypoints`: the connect command carries world-space
+## clicks, storage keeps block-clipped ones in their block's frame.
+static func localize_waypoints(
+	world: SimulationWorld,
+	world_points: PackedVector3Array,
+	anchors: PackedInt32Array
+) -> PackedVector3Array:
+	if world == null:
+		return world_points.duplicate()
+	var localized := PackedVector3Array()
+	for index: int in range(world_points.size()):
+		var anchor_element_id := 0
+		if index < anchors.size():
+			anchor_element_id = anchors[index]
+		if (
+			anchor_element_id <= 0
+			or world.get_element(anchor_element_id) == null
+		):
+			localized.append(world_points[index])
+			continue
+		localized.append(
+			world.element_group_transform(anchor_element_id).affine_inverse()
+			* world_points[index]
+		)
+	return localized
+
+
+## Anchors as they will be stored: a mount whose element vanished between the
+## click and the command degrades to world-pinned, matching localize_waypoints.
+static func sanitized_waypoint_anchors(
+	world: SimulationWorld,
+	world_points: PackedVector3Array,
+	anchors: PackedInt32Array
+) -> PackedInt32Array:
+	var sanitized := PackedInt32Array()
+	sanitized.resize(world_points.size())
+	for index: int in range(world_points.size()):
+		if index >= anchors.size():
+			continue
+		var anchor_element_id := anchors[index]
+		if anchor_element_id <= 0 or world == null:
+			continue
+		if world.get_element(anchor_element_id) == null:
+			continue
+		sanitized[index] = anchor_element_id
+	return sanitized
 
 
 static func port_anchor_world_position(
@@ -216,6 +287,8 @@ static func electric_directions_compatible(
 
 ## Total routed length (anchor → скобы → anchor). Informational only; the
 ## connect limit applies per span via cable_max_span_m.
+## `waypoints` are world-space here — stored links must go through
+## `resolved_waypoints()` first.
 static func cable_distance_m(
 	world: SimulationWorld,
 	element_a: SimulationElement,
@@ -258,18 +331,10 @@ static func cable_max_span_m(
 	return maxf(max_span, previous.distance_to(anchor_b))
 
 
-## Only power infrastructure accepts manual wires; machines are powered by
-## distributor radius. Keeps one mental model: провода — это магистраль.
-static func is_wireable_element(element: SimulationElement) -> bool:
-	if element == null:
-		return false
-	return (
-		IndustryElectricProfile.is_power_source(element)
-		or IndustryElectricProfile.is_distributor(element)
-		or IndustryElectricProfile.is_battery(element)
-	)
-
-
+## Anything with an electric port takes a cable now (CABLE-ROPE-V0). The old
+## "only source / distributor / battery" gate is gone: consumers can be wired
+## directly, and the distributor radius is the wireless alternative, not the
+## only way to power a machine.
 static func ports_are_face_adjacent(
 	left: SimulationElement,
 	left_port: PortDefinition,
@@ -338,24 +403,16 @@ static func validate_connect_endpoints(
 			)
 			else StructuralCommandResult.REASON_ELEMENT_BROKEN
 		)
-	if (
-		not is_wireable_element(element_a)
-		or not is_wireable_element(element_b)
-	):
-		return StructuralCommandResult.failed(
-			StructuralCommandResult.REASON_ENDPOINT_NOT_WIREABLE
-		)
+	# Cables have no placement requirements any more (CABLE-ROPE-V0): the
+	# endpoint role and the port direction stopped gating the connection. Both
+	# ends still have to be electric ports — that is what a port link *is*.
 	var port_a := find_port(element_a, port_a_id)
 	var port_b := find_port(element_b, port_b_id)
 	if port_a == null or port_b == null:
 		return StructuralCommandResult.failed(
 			StructuralCommandResult.REASON_INVALID_REFERENCE
 		)
-	if (
-		not is_electric_port(port_a)
-		or not is_electric_port(port_b)
-		or not electric_directions_compatible(port_a, port_b)
-	):
+	if not is_electric_port(port_a) or not is_electric_port(port_b):
 		return StructuralCommandResult.failed(
 			StructuralCommandResult.REASON_INCOMPATIBLE_CONNECTION
 		)
@@ -387,9 +444,63 @@ static func validate_connect_endpoints(
 	})
 
 
+## Rope endpoints (CABLE-ROPE-V0). There are no placement requirements: any
+## block, in any state, at any distance, to any other block or to a point on
+## terrain. The only things that can fail are a vanished element, two world
+## anchors (nothing to hold) and a span too short to be a rope.
+##
+## Both attach points are **world-space** here — these are the player's clicks,
+## localization into block frames happens afterwards, at storage. Resolving
+## them through endpoint_world_position() would apply the block transform a
+## second time; near the origin that is invisible, on the moon it inflates the
+## span by kilometres and the rope hangs into the planet.
+static func validate_rope_endpoints(
+	world: SimulationWorld,
+	element_a_id: int,
+	attach_a: Vector3,
+	element_b_id: int,
+	attach_b: Vector3
+) -> StructuralCommandResult:
+	if world == null:
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INVALID_TARGET
+		)
+	if element_a_id <= 0 and element_b_id <= 0:
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INVALID_TARGET
+		)
+	var element_a := (
+		world.get_element(element_a_id) if element_a_id > 0 else null
+	)
+	var element_b := (
+		world.get_element(element_b_id) if element_b_id > 0 else null
+	)
+	if (
+		(element_a_id > 0 and element_a == null)
+		or (element_b_id > 0 and element_b == null)
+	):
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INVALID_REFERENCE
+		)
+	var span_m := attach_a.distance_to(attach_b)
+	if span_m < CableAnchorUtil.MIN_SPAN_M:
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_INVALID_TARGET,
+			{"distance_m": span_m}
+		)
+	return StructuralCommandResult.ok({
+		"element_a_id": element_a_id,
+		"element_b_id": element_b_id,
+		"assembly_a_id": element_a.assembly_id if element_a != null else 0,
+		"assembly_b_id": element_b.assembly_id if element_b != null else 0,
+		"distance_m": span_m,
+	})
+
+
 ## Deletion criterion: a link may only be removed from the network state when an
 ## endpoint element no longer exists in the world. Temporary conditions (damaged
 ## endpoint, overstretched cable) make the link dormant, never delete it.
+## A world-nailed rope end (element 0) always "exists" — it is a point in space.
 static func link_endpoints_exist(
 	world: SimulationWorld,
 	link: IndustryElectricLink
@@ -397,14 +508,24 @@ static func link_endpoints_exist(
 	if link == null:
 		return false
 	return (
-		world.get_element(link.element_a) != null
-		and world.get_element(link.element_b) != null
+		_endpoint_exists(world, link.element_a)
+		and _endpoint_exists(world, link.element_b)
 	)
+
+
+static func _endpoint_exists(world: SimulationWorld, element_id: int) -> bool:
+	if element_id <= 0:
+		return true
+	return world.get_element(element_id) != null
 
 
 ## Activity criterion: dormant links (endpoint not operational, cable stretched
 ## beyond max length) stay stored but drop out of the electric graph until the
 ## condition clears.
+## Conduction rule: a cable carries current between any two operational
+## elements that have an electric port at all — a rope tied to a drill powers
+## the drill. Ends nailed to the world conduct nothing (the rope is purely
+## mechanical there), and neither does a rope to a portless block.
 static func link_still_valid(
 	world: SimulationWorld,
 	link: IndustryElectricLink
@@ -417,13 +538,20 @@ static func link_still_valid(
 		return false
 	if not element_a.is_operational() or not element_b.is_operational():
 		return false
+	if (
+		list_electric_ports(element_a).is_empty()
+		or list_electric_ports(element_b).is_empty()
+	):
+		return false
+	if link.is_rope():
+		# A rope has no length limit: pull it too hard and it snaps outright
+		# (CableTensionUtil), it never quietly goes dead.
+		return true
+	# Stiff port wires keep the old overstretch dormancy — that is what stops
+	# an umbilical between two grids from conducting across the map.
 	var port_a := find_port(element_a, link.port_a)
 	var port_b := find_port(element_b, link.port_b)
-	if (
-		not is_electric_port(port_a)
-		or not is_electric_port(port_b)
-		or not electric_directions_compatible(port_a, port_b)
-	):
+	if not is_electric_port(port_a) or not is_electric_port(port_b):
 		return false
 	return (
 		cable_max_span_m(
@@ -432,7 +560,7 @@ static func link_still_valid(
 			port_a,
 			element_b,
 			port_b,
-			link.waypoints
+			resolved_waypoints(world, link)
 		)
 		<= MAX_CABLE_LENGTH_M + 0.000001
 	)

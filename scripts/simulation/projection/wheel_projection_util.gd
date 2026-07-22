@@ -20,27 +20,23 @@ static func mount_pad_anchor_assembly_local(
 	var archetype := element.get_archetype()
 	if archetype == null:
 		return {}
-	for pad: StructuralMountPad in archetype.structural_mount_pads:
-		if pad == null or pad.socket_tag != socket_tag:
+	var wanted := ConnectorRuleTable.normalize_tag(socket_tag)
+	for connector: ConnectorDefinition in archetype.effective_connectors():
+		if connector == null or connector.normalized_tag() != wanted:
 			continue
-		var face_vec: Vector3i = OrientationUtil.rotate_direction(
-			OrientationUtil.face_to_vector(pad.local_face),
-			element.orientation_index
-		)
-		var world_cell: Vector3i = (
-			element.origin_cell
-			+ OrientationUtil.rotate_cell(
-				pad.local_cell,
-				element.orientation_index
-			)
-		)
-		var origin := (
-			GridMetric.cell_center_meters(world_cell)
-			+ Vector3(face_vec) * GridMetric.HALF_CELL_SIZE_M
+		# The connector point is the anchor: for a plain grid pad that is the
+		# face centre, for a precise part it is wherever the author put it
+		# (the hub slot), and pose_offset rides along.
+		var metric := GridPoseUtil.element_metric_transform(
+			element.origin_cell,
+			element.orientation_index,
+			element.pose_offset
 		)
 		return {
-			"origin": origin,
-			"direction": Vector3(face_vec).normalized(),
+			"origin": metric * connector.local_position,
+			"direction": (
+				metric.basis * connector.direction_normalized()
+			).normalized(),
 		}
 	return {}
 
@@ -101,11 +97,20 @@ static func tick_pair(
 	if socket_pose.is_empty():
 		result["status"] = &"invalid_body"
 		return result
-	var ray_origin_local: Vector3 = socket_pose["origin"]
-	var ray_dir_local := Vector3(socket_pose["direction"]).normalized()
-	if ray_dir_local.length_squared() <= 0.0001:
-		result["status"] = &"invalid_body"
-		return result
+	# Suspension travel runs along the chassis' own down axis, NOT along the
+	# socket face. A car-style upright holds its hub sideways while the spring
+	# still works vertically; keying the ray to the socket face made every
+	# side-mounted wheel fire its ray at the horizon and hang permanently
+	# airborne. For the stock suspension — socket on the bottom face — this is
+	# the very same vector it always was.
+	var ray_dir_local := Vector3.DOWN
+	# The socket point is where the wheel sits with the suspension FULLY
+	# EXTENDED — its lowest position, and exactly where the part was seated at
+	# build time. Compression lifts the wheel from there toward the chassis, so
+	# the spring's fixed end is one full travel above the socket.
+	var ray_origin_local: Vector3 = (
+		Vector3(socket_pose["origin"]) - ray_dir_local * travel_m
+	)
 	var body_transform := body.global_transform
 	if (
 		not body_transform.origin.is_finite()
@@ -150,6 +155,10 @@ static func tick_pair(
 	if locomotion != null:
 		drive_command = locomotion.drive_command
 		brake_command = locomotion.brake_command
+	# Направление привода настраивается на колесе (терминал/кокпит). Знак меняем
+	# здесь, до записи в result, чтобы и разгон, и телеметрия следовали настройке.
+	if bool(pair.get("drive_inverted", false)):
+		drive_command = -drive_command
 	if parking_hold:
 		drive_command = 0.0
 		brake_command = 1.0

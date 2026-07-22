@@ -48,7 +48,8 @@ static func element_center_of_mass_local(
 			GridPoseUtil.collider_local_transform(
 				element.origin_cell,
 				element.orientation_index,
-				collider
+				collider,
+				element.pose_offset
 			)
 		)
 		weighted += local_transform.origin * volume
@@ -101,7 +102,8 @@ static func build_collision_shapes(
 				GridPoseUtil.collider_local_transform(
 					element.origin_cell,
 					element.orientation_index,
-					collider
+					collider,
+					element.pose_offset
 				)
 			)
 			records.append({

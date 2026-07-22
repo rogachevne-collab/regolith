@@ -12,6 +12,14 @@ const SUSTAINED_V_EPS := 0.05
 ## body is frozen (~0.5s at 60Hz).
 const PARK_FREEZE_SETTLE_FRAMES := 30
 const WAKE_DIG_MARGIN_M := 3.0
+## Rope particles allowed to run world collision per physics tick, across all
+## ropes. One rope always fits; a forest of them degrades to every-other-tick
+## collision instead of eating the frame.
+const CABLE_ROPE_COLLISION_BUDGET := 320
+## Ground-anchor upkeep: how often a world-nailed rope end checks that it still
+## has ground, and how much ground has to disappear before it tears loose.
+const CABLE_ANCHOR_PROBE_INTERVAL_S := 0.33
+const CABLE_ANCHOR_PROBE_RADIUS := 0.3
 const FragmentBodyScript := preload(
 	"res://scripts/simulation/projection/projected_assembly_body.gd"
 )
@@ -52,6 +60,10 @@ var _piston_constraints: Dictionary = {}
 var _rotor_constraints: Dictionary = {}
 var _root_group_ids: Dictionary = {}
 var _impact_service: ImpactResolverService
+var _cable_anchor_probe_cooldown := 0.0
+## link_id → verlet rope state (CableRopeSolver). Presentation/physics only.
+var _rope_states: Dictionary = {}
+var _rope_collision_cursor := 0
 
 func bind_impact_service(service: ImpactResolverService) -> void:
 	_impact_service = service
@@ -194,6 +206,9 @@ func _physics_process(delta: float) -> void:
 	_tick_piston_actuators(delta)
 	_tick_wheel_pairs(delta)
 	_tick_thrusters(delta)
+	_tick_cable_ropes(delta)
+	_tick_cable_tension(delta)
+	_tick_cable_anchors(delta)
 	for assembly_id: int in _sorted_int_keys(_bodies):
 		var assembly: SimulationAssembly = _world.get_assembly_raw(assembly_id)
 		if assembly == null or assembly.tombstoned:
@@ -1529,6 +1544,180 @@ func _tick_thrusters(delta: float) -> void:
 			continue
 		for gyro: SimulationElement in gyros:
 			_apply_gyro_torque(gyro, locomotion, gyro_count)
+
+## Rope shape: one verlet step per rope, so cables drape over the world instead
+## of passing through it. Runs before tension — the pull direction comes from
+## the solved rope, not from the straight line between the anchors.
+func _tick_cable_ropes(delta: float) -> void:
+	if _world == null or delta <= 0.0:
+		return
+	var ropes: Array[IndustryElectricLink] = []
+	for link: IndustryElectricLink in _world.get_industry_network().list_links():
+		if link.is_rope():
+			ropes.append(link)
+	if ropes.is_empty():
+		_rope_states = {}
+		return
+	var space_state := get_world_3d().direct_space_state
+	# Collision is one shape query per particle per tick, so it runs on a
+	# budget. A rope past the budget still integrates and holds its length this
+	# tick; the rotating start makes sure it is a different rope every time and
+	# not always the last one in the list that goes without.
+	var collision_budget := CABLE_ROPE_COLLISION_BUDGET
+	_rope_collision_cursor = (_rope_collision_cursor + 1) % ropes.size()
+	var live: Dictionary = {}
+	for offset: int in range(ropes.size()):
+		var link: IndustryElectricLink = ropes[
+			(offset + _rope_collision_cursor) % ropes.size()
+		]
+		var anchor_a := CableAnchorUtil.endpoint_world_position(
+			_world,
+			link.element_a,
+			link.port_a,
+			link.attach_a
+		)
+		var anchor_b := CableAnchorUtil.endpoint_world_position(
+			_world,
+			link.element_b,
+			link.port_b,
+			link.attach_b
+		)
+		var gravity := GravityField.resolve_gravity_accel(
+			self,
+			(anchor_a + anchor_b) * 0.5
+		)
+		var state: Variant = _rope_states.get(link.link_id)
+		if not state is Dictionary:
+			state = CableRopeSolver.create_state(
+				anchor_a,
+				anchor_b,
+				link.rest_length_m,
+				-gravity.normalized() if gravity.length_squared() > 0.0 else Vector3.UP,
+				space_state
+			)
+		var particles := CableRopeSolver.path(state).size()
+		var collides := space_state != null and collision_budget >= particles
+		if collides:
+			collision_budget -= particles
+		CableRopeSolver.step(
+			state,
+			anchor_a,
+			anchor_b,
+			link.rest_length_m,
+			gravity,
+			delta,
+			space_state if collides else null
+		)
+		live[link.link_id] = state
+	_rope_states = live
+
+## Solved rope path in world space for presentation. Empty when the rope has
+## not been stepped yet — the caller falls back to the analytic curve.
+func rope_path(link_id: int) -> PackedVector3Array:
+	var state: Variant = _rope_states.get(link_id)
+	if state is Dictionary:
+		return CableRopeSolver.path(state)
+	return PackedVector3Array()
+
+## Ropes pull once they run out of slack, and snap when the pull is too hard.
+## Runs after the actuators so a rope reacts to the same tick's motion.
+func _tick_cable_tension(delta: float) -> void:
+	if _world == null or delta <= 0.0:
+		return
+	var snapped: Array[int] = []
+	for link: IndustryElectricLink in _world.get_industry_network().list_links():
+		if not link.is_rope():
+			continue
+		var body_a := _rope_endpoint_body(link.element_a)
+		var body_b := _rope_endpoint_body(link.element_b)
+		if body_a == null and body_b == null:
+			continue
+		var anchor_a := CableAnchorUtil.endpoint_world_position(
+			_world,
+			link.element_a,
+			link.port_a,
+			link.attach_a
+		)
+		var anchor_b := CableAnchorUtil.endpoint_world_position(
+			_world,
+			link.element_b,
+			link.port_b,
+			link.attach_b
+		)
+		var tension_n := 0.0
+		var state: Variant = _rope_states.get(link.link_id)
+		if state is Dictionary:
+			# Draped over a rock the rope runs longer than the straight span and
+			# hits its limit sooner, and it pulls along its own first segment —
+			# toward what it is draped over, not through it.
+			tension_n = CableTensionUtil.solve_routed(
+				anchor_a,
+				body_a,
+				CableRopeSolver.pull_direction(state, true),
+				anchor_b,
+				body_b,
+				CableRopeSolver.pull_direction(state, false),
+				CableRopeSolver.routed_length_m(state),
+				link.rest_length_m,
+				delta
+			)
+		else:
+			tension_n = CableTensionUtil.solve(
+				anchor_a,
+				body_a,
+				anchor_b,
+				body_b,
+				link.rest_length_m,
+				delta
+			)
+		if tension_n > CableTensionUtil.break_force_n(link.break_force_n):
+			snapped.append(link.link_id)
+	for link_id: int in snapped:
+		_world.disconnect_network(0, "", 0, "", link_id)
+
+## A rope end hammered into the ground holds on to the ground, not to a point
+## in space: dig it out and the anchor tears loose. Probed a few times a second
+## — it is a shape query per anchored rope, and terrain never vanishes mid-tick.
+func _tick_cable_anchors(delta: float) -> void:
+	if _world == null:
+		return
+	_cable_anchor_probe_cooldown -= delta
+	if _cable_anchor_probe_cooldown > 0.0:
+		return
+	_cable_anchor_probe_cooldown = CABLE_ANCHOR_PROBE_INTERVAL_S
+	var space_state := get_world_3d().direct_space_state
+	if space_state == null:
+		return
+	var torn: Array[int] = []
+	for link: IndustryElectricLink in _world.get_industry_network().list_links():
+		if not link.is_rope() or not link.has_world_endpoint():
+			continue
+		# Judge the anchor only while the machine end is live physics. Frozen or
+		# unprojected means the player is elsewhere, and terrain collision that
+		# far out is simply not streamed in — an unloaded chunk is not a hole.
+		var machine_element_id := (
+			link.element_a if link.element_a > 0 else link.element_b
+		)
+		var machine_body := _rope_endpoint_body(machine_element_id)
+		if machine_body == null or machine_body.freeze:
+			continue
+		var anchor := (
+			link.attach_b if link.element_b <= 0 else link.attach_a
+		)
+		if TerrainAnchorProbe.point_has_ground_support(
+			space_state,
+			anchor,
+			CABLE_ANCHOR_PROBE_RADIUS
+		):
+			continue
+		torn.append(link.link_id)
+	for link_id: int in torn:
+		_world.disconnect_network(0, "", 0, "", link_id)
+
+func _rope_endpoint_body(element_id: int) -> RigidBody3D:
+	if element_id <= 0:
+		return null
+	return get_element_projection(element_id).get("body") as RigidBody3D
 
 func _apply_thruster_force(
 	element: SimulationElement,

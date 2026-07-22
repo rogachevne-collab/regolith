@@ -57,6 +57,10 @@ func apply_set_machine_enabled(command: SetMachineEnabledCommand) -> Dictionary:
 	return world.apply_set_machine_enabled(command)
 
 
+func apply_set_element_name(command: SetElementNameCommand) -> Dictionary:
+	return world.apply_set_element_name(command)
+
+
 func apply_enqueue_recipe(command: EnqueueRecipeCommand) -> Dictionary:
 	return world.apply_enqueue_recipe(command)
 

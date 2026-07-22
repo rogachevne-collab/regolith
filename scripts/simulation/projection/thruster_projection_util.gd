@@ -60,7 +60,8 @@ static func nozzle_offset_local(
 		return Vector3.ZERO
 	var element_xform := GridPoseUtil.element_local_transform(
 		element.origin_cell,
-		element.orientation_index
+		element.orientation_index,
+		element.pose_offset
 	)
 	return (
 		element_xform.origin

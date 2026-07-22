@@ -3,24 +3,6 @@ extends RefCounted
 
 const STRUCTURAL_ID_PREFIX := "structural_"
 
-const _FACE_SUFFIXES: PackedStringArray = [
-	"px",
-	"nx",
-	"py",
-	"ny",
-	"pz",
-	"nz",
-]
-
-const _FACE_ORDER: Array[OrientationUtil.Face] = [
-	OrientationUtil.Face.POS_X,
-	OrientationUtil.Face.NEG_X,
-	OrientationUtil.Face.POS_Y,
-	OrientationUtil.Face.NEG_Y,
-	OrientationUtil.Face.POS_Z,
-	OrientationUtil.Face.NEG_Z,
-]
-
 static var _descriptor_cache: Dictionary = {}
 static var _world_face_lookup_cache: Dictionary = {}
 
@@ -30,6 +12,8 @@ class SurfaceFaceDescriptor:
 	var local_face: OrientationUtil.Face = OrientationUtil.Face.POS_X
 	var structural_id: String = ""
 	var socket_tag: String = ""
+	## The connector this face came from; carries the precise anchor point.
+	var connector: ConnectorDefinition = null
 
 
 static func is_structural_surface_id(port_id: String) -> bool:
@@ -40,13 +24,7 @@ static func structural_id_for(
 	local_cell: Vector3i,
 	local_face: OrientationUtil.Face
 ) -> String:
-	return "%s%d_%d_%d_%s" % [
-		STRUCTURAL_ID_PREFIX,
-		local_cell.x,
-		local_cell.y,
-		local_cell.z,
-		_face_suffix(local_face),
-	]
+	return FootprintUtil.structural_id_for(local_cell, local_face)
 
 
 static func parse_structural_id(port_id: String) -> Dictionary:
@@ -78,37 +56,28 @@ static func get_surface_descriptors(
 	var cache_key := _descriptor_cache_key(archetype, orientation_index)
 	if _descriptor_cache.has(cache_key):
 		return _descriptor_cache[cache_key]
-	var policy := archetype.resolved_structural_surface_policy()
-	if policy == ElementArchetype.StructuralSurfacePolicy.NONE:
-		_descriptor_cache[cache_key] = []
-		return []
 	var allowed_faces: Dictionary = {}
-	match policy:
-		ElementArchetype.StructuralSurfacePolicy.FULL_SURFACE:
-			for face_data: Dictionary in _external_faces(archetype.footprint_cells):
-				allowed_faces[_face_key(face_data)] = face_data
-		ElementArchetype.StructuralSurfacePolicy.MOUNT_PADS:
-			for pad: StructuralMountPad in archetype.effective_mount_pads():
-				if pad == null:
-					continue
-				var face_data := {
-					"local_cell": pad.local_cell,
-					"local_face": pad.local_face,
-					"socket_tag": pad.socket_tag,
-				}
-				if _is_external_face(archetype.footprint_cells, face_data):
-					allowed_faces[_face_key(face_data)] = face_data
+	for connector: ConnectorDefinition in archetype.effective_connectors():
+		if connector == null or not connector.is_grid:
+			continue
+		if not FootprintUtil.is_external_face(
+			archetype.footprint_cells,
+			connector.grid_cell,
+			connector.grid_face
+		):
+			continue
+		allowed_faces[_face_key(connector.grid_cell, connector.grid_face)] = (
+			connector
+		)
 	var descriptors: Array[SurfaceFaceDescriptor] = []
 	for face_key: Variant in _sorted_face_keys(allowed_faces):
-		var face_data: Dictionary = allowed_faces[face_key]
+		var connector: ConnectorDefinition = allowed_faces[face_key]
 		var descriptor := SurfaceFaceDescriptor.new()
-		descriptor.local_cell = face_data["local_cell"]
-		descriptor.local_face = face_data["local_face"]
-		descriptor.socket_tag = str(face_data.get("socket_tag", ""))
-		descriptor.structural_id = structural_id_for(
-			descriptor.local_cell,
-			descriptor.local_face
-		)
+		descriptor.local_cell = connector.grid_cell
+		descriptor.local_face = connector.grid_face
+		descriptor.socket_tag = connector.tag
+		descriptor.structural_id = connector.id
+		descriptor.connector = connector
 		descriptors.append(descriptor)
 	_descriptor_cache[cache_key] = descriptors
 	return descriptors
@@ -486,38 +455,6 @@ static func _world_face(
 	}
 
 
-static func _external_faces(footprint_cells: Array[Vector3i]) -> Array[Dictionary]:
-	var occupied: Dictionary = {}
-	for cell: Vector3i in footprint_cells:
-		occupied[_cell_key(cell)] = true
-	var faces: Array[Dictionary] = []
-	for cell: Vector3i in footprint_cells:
-		for face: OrientationUtil.Face in _FACE_ORDER:
-			var neighbor := cell + OrientationUtil.face_to_vector(face)
-			if occupied.has(_cell_key(neighbor)):
-				continue
-			faces.append({
-				"local_cell": cell,
-				"local_face": face,
-			})
-	return faces
-
-
-static func _is_external_face(
-	footprint_cells: Array[Vector3i],
-	face_data: Dictionary
-) -> bool:
-	var occupied: Dictionary = {}
-	for cell: Vector3i in footprint_cells:
-		occupied[_cell_key(cell)] = true
-	var local_cell: Vector3i = face_data["local_cell"]
-	var local_face: OrientationUtil.Face = face_data["local_face"]
-	if not occupied.has(_cell_key(local_cell)):
-		return false
-	var neighbor := local_cell + OrientationUtil.face_to_vector(local_face)
-	return not occupied.has(_cell_key(neighbor))
-
-
 static func _descriptor_cache_key(
 	archetype: ElementArchetype,
 	orientation_index: int
@@ -568,18 +505,13 @@ static func _world_face_lookup(
 
 
 static func _socket_tags_compatible(left_tag: String, right_tag: String) -> bool:
-	if left_tag.is_empty() and right_tag.is_empty():
-		return true
-	if left_tag == "wheel_socket" and right_tag == "wheel_plug":
-		return true
-	if left_tag == "wheel_plug" and right_tag == "wheel_socket":
-		return true
-	return false
+	return ConnectorRuleTable.default_table().compatible(left_tag, right_tag)
 
 
-static func _face_key(face_data: Dictionary) -> String:
-	var local_cell: Vector3i = face_data["local_cell"]
-	var local_face: OrientationUtil.Face = face_data["local_face"]
+static func _face_key(
+	local_cell: Vector3i,
+	local_face: OrientationUtil.Face
+) -> String:
 	return "%d,%d,%d,%d" % [
 		local_cell.x,
 		local_cell.y,
@@ -594,16 +526,8 @@ static func _sorted_face_keys(allowed_faces: Dictionary) -> Array:
 	return keys
 
 
-static func _cell_key(cell: Vector3i) -> String:
-	return "%d,%d,%d" % [cell.x, cell.y, cell.z]
-
-
-static func _face_suffix(face: OrientationUtil.Face) -> String:
-	return _FACE_SUFFIXES[int(face)]
-
-
 static func _face_from_suffix(suffix: String) -> int:
-	var index := _FACE_SUFFIXES.find(suffix)
+	var index := FootprintUtil.FACE_SUFFIXES.find(suffix)
 	if index < 0:
 		return -1
 	return index

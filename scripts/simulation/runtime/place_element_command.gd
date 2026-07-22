@@ -6,6 +6,8 @@ var expected_assembly_revision: int = -1
 var archetype: ElementArchetype
 var origin_cell: Vector3i = Vector3i.ZERO
 var orientation_index: int = 0
+## Sub-cell precision on top of the grid pose (see SimulationElement).
+var pose_offset: Transform3D = Transform3D.IDENTITY
 var new_assembly_grid_frame: GridTransform = GridTransform.identity()
 ## Exact root pose for a new assembly. Topology remains in grid_frame; this is
 ## the continuous pose shared by preview, physics and presentation.
@@ -26,6 +28,7 @@ func execution_copy() -> StructuralCommand:
 	copy.archetype = archetype
 	copy.origin_cell = origin_cell
 	copy.orientation_index = orientation_index
+	copy.pose_offset = pose_offset
 	copy.new_assembly_grid_frame = (
 		new_assembly_grid_frame.duplicate_transform()
 		if new_assembly_grid_frame != null

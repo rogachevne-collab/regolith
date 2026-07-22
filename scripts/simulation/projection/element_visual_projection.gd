@@ -286,6 +286,8 @@ func _attach_element_visuals(
 	if ROVER_MODULE_VISUAL_SCRIPT.is_rover_module(element.archetype_id):
 		_add_rover_module_visual(body, assembly_id, element)
 		return true
+	if _attach_scene_visual(body, assembly_id, element, archetype):
+		return true
 	var use_connected := CONNECTED_BLOCK_VISUAL_SCRIPT.is_connected_archetype(
 		element.archetype_id
 	)
@@ -325,7 +327,8 @@ func _attach_element_visuals(
 		visual.transform = GridPoseUtil.collider_local_transform(
 			element.origin_cell,
 			element.orientation_index,
-			collider
+			collider,
+			element.pose_offset
 		)
 		visual.set_meta("element_visual", true)
 		visual.set_meta("assembly_id", assembly_id)
@@ -333,6 +336,125 @@ func _attach_element_visuals(
 	if element.archetype_id == "stationary_drill":
 		_add_stationary_drill_visual(body, assembly_id, element)
 	return true
+
+
+## Wizard-baked parts carry their authoring model; show it instead of the
+## collider-box "briquettes". The metric frame + visual_offset reproduce
+## exactly what the author saw (pivot compensation included).
+func _attach_scene_visual(
+	body: PhysicsBody3D,
+	assembly_id: int,
+	element: SimulationElement,
+	archetype: ElementArchetype
+) -> bool:
+	if archetype.visual_scene_path.is_empty():
+		return false
+	if not ResourceLoader.exists(archetype.visual_scene_path):
+		return false
+	var packed := load(archetype.visual_scene_path) as PackedScene
+	if packed == null:
+		return false
+	var instance := packed.instantiate() as Node3D
+	if instance == null:
+		return false
+	instance.name = "%s%d_scene" % [VISUAL_PREFIX, element.element_id]
+	var element_pose := (
+		GridPoseUtil.element_metric_transform(
+			element.origin_cell,
+			element.orientation_index,
+			element.pose_offset
+		)
+		* Transform3D(Basis.IDENTITY, archetype.visual_offset)
+	)
+	var root: Node3D = instance
+	if archetype.is_wheel():
+		root = _wrap_spinning_wheel(instance, element, archetype)
+		root.name = "%s%d_wheel" % [VISUAL_PREFIX, element.element_id]
+		root.set_meta("rover_module_visual", true)
+		root.set_meta("element_id", element.element_id)
+	else:
+		instance.transform = element_pose
+	root.set_meta("element_visual", true)
+	root.set_meta("assembly_id", assembly_id)
+	body.add_child(root)
+	return true
+
+
+## Wheels need SteerRoot/SteerRoot/SpinRoot for the runtime to steer and spin
+## them (WheelVisualProjection looks those up by name). A plain authored model
+## has no such nodes, so build the rig around it: the wheel's own connector
+## point is the axle, and the spin axis is +X the way the rig expects.
+func _wrap_spinning_wheel(
+	instance: Node3D,
+	element: SimulationElement,
+	archetype: ElementArchetype
+) -> Node3D:
+	var root := Node3D.new()
+	root.transform = Transform3D(
+		OrientationUtil.orientation_basis(element.orientation_index),
+		GridPoseUtil.oriented_footprint_pivot(
+			archetype,
+			element.origin_cell,
+			element.orientation_index
+		)
+	)
+	var steer := Node3D.new()
+	steer.name = "SteerRoot"
+	# Seat the rig on the axle straight away. The runtime overwrites this every
+	# tick, but wheels only tick once the assembly is driven — before that
+	# (fresh load, parked rover) an unseated rig left the wheel hanging off in
+	# space until the player sat down.
+	steer.position = root.transform.affine_inverse() * (
+		GridPoseUtil.element_metric_transform(
+			element.origin_cell,
+			element.orientation_index,
+			element.pose_offset
+		) * _axle_point_local(archetype)
+	)
+	root.add_child(steer)
+	var spin := Node3D.new()
+	spin.name = "SpinRoot"
+	# Turn the part's own axle direction into the rig's +X spin axis.
+	spin.basis = _axle_to_spin_basis(archetype)
+	steer.add_child(spin)
+	# Seat the model so its axle sits on the spin origin, else it wobbles
+	# around a point that is not its centre.
+	instance.transform = Transform3D(
+		Basis.IDENTITY,
+		archetype.visual_offset - _axle_point_local(archetype)
+	)
+	spin.add_child(instance)
+	return root
+
+
+func _axle_point_local(archetype: ElementArchetype) -> Vector3:
+	for connector: ConnectorDefinition in archetype.effective_connectors():
+		if connector != null and connector.normalized_tag() == "wheel_plug":
+			return connector.local_position
+	if archetype.footprint_cells.is_empty():
+		return Vector3.ZERO
+	var sum := Vector3.ZERO
+	for local_cell: Vector3i in archetype.footprint_cells:
+		sum += GridMetric.cell_center_meters(local_cell)
+	return sum / float(archetype.footprint_cells.size())
+
+
+func _axle_to_spin_basis(archetype: ElementArchetype) -> Basis:
+	var axle := Vector3.RIGHT
+	for connector: ConnectorDefinition in archetype.effective_connectors():
+		if connector != null and connector.normalized_tag() == "wheel_plug":
+			axle = connector.direction_normalized()
+			break
+	if axle.is_equal_approx(Vector3.RIGHT):
+		return Basis.IDENTITY
+	var rotation_axis := Vector3.RIGHT.cross(axle)
+	if rotation_axis.length_squared() <= 0.000001:
+		# Axle points at -X: flip about any perpendicular axis.
+		return Basis(Vector3.UP, PI)
+	return Basis(
+		rotation_axis.normalized(),
+		Vector3.RIGHT.signed_angle_to(axle, rotation_axis.normalized())
+	)
 
 
 func _refresh_connected_neighbours(
