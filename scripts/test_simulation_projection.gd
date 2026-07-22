@@ -47,6 +47,20 @@ func _run() -> void:
 		return
 	if not await _test_piston_split_keeps_extended_carriage_pose():
 		return
+	if not await _test_rope_tension_pulls_and_breaks():
+		return
+	if not await _test_ground_anchor_tears_out_with_the_ground():
+		return
+	if not await _test_rope_lies_on_the_world():
+		return
+	if not await _test_rope_does_not_saw_through_a_thin_beam():
+		return
+	if not _test_render_spline_subdivides_where_it_bends():
+		return
+	if not _test_rope_settles_and_stays_still():
+		return
+	if not _test_cable_damps_ripple_faster_than_swing():
+		return
 	print("KERNEL-PROJECTION-V0: PASS")
 	get_tree().quit(0)
 
@@ -1156,6 +1170,530 @@ func _first_rigid_joint(
 		):
 			return joint.joint_id
 	return 0
+
+
+## Rope physics contract: slack does nothing at all, a taut rope pulls the free
+## end back toward its anchor, and a hard enough yank exceeds the break
+## threshold. Two bare bodies — no world needed, the solver is the unit.
+func _test_rope_tension_pulls_and_breaks() -> bool:
+	var root := Node3D.new()
+	add_child(root)
+	var anchor_point := Vector3.ZERO
+	var runaway := RigidBody3D.new()
+	runaway.mass = 500.0
+	runaway.gravity_scale = 0.0
+	root.add_child(runaway)
+	runaway.global_position = Vector3(9.0, 0.0, 0.0)
+	await get_tree().process_frame
+	var rest_length := 10.0
+	# Slack: the body is inside the rest length, nothing may happen.
+	var slack_tension := CableTensionUtil.solve(
+		anchor_point,
+		null,
+		runaway.global_position,
+		runaway,
+		rest_length,
+		0.016
+	)
+	if slack_tension != 0.0 or runaway.linear_velocity.length() > 0.000001:
+		root.queue_free()
+		return _fail("a slack rope must apply nothing at all")
+	# Taut and still running: the rope has to pull the body back.
+	runaway.global_position = Vector3(12.0, 0.0, 0.0)
+	runaway.linear_velocity = Vector3(6.0, 0.0, 0.0)
+	await get_tree().physics_frame
+	var taut_tension := CableTensionUtil.solve(
+		anchor_point,
+		null,
+		runaway.global_position,
+		runaway,
+		rest_length,
+		0.016
+	)
+	if taut_tension <= 0.0:
+		root.queue_free()
+		return _fail("a taut rope must pull")
+	await get_tree().physics_frame
+	# A rope catches; it does not throw. Slowed, but never fired back the way it
+	# came — that is what smashed small objects tied to masts.
+	if runaway.linear_velocity.x >= 6.0:
+		root.queue_free()
+		return _fail(
+			"rope must slow the runaway end, vx=%.3f" % runaway.linear_velocity.x
+		)
+	if runaway.linear_velocity.x < -1.0:
+		root.queue_free()
+		return _fail(
+			"rope threw the end back instead of catching it, vx=%.3f"
+			% runaway.linear_velocity.x
+		)
+	# A light object on a long fall must never take more than it arrived with.
+	var pebble := RigidBody3D.new()
+	pebble.mass = 12.0
+	pebble.gravity_scale = 0.0
+	root.add_child(pebble)
+	pebble.global_position = Vector3(13.0, 0.0, 0.0)
+	pebble.linear_velocity = Vector3(9.0, 0.0, 0.0)
+	await get_tree().physics_frame
+	var arriving := pebble.linear_velocity.x
+	CableTensionUtil.solve(
+		anchor_point,
+		null,
+		pebble.global_position,
+		pebble,
+		rest_length,
+		0.016
+	)
+	await get_tree().physics_frame
+	if absf(pebble.linear_velocity.x) > arriving:
+		root.queue_free()
+		return _fail(
+			"rope gave a light body more speed than it had: %.3f from %.3f"
+			% [pebble.linear_velocity.x, arriving]
+		)
+	# A heavy body ripping away at speed must be over the snap threshold.
+	var heavy := RigidBody3D.new()
+	heavy.mass = 6000.0
+	heavy.gravity_scale = 0.0
+	root.add_child(heavy)
+	heavy.global_position = Vector3(14.0, 0.0, 0.0)
+	heavy.linear_velocity = Vector3(30.0, 0.0, 0.0)
+	await get_tree().physics_frame
+	var yank_n := CableTensionUtil.solve(
+		anchor_point,
+		null,
+		heavy.global_position,
+		heavy,
+		rest_length,
+		0.016
+	)
+	if yank_n <= CableTensionUtil.break_force_n(0.0):
+		root.queue_free()
+		return _fail(
+			"a 6 t body tearing off at 30 m/s must snap the rope, %.0f N"
+			% yank_n
+		)
+	root.queue_free()
+	return true
+
+
+## A rope end hammered into the ground is only as good as the ground: while
+## there is terrain under it the anchor holds, and when the ground is dug out
+## the rope tears loose instead of hanging off thin air.
+func _test_ground_anchor_tears_out_with_the_ground() -> bool:
+	var fixture: Dictionary = _new_fixture()
+	var world: SimulationWorld = fixture["world"]
+	var projection: SimulationPhysicsProjection = fixture["projection"]
+	var spawned: StructuralCommandResult = _spawn(
+		world,
+		_single_blueprint(Slice01Archetypes.frame()),
+		GridTransform.identity()
+	)
+	if not spawned.is_ok():
+		_free_fixture(fixture)
+		return _fail("ground anchor scenario spawn failed: %s" % spawned.reason)
+	var element_id: int = int(spawned.data["element_ids"][0])
+	var anchor_point := Vector3(4.0, 0.0, 0.0)
+	# Stand-in for terrain: a static body on layer 1, the terrain layer.
+	var ground := StaticBody3D.new()
+	ground.collision_layer = 1
+	ground.collision_mask = 0
+	var ground_shape := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(2.0, 1.0, 2.0)
+	ground_shape.shape = box
+	ground.add_child(ground_shape)
+	(fixture["root"] as Node).add_child(ground)
+	ground.global_position = anchor_point
+	await get_tree().physics_frame
+	var roped := world.connect_rope(
+		element_id,
+		world.element_world_transform(element_id).origin,
+		0,
+		anchor_point,
+		0.2
+	)
+	if not roped.is_ok():
+		_free_fixture(fixture)
+		return _fail("rope to the ground failed: %s" % str(roped.reason))
+	var link_id := int(roped.data["link_id"])
+	projection._tick_cable_anchors(10.0)
+	if world.get_industry_network().get_link(link_id) == null:
+		_free_fixture(fixture)
+		return _fail("anchor with ground under it must hold")
+	# Dig it out.
+	ground.queue_free()
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	projection._tick_cable_anchors(10.0)
+	if world.get_industry_network().get_link(link_id) != null:
+		_free_fixture(fixture)
+		return _fail("anchor must tear loose when the ground is gone")
+	_free_fixture(fixture)
+	return true
+
+
+## What the rope is for: slack has to pile ON the ground, not sink through it,
+## and a rope strung across an obstacle has to lie over it instead of passing
+## through. Both ends pinned above a floor, with a block in the middle.
+func _test_rope_lies_on_the_world() -> bool:
+	var root := Node3D.new()
+	add_child(root)
+	var floor_body := StaticBody3D.new()
+	floor_body.collision_layer = 1
+	floor_body.collision_mask = 0
+	var floor_shape := CollisionShape3D.new()
+	var floor_box := BoxShape3D.new()
+	floor_box.size = Vector3(40.0, 1.0, 40.0)
+	floor_shape.shape = floor_box
+	floor_body.add_child(floor_shape)
+	root.add_child(floor_body)
+	# Floor top surface at y = 0.
+	floor_body.global_position = Vector3(0.0, -0.5, 0.0)
+	var obstacle := StaticBody3D.new()
+	obstacle.collision_layer = 1
+	obstacle.collision_mask = 0
+	var obstacle_shape := CollisionShape3D.new()
+	var obstacle_box := BoxShape3D.new()
+	obstacle_box.size = Vector3(1.0, 2.0, 1.0)
+	obstacle_shape.shape = obstacle_box
+	obstacle.add_child(obstacle_shape)
+	root.add_child(obstacle)
+	obstacle.global_position = Vector3(0.0, 1.0, 0.0)
+	await get_tree().physics_frame
+	var anchor_a := Vector3(-4.0, 2.2, 0.0)
+	var anchor_b := Vector3(4.0, 2.2, 0.0)
+	# Twice the straight span: it has to end up draped, not stretched.
+	var rest_length := anchor_a.distance_to(anchor_b) * 2.0
+	var space_state := get_viewport().get_world_3d().direct_space_state
+	var state := CableRopeSolver.create_state(
+		anchor_a,
+		anchor_b,
+		rest_length,
+		Vector3.UP,
+		space_state
+	)
+	for _step: int in range(300):
+		CableRopeSolver.step(
+			state,
+			anchor_a,
+			anchor_b,
+			rest_length,
+			Vector3(0.0, -1.62, 0.0),
+			1.0 / 60.0,
+			space_state
+		)
+		await get_tree().physics_frame
+	var path := CableRopeSolver.path(state)
+	if path.size() < CableRopeSolver.MIN_PARTICLES:
+		root.queue_free()
+		return _fail("rope must keep its particles")
+	var lowest := INF
+	var inside_obstacle := 0
+	for point: Vector3 in path:
+		lowest = minf(lowest, point.y)
+		if (
+			absf(point.x) < 0.45
+			and absf(point.z) < 0.45
+			and point.y < 1.9
+		):
+			inside_obstacle += 1
+	if lowest < -CableRopeSolver.COLLISION_RADIUS:
+		root.queue_free()
+		return _fail(
+			"slack rope sank through the floor, lowest y=%.3f" % lowest
+		)
+	if inside_obstacle > 0:
+		root.queue_free()
+		return _fail(
+			"rope passed through the obstacle at %d points" % inside_obstacle
+		)
+	# It really did go slack rather than hanging straight between the anchors.
+	if lowest > 1.9:
+		root.queue_free()
+		return _fail("slack rope did not drape at all, lowest y=%.3f" % lowest)
+	root.queue_free()
+	return await _test_rope_hangs_smooth()
+
+
+## No accordions. Distance constraints alone are perfectly happy with a rope
+## folded back on itself, and lunar gravity is far too weak to shake a crease
+## out — so a moving anchor used to leave a permanent zigzag. Every joint must
+## stay open: neighbours no closer than half of two straight segments.
+func _test_rope_hangs_smooth() -> bool:
+	var anchor_a := Vector3(-3.0, 3.0, 0.0)
+	var anchor_b := Vector3(3.0, 3.0, 0.0)
+	var rest_length := anchor_a.distance_to(anchor_b) * 1.35
+	var state := CableRopeSolver.create_state(
+		anchor_a,
+		anchor_b,
+		rest_length,
+		Vector3.UP
+	)
+	var gravity := Vector3(0.0, -1.62, 0.0)
+	for step: int in range(240):
+		# Jog the free end every few frames: a rope only creases when it is
+		# being moved, which is exactly the case that used to look broken.
+		var wobble := Vector3(sin(float(step) * 0.3) * 0.35, 0.0, 0.0)
+		CableRopeSolver.step(
+			state,
+			anchor_a,
+			anchor_b + wobble,
+			rest_length,
+			gravity,
+			1.0 / 60.0,
+			null
+		)
+	# A hard resize mid-flight — the aim jumping from a near wall to distant
+	# terrain changes both the span and the particle count at once. The rope may
+	# lurch; what it may not do is stay creased. A second and a half is the
+	# honest budget: under 1.62 m/s² a rope with 2x slack physically needs that
+	# long to hang its extra length out, and until it has, a gathered rope and a
+	# folded one look the same to this metric.
+	var jumped_end := anchor_b + Vector3(6.0, 0.0, 0.0)
+	var jumped_rest := rest_length * 1.9
+	for _recover: int in range(90):
+		CableRopeSolver.step(
+			state,
+			anchor_a,
+			jumped_end,
+			jumped_rest,
+			gravity,
+			1.0 / 60.0,
+			null
+		)
+	var path := CableRopeSolver.path(state)
+	var segment_rest := jumped_rest / float(path.size() - 1)
+	var sharpest := INF
+	for index: int in range(1, path.size() - 1):
+		sharpest = minf(
+			sharpest,
+			path[index + 1].distance_to(path[index - 1])
+		)
+	if sharpest < segment_rest:
+		return _fail(
+			"rope folded into an accordion: tightest joint spans %.3f m of %.3f m"
+			% [sharpest, 2.0 * segment_rest]
+		)
+	return true
+
+
+## The case a chain of spheres cannot pass: a beam thinner than the particle
+## spacing. Point collision lets the gap between two particles swallow it whole
+## and the rope saws straight through; only a capsule over the whole segment
+## sees it. Sampled at midpoints, which is exactly where the old solver failed.
+func _test_rope_does_not_saw_through_a_thin_beam() -> bool:
+	var root := Node3D.new()
+	add_child(root)
+	var beam := StaticBody3D.new()
+	beam.collision_layer = 1
+	beam.collision_mask = 0
+	var beam_shape := CollisionShape3D.new()
+	var beam_box := BoxShape3D.new()
+	# 18 cm thick — a quarter of the particle spacing.
+	beam_box.size = Vector3(6.0, 0.18, 0.18)
+	beam_shape.shape = beam_box
+	beam.add_child(beam_shape)
+	root.add_child(beam)
+	beam.global_position = Vector3(0.0, 1.0, 0.0)
+	await get_tree().physics_frame
+	var anchor_a := Vector3(0.0, 2.0, -2.5)
+	var anchor_b := Vector3(0.0, 2.0, 2.5)
+	var rest_length := anchor_a.distance_to(anchor_b) * 1.5
+	var space_state := get_viewport().get_world_3d().direct_space_state
+	var state := CableRopeSolver.create_state(
+		anchor_a,
+		anchor_b,
+		rest_length,
+		Vector3.UP,
+		space_state
+	)
+	for _step: int in range(240):
+		CableRopeSolver.step(
+			state,
+			anchor_a,
+			anchor_b,
+			rest_length,
+			Vector3(0.0, -1.62, 0.0),
+			1.0 / 60.0,
+			space_state
+		)
+		await get_tree().physics_frame
+	var path := CableRopeSolver.path(state)
+	# Inside the beam, not merely below it: a rope draped over a thin beam has
+	# both tails hanging past its sides, and that is the correct shape.
+	var inside := 0
+	var deepest := 0.0
+	for index: int in range(path.size() - 1):
+		for sample: float in [0.0, 0.2, 0.4, 0.6, 0.8]:
+			var point := path[index].lerp(path[index + 1], sample)
+			var into_z := 0.09 - absf(point.z)
+			var into_y := 0.09 - absf(point.y - 1.0)
+			if into_z > 0.0 and into_y > 0.0:
+				inside += 1
+				deepest = maxf(deepest, minf(into_z, into_y))
+	if inside > 0:
+		root.queue_free()
+		return _fail(
+			"rope inside the beam at %d points, %.3f m deep" % [inside, deepest]
+		)
+	root.queue_free()
+	return true
+
+
+## Adaptive belongs in the mesh, not in the simulation: the drawn spline must
+## get dense where the rope turns and stay cheap where it runs straight, off
+## the same uniform particles the solver uses.
+func _test_render_spline_subdivides_where_it_bends() -> bool:
+	var straight := PackedVector3Array([
+		Vector3(0.0, 0.0, 0.0),
+		Vector3(1.0, 0.0, 0.0),
+		Vector3(2.0, 0.0, 0.0),
+		Vector3(3.0, 0.0, 0.0),
+		Vector3(4.0, 0.0, 0.0),
+	])
+	var elbow := PackedVector3Array([
+		Vector3(0.0, 0.0, 0.0),
+		Vector3(1.0, 0.0, 0.0),
+		Vector3(2.0, 0.0, 0.0),
+		Vector3(2.0, -1.0, 0.0),
+		Vector3(2.0, -2.0, 0.0),
+	])
+	var straight_points := CableCurveUtil.smooth_adaptive(straight).size()
+	var elbow_points := CableCurveUtil.smooth_adaptive(elbow).size()
+	if straight_points != straight.size():
+		return _fail(
+			"a straight rope must not be subdivided, got %d points from %d"
+			% [straight_points, straight.size()]
+		)
+	if elbow_points <= straight_points * 2:
+		return _fail(
+			"a bent rope must be subdivided, got %d points vs %d straight"
+			% [elbow_points, straight_points]
+		)
+	# The extra points have to be AT the bend, not spread evenly.
+	var smoothed := CableCurveUtil.smooth_adaptive(elbow)
+	var near_corner := 0
+	for point: Vector3 in smoothed:
+		if point.distance_to(Vector3(2.0, 0.0, 0.0)) < 1.1:
+			near_corner += 1
+	if near_corner < smoothed.size() / 2:
+		return _fail(
+			"subdivision did not concentrate at the corner: %d of %d points"
+			% [near_corner, smoothed.size()]
+		)
+	return true
+
+
+## A rope between two still anchors has to actually stop. A verlet rope has no
+## exact rest state — every pass leaves a fraction of a millimetre somewhere —
+## so without a dead zone and a sleep it twitches for the rest of the session,
+## which is precisely how it looked in play.
+func _test_rope_settles_and_stays_still() -> bool:
+	var anchor_a := Vector3(-3.0, 3.0, 0.0)
+	var anchor_b := Vector3(3.0, 3.0, 0.0)
+	var rest_length := anchor_a.distance_to(anchor_b) * 1.2
+	var gravity := Vector3(0.0, -1.62, 0.0)
+	var state := CableRopeSolver.create_state(
+		anchor_a,
+		anchor_b,
+		rest_length,
+		Vector3.UP
+	)
+	for _settle: int in range(600):
+		CableRopeSolver.step(
+			state,
+			anchor_a,
+			anchor_b,
+			rest_length,
+			gravity,
+			1.0 / 60.0,
+			null
+		)
+	var before := CableRopeSolver.path(state).duplicate()
+	for _idle: int in range(120):
+		CableRopeSolver.step(
+			state,
+			anchor_a,
+			anchor_b,
+			rest_length,
+			gravity,
+			1.0 / 60.0,
+			null
+		)
+	var after := CableRopeSolver.path(state)
+	var drift := 0.0
+	for index: int in range(mini(before.size(), after.size())):
+		drift = maxf(drift, before[index].distance_to(after[index]))
+	if drift > 0.001:
+		return _fail(
+			"settled rope kept moving: %.4f m over two idle seconds" % drift
+		)
+	# And it must wake the moment an anchor moves.
+	CableRopeSolver.step(
+		state,
+		anchor_a,
+		anchor_b + Vector3(0.5, 0.0, 0.0),
+		rest_length,
+		gravity,
+		1.0 / 60.0,
+		null
+	)
+	var woken := CableRopeSolver.path(state)
+	if woken[woken.size() - 1].distance_to(anchor_b) < 0.4:
+		return _fail("rope stayed asleep when its anchor moved")
+	return true
+
+
+## Weight is read from behaviour, not from a mass number: in a rigid-constraint
+## verlet rope the particle mass cancels out entirely, so "heavier" has to mean
+## falls decisively and stops rippling. A jolted cable must lose most of its
+## wobble within a second, and the ripple must die faster than the swing — that
+## difference is what separates cable from cloth.
+func _test_cable_damps_ripple_faster_than_swing() -> bool:
+	var anchor_a := Vector3(-3.0, 3.0, 0.0)
+	var anchor_b := Vector3(3.0, 3.0, 0.0)
+	var rest_length := anchor_a.distance_to(anchor_b) * 1.25
+	var gravity := Vector3(0.0, -1.62, 0.0)
+	var state := CableRopeSolver.create_state(
+		anchor_a,
+		anchor_b,
+		rest_length,
+		Vector3.UP
+	)
+	for _settle: int in range(400):
+		CableRopeSolver.step(
+			state, anchor_a, anchor_b, rest_length, gravity, 1.0 / 60.0, null
+		)
+	# Kick every other particle sideways: pure ripple, no net swing.
+	var positions := CableRopeSolver.path(state)
+	var kicked := positions.duplicate()
+	for index: int in range(1, kicked.size() - 1):
+		kicked[index] += Vector3(0.0, 0.0, 0.25 if index % 2 == 0 else -0.25)
+	state["positions"] = kicked
+	state["quiescent_ticks"] = 0
+	var ripple_start := _rope_ripple(CableRopeSolver.path(state))
+	for _tick: int in range(60):
+		CableRopeSolver.step(
+			state, anchor_a, anchor_b, rest_length, gravity, 1.0 / 60.0, null
+		)
+	var ripple_end := _rope_ripple(CableRopeSolver.path(state))
+	if ripple_end > ripple_start * 0.25:
+		return _fail(
+			"cable keeps flapping: ripple %.4f of %.4f after a second"
+			% [ripple_end, ripple_start]
+		)
+	return true
+
+
+## How much the rope zig-zags against its own local direction — the measure of
+## flapping, as opposed to the rope swinging as a whole.
+func _rope_ripple(path: PackedVector3Array) -> float:
+	var ripple := 0.0
+	for index: int in range(1, path.size() - 1):
+		var chord := (path[index - 1] + path[index + 1]) * 0.5
+		ripple += path[index].distance_to(chord)
+	return ripple
 
 
 func _fail(reason: String) -> bool:

@@ -28,7 +28,7 @@ func _run() -> void:
 
 
 func _test_labels() -> bool:
-	for archetype_id: String in ToolController.CONSTRUCTION_ARCHETYPES:
+	for archetype_id: String in ToolController.construction_archetype_ids():
 		var label := HudTokens.archetype_label(archetype_id)
 		if label.contains("_"):
 			return _fail("label for %s must not expose raw id: '%s'" % [archetype_id, label])
@@ -48,11 +48,14 @@ func _test_layout_at_default_viewport() -> bool:
 	if not panel.clip_contents:
 		palette.queue_free()
 		return _fail("panel must clip overflowing content")
-	if grid.get_child_count() != ToolController.CONSTRUCTION_ARCHETYPES.size():
+	if grid.get_child_count() != ToolController.construction_archetype_ids().size():
 		palette.queue_free()
 		return _fail(
 			"grid expected %d entries, got %d"
-			% [ToolController.CONSTRUCTION_ARCHETYPES.size(), grid.get_child_count()]
+			% [
+				ToolController.construction_archetype_ids().size(),
+				grid.get_child_count(),
+			]
 		)
 	await get_tree().process_frame
 	await get_tree().process_frame

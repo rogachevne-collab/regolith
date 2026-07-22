@@ -18,6 +18,7 @@ KERNEL=(
 	test_rover_compose
 	test_machine_compose
 	test_part_authoring
+	test_connectors
 	test_simulation_projection
 	test_construction_preview
 	test_construction_damage

@@ -126,8 +126,10 @@ func _run_tests() -> void:
 		_test_cargo_connect_network_absent_or_rejects_cargo,
 		_test_electric_connect_network_runtime,
 		_test_electric_link_dormancy_survives_damage_repair,
-		_test_electric_consumer_wire_rejected,
+		_test_electric_consumer_wire_powers_machine,
 		_test_electric_cable_waypoints_polyline,
+		_test_electric_cable_waypoint_mounts,
+		_test_cable_rope_free_attach,
 		_test_industry_simulation_tick_runtime,
 		_test_drill_mining_storage_full_runtime,
 		_test_stationary_drill_set_machine_enabled,
@@ -425,12 +427,20 @@ func _test_electric_link_dormancy_survives_damage_repair() -> bool:
 	return await _run_electric_link_dormancy_scenario()
 
 
-func _test_electric_consumer_wire_rejected() -> bool:
-	return await _run_electric_consumer_wire_rejected_scenario()
+func _test_electric_consumer_wire_powers_machine() -> bool:
+	return await _run_electric_consumer_wire_scenario()
+
+
+func _test_cable_rope_free_attach() -> bool:
+	return await _run_rope_free_attach_scenario()
 
 
 func _test_electric_cable_waypoints_polyline() -> bool:
 	return await _run_electric_waypoints_scenario()
+
+
+func _test_electric_cable_waypoint_mounts() -> bool:
+	return await _run_electric_waypoint_mounts_scenario()
 
 
 func _test_industry_simulation_tick_runtime() -> bool:
@@ -668,19 +678,31 @@ func _run_electric_wire_scenario() -> bool:
 	var distributor_id := int(mapping["distributor_0"])
 	var consumer_id := int(mapping["processor_0"])
 	var outside_id := int(mapping["fabricator_outside"])
+	# Wiring a consumer directly is allowed since CABLE-ROPE-V0; this scenario
+	# is about the wireless path, so the direct cable is disconnected again and
+	# the rest of the checks run on radius distribution alone.
 	var consumer_wire := world.connect_network(
 		source_id,
 		"power_out",
 		outside_id,
 		"power_in"
 	)
-	if (
-		consumer_wire.is_ok()
-		or consumer_wire.reason
-		!= StructuralCommandResult.REASON_ENDPOINT_NOT_WIREABLE
-	):
+	if not consumer_wire.is_ok():
 		world.free()
-		return _fail("wire into a consumer must be rejected as not wireable")
+		return _fail(
+			"wire into a consumer must be accepted, got %s"
+			% str(consumer_wire.reason)
+		)
+	var unwired := world.disconnect_network(
+		0,
+		"",
+		0,
+		"",
+		int(consumer_wire.data["link_id"])
+	)
+	if not unwired.is_ok():
+		world.free()
+		return _fail("failed to cut the direct consumer cable again")
 	var source_link := world.connect_network(
 		source_id,
 		"power_out",
@@ -801,10 +823,80 @@ func _run_electric_waypoints_scenario() -> bool:
 	return true
 
 
-## Wires connect only power infrastructure (source / distributor / battery).
-## A cable into a consumer's power_in is rejected with endpoint_not_wireable
-## and nothing is stored; machines are powered by distributor radius alone.
-func _run_electric_consumer_wire_rejected_scenario() -> bool:
+## A скоба clicked onto a block rides that block: cabling laid over a static
+## structure keeps its shape once the structure is cut loose and drives off.
+## Скобы on terrain stay nailed to the world.
+func _run_electric_waypoint_mounts_scenario() -> bool:
+	var world := SimulationWorld.new()
+	# Off the origin, for the same reason as the rope scenario: a local↔world
+	# round trip that silently drops the assembly transform is indistinguishable
+	# from a correct one at (0, 0, 0).
+	var moon_frame := GridTransform.identity()
+	moon_frame.translation = Vector3i(0, 19000, 0)
+	var spawn := _spawn(world, _electric_cable_blueprint(), moon_frame)
+	if not spawn.is_ok():
+		world.free()
+		return _fail("waypoint mount scenario spawn failed: %s" % spawn.reason)
+	var mapping: Dictionary = spawn.data["local_to_element_id"]
+	var source_id := int(mapping["source_0"])
+	var distributor_id := int(mapping["distributor_0"])
+	var block_id := int(mapping["processor_0"])
+	var clipped := IndustryElectricBudget.element_world_position(
+		world,
+		world.get_element(block_id)
+	) + Vector3(0.0, 0.31, 0.0)
+	# A terrain скоба next to the structure, not next to the world origin —
+	# the span limit is measured in metres, and the structure is 9.5 km out.
+	var pinned := clipped + Vector3(1.5, -0.25, 4.0)
+	var routed := world.connect_network(
+		source_id,
+		"power_out",
+		distributor_id,
+		"power_in",
+		-1,
+		PackedVector3Array([clipped, pinned]),
+		PackedInt32Array([block_id, 0])
+	)
+	if not routed.is_ok():
+		world.free()
+		return _fail("mounted cable connect failed: %s" % routed.reason)
+	var link := world.get_industry_network().get_link(
+		int(routed.data["link_id"])
+	)
+	if link == null:
+		world.free()
+		return _fail("mounted cable must be stored")
+	if link.waypoint_anchor(0) != block_id or link.waypoint_anchor(1) != 0:
+		world.free()
+		return _fail("link must store the mount of every скоба")
+	var resolved := IndustryElectricPortUtil.resolved_waypoints(world, link)
+	if (
+		resolved.size() != 2
+		or not resolved[0].is_equal_approx(clipped)
+		or not resolved[1].is_equal_approx(pinned)
+	):
+		world.free()
+		return _fail("resolved скобы must round-trip the clicked world points")
+	var assembly := world.get_assembly_raw(
+		world.get_element(block_id).assembly_id
+	)
+	var shift := Vector3(12.0, 0.0, -3.0)
+	assembly.motion.transform = assembly.motion.transform.translated(shift)
+	resolved = IndustryElectricPortUtil.resolved_waypoints(world, link)
+	if resolved.size() != 2 or not resolved[0].is_equal_approx(clipped + shift):
+		world.free()
+		return _fail("скоба on a block must ride the assembly")
+	if not resolved[1].is_equal_approx(pinned):
+		world.free()
+		return _fail("скоба on terrain must stay world-pinned")
+	world.free()
+	return true
+
+
+## CABLE-ROPE-V0 turned the endpoint rule around: a cable into a consumer is
+## accepted and the consumer runs off that cable, wherever it stands. The
+## distributor radius stays as the wireless convenience, not as the only way in.
+func _run_electric_consumer_wire_scenario() -> bool:
 	var world := SimulationWorld.new()
 	var spawn := _spawn(
 		world,
@@ -816,34 +908,153 @@ func _run_electric_consumer_wire_rejected_scenario() -> bool:
 		return _fail("consumer wire scenario spawn failed: %s" % spawn.reason)
 	var mapping: Dictionary = spawn.data["local_to_element_id"]
 	var source_id := int(mapping["source_0"])
-	var consumer_id := int(mapping["processor_0"])
-	var rejected := world.connect_network(
+	# Far outside every distributor radius: only the cable can power it.
+	var consumer_id := int(mapping["fabricator_outside"])
+	var wired := world.connect_network(
 		source_id,
 		"power_out",
 		consumer_id,
 		"power_in"
 	)
-	if (
-		rejected.is_ok()
-		or rejected.reason
-		!= StructuralCommandResult.REASON_ENDPOINT_NOT_WIREABLE
-	):
+	if not wired.is_ok():
 		world.free()
 		return _fail(
-			"consumer wire expected endpoint_not_wireable, got %s"
-			% str(rejected.reason)
+			"cable into a consumer must be accepted, got %s" % str(wired.reason)
 		)
-	if not world.list_electric_links().is_empty():
+	if world.list_electric_links().size() != 1:
 		world.free()
-		return _fail("rejected consumer wire must not be stored")
-	var battery_pair := IndustryElectricPortUtil.diagnose_electric_pair(
+		return _fail("accepted consumer cable must be stored")
+	IndustryElectricBudget.apply_tick(world, 1.0)
+	var runtime := world.get_industry_element_runtime(consumer_id)
+	if runtime == null or not runtime.powered:
+		world.free()
+		return _fail(
+			"cabled consumer outside every radius must be powered, reason %s"
+			% str(runtime.power_reason if runtime != null else &"missing")
+		)
+	world.free()
+	return true
+
+
+## The rope form: click anywhere on a block, click anywhere else — including
+## bare terrain — and a cable exists. No ports, no roles, no length rule. The
+## block end rides its block; the terrain end stays where it was hammered in.
+func _run_rope_free_attach_scenario() -> bool:
+	var world := SimulationWorld.new()
+	# Far from the origin on purpose: on a Ø19 km moon every real anchor sits
+	# thousands of metres out, and at the origin an endpoint that silently
+	# resolves to Transform3D.IDENTITY looks exactly like a correct one.
+	var moon_frame := GridTransform.identity()
+	moon_frame.translation = Vector3i(0, 19000, 0)
+	var spawn := _spawn(
 		world,
-		source_id,
-		consumer_id
+		_electric_cable_blueprint(),
+		moon_frame
 	)
-	if StringName(battery_pair.get("reason", &"")) != &"endpoint_not_wireable":
+	if not spawn.is_ok():
 		world.free()
-		return _fail("diagnose must flag consumer endpoints as not wireable")
+		return _fail("rope scenario spawn failed: %s" % spawn.reason)
+	var mapping: Dictionary = spawn.data["local_to_element_id"]
+	var block_id := int(mapping["processor_0"])
+	var block_point := IndustryElectricBudget.element_world_position(
+		world,
+		world.get_element(block_id)
+	) + Vector3(0.0, 0.4, 0.0)
+	var ground_point := block_point + Vector3(3.0, -1.0, 2.0)
+	var slack := 0.5
+	var roped := world.connect_rope(
+		block_id,
+		block_point,
+		0,
+		ground_point,
+		slack
+	)
+	if not roped.is_ok():
+		world.free()
+		return _fail("rope to bare terrain failed: %s" % str(roped.reason))
+	var link := world.get_industry_network().get_link(
+		int(roped.data["link_id"])
+	)
+	if link == null or not link.is_rope() or not link.has_world_endpoint():
+		world.free()
+		return _fail("rope must be stored as a rope with a world endpoint")
+	var span := block_point.distance_to(ground_point)
+	var expected_rest := CableAnchorUtil.rest_length_m(span, slack)
+	if absf(link.rest_length_m - expected_rest) > 0.001:
+		world.free()
+		return _fail(
+			"rope rest length %.3f must follow the slack knob (%.3f)"
+			% [link.rest_length_m, expected_rest]
+		)
+	# Second rope on the same pair of blocks: ropes are not deduplicated.
+	var twin := world.connect_rope(
+		block_id,
+		block_point + Vector3(0.0, 0.2, 0.0),
+		0,
+		ground_point,
+		slack
+	)
+	if not twin.is_ok() or world.list_electric_links().size() != 2:
+		world.free()
+		return _fail("a second rope on the same pair must be allowed")
+	# The block end rides the assembly, the terrain end does not.
+	var assembly := world.get_assembly_raw(
+		world.get_element(block_id).assembly_id
+	)
+	var shift := Vector3(7.0, 0.0, 0.0)
+	assembly.motion.transform = assembly.motion.transform.translated(shift)
+	var moved_block_end := CableAnchorUtil.endpoint_world_position(
+		world,
+		link.element_a,
+		link.port_a,
+		link.attach_a
+	)
+	var world_end := CableAnchorUtil.endpoint_world_position(
+		world,
+		link.element_b,
+		link.port_b,
+		link.attach_b
+	)
+	if not moved_block_end.is_equal_approx(block_point + shift):
+		world.free()
+		return _fail("rope end on a block must ride the block")
+	if not world_end.is_equal_approx(ground_point):
+		world.free()
+		return _fail("rope end in the ground must stay nailed to the world")
+	# Nothing to hold on to: a rope between two world points is refused.
+	var floating := world.connect_rope(
+		0,
+		ground_point,
+		0,
+		ground_point + Vector3(2.0, 0.0, 0.0),
+		slack
+	)
+	if floating.is_ok():
+		world.free()
+		return _fail("a rope between two world anchors must be refused")
+	# Ropes have no ports and no pair key — snapshot validation used to reject
+	# exactly that shape, so the round trip is part of the contract.
+	var snapshot := world.capture_snapshot()
+	var restored: SimulationWorld = SimulationSnapshot.create_from_snapshot(
+		snapshot
+	)
+	if restored == null or restored.list_electric_links().size() != 2:
+		if restored != null:
+			restored.free()
+		world.free()
+		return _fail("ropes must survive a snapshot round trip")
+	var restored_link := restored.get_industry_network().get_link(link.link_id)
+	if (
+		restored_link == null
+		or not restored_link.is_rope()
+		or restored_link.element_b != 0
+		or absf(restored_link.rest_length_m - expected_rest) > 0.001
+		or not restored_link.attach_b.is_equal_approx(ground_point)
+	):
+		restored.free()
+		world.free()
+		return _fail("restored rope must keep its anchors and rest length")
+	restored.free()
 	world.free()
 	return true
 
