@@ -4,6 +4,7 @@
 [ext_resource type="Script" uid="uid://c2p36g85wqkru" path="res://scripts/simulation/resources/build_requirement.gd" id="1_e47yp"]
 [ext_resource type="Script" uid="uid://c4hgnuqnf2up8" path="res://scripts/simulation/resources/port_definition.gd" id="2"]
 [ext_resource type="Script" uid="uid://bfuxth8e6lccw" path="res://scripts/simulation/resources/structural_mount_pad.gd" id="3"]
+[ext_resource type="Script" uid="uid://ckr7otbjrwxja" path="res://scripts/simulation/resources/connector_definition.gd" id="3_jggm0"]
 [ext_resource type="Script" uid="uid://bxidpb3tep3ih" path="res://scripts/simulation/resources/element_archetype.gd" id="4"]
 
 [sub_resource type="Resource" id="Collider"]
