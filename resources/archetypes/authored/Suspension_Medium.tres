@@ -1,0 +1,51 @@
+[gd_resource type="Resource" script_class="ElementArchetype" format=3 uid="uid://c5xmgqnow7s6c"]
+
+[ext_resource type="Script" uid="uid://c2p36g85wqkru" path="res://scripts/simulation/resources/build_requirement.gd" id="1_to3n7"]
+[ext_resource type="Script" uid="uid://b6d2jhfw581hb" path="res://scripts/simulation/resources/collider_definition.gd" id="2_y87g7"]
+[ext_resource type="Script" uid="uid://ckr7otbjrwxja" path="res://scripts/simulation/resources/connector_definition.gd" id="3_r7jv5"]
+[ext_resource type="Script" uid="uid://c4hgnuqnf2up8" path="res://scripts/simulation/resources/port_definition.gd" id="4_7d0bw"]
+[ext_resource type="Script" uid="uid://bxidpb3tep3ih" path="res://scripts/simulation/resources/element_archetype.gd" id="5_plwec"]
+[ext_resource type="Script" uid="uid://bfuxth8e6lccw" path="res://scripts/simulation/resources/structural_mount_pad.gd" id="6_kddbu"]
+[ext_resource type="Script" uid="uid://dxjvr18phvd54" path="res://scripts/simulation/resources/suspension_definition.gd" id="7_jbwls"]
+
+[sub_resource type="Resource" id="Resource_bom"]
+script = ExtResource("1_to3n7")
+resource_id = "mechanism"
+amount = 2.0
+
+[sub_resource type="Resource" id="Resource_to3n7"]
+script = ExtResource("2_y87g7")
+size = Vector3(0.5, 1, 0.5)
+offset_in_cell = Vector3(0.25, 0.5, 0.25)
+
+[sub_resource type="Resource" id="Resource_y87g7"]
+script = ExtResource("6_kddbu")
+local_face = 1
+socket_tag = "wheel_socket"
+exact_point = true
+local_position = Vector3(0, 0.29862154712613975, 0.24885538134802457)
+
+[sub_resource type="Resource" id="Resource_r7jv5"]
+script = ExtResource("6_kddbu")
+exact_point = true
+local_position = Vector3(0.5032895516625148, 0.49817753622143257, 0.2517734489112369)
+
+[sub_resource type="Resource" id="Resource_7d0bw"]
+script = ExtResource("7_jbwls")
+wheel_socket_face = 1
+
+[resource]
+script = ExtResource("5_plwec")
+archetype_id = "Suspension_Medium"
+display_name = "Подвеска"
+roles = PackedStringArray("Support")
+mass_kg = 16.0
+footprint_cells = Array[Vector3i]([Vector3i(0, 0, 0), Vector3i(0, 1, 0)])
+colliders = Array[ExtResource("2_y87g7")]([SubResource("Resource_to3n7")])
+structural_surface_policy = 2
+structural_mount_pads = Array[ExtResource("6_kddbu")]([SubResource("Resource_y87g7"), SubResource("Resource_r7jv5")])
+build_requirements = Array[ExtResource("1_to3n7")]([SubResource("Resource_bom")])
+suspension_definition = SubResource("Resource_7d0bw")
+default_orientation_index = 20
+visual_scene_path = "res://resources/models/suspension_small.fbx"
+visual_offset = Vector3(0.5078167724609375, 0.5, 0.25)

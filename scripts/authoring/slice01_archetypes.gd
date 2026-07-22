@@ -2,6 +2,9 @@ class_name Slice01Archetypes
 extends RefCounted
 
 const ARCHETYPE_DIR := "res://resources/archetypes/slice01/"
+## Parts baked by the Part Wizard land here and are picked up automatically —
+## no lists to edit by hand.
+const AUTHORED_DIR := "res://resources/archetypes/authored/"
 const ROVER_IDS: PackedStringArray = [
 	"rover_frame",
 	"wheel_suspension",
@@ -39,6 +42,8 @@ const REQUIRED_IDS: PackedStringArray = [
 static func load_required(archetype_id: String) -> ElementArchetype:
 	var path := "%s%s.tres" % [ARCHETYPE_DIR, archetype_id]
 	if not ResourceLoader.exists(path):
+		path = "%s%s.tres" % [AUTHORED_DIR, archetype_id]
+	if not ResourceLoader.exists(path):
 		push_error(
 			"Required Slice-01 archetype asset is missing: %s" % path
 		)
@@ -59,6 +64,23 @@ static func load_required(archetype_id: String) -> ElementArchetype:
 		return null
 	GameBalance.apply_element(archetype)
 	return archetype
+
+
+## Every wizard-baked part id, sorted. Internal archetypes (piston heads
+## etc.) never land in AUTHORED_DIR, so no filtering is needed here.
+static func authored_ids() -> PackedStringArray:
+	var ids := PackedStringArray()
+	var dir := DirAccess.open(AUTHORED_DIR)
+	if dir == null:
+		return ids
+	for file: String in dir.get_files():
+		# In exported builds text resources may appear as .tres.remap.
+		var name := file.trim_suffix(".remap")
+		if name.get_extension() != "tres":
+			continue
+		ids.append(name.get_basename())
+	ids.sort()
+	return ids
 
 
 static func load_all_required() -> Array[ElementArchetype]:

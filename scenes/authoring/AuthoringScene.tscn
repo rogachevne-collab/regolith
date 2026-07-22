@@ -1,0 +1,29 @@
+[gd_scene format=3 uid="uid://dgf75cdw3nlu0"]
+
+[ext_resource type="Script" uid="uid://dgr075qc34e5" path="res://scripts/authoring/part_authoring_root.gd" id="1"]
+[ext_resource type="PackedScene" uid="uid://v2pofduopg6d" path="res://resources/models/suspension_small.fbx" id="2_6wrpo"]
+[ext_resource type="Script" uid="uid://bwsx0ndumvttw" path="res://scripts/authoring/mount_pad_marker.gd" id="3_hw4yq"]
+
+[node name="PartAuthoring" type="Node3D" unique_id=407283670]
+script = ExtResource("1")
+part_id = "Suspension_Medium"
+display_name = "Подвеска"
+part_kind = 2
+visual_scene = ExtResource("2_6wrpo")
+size_cells = Vector3i(1, 2, 1)
+model_offset = Vector3(0.5078167724609375, 0.5, 0.25)
+mount_generation = 1
+default_orientation_index = 20
+last_bake_diagnostics = PackedStringArray("baked \'Suspension_Medium\' -> OK res://resources/archetypes/authored/Suspension_Medium.tres")
+last_baked_path = "res://resources/archetypes/authored/Suspension_Medium.tres"
+
+[node name="Mount_1" type="Node3D" parent="." unique_id=273699603]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.29862154712613975, 0.24885538134802457)
+script = ExtResource("3_hw4yq")
+socket_kind = 1
+snap_to_face = false
+
+[node name="Mount_2" type="Node3D" parent="." unique_id=1791882068]
+transform = Transform3D(1, 0, -2.6124255991473534e-16, 0, 1, 0, 2.6124255991473534e-16, 0, 1, 0.5032895516625148, 0.49817753622143257, 0.2517734489112369)
+script = ExtResource("3_hw4yq")
+snap_to_face = false

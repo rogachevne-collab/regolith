@@ -1,0 +1,27 @@
+[gd_scene format=3 uid="uid://bsd5xp7vdcjxp"]
+
+[ext_resource type="Script" uid="uid://dgr075qc34e5" path="res://scripts/authoring/part_authoring_root.gd" id="1"]
+[ext_resource type="PackedScene" uid="uid://dor6ihexf41m7" path="res://resources/models/wheel_med.fbx" id="2_sgpl2"]
+[ext_resource type="Script" uid="uid://bwsx0ndumvttw" path="res://scripts/authoring/mount_pad_marker.gd" id="3_rqo8o"]
+
+[node name="PartAuthoring" type="Node3D" unique_id=928619132]
+script = ExtResource("1")
+part_id = "Wheel_Medium_01"
+display_name = "Колесо круглое"
+part_kind = 1
+visual_scene = ExtResource("2_sgpl2")
+size_cells = Vector3i(2, 3, 3)
+mass_kg = 40.0
+wheel_radius_m = 0.75
+wheel_drive_torque_n_m = 250.0
+model_offset = Vector3(0.7327766603221566, 0.75000001279264, 0.7386058044433595)
+mount_generation = 1
+default_orientation_index = 16
+last_bake_diagnostics = PackedStringArray("baked \'Wheel_Medium_01\' -> OK res://resources/archetypes/authored/Wheel_Medium_01.tres")
+last_baked_path = "res://resources/archetypes/authored/Wheel_Medium_01.tres"
+
+[node name="Mount_click" type="Node3D" parent="." unique_id=2074594343]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.7344323578583819, 0.750018021914873, 0.7380003570491135)
+script = ExtResource("3_rqo8o")
+socket_kind = 2
+snap_to_face = false

@@ -1,0 +1,24 @@
+[gd_scene format=3 uid="uid://btofiplrhqrhl"]
+
+[ext_resource type="Script" uid="uid://dgr075qc34e5" path="res://scripts/authoring/part_authoring_root.gd" id="1_m3umn"]
+[ext_resource type="PackedScene" path="res://scenes/presentation/drive_wheel_visual.tscn" id="2_mmhtg"]
+[ext_resource type="Script" uid="uid://bwsx0ndumvttw" path="res://scripts/authoring/mount_pad_marker.gd" id="3_188xu"]
+[ext_resource type="PackedScene" uid="uid://dor6ihexf41m7" path="res://resources/models/wheel_med.fbx" id="4_mmhtg"]
+
+[node name="PartAuthoring" type="Node3D" unique_id=1373681657]
+script = ExtResource("1_m3umn")
+part_id = "my_wheel"
+display_name = "Моё колесо"
+part_kind = 1
+visual_scene = ExtResource("2_mmhtg")
+size_cells = Vector3i(1, 2, 2)
+mount_generation = 1
+wheel_radius_m = 0.75
+last_bake_diagnostics = PackedStringArray("создано 6 маркер(ов) — лишние удали, нужные подвинь")
+
+[node name="MountHere" type="Node3D" parent="." unique_id=1738682038]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.5, 0.25, 0.25)
+script = ExtResource("3_188xu")
+socket_kind = 2
+
+[node name="wheel_med" parent="." unique_id=984356626 instance=ExtResource("4_mmhtg")]

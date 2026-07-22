@@ -1,0 +1,49 @@
+[gd_resource type="Resource" script_class="ElementArchetype" format=3 uid="uid://dr78tfxjg1t8e"]
+
+[ext_resource type="Script" uid="uid://c2p36g85wqkru" path="res://scripts/simulation/resources/build_requirement.gd" id="1_fndbt"]
+[ext_resource type="Script" uid="uid://b6d2jhfw581hb" path="res://scripts/simulation/resources/collider_definition.gd" id="2_eu0p1"]
+[ext_resource type="Script" uid="uid://ckr7otbjrwxja" path="res://scripts/simulation/resources/connector_definition.gd" id="3_xdnt2"]
+[ext_resource type="Script" uid="uid://c4hgnuqnf2up8" path="res://scripts/simulation/resources/port_definition.gd" id="4_e1bhg"]
+[ext_resource type="Script" uid="uid://bxidpb3tep3ih" path="res://scripts/simulation/resources/element_archetype.gd" id="5_x3aj8"]
+[ext_resource type="Script" uid="uid://bfuxth8e6lccw" path="res://scripts/simulation/resources/structural_mount_pad.gd" id="6_alwsx"]
+[ext_resource type="Script" uid="uid://bppkqauuwpwdw" path="res://scripts/simulation/resources/wheel_definition.gd" id="7_w1jtj"]
+
+[sub_resource type="Resource" id="Resource_bom"]
+script = ExtResource("1_fndbt")
+resource_id = "mechanism"
+amount = 5.0
+
+[sub_resource type="Resource" id="Resource_1an3k"]
+script = ExtResource("2_eu0p1")
+local_cell = Vector3i(1, 1, 1)
+size = Vector3(0.375, 0.375, 0.375)
+
+[sub_resource type="Resource" id="Resource_hde2f"]
+script = ExtResource("6_alwsx")
+local_cell = Vector3i(1, 1, 1)
+socket_tag = "wheel_plug"
+exact_point = true
+local_position = Vector3(0.7344323578583819, 0.750018021914873, 0.7380003570491135)
+
+[sub_resource type="Resource" id="Resource_dfxe1"]
+script = ExtResource("7_w1jtj")
+radius_m = 0.75
+width_m = 0.5625
+drive_torque_n_m = 250.0
+forward_axis_face = 5
+
+[resource]
+script = ExtResource("5_x3aj8")
+archetype_id = "Wheel_Medium_01"
+display_name = "Колесо круглое"
+roles = PackedStringArray("Support", "Actuator")
+mass_kg = 40.0
+footprint_cells = Array[Vector3i]([Vector3i(1, 1, 1)])
+colliders = Array[ExtResource("2_eu0p1")]([SubResource("Resource_1an3k")])
+structural_surface_policy = 2
+structural_mount_pads = Array[ExtResource("6_alwsx")]([SubResource("Resource_hde2f")])
+build_requirements = Array[ExtResource("1_fndbt")]([SubResource("Resource_bom")])
+wheel_definition = SubResource("Resource_dfxe1")
+default_orientation_index = 16
+visual_scene_path = "res://resources/models/wheel_med.fbx"
+visual_offset = Vector3(0.7327766603221566, 0.75000001279264, 0.7386058044433595)
