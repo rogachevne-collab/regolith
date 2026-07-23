@@ -145,6 +145,16 @@ static func plan(
 				store_id,
 				held_attach_pivot
 			)
+			if not _auto_facing_prefilter_fits(
+				world,
+				archetype,
+				command.assembly_id,
+				attach_snap_context,
+				alt_orientation,
+				store_id,
+				held_attach_pivot
+			):
+				continue
 			var alt_validation := world.preview_place_element(command)
 			if alt_validation.is_ok():
 				validation = alt_validation
@@ -496,6 +506,48 @@ static func _plan_for_attach_origin(
 ## Orientations that turn at least one of the part's grid mount faces toward
 ## the snap target (face == -snap_dir), nearest to `current` first. `current`
 ## itself is excluded — it just failed.
+static func _auto_facing_prefilter_fits(
+	world: SimulationWorld,
+	archetype: ElementArchetype,
+	assembly_id: int,
+	snap_context: Dictionary,
+	orientation_index: int,
+	store_id: String,
+	held_attach_pivot: Vector3
+) -> bool:
+	var kernel := ConstructionPreviewKernelAccess.get_kernel()
+	if kernel == null or world == null or archetype == null:
+		return true
+	var assembly := world.get_assembly_raw(assembly_id)
+	if assembly == null:
+		return true
+	var occupancy: Dictionary = ConstructionOccupancyUtil.assembly_occupancy_index(
+		world,
+		assembly
+	)
+	var origin: Vector3i = _resolve_attach_origin(
+		world,
+		archetype,
+		snap_context,
+		orientation_index,
+		assembly_id,
+		store_id,
+		held_attach_pivot
+	)
+	return bool(
+		kernel.call(
+			"prefilter_attach_fits",
+			ConstructionPreviewKernelAccess.pack_occupancy(occupancy),
+			ConstructionPreviewKernelAccess.cached_footprint_local(
+				archetype,
+				orientation_index
+			),
+			origin,
+			orientation_index
+		)
+	)
+
+
 static func _auto_facing_orientations(
 	archetype: ElementArchetype,
 	snap_context: Dictionary,

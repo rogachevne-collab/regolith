@@ -242,26 +242,52 @@ static func validate_place_element(world,
 			)
 		var occupancy: Dictionary = ConstructionOccupancyUtil.assembly_occupancy_index(world, assembly)
 		var preview_cells := preview.occupied_cells()
-		if ConstructionOccupancyUtil.preview_overlaps_occupancy(preview_cells, occupancy):
-			return StructuralCommandResult.failed(
-				StructuralCommandResult.REASON_OVERLAP
+		var geom: Dictionary = ConstructionPreviewKernelAccess.find_attach_connections(
+			world,
+			assembly,
+			archetype,
+			command.origin_cell,
+			command.orientation_index
+		)
+		if not geom.is_empty():
+			if bool(geom.get("overlap", false)):
+				return StructuralCommandResult.failed(
+					StructuralCommandResult.REASON_OVERLAP
+				)
+			for connection_variant: Variant in geom.get("connections", []):
+				var connection: Dictionary = connection_variant
+				connections.append({
+					"existing_element_id": int(connection.get("existing_element_id", 0)),
+					"existing_port_id": str(connection.get("existing_port_id", "")),
+					"new_port_id": str(connection.get("new_port_id", "")),
+				})
+		else:
+			if ConstructionOccupancyUtil.preview_overlaps_occupancy(
+				preview_cells,
+				occupancy
+			):
+				return StructuralCommandResult.failed(
+					StructuralCommandResult.REASON_OVERLAP
+				)
+			# A rigid edge requires adjacent derived structural surface faces, so only
+			# elements occupying a neighbour of the preview footprint can ever connect.
+			var neighbour_ids: Array[int] = ConstructionOccupancyUtil.neighbour_element_ids(
+				preview_cells,
+				occupancy
 			)
-		# A rigid edge requires adjacent derived structural surface faces, so only
-		# elements occupying a neighbour of the preview footprint can ever connect.
-		var neighbour_ids: Array[int] = ConstructionOccupancyUtil.neighbour_element_ids(preview_cells, occupancy)
-		for existing_id: int in neighbour_ids:
-			var existing: SimulationElement = world.get_element(existing_id)
-			var connection := RuntimeConnectivity.find_rigid_connection(
-				existing,
-				preview
-			)
-			if connection.is_empty():
-				continue
-			connections.append({
-				"existing_element_id": existing_id,
-				"existing_port_id": connection["left_port_id"],
-				"new_port_id": connection["right_port_id"],
-			})
+			for existing_id: int in neighbour_ids:
+				var existing: SimulationElement = world.get_element(existing_id)
+				var connection := RuntimeConnectivity.find_rigid_connection(
+					existing,
+					preview
+				)
+				if connection.is_empty():
+					continue
+				connections.append({
+					"existing_element_id": existing_id,
+					"existing_port_id": connection["left_port_id"],
+					"new_port_id": connection["right_port_id"],
+				})
 		if connections.is_empty():
 			return StructuralCommandResult.failed(
 				StructuralCommandResult.REASON_INCOMPATIBLE_CONNECTION

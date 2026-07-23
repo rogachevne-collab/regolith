@@ -51,6 +51,13 @@ public:
 			const godot::PackedVector3Array &preview_cells,
 			const godot::PackedInt32Array &occupancy) const;
 
+	/// Overlap + rigid connections for attach preview validate (one IPC call).
+	godot::Dictionary find_attach_connections(
+			const godot::PackedInt32Array &occupancy,
+			const godot::PackedVector3Array &preview_cells,
+			const godot::Dictionary &preview_side,
+			const godot::Array &neighbour_sides) const;
+
 	/// Phase 4: body-group compile from packed joint/element tables.
 	/// joints: PackedInt32Array flat [kind, a_id, b_id, joint_id] * N
 	/// element_flags: PackedInt32Array parallel to element_ids (bit0=suspension, bit1=wheel)

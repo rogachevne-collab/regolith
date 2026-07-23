@@ -439,6 +439,64 @@ bool ConstructionPreviewKernel::check_preview_overlap(
 	return false;
 }
 
+Dictionary ConstructionPreviewKernel::find_attach_connections(
+		const PackedInt32Array &occupancy,
+		const PackedVector3Array &preview_cells,
+		const Dictionary &preview_side,
+		const Array &neighbour_sides) const {
+	Dictionary out;
+	out["overlap"] = check_preview_overlap(preview_cells, occupancy);
+	if (bool(out["overlap"])) {
+		out["connections"] = Array();
+		return out;
+	}
+
+	std::unordered_map<int32_t, SideSpec> sides_by_id;
+	for (int i = 0; i < neighbour_sides.size(); ++i) {
+		const Dictionary entry = neighbour_sides[i];
+		const int element_id = int(entry.get("element_id", 0));
+		if (element_id <= 0) {
+			continue;
+		}
+		sides_by_id[element_id] = parse_side(entry.get("side", Dictionary()));
+	}
+
+	const SideSpec preview_spec = parse_side(preview_side);
+	PackedInt32Array neighbour_ids = neighbour_element_ids(preview_cells, occupancy);
+	Array connections;
+	for (int i = 0; i < neighbour_ids.size(); ++i) {
+		const int32_t element_id = neighbour_ids[i];
+		const auto side_it = sides_by_id.find(element_id);
+		if (side_it == sides_by_id.end()) {
+			continue;
+		}
+		Dictionary canonical;
+		if (side_it->second.footprint_size > preview_spec.footprint_size) {
+			canonical = find_canonical_pair_scan(preview_spec, side_it->second);
+			if (canonical.is_empty()) {
+				continue;
+			}
+			Dictionary connection;
+			connection["existing_element_id"] = element_id;
+			connection["existing_port_id"] = canonical["right_port_id"];
+			connection["new_port_id"] = canonical["left_port_id"];
+			connections.push_back(connection);
+		} else {
+			canonical = find_canonical_pair_scan(side_it->second, preview_spec);
+			if (canonical.is_empty()) {
+				continue;
+			}
+			Dictionary connection;
+			connection["existing_element_id"] = element_id;
+			connection["existing_port_id"] = canonical["left_port_id"];
+			connection["new_port_id"] = canonical["right_port_id"];
+			connections.push_back(connection);
+		}
+	}
+	out["connections"] = connections;
+	return out;
+}
+
 Array ConstructionPreviewKernel::scan_magnetic_faces(
 		const Dictionary &snapshot,
 		const Dictionary &ray,
@@ -919,6 +977,14 @@ void ConstructionPreviewKernel::_bind_methods() {
 	ClassDB::bind_method(
 			D_METHOD("check_preview_overlap", "preview_cells", "occupancy"),
 			&ConstructionPreviewKernel::check_preview_overlap);
+	ClassDB::bind_method(
+			D_METHOD(
+					"find_attach_connections",
+					"occupancy",
+					"preview_cells",
+					"preview_side",
+					"neighbour_sides"),
+			&ConstructionPreviewKernel::find_attach_connections);
 	ClassDB::bind_method(
 			D_METHOD("compile_body_groups", "element_ids", "element_flags", "joints"),
 			&ConstructionPreviewKernel::compile_body_groups);

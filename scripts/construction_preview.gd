@@ -57,6 +57,7 @@ const _LARGE_AIM_ORIGIN_STEP := 0.25
 const _LARGE_AIM_DIRECTION_STEP := 0.1
 const _RESOLVE_HEARTBEAT_MSEC := 150
 var _last_resolve_msec := 0
+var _heartbeat_invalidated_mobile := false
 
 
 func _ready() -> void:
@@ -174,14 +175,16 @@ func _update_resolution() -> void:
 	# re-resolve occasionally or a rover parked in the crosshair never
 	# becomes magnetic until the aim moves.
 	var now_msec := Time.get_ticks_msec()
-	if (
-		not _manual_lock
-		and context_key == _cached_resolve_context_key
-		and now_msec - _last_resolve_msec < _RESOLVE_HEARTBEAT_MSEC
-	):
-		return
+	var same_context := context_key == _cached_resolve_context_key
+	if not _manual_lock and same_context:
+		if now_msec - _last_resolve_msec < _RESOLVE_HEARTBEAT_MSEC:
+			return
+		if _refresh_heartbeat_attach_permission():
+			_last_resolve_msec = now_msec
+			return
 	_cached_resolve_context_key = context_key
 	_last_resolve_msec = now_msec
+	_heartbeat_invalidated_mobile = false
 
 	var resolved := _gateway.resolve_construction_placement({
 		"direct_hit": direct_hit,
@@ -336,6 +339,31 @@ func _advance_manual_cycle() -> void:
 	_update_resolution()
 
 
+func _refresh_heartbeat_attach_permission() -> bool:
+	if resolved_plan.is_empty():
+		return false
+	var command := resolved_plan.get("command") as PlaceElementCommand
+	if command == null or command.assembly_id == 0:
+		return false
+	var world := _gateway.get_world()
+	if world == null:
+		return false
+	var allowed := world.construction_attach_allowed(command.assembly_id)
+	var was_valid := bool(resolved_plan.get("valid", false))
+	if allowed:
+		if _heartbeat_invalidated_mobile and not was_valid:
+			resolved_plan["valid"] = true
+			resolved_plan["reason"] = StructuralCommandResult.REASON_OK
+			_heartbeat_invalidated_mobile = false
+		return true
+	if was_valid:
+		resolved_plan["valid"] = false
+		resolved_plan["reason"] = StructuralCommandResult.REASON_INVALID_TARGET
+		_heartbeat_invalidated_mobile = true
+		return true
+	return false
+
+
 func _clear_resolution() -> void:
 	resolved_target = {}
 	resolved_plan = {}
@@ -350,6 +378,7 @@ func _clear_resolution() -> void:
 	_attach_pivot_key = ""
 	_held_attach_pivot = Vector3(INF, INF, INF)
 	_held_attach_snap_context.clear()
+	_heartbeat_invalidated_mobile = false
 
 
 func _attach_pivot_key_for(target: Dictionary) -> String:
@@ -760,6 +789,7 @@ func _on_selection_changed(
 	_manual_lock = false
 	_cached_resolve_context_key = ""
 	if archetype_changed:
+		ConstructionPreviewKernelAccess.clear_archetype_cache()
 		_ground_pivot_key = ""
 		_held_ground_pivot = Vector3(INF, INF, INF)
 		_attach_pivot_key = ""

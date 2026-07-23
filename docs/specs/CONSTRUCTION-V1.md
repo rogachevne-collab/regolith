@@ -323,6 +323,13 @@ single-body assembly обновляет colliders in-place (без destroy Rigid
 `find_rigid_connection` сканирует меньший footprint и кэширует world-face
 lookup (семантика контакта без изменений).
 
+**L25 preview (2026-07).** Heartbeat на неизменном aim не гоняет полный
+`plan()` — только `construction_attach_allowed` (parking brake). Side-spec /
+footprint кэшируются по `(archetype_id, orientation_index)`. Auto-facing
+пропускает ориентации через native `prefilter_attach_fits`. Attach geometry
+(overlap + connections) — один native `find_attach_connections`; bridge/driven
+checks остаются в GDScript.
+
 **Native preview kernel (optional GDExtension).** `addons/regolith_construction_preview`
 exposes `ConstructionPreviewKernel` + `ConstructionPhysicsMath`. Hot geometry
 paths (`find_rigid_connection`, magnet face scan, occupancy overlap/neighbours/
