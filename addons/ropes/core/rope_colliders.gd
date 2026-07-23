@@ -179,18 +179,20 @@ static func gather_from_space(
 		var obj := hit.collider as CollisionObject3D
 		if obj == null:
 			continue
-		var shape_rid: RID = hit.shape
-		var owner_id: int = obj.shape_find_owner(shape_rid)
-		var shape_idx := 0
-		for si in obj.shape_owner_get_shape_count(owner_id):
-			if obj.shape_owner_get_shape(owner_id, si).get_rid() == shape_rid:
-				shape_idx = si
-				break
-		var shape_res := obj.shape_owner_get_shape(owner_id, shape_idx)
-		var xf := (
-			obj.global_transform
-			* obj.shape_owner_get_transform(owner_id)
-			* obj.shape_owner_get_shape_transform(owner_id, shape_idx)
+		var shape_index: int = int(hit.get("shape", -1))
+		if shape_index < 0:
+			continue
+		var resolved := _resolve_owner_shape(obj, shape_index)
+		if resolved.is_empty():
+			continue
+		var owner_id: int = int(resolved.owner_id)
+		var shape_res := resolved.shape as Shape3D
+		if shape_res == null:
+			continue
+		# Owner transform only — shape_owner_get_shape_transform is not in 4.8;
+		# matches bench adapter and Regolith's one-shape-per-owner colliders.
+		var xf: Transform3D = (
+			obj.global_transform * obj.shape_owner_get_transform(owner_id)
 		)
 		var entry := {}
 		if shape_res is BoxShape3D:
@@ -217,6 +219,22 @@ static func gather_from_space(
 		entry.angular_velocity = body.angular_velocity if body else Vector3.ZERO
 		out.append(entry)
 	return {"colliders": out, "cache": next_cache}
+
+
+## Map a physics-server shape index from intersect_shape to owner-local data.
+static func _resolve_owner_shape(obj: CollisionObject3D, shape_index: int) -> Dictionary:
+	var owner_id := obj.shape_find_owner(shape_index)
+	if owner_id < 0:
+		return {}
+	var count := obj.shape_owner_get_shape_count(owner_id)
+	for si in count:
+		if obj.shape_owner_get_shape_index(owner_id, si) == shape_index:
+			return {
+				"owner_id": owner_id,
+				"local_idx": si,
+				"shape": obj.shape_owner_get_shape(owner_id, si),
+			}
+	return {}
 
 
 static func _basis_from_y(y: Vector3) -> Basis:

@@ -22,6 +22,7 @@ const QUERY_MARGIN_M := 1.0
 const PIN_REACTION_RELAXATION := 0.55
 const MAX_LEVER_ARM_M := 120.0
 const LIFT_SKIN_M := 0.004
+const SEED_LIFT_ATTEMPTS := 3
 
 
 static func particle_count(rest_length_m: float, span_m: float) -> int:
@@ -166,11 +167,9 @@ static func _apply_pin_reaction(
 	if impulse.length_squared() <= 1e-12:
 		return
 	var tension_n := impulse.length() / delta
-	var force_cap_n := INF
-	if backing.has("force_cap_n"):
-		force_cap_n = maxf(float(backing.get("force_cap_n", INF)), 0.0)
+	var force_cap_n := maxf(float(backing.get("force_cap_n", INF)), 0.0)
 	if tension_n > force_cap_n:
-		impulse = impulse.normalized() * force_cap_n * dt
+		impulse = impulse.normalized() * force_cap_n * delta
 		if impulse.length_squared() <= 1e-12:
 			return
 	var target := body
@@ -188,23 +187,31 @@ static func _apply_pin_reaction(
 static func _lift_out_of_geometry(
 	sim: XPBDRope,
 	space_state: PhysicsDirectSpaceState3D,
-	up: Vector3
+	_up: Vector3
 ) -> void:
-	if up.length_squared() <= 1e-12:
-		up = Vector3.UP
-	var dir := up.normalized()
+	if space_state == null:
+		return
+	var query_shape := SphereShape3D.new()
+	query_shape.radius = RADIUS + LIFT_SKIN_M
+	var params := PhysicsShapeQueryParameters3D.new()
+	params.shape = query_shape
+	params.collision_mask = COLLISION_MASK
+	params.collide_with_bodies = true
+	params.collide_with_areas = false
 	for i in sim.positions.size():
 		if sim.is_pinned(i):
 			continue
-		var p := sim.positions[i]
-		var ray := PhysicsRayQueryParameters3D.create(
-			p - dir * 2.0, p + dir * 2.0
-		)
-		ray.collision_mask = COLLISION_MASK
-		var hit := space_state.intersect_ray(ray)
-		if hit.is_empty():
-			continue
-		var n: Vector3 = hit.normal
-		var gap := (p - hit.position).dot(n)
-		if gap < RADIUS + LIFT_SKIN_M:
-			sim.positions[i] = hit.position + n * (RADIUS + LIFT_SKIN_M)
+		var lifted := sim.positions[i]
+		for _attempt in SEED_LIFT_ATTEMPTS:
+			params.transform = Transform3D(Basis.IDENTITY, lifted)
+			var rest: Dictionary = space_state.get_rest_info(params)
+			if rest.is_empty():
+				break
+			var normal: Vector3 = rest.get("normal", Vector3.ZERO)
+			if normal.length_squared() <= 1e-6:
+				break
+			lifted = (
+				rest.get("point", lifted)
+				+ normal * (RADIUS + LIFT_SKIN_M)
+			)
+		sim.positions[i] = lifted
