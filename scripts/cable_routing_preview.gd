@@ -26,11 +26,9 @@ const MAX_SOLVER_STEPS_PER_FRAME := 3
 @export var tool_controller_path: NodePath = NodePath("../ToolController")
 
 ## Try the Ropes! addon's XPBD core for the rope in hand instead of
-## CableRopeSolver. Preview-only experiment (2026-07-23, addons/ropes):
-## this is presentation, never issues commands, so there is nothing for a
-## rough edge here to break — flip it off to go back to the shipping verlet
-## rope with no other change. See scripts/bench/xpbd_cable_rope_solver.gd for
-## what is and is not proven about this core yet.
+## CableRopeSolver. Preview-only: no forces on bodies. Production path:
+## scripts/simulation/projection/xpbd_cable_rope_solver.gd +
+## SimulationPhysicsProjection.use_xpbd_cable_rope.
 @export var use_xpbd: bool = true
 
 var _query: InteractionQuery

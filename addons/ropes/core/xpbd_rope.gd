@@ -86,6 +86,10 @@ var _c_xf: Array[Transform3D] = []
 var _c_inv: Array[Transform3D] = []
 var _c_near: Array[bool] = []
 
+## Which particles are kinematic pins (gate 4 hosts read reactions from these).
+var _pinned := PackedByteArray()
+var _last_dt := 0.0
+
 
 func setup(segment_count: int, total_length: float, mass_per_meter: float) -> void:
 	assert(segment_count >= 1, "rope needs at least one segment")
@@ -102,6 +106,8 @@ func setup(segment_count: int, total_length: float, mass_per_meter: float) -> vo
 	_contact_lambda.resize(count)
 	_contact_normal.resize(count)
 	_contact_vel.resize(count)
+	_pinned.resize(count)
+	_pinned.fill(0)
 	velocities.fill(Vector3.ZERO)
 	lambdas.fill(0.0)
 	tensions.fill(0.0)
@@ -151,6 +157,12 @@ func lay_line(a: Vector3, b: Vector3, jitter := 0.0) -> void:
 
 func pin(index: int) -> void:
 	inv_mass[index] = 0.0
+	if index >= 0 and index < _pinned.size():
+		_pinned[index] = 1
+
+
+func is_pinned(index: int) -> bool:
+	return index >= 0 and index < _pinned.size() and _pinned[index] != 0
 
 
 ## Add lumped mass in kg to one particle (a hook, a weight).
@@ -185,6 +197,7 @@ func apply_impulse(index: int, impulse: Vector3) -> void:
 func step(dt: float) -> void:
 	if not (dt > 0.0) or not is_finite(dt):
 		return
+	_last_dt = dt
 	var count := positions.size()
 	var segs := rest_lengths.size()
 	var h := dt / float(substeps)
@@ -439,6 +452,43 @@ func max_speed() -> float:
 	for i in velocities.size():
 		out = maxf(out, velocities[i].length())
 	return out
+
+
+## Constraint force in newtons on a pinned particle, for gate-4 reaction
+## impulses on the host's [PhysicsBody3D]. Sign: force the ROPE exerts on the
+## pin; the body receives the opposite impulse.
+func pin_reaction_force(index: int) -> Vector3:
+	if not is_pinned(index):
+		return Vector3.ZERO
+	var force := Vector3.ZERO
+	var segs := rest_lengths.size()
+	if index < segs:
+		var d := positions[index + 1] - positions[index]
+		var seg_len := d.length()
+		if seg_len > 1e-12:
+			force -= (d / seg_len) * tensions[index]
+	if index > 0:
+		var d := positions[index] - positions[index - 1]
+		var seg_len := d.length()
+		if seg_len > 1e-12:
+			force += (d / seg_len) * tensions[index - 1]
+	return force
+
+
+## Impulse (N*s) to apply at a pin this tick — [method pin_reaction_force] *
+## the last [method step] dt.
+func pin_reaction_impulse(index: int) -> Vector3:
+	if _last_dt <= 0.0:
+		return Vector3.ZERO
+	return pin_reaction_force(index) * _last_dt
+
+
+## Largest segment tension touching either end — break checks and HUD.
+func endpoint_tension_n() -> float:
+	var segs := tensions.size()
+	if segs == 0:
+		return 0.0
+	return maxf(tensions[0], tensions[segs - 1])
 
 
 ## Center of mass in meters — the quantity gravity and damping must not lie

@@ -141,3 +141,87 @@ static func probe(shape: int, params: Vector3, xf: Transform3D,
 static func surface_velocity(col: Dictionary, xf: Transform3D, p: Vector3) -> Vector3:
 	return (col.linear_velocity as Vector3) \
 			+ (col.angular_velocity as Vector3).cross(p - xf.origin)
+
+
+## Broadphase gather for hosts (Rope3D, Regolith cable facade). Returns
+## { colliders: Array[Dictionary], cache: Dictionary } where cache maps
+## "%instance_id:owner_id" → this tick's transform for next tick's
+## prev_xform (ADR 0006 moving colliders).
+static func gather_from_space(
+		positions: PackedVector3Array,
+		space_state: PhysicsDirectSpaceState3D,
+		collision_mask: int,
+		margin_m: float,
+		prev_cache: Dictionary,
+		exclude: Array[RID] = []
+) -> Dictionary:
+	var out: Array[Dictionary] = []
+	var next_cache := {}
+	if positions.is_empty() or space_state == null:
+		return {"colliders": out, "cache": next_cache}
+	var lo := positions[0]
+	var hi := lo
+	for p: Vector3 in positions:
+		lo = lo.min(p)
+		hi = hi.max(p)
+	var center := (lo + hi) * 0.5
+	var query_shape := SphereShape3D.new()
+	query_shape.radius = (hi - lo).length() * 0.5 + margin_m
+
+	var query := PhysicsShapeQueryParameters3D.new()
+	query.shape = query_shape
+	query.transform = Transform3D(Basis.IDENTITY, center)
+	query.collision_mask = collision_mask
+	query.exclude = exclude
+
+	var hits := space_state.intersect_shape(query, 16)
+	for hit: Dictionary in hits:
+		var obj := hit.collider as CollisionObject3D
+		if obj == null:
+			continue
+		var shape_rid: RID = hit.shape
+		var owner_id: int = obj.shape_find_owner(shape_rid)
+		var shape_idx := 0
+		for si in obj.shape_owner_get_shape_count(owner_id):
+			if obj.shape_owner_get_shape(owner_id, si).get_rid() == shape_rid:
+				shape_idx = si
+				break
+		var shape_res := obj.shape_owner_get_shape(owner_id, shape_idx)
+		var xf := (
+			obj.global_transform
+			* obj.shape_owner_get_transform(owner_id)
+			* obj.shape_owner_get_shape_transform(owner_id, shape_idx)
+		)
+		var entry := {}
+		if shape_res is BoxShape3D:
+			entry.shape = SHAPE_BOX
+			entry.params = (shape_res as BoxShape3D).size * 0.5
+		elif shape_res is SphereShape3D:
+			entry.shape = SHAPE_SPHERE
+			entry.params = Vector3((shape_res as SphereShape3D).radius, 0, 0)
+		elif shape_res is WorldBoundaryShape3D:
+			var plane := (shape_res as WorldBoundaryShape3D).plane
+			var n := (xf.basis * plane.normal).normalized()
+			var point := xf * (plane.normal * plane.d)
+			entry.shape = SHAPE_PLANE
+			entry.params = Vector3.ZERO
+			xf = Transform3D(_basis_from_y(n), point)
+		else:
+			continue
+		entry.xform = xf
+		var key := "%d:%d" % [obj.get_instance_id(), owner_id]
+		entry.prev_xform = prev_cache.get(key, xf)
+		next_cache[key] = xf
+		var body := obj as RigidBody3D
+		entry.linear_velocity = body.linear_velocity if body else Vector3.ZERO
+		entry.angular_velocity = body.angular_velocity if body else Vector3.ZERO
+		out.append(entry)
+	return {"colliders": out, "cache": next_cache}
+
+
+static func _basis_from_y(y: Vector3) -> Basis:
+	var x := y.cross(Vector3.FORWARD)
+	if x.length_squared() < 1e-6:
+		x = y.cross(Vector3.RIGHT)
+	x = x.normalized()
+	return Basis(x, y, x.cross(y))

@@ -36,6 +36,13 @@ const FragmentBodyScript := preload(
 const BodyGroupMotionUtilScript := preload(
 	"res://scripts/simulation/runtime/body_group_motion_util.gd"
 )
+const XpbdCableRopeSolverScript := preload(
+	"res://scripts/simulation/projection/xpbd_cable_rope_solver.gd"
+)
+
+## When on, placed cables use the Ropes! XPBD core with gate-4 pin reactions
+## inside [XpbdCableRopeSolver] — [method _tick_cable_tension] is skipped.
+@export var use_xpbd_cable_rope := true
 
 const ASSEMBLY_BOUNCE := 0.32
 const ASSEMBLY_FRICTION := 0.42
@@ -72,7 +79,7 @@ var _wheel_constraints: Dictionary = {}
 var _root_group_ids: Dictionary = {}
 var _impact_service: ImpactResolverService
 var _cable_anchor_probe_cooldown := 0.0
-## link_id → verlet rope state (CableRopeSolver). Presentation/physics only.
+## link_id → rope solver state (CableRopeSolver or XpbdCableRopeSolver).
 var _rope_states: Dictionary = {}
 var _rope_collision_cursor := 0
 ## link_id → slackest overshoot seen since this rope last thawed an endpoint.
@@ -2120,9 +2127,8 @@ func _tick_thrusters(delta: float) -> void:
 		for gyro: SimulationElement in gyros:
 			_apply_gyro_torque(gyro, locomotion, gyro_count)
 
-## Rope shape: one verlet step per rope, so cables drape over the world instead
-## of passing through it. Runs before tension — the pull direction comes from
-## the solved rope, not from the straight line between the anchors.
+## Rope shape: one solver step per rope. XPBD path also applies gate-4 pin
+## reactions and break checks; verlet path leaves forces to _tick_cable_tension.
 func _tick_cable_ropes(delta: float) -> void:
 	if _world == null or delta <= 0.0:
 		return
@@ -2134,13 +2140,10 @@ func _tick_cable_ropes(delta: float) -> void:
 		_rope_states = {}
 		return
 	var space_state := get_world_3d().direct_space_state
-	# Collision is one shape query per particle per tick, so it runs on a
-	# budget. A rope past the budget still integrates and holds its length this
-	# tick; the rotating start makes sure it is a different rope every time and
-	# not always the last one in the list that goes without.
 	var collision_budget := CABLE_ROPE_COLLISION_BUDGET
 	_rope_collision_cursor = (_rope_collision_cursor + 1) % ropes.size()
 	var live: Dictionary = {}
+	var snapped: Array[int] = []
 	for offset: int in range(ropes.size()):
 		var link: IndustryElectricLink = ropes[
 			(offset + _rope_collision_cursor) % ropes.size()
@@ -2161,47 +2164,158 @@ func _tick_cable_ropes(delta: float) -> void:
 			self,
 			(anchor_a + anchor_b) * 0.5
 		)
+		var up := -gravity.normalized() if gravity.length_squared() > 0.0 else Vector3.UP
 		var state: Variant = _rope_states.get(link.link_id)
-		if not state is Dictionary:
-			state = CableRopeSolver.create_state(
+		if use_xpbd_cable_rope:
+			collision_budget = _tick_one_xpbd_rope(
+				link,
+				state,
 				anchor_a,
 				anchor_b,
-				link.rest_length_m,
-				-gravity.normalized() if gravity.length_squared() > 0.0 else Vector3.UP,
-				space_state
+				gravity,
+				up,
+				delta,
+				space_state,
+				collision_budget,
+				live,
+				snapped
 			)
-		var particles := CableRopeSolver.path(state).size()
-		var collides := space_state != null and collision_budget >= particles
-		if collides:
-			collision_budget -= particles
-		# Past the budget the rope loses only its shape queries; the space state
-		# still goes in so the anti-tunnel sweep runs every tick. Starving a rope
-		# of collision wholesale is how they ended up inside driving machines.
-		CableRopeSolver.step(
-			state,
+		else:
+			collision_budget = _tick_one_verlet_rope(
+				link,
+				state,
+				anchor_a,
+				anchor_b,
+				gravity,
+				up,
+				delta,
+				space_state,
+				collision_budget,
+				live
+			)
+	_rope_states = live
+	for link_id: int in snapped:
+		_world.disconnect_network(0, "", 0, "", link_id)
+
+
+func _tick_one_verlet_rope(
+	link: IndustryElectricLink,
+	state: Variant,
+	anchor_a: Vector3,
+	anchor_b: Vector3,
+	gravity: Vector3,
+	up: Vector3,
+	delta: float,
+	space_state: PhysicsDirectSpaceState3D,
+	collision_budget: int,
+	live: Dictionary
+) -> int:
+	if not state is Dictionary:
+		state = CableRopeSolver.create_state(
 			anchor_a,
 			anchor_b,
 			link.rest_length_m,
-			gravity,
-			delta,
-			space_state,
-			collides
+			up,
+			space_state
 		)
-		live[link.link_id] = state
-	_rope_states = live
+	var particles := CableRopeSolver.path(state).size()
+	var collides := space_state != null and collision_budget >= particles
+	if collides:
+		collision_budget -= particles
+	CableRopeSolver.step(
+		state,
+		anchor_a,
+		anchor_b,
+		link.rest_length_m,
+		gravity,
+		delta,
+		space_state,
+		collides
+	)
+	live[link.link_id] = state
+	return collision_budget
+
+
+func _tick_one_xpbd_rope(
+	link: IndustryElectricLink,
+	state: Variant,
+	anchor_a: Vector3,
+	anchor_b: Vector3,
+	gravity: Vector3,
+	up: Vector3,
+	delta: float,
+	space_state: PhysicsDirectSpaceState3D,
+	collision_budget: int,
+	live: Dictionary,
+	snapped: Array[int]
+) -> int:
+	var body_a := _rope_endpoint_body(link.element_a)
+	var body_b := _rope_endpoint_body(link.element_b)
+	if body_a == null and body_b == null:
+		return collision_budget
+	if not state is Dictionary:
+		state = XpbdCableRopeSolverScript.create_state(
+			anchor_a,
+			anchor_b,
+			link.rest_length_m,
+			up,
+			space_state
+		)
+	if state is Dictionary:
+		_wake_roped_bodies(
+			link.link_id,
+			body_a,
+			body_b,
+			CableTensionUtil.effective_overshoot_m(
+				XpbdCableRopeSolverScript.routed_length_m(state),
+				link.rest_length_m
+			)
+		)
+	var particles := XpbdCableRopeSolverScript.path(state).size()
+	var collides := space_state != null and collision_budget >= particles
+	if collides:
+		collision_budget -= particles
+	var result: Dictionary = XpbdCableRopeSolverScript.step(
+		state,
+		anchor_a,
+		anchor_b,
+		link.rest_length_m,
+		gravity,
+		delta,
+		space_state,
+		collides,
+		body_a,
+		body_b,
+		_rope_endpoint_backing(body_a),
+		_rope_endpoint_backing(body_b),
+		link.break_force_n
+	)
+	if bool(result.get("snapped", false)):
+		snapped.append(link.link_id)
+		return collision_budget
+	live[link.link_id] = state
+	_wake_roped_bodies(
+		link.link_id,
+		body_a,
+		body_b,
+		float(result.get("overshoot_m", 0.0))
+	)
+	return collision_budget
 
 ## Solved rope path in world space for presentation. Empty when the rope has
 ## not been stepped yet — the caller falls back to the analytic curve.
 func rope_path(link_id: int) -> PackedVector3Array:
 	var state: Variant = _rope_states.get(link_id)
 	if state is Dictionary:
+		if use_xpbd_cable_rope:
+			return XpbdCableRopeSolverScript.path(state)
 		return CableRopeSolver.path(state)
 	return PackedVector3Array()
 
 ## Ropes pull once they run out of slack, and snap when the pull is too hard.
 ## Runs after the actuators so a rope reacts to the same tick's motion.
 func _tick_cable_tension(delta: float) -> void:
-	if _world == null or delta <= 0.0:
+	if _world == null or delta <= 0.0 or use_xpbd_cable_rope:
 		return
 	var snapped: Array[int] = []
 	var seen: Dictionary = {}

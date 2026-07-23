@@ -42,6 +42,7 @@ TESTS=(
 	addons/ropes/tests/test_unilateral.gd
 	addons/ropes/tests/test_drape.gd
 	addons/ropes/tests/test_length_guard.gd
+	addons/ropes/tests/test_pin_reaction.gd
 )
 
 pass=0

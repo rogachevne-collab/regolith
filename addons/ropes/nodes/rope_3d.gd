@@ -13,13 +13,16 @@ extends Node3D
 ## start of the next physics tick, discarding its current motion — so a
 ## smooth winch is not yet this, it is gate 5.
 ##
-## STATUS: gate 3 slice 1. Collision (box/sphere/plane) is live; anchors are
-## one-way kinematic pins (rigid-body coupling is gate 4). Shipping core is
-## XPBD; AVBD is parked (ADR 0007/0008).
+## STATUS: gate 4 slice 1. Collision live; [PhysicsBody3D] anchors receive
+## reaction impulses. XPBD shipping; AVBD parked. Smooth winch is gate 5.
 
 const XPBDRope := preload("res://addons/ropes/core/xpbd_rope.gd")
 const AVBDRope := preload("res://addons/ropes/core/avbd_rope.gd")
 const RopeRenderer := preload("res://addons/ropes/render/rope_renderer.gd")
+const RopeColliders := preload("res://addons/ropes/core/rope_colliders.gd")
+
+## Under-relax pin reactions so a coupled body can settle (Spike B / gate 4).
+const PIN_REACTION_RELAXATION := 0.55
 
 ## Which core this node drives, as a constant rather than a setting: exposing
 ## two solvers as a choice means every feature has to exist twice or the
@@ -63,8 +66,8 @@ const STRAIGHTNESS_JITTER := 0.0001
 		_push_visual_params()
 
 @export_group("Anchors")
-## Node3D the first particle is pinned to. A PhysicsBody3D also receives
-## reaction impulses (gate 4). Empty = free end. Cold.
+## Node3D the first particle is pinned to. A [PhysicsBody3D] also receives
+## reaction impulses at the pin. Empty = free end. Cold.
 @export var anchor_a: NodePath:
 	set(value):
 		anchor_a = value
@@ -169,8 +172,6 @@ var _prev_points := PackedVector3Array()
 var _curr_points := PackedVector3Array()
 var _needs_rebuild := false
 var _collider_prev := {}
-var _query_shape: SphereShape3D
-var _warned_shapes := {}
 
 
 func _ready() -> void:
@@ -253,6 +254,7 @@ func _physics_process(dt: float) -> void:
 	if collision_enabled:
 		_gather_colliders()
 	_sim.step(dt)
+	_apply_anchor_reactions()
 	_prev_points = _curr_points
 	_curr_points = _sim.positions.duplicate()
 	_renderer.push_state(_prev_points, _curr_points, _sim.tensions)
@@ -382,76 +384,54 @@ func _push_visual_params() -> void:
 # One broadphase query per tick; the core does exact analytic distances to
 # these shapes every substep with interpolated transforms (ADR 0006).
 func _gather_colliders() -> void:
-	var lo := _curr_points[0]
-	var hi := lo
-	for i in _curr_points.size():
-		var p := _curr_points[i]
-		lo = lo.min(p)
-		hi = hi.max(p)
-	var center := (lo + hi) * 0.5
-	if _query_shape == null:
-		_query_shape = SphereShape3D.new()
-	_query_shape.radius = (hi - lo).length() * 0.5 + maxf(length * 0.25, 1.0)
-
-	var query := PhysicsShapeQueryParameters3D.new()
-	query.shape = _query_shape
-	query.transform = Transform3D(Basis.IDENTITY, center)
-	query.collision_mask = collision_mask
+	var world := get_world_3d()
+	if world == null:
+		return
 	var exclude: Array[RID] = []
 	if _anchor_a_node is CollisionObject3D:
 		exclude.append((_anchor_a_node as CollisionObject3D).get_rid())
 	if _anchor_b_node is CollisionObject3D:
 		exclude.append((_anchor_b_node as CollisionObject3D).get_rid())
-	query.exclude = exclude
-
-	var out: Array[Dictionary] = []
-	var prev_cache := {}
-	var hits := get_world_3d().direct_space_state.intersect_shape(query, 16)
-	for hit: Dictionary in hits:
-		var obj := hit.collider as CollisionObject3D
-		if obj == null:
-			continue
-		var owner_id: int = obj.shape_find_owner(hit.shape)
-		var shape_res := obj.shape_owner_get_shape(owner_id, 0)
-		var xf := obj.global_transform * obj.shape_owner_get_transform(owner_id)
-		var entry := {}
-		if shape_res is BoxShape3D:
-			entry.shape = XPBDRope.SHAPE_BOX
-			entry.params = (shape_res as BoxShape3D).size * 0.5
-		elif shape_res is SphereShape3D:
-			entry.shape = XPBDRope.SHAPE_SPHERE
-			entry.params = Vector3((shape_res as SphereShape3D).radius, 0, 0)
-		elif shape_res is WorldBoundaryShape3D:
-			var plane := (shape_res as WorldBoundaryShape3D).plane
-			var n := (xf.basis * plane.normal).normalized()
-			var point := xf * (plane.normal * plane.d)
-			entry.shape = XPBDRope.SHAPE_PLANE
-			entry.params = Vector3.ZERO
-			xf = Transform3D(_basis_from_y(n), point)
-		else:
-			var kind := shape_res.get_class() if shape_res else "<null>"
-			if not _warned_shapes.has(kind):
-				_warned_shapes[kind] = true
-				push_warning("Rope3D: unsupported collider shape %s, skipped" % kind)
-			continue
-		entry.xform = xf
-		var key := "%d:%d" % [obj.get_instance_id(), owner_id]
-		entry.prev_xform = _collider_prev.get(key, xf)
-		prev_cache[key] = xf
-		var body := obj as RigidBody3D
-		entry.linear_velocity = body.linear_velocity if body else Vector3.ZERO
-		entry.angular_velocity = body.angular_velocity if body else Vector3.ZERO
-		out.append(entry)
-	_collider_prev = prev_cache
-	_sim.colliders = out
+	var gathered := RopeColliders.gather_from_space(
+		_curr_points,
+		world.direct_space_state,
+		collision_mask,
+		maxf(length * 0.25, 1.0),
+		_collider_prev,
+		exclude
+	)
+	_collider_prev = gathered.cache
+	_sim.colliders = gathered.colliders
 
 
-func _basis_from_y(y: Vector3) -> Basis:
-	var x := y.cross(Vector3.FORWARD)
-	if x.length_squared() < 1e-6:
-		x = y.cross(Vector3.RIGHT)
-	x = x.normalized()
-	return Basis(x, y, x.cross(y))
+func _apply_anchor_reactions() -> void:
+	if _sim == null:
+		return
+	if _anchor_a_node is RigidBody3D:
+		_apply_pin_reaction(
+			_anchor_a_node as RigidBody3D,
+			_anchor_a_node.global_position,
+			0
+		)
+	if _anchor_b_node is RigidBody3D:
+		_apply_pin_reaction(
+			_anchor_b_node as RigidBody3D,
+			_anchor_b_node.global_position,
+			_sim.segment_count()
+		)
+
+
+func _apply_pin_reaction(body: RigidBody3D, anchor: Vector3, pin_index: int) -> void:
+	if body.freeze:
+		return
+	var impulse := _sim.pin_reaction_impulse(pin_index) * PIN_REACTION_RELAXATION
+	if impulse.length_squared() <= 1e-12:
+		return
+	body.sleeping = false
+	var offset := anchor - body.global_position
+	if offset.length() > 120.0:
+		offset = Vector3.ZERO
+	body.apply_impulse(impulse, offset)
 
 
 func _resolve(path: NodePath) -> Node3D:

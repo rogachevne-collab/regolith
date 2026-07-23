@@ -403,6 +403,13 @@ Legacy port-wire (оба `port_id` непустые) остаётся валид
 Состояние частиц — presentation/physics, в снапшот не пишется: при загрузке
 верёвка отстраивается из двух якорей и `rest_length_m`.
 
+**XPBD backend (2026-07, optional).** При
+`SimulationPhysicsProjection.use_xpbd_cable_rope = true` форма и силы идут через
+`XpbdCableRopeSolver` (addons/ropes XPBD, gate 4): pin-reaction из λ сегментов,
+без `CableTensionUtil` на этом пути. Verlet + `CableTensionUtil` остаётся
+fallback (`use_xpbd_cable_rope = false`). Voxel-drape по-прежнему сильнее на
+verlet; XPBD v1 — подъём/буксир по box/sphere/plane.
+
 **Физика (`CableTensionUtil`).** Пока верёвка короче `rest_length_m` — канат не
 делает ничего. На натяге — max-distance constraint одним импульсом за тик.
 Меряется **длина по фактической трассе** (`solve_routed`), а тянет каждый конец

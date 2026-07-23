@@ -1354,6 +1354,7 @@ func _test_rope_wakes_a_parked_body() -> bool:
 	link.rest_length_m = element_origin.distance_to(anchor_point) - 0.25
 	parked.freeze = true
 	parked.sleeping = true
+	projection._tick_cable_ropes(1.0 / 60.0)
 	projection._tick_cable_tension(1.0 / 60.0)
 	if world.get_industry_network().get_link(link_id) == null:
 		_free_fixture(fixture)
@@ -1365,12 +1366,14 @@ func _test_rope_wakes_a_parked_body() -> bool:
 	# work; re-thawing here is what would keep a moored rover awake forever.
 	parked.freeze = true
 	parked.sleeping = true
+	projection._tick_cable_ropes(1.0 / 60.0)
 	projection._tick_cable_tension(1.0 / 60.0)
 	if not parked.freeze:
 		_free_fixture(fixture)
 		return _fail("a rope hanging taut and still must leave a park alone")
 	# Winch takes up another half metre: that is a pull, and it must land.
 	link.rest_length_m -= 0.5
+	projection._tick_cable_ropes(1.0 / 60.0)
 	projection._tick_cable_tension(1.0 / 60.0)
 	if parked.freeze:
 		_free_fixture(fixture)

@@ -4,15 +4,11 @@ Physically based ropes for Godot 4. Target: XPBD solver in a C++ GDExtension,
 believable rope behavior on low-end hardware. Works with stock Godot — no
 engine fork, no custom physics server.
 
-**Status: pre-alpha, gate 3 slice 1.** Shipping today is the XPBD reference
-core in GDScript (ADR 0002) with collision: contacts solved in the same
-constraint loop, analytic narrow phase against box/sphere/plane colliders
-cached once per tick, moving-collider transform interpolation, Coulomb
-friction with honest stick/slide split (ADR 0006). Next: concave shapes /
-voxel terrain (slice 2), then two-way rigid-body coupling (gate 4) and a
-smooth winch on `length` (gate 5). The C++ GDExtension port of this core is
-still the production path — not landed yet. AVBD (ADR 0007/0008) is parked;
-`Rope3D` drives XPBD only. Visual playground: `demos/gate2_playground.tscn`.
+**Status: pre-alpha, gate 4 slice 1.** Shipping today is the XPBD reference
+core in GDScript (ADR 0002) with collision and two-way pin reactions on
+[PhysicsBody3D] anchors (gate 4). Next: concave shapes / voxel terrain (slice
+2), smooth winch on `length` (gate 5). The C++ GDExtension port is still the
+production performance path — not landed yet. AVBD (ADR 0007/0008) is parked.
 
 ## Target usage
 
@@ -23,8 +19,8 @@ Rope3D            length = 8.0, anchor_a = ../Crane, anchor_b = ../Player
 ```
 
 Add a `Rope3D`, point its anchors at two nodes, press play. Free ends and
-world collision (box/sphere/plane) work today. Two-way forces on rigid
-bodies are gate 4.
+world collision (box/sphere/plane) work today. Anchors on `PhysicsBody3D`
+receive reaction impulses from segment tension (gate 4).
 
 ## Public API
 
@@ -141,7 +137,8 @@ candidates in the research note become worth their complexity.
    old rope's killer scenario: an asymmetric drape over a box must settle,
    hold, not creep, not penetrate, and slide off only at zero friction);
    slice 2 is concave shapes / voxel terrain
-4. Two-way coupling with rigid bodies
+4. Two-way coupling with rigid bodies — slice 1 done (pin reactions from λ;
+   Regolith via XpbdCableRopeSolver)
 5. Smooth winch on `length` (no re-seed)
 6. C++ GDExtension port of the XPBD core; performance, LOD, demos
 
