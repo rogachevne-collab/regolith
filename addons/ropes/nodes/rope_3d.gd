@@ -7,14 +7,14 @@ extends Node3D
 ## path leaves that end free. Simulation state is read back with
 ## [method get_particles] and [method get_segment_tension].
 ##
-## Properties come in two kinds. [b]Hot[/b] ones (stiffness, damping, budget,
-## radius) apply immediately. [b]Cold[/b] ones change the rope's topology
-## (length, resolution, density, end mass, anchors) and re-seed it at the
-## start of the next physics tick, discarding its current motion — so a
-## smooth winch is not yet this, it is gate 5.
+## Properties come in two kinds. [b]Hot[/b] ones (length, stiffness, damping,
+## budget, radius) apply immediately. [b]Cold[/b] ones change the rope's
+## topology (resolution, density, end mass, anchors) and re-seed it at the
+## start of the next physics tick, discarding its current motion.
 ##
-## STATUS: gate 4 slice 1. Collision live; [PhysicsBody3D] anchors receive
-## reaction impulses. XPBD shipping; AVBD parked. Smooth winch is gate 5.
+## STATUS: gate 5. Collision covers the analytic set plus concave meshes and
+## voxel terrain; a [RigidBody3D] anchor is coupled by mass, so a rope on a
+## winch can lift it; [member length] is a winch. XPBD shipping; AVBD parked.
 
 const XPBDRope := preload("res://addons/ropes/core/xpbd_rope.gd")
 const AVBDRope := preload("res://addons/ropes/core/avbd_rope.gd")
@@ -22,7 +22,25 @@ const RopeRenderer := preload("res://addons/ropes/render/rope_renderer.gd")
 const RopeColliders := preload("res://addons/ropes/core/rope_colliders.gd")
 
 ## Under-relax pin reactions so a coupled body can settle (Spike B / gate 4).
+## Only frozen or non-rigid anchors take this path now; anything the rope can
+## actually move is coupled by mass instead (see [method _end_body]).
 const PIN_REACTION_RELAXATION := 0.55
+
+## Momentum handed to a mass-coupled body, as a fraction of what the rope
+## spent on its proxy. 1.0 is the honest number — the proxy carries the body's
+## own mass, so the exchange is already correctly scaled, and under-relaxing it
+## would mean a rope that lifts 55% of a rover and drops the rest.
+const PROXY_REACTION_RELAXATION := 1.0
+
+## Floor on a coupled body's mass, kg. A zero-mass anchor would make its proxy
+## massless and the rope would snap to it as if to a pin — silently, which is
+## the worst way for a rope to stop lifting things.
+const MIN_ANCHOR_MASS := 0.001
+
+## An anchor further than this from its body's origin is treated as acting at
+## the origin: past it the lever arm is almost certainly a stale transform, and
+## a stale lever arm spins the body instead of pulling it.
+const MAX_LEVER_ARM_M := 120.0
 
 ## Which core this node drives, as a constant rather than a setting: exposing
 ## two solvers as a choice means every feature has to exist twice or the
@@ -41,11 +59,19 @@ const CORE_IS_AVBD := false
 ## radius and deterministic. See XPBDRope.lay_line.
 const STRAIGHTNESS_JITTER := 0.0001
 
-## Rest length in meters. Cold.
+## Rest length in meters. [b]Hot: this is the winch.[/b] Changing it pays rope
+## out or reels it in without re-seeding — shape, motion and anchors survive.
+##
+## Resolution does not follow: the rope keeps the segment count it was seeded
+## with, so a rope winched far past its original length gets coarse. Call
+## [method rebuild] when that matters more than the motion does.
 @export_range(0.1, 1000.0, 0.1, "or_greater", "suffix:m") var length: float = 5.0:
 	set(value):
-		length = value
-		_cold_changed()
+		length = maxf(value, 0.01)
+		if _sim != null and not _needs_rebuild:
+			_sim.set_rest_length(length)
+			_push_visual_params()
+		update_configuration_warnings()
 
 ## Simulated particles per meter. Higher = smoother bends, more CPU. Cold.
 @export_range(1.0, 16.0, 0.5) var segments_per_meter: float = 4.0:
@@ -162,6 +188,17 @@ const STRAIGHTNESS_JITTER := 0.0001
 		if _sim:
 			_sim.friction = value
 
+## Also collide with geometry that has no analytic form — concave meshes,
+## heightmaps, voxel terrain. Costs one physics query per particle per tick,
+## against the same [member collision_mask]; turn it off for a rope that only
+## ever meets boxes and spheres. Hot.
+@export var concave_collision := true
+
+## How far ahead of the rope the concave probe looks, in meters. It is also
+## the rope's speed limit against that geometry: whatever the rope crosses in
+## one tick beyond this margin was never sampled and is not there. Hot.
+@export_range(0.05, 2.0, 0.01, "suffix:m") var probe_margin: float = 0.25
+
 var _sim: XPBDRope
 var _renderer: RopeRenderer
 var _anchor_a_node: Node3D
@@ -208,10 +245,8 @@ func rebuild() -> void:
 	var lay := lay_direction if lay_direction.length_squared() > 1e-12 else Vector3.DOWN
 	var b := _anchor_b_node.global_position if _anchor_b_node else a + lay.normalized() * length
 	_sim.lay_line(a, b, STRAIGHTNESS_JITTER)
-	if _anchor_a_node:
-		_sim.pin(0)
-	if _anchor_b_node:
-		_sim.pin(segs)
+	_attach_end(0, _anchor_a_node)
+	_attach_end(segs, _anchor_b_node)
 	_anchor_a_prev = a
 	_anchor_b_prev = b
 	_curr_points = _sim.positions.duplicate()
@@ -243,18 +278,25 @@ func _physics_process(dt: float) -> void:
 		rebuild()
 	if _sim == null:
 		return
+	var last := _sim.segment_count()
+	var a := _anchor_a_node.global_position if _anchor_a_node else _anchor_a_prev
+	var b := _anchor_b_node.global_position if _anchor_b_node else _anchor_b_prev
 	if _anchor_a_node:
-		var a := _anchor_a_node.global_position
-		_sim.move_pin(0, a, (a - _anchor_a_prev) / dt)
+		_drive_end(0, _anchor_a_node, a, _anchor_a_prev, dt)
 		_anchor_a_prev = a
 	if _anchor_b_node:
-		var b := _anchor_b_node.global_position
-		_sim.move_pin(_sim.segment_count(), b, (b - _anchor_b_prev) / dt)
+		_drive_end(last, _anchor_b_node, b, _anchor_b_prev, dt)
 		_anchor_b_prev = b
 	if collision_enabled:
 		_gather_colliders()
+	else:
+		_sim.colliders = []
+		_sim.local_planes = PackedVector4Array()
 	_sim.step(dt)
-	_apply_anchor_reactions()
+	if _anchor_a_node:
+		_settle_end(0, _anchor_a_node, a)
+	if _anchor_b_node:
+		_settle_end(last, _anchor_b_node, b)
 	_prev_points = _curr_points
 	_curr_points = _sim.positions.duplicate()
 	_renderer.push_state(_prev_points, _curr_points, _sim.tensions)
@@ -387,14 +429,16 @@ func _gather_colliders() -> void:
 	var world := get_world_3d()
 	if world == null:
 		return
+	var space := world.direct_space_state
+	# Anchor bodies are NOT excluded. They used to be, and the price was a rope
+	# cutting through the corners of the very block it was tied to whenever the
+	# block swung. The narrow exemption belongs on the attachment points — pins
+	# and proxies skip contacts in the core — not on the whole body, which the
+	# rest of the rope is entitled to lie against.
 	var exclude: Array[RID] = []
-	if _anchor_a_node is CollisionObject3D:
-		exclude.append((_anchor_a_node as CollisionObject3D).get_rid())
-	if _anchor_b_node is CollisionObject3D:
-		exclude.append((_anchor_b_node as CollisionObject3D).get_rid())
 	var gathered := RopeColliders.gather_from_space(
 		_curr_points,
-		world.direct_space_state,
+		space,
 		collision_mask,
 		maxf(length * 0.25, 1.0),
 		_collider_prev,
@@ -402,23 +446,100 @@ func _gather_colliders() -> void:
 	)
 	_collider_prev = gathered.cache
 	_sim.colliders = gathered.colliders
-
-
-func _apply_anchor_reactions() -> void:
-	if _sim == null:
+	if not concave_collision:
+		_sim.local_planes = PackedVector4Array()
 		return
-	if _anchor_a_node is RigidBody3D:
-		_apply_pin_reaction(
-			_anchor_a_node as RigidBody3D,
-			_anchor_a_node.global_position,
-			0
-		)
-	if _anchor_b_node is RigidBody3D:
-		_apply_pin_reaction(
-			_anchor_b_node as RigidBody3D,
-			_anchor_b_node.global_position,
-			_sim.segment_count()
-		)
+	# Whatever the analytic pass already solves is excluded from the plane
+	# pass: the same wall solved twice is the same wall with twice the
+	# friction, and it is the kind of double-count nobody sees until a rope
+	# refuses to slide.
+	var probe_exclude: Array[RID] = exclude.duplicate()
+	for rid: RID in RopeColliders.body_rids(_sim.colliders):
+		probe_exclude.append(rid)
+	_sim.local_planes = RopeColliders.sample_local_planes(
+		_sim.positions,
+		space,
+		collision_mask,
+		radius,
+		probe_margin,
+		probe_exclude
+	)
+
+
+# --- anchors -----------------------------------------------------------------
+#
+# An anchor the rope cannot move (a crane arm, a bolted eyelet, a frozen body)
+# is a kinematic pin: the host says where it is, the rope obeys. An anchor the
+# rope IS supposed to move — a rover on the end of a winch — is coupled by
+# mass instead, because a kinematic end makes the rope's constraints blind to
+# the thing hanging on it. See the proxy note in the core: the difference is
+# between a rope that reports the weight of its own fibres and one that
+# reports the rover.
+
+
+## The [RigidBody3D] an anchor node belongs to — itself, or the nearest one
+## above it, so a [Marker3D] hook bolted under a chassis couples the chassis.
+## Null when there is none, or when it is frozen: a frozen body is scenery
+## that happens to be a rigid body, and the rope must pin to it, not push it.
+func _end_body(node: Node3D) -> RigidBody3D:
+	var current: Node = node
+	while current != null:
+		var body := current as RigidBody3D
+		if body != null:
+			return null if body.freeze else body
+		current = current.get_parent()
+	return null
+
+
+## Decide once, at seed time, whether an end is a pin or a mass-coupled proxy.
+func _attach_end(index: int, node: Node3D) -> void:
+	if node == null:
+		return
+	var body := _end_body(node)
+	if body != null:
+		_sim.attach_proxy(index, maxf(body.mass, MIN_ANCHOR_MASS))
+	else:
+		_sim.pin(index)
+
+
+## Put an end where its anchor is, before the step. Bodies that froze or
+## unfroze since the last tick switch mode here rather than waiting for a
+## rebuild — freezing a body is how a game says "this is scenery now".
+func _drive_end(index: int, node: Node3D, at: Vector3, was_at: Vector3, dt: float) -> void:
+	var body := _end_body(node)
+	if body != null:
+		if not _sim.is_proxy(index):
+			_sim.attach_proxy(index, maxf(body.mass, MIN_ANCHOR_MASS))
+		_sim.seat_proxy(index, at, _point_velocity(body, at))
+	else:
+		if _sim.is_proxy(index):
+			_sim.pin(index)
+		_sim.move_pin(index, at, (at - was_at) / dt)
+
+
+## Hand the anchor's body what the rope just spent on it, after the step.
+func _settle_end(index: int, node: Node3D, at: Vector3) -> void:
+	var body := _end_body(node)
+	if body == null:
+		if node is RigidBody3D:
+			_apply_pin_reaction(node as RigidBody3D, at, index)
+		return
+	var impulse := _sim.proxy_momentum(index) * PROXY_REACTION_RELAXATION
+	# Back on the hook for rendering, whatever the solver did to the stand-in.
+	_sim.reseat_proxy(index, at)
+	if impulse.length_squared() <= 1e-12:
+		return
+	body.sleeping = false
+	var offset := at - body.global_position
+	if offset.length() > MAX_LEVER_ARM_M:
+		offset = Vector3.ZERO
+	body.apply_impulse(impulse, offset)
+
+
+## Velocity of a body's surface AT the anchor point: the tip of a swinging
+## boom is not moving at the boom's linear velocity.
+func _point_velocity(body: RigidBody3D, at: Vector3) -> Vector3:
+	return body.linear_velocity + body.angular_velocity.cross(at - body.global_position)
 
 
 func _apply_pin_reaction(body: RigidBody3D, anchor: Vector3, pin_index: int) -> void:
@@ -429,7 +550,7 @@ func _apply_pin_reaction(body: RigidBody3D, anchor: Vector3, pin_index: int) -> 
 		return
 	body.sleeping = false
 	var offset := anchor - body.global_position
-	if offset.length() > 120.0:
+	if offset.length() > MAX_LEVER_ARM_M:
 		offset = Vector3.ZERO
 	body.apply_impulse(impulse, offset)
 

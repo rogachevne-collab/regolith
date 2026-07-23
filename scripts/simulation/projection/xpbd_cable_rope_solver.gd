@@ -19,6 +19,11 @@ const SUBSTEPS := 32
 const ITERATIONS := 2
 const COLLISION_MASK := 3
 const QUERY_MARGIN_M := 1.0
+## How far ahead of each particle the moon is sampled. The crust is a concave
+## mesh rebuilt as it is dug, so it never reaches the analytic collider set —
+## it arrives as one contact plane per particle per tick instead (ADR 0006
+## slice 2). Also the cable's speed limit against terrain.
+const TERRAIN_PROBE_MARGIN_M := 0.3
 const PIN_REACTION_RELAXATION := 0.55
 const MAX_LEVER_ARM_M := 120.0
 const LIFT_SKIN_M := 0.004
@@ -54,7 +59,21 @@ static func create_state(
 			sim.positions, space_state, COLLISION_MASK, QUERY_MARGIN_M, {}
 		)
 		sim.colliders = gathered.colliders
+		_sample_terrain(sim, space_state)
 	return {"sim": sim, "_collider_prev": {}}
+
+
+## The moon, once per tick, per particle. Analytic colliders are excluded so a
+## boulder already solved as a box is not also solved as a plane.
+static func _sample_terrain(sim: XPBDRope, space_state: PhysicsDirectSpaceState3D) -> void:
+	sim.local_planes = RopeColliders.sample_local_planes(
+		sim.positions,
+		space_state,
+		COLLISION_MASK,
+		RADIUS,
+		TERRAIN_PROBE_MARGIN_M,
+		RopeColliders.body_rids(sim.colliders)
+	)
 
 
 static func step(
@@ -88,11 +107,10 @@ static func step(
 		sim = fresh.sim
 		state["sim"] = sim
 		state["_collider_prev"] = fresh.get("_collider_prev", {})
-	else:
-		var seg_rest := rest_length_m / float(sim.segment_count())
-		if not is_equal_approx(sim.rest_lengths[0], seg_rest):
-			for j in sim.rest_lengths.size():
-				sim.rest_lengths[j] = seg_rest
+	elif not is_equal_approx(sim.rest_length(), rest_length_m):
+		# Winch: rest length and lumped mass follow the reel without re-seeding
+		# (the re-seed above only happens when the particle count itself moves).
+		sim.set_rest_length(rest_length_m)
 	sim.gravity = gravity
 	var pin_vel_a := _pin_velocity(body_a, anchor_a)
 	var pin_vel_b := _pin_velocity(body_b, anchor_b)
@@ -105,8 +123,10 @@ static func step(
 		)
 		state["_collider_prev"] = gathered.cache
 		sim.colliders = gathered.colliders
+		_sample_terrain(sim, space_state)
 	elif not collide_shapes:
 		sim.colliders = []
+		sim.local_planes = PackedVector4Array()
 	sim.step(delta)
 	result.overshoot_m = CableTensionUtil.effective_overshoot_m(
 		routed_length_m(state), rest_length_m

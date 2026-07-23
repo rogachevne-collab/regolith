@@ -14,7 +14,9 @@ extends RefCounted
 # from body velocities. Contacts are unilateral constraint rows solved in
 # the SAME iteration loop as distance constraints. Friction is Coulomb,
 # capped by the accumulated contact force, applied once per particle after
-# all its contacts. Restitution is 0.
+# all its contacts. Restitution is 0. Geometry with no analytic form —
+# concave meshes, voxel terrain — arrives as [member local_planes], one
+# plane per particle, sampled by the host once per tick.
 #
 # Array ownership: every public array is BORROWED, valid until the next
 # step(). Copy what you need to keep. The C++ core exposes the same buffers
@@ -76,6 +78,25 @@ var iterations := 1
 ## across substeps (ADR 0006). Basis must be orthonormal (no scaled shapes).
 var colliders: Array[Dictionary] = []
 
+## One contact plane per particle, in the same order as [member positions],
+## pushed by the host once per tick: (normal.xyz, plane constant), where the
+## signed distance of a point p is `normal.dot(p) - w`. A zero normal means
+## "nothing near this particle". Empty, or any other size than the particle
+## count, disables the pass.
+##
+## This is how a voxel planet gets to be a collider (ADR 0006 slice 2). The
+## analytic set is what the core can evaluate every substep; a concave mesh or
+## a marching-cubes crust has no analytic form at all. What it does have, at
+## the scale of one rope segment, is a surface — so the host asks the physics
+## server where that surface is once per tick and the core solves a plane,
+## exactly like any other contact row, for the rest of the tick.
+##
+## The approximation is deliberate, and its limits are the honest ones: a
+## plane per particle resolves nothing sharper than the particle spacing, and
+## a rope moving further in one tick than the host's probe margin passes
+## through the wall it never saw.
+var local_planes := PackedVector4Array()
+
 # Per-particle contact accumulators, valid within one substep.
 var _contact_lambda := PackedFloat64Array()
 var _contact_normal := PackedVector3Array()
@@ -88,6 +109,16 @@ var _c_near: Array[bool] = []
 
 ## Which particles are kinematic pins (gate 4 hosts read reactions from these).
 var _pinned := PackedByteArray()
+## Lumped mass added on top of the fibre's own, per particle (hooks, weights).
+## Kept separately from [member inv_mass] so a winch can recompute the fibre
+## half of it without eating the hook.
+var _extra_mass := PackedFloat64Array()
+## Body mass a particle stands in for, per particle; 0 = not a proxy.
+var _proxy_mass := PackedFloat64Array()
+## Proxy velocity at seat time — the reference the handed-back momentum is
+## measured against.
+var _proxy_ref_vel := PackedVector3Array()
+var _mass_per_meter := 0.0
 var _last_dt := 0.0
 
 
@@ -108,15 +139,60 @@ func setup(segment_count: int, total_length: float, mass_per_meter: float) -> vo
 	_contact_vel.resize(count)
 	_pinned.resize(count)
 	_pinned.fill(0)
+	_extra_mass.resize(count)
+	_extra_mass.fill(0.0)
+	_proxy_mass.resize(count)
+	_proxy_mass.fill(0.0)
+	_proxy_ref_vel.resize(count)
+	_proxy_ref_vel.fill(Vector3.ZERO)
 	velocities.fill(Vector3.ZERO)
 	lambdas.fill(0.0)
 	tensions.fill(0.0)
-	var seg_rest := total_length / segment_count
-	rest_lengths.fill(seg_rest)
-	# Lumped masses: each particle carries half of each adjacent segment.
-	var seg_mass := maxf(mass_per_meter, MIN_MASS) * seg_rest
+	_mass_per_meter = maxf(mass_per_meter, MIN_MASS)
+	rest_lengths.fill(total_length / segment_count)
+	_recompute_masses()
+
+
+## Rest length per segment, uniform by construction.
+func segment_rest_length() -> float:
+	return rest_lengths[0] if not rest_lengths.is_empty() else 0.0
+
+
+## Total rest length in meters — what the rope is, as opposed to
+## [method total_polyline_length], which is where it currently hangs.
+func rest_length() -> float:
+	return segment_rest_length() * rest_lengths.size()
+
+
+## Winch (gate 5): change the rest length without re-seeding. The rope's
+## shape, velocity, pins, proxies and hooks all survive — that is the whole
+## difference between paying out a cable and building a new one. Rest is
+## spread uniformly over the existing segments, so resolution drifts as the
+## rope grows: the host decides when a winched rope has stretched far enough
+## from its seeded resolution to deserve a rebuild.
+##
+## Lumped masses follow the new length, because a rope reeled in to a third
+## of its length that still weighs the same is a rope that will hang wrong
+## and read wrong.
+func set_rest_length(total_length: float) -> void:
+	assert(total_length > 0.0, "rope length must be positive")
+	rest_lengths.fill(total_length / rest_lengths.size())
+	_recompute_masses()
+
+
+# Lumped masses: each particle carries half of each adjacent segment, plus
+# whatever the host hung on it, plus the body it stands in for. Pins stay at
+# inverse mass 0 — they are kinematic, and no amount of rope on them changes
+# that.
+func _recompute_masses() -> void:
+	var count := positions.size()
+	var seg_mass := _mass_per_meter * segment_rest_length()
 	for i in count:
+		if _pinned[i] != 0:
+			inv_mass[i] = 0.0
+			continue
 		var m := seg_mass if (i > 0 and i < count - 1) else seg_mass * 0.5
+		m += _extra_mass[i] + _proxy_mass[i]
 		inv_mass[i] = 1.0 / maxf(m, MIN_MASS)
 
 
@@ -159,6 +235,7 @@ func pin(index: int) -> void:
 	inv_mass[index] = 0.0
 	if index >= 0 and index < _pinned.size():
 		_pinned[index] = 1
+		_proxy_mass[index] = 0.0
 
 
 func is_pinned(index: int) -> bool:
@@ -168,8 +245,70 @@ func is_pinned(index: int) -> bool:
 ## Add lumped mass in kg to one particle (a hook, a weight).
 func add_point_mass(index: int, extra_kg: float) -> void:
 	assert(extra_kg >= 0.0, "point mass must not be negative")
-	if inv_mass[index] > 0.0:
-		inv_mass[index] = 1.0 / maxf(1.0 / inv_mass[index] + extra_kg, MIN_MASS)
+	_extra_mass[index] += extra_kg
+	if _pinned[index] == 0:
+		_recompute_masses()
+
+
+# --- body proxies ------------------------------------------------------------
+#
+# A pin is kinematic: inverse mass 0, position dictated by the host. That is
+# right for a crane hook and wrong for anything the rope is supposed to LIFT.
+# A rope tied to a 500 kg rover through a pin reports the same tension as one
+# tied to a nail, because the only mass its distance constraints ever see is
+# its own fibre — so the reaction handed to the rover is the weight of the
+# rope, and the rover keeps falling with a cable politely attached to it.
+#
+# A proxy is the same particle made dynamic and given the body's mass. Now the
+# constraint chain has to hold the rover up, the multipliers say what that
+# costs, and the host hands the body exactly the momentum the rope just spent
+# on its stand-in. Each tick: seat_proxy() -> step() -> proxy_momentum() ->
+# apply_impulse() on the body -> reseat_proxy() so the rendered end sits on the
+# hook. Position is re-seated rather than integrated, so the proxy cannot drift
+# away from the attachment it represents.
+
+
+## Make particle [param index] stand in for a rigid body of [param
+## effective_mass] kg. Clears any pin on it.
+func attach_proxy(index: int, effective_mass: float) -> void:
+	assert(effective_mass > 0.0, "a proxy needs the body's mass")
+	_pinned[index] = 0
+	_proxy_mass[index] = effective_mass
+	_recompute_masses()
+
+
+func is_proxy(index: int) -> bool:
+	return index >= 0 and index < _proxy_mass.size() and _proxy_mass[index] > 0.0
+
+
+## Place a proxy on its attachment point before [method step], with the
+## velocity of the body AT that point (include the rotational term: the tip of
+## a swinging boom is not moving at the boom's linear velocity).
+func seat_proxy(index: int, position: Vector3, velocity: Vector3) -> void:
+	positions[index] = position
+	prev_positions[index] = position
+	velocities[index] = velocity
+	_proxy_ref_vel[index] = velocity
+
+
+## Momentum in N*s the rope gave the proxy during the last [method step] —
+## what the host must hand to the real body.
+##
+## Gravity is subtracted because the host's physics engine already applies it
+## to the body; leaving it in would make every rope a second gravity well and
+## anything hanging on one would fall at 2g.
+func proxy_momentum(index: int) -> Vector3:
+	if not is_proxy(index) or _last_dt <= 0.0:
+		return Vector3.ZERO
+	var dv := velocities[index] - _proxy_ref_vel[index] - gravity * _last_dt
+	return dv * _proxy_mass[index]
+
+
+## Put a proxy back on its attachment after [method step], keeping the solved
+## velocity. The rendered rope end belongs on the hook, not where a 500 kg
+## stand-in drifted to while the solver was thinking.
+func reseat_proxy(index: int, position: Vector3) -> void:
+	positions[index] = position
 
 
 ## Move a pinned particle that is TRAVELING (an anchor on a moving crane).
@@ -203,9 +342,11 @@ func step(dt: float) -> void:
 	var h := dt / float(substeps)
 	var h2 := h * h
 	var alpha := stretch_compliance / h2
-	var have_contacts := not colliders.is_empty()
-	if have_contacts:
-		have_contacts = _cull_colliders(dt)
+	var have_shapes := not colliders.is_empty()
+	if have_shapes:
+		have_shapes = _cull_colliders(dt)
+	var have_planes := local_planes.size() == count
+	var have_contacts := have_shapes or have_planes
 	for s in substeps:
 		for i in count:
 			if inv_mass[i] == 0.0:
@@ -219,8 +360,9 @@ func step(dt: float) -> void:
 			_contact_lambda.fill(0.0)
 			_contact_normal.fill(Vector3.ZERO)
 			_contact_vel.fill(Vector3.ZERO)
-			# End of this substep in tick time: substeps sweep prev -> curr.
-			_interpolate_colliders(float(s + 1) / float(substeps))
+			if have_shapes:
+				# End of this substep in tick time: substeps sweep prev -> curr.
+				_interpolate_colliders(float(s + 1) / float(substeps))
 		for _it in iterations:
 			# Red-black sweep: no two segments of the same color share a
 			# particle, so the result cannot depend on traversal order and
@@ -229,8 +371,10 @@ func step(dt: float) -> void:
 				_solve_segment(j, alpha)
 			for j in range(1, segs, 2):
 				_solve_segment(j, alpha)
-			if have_contacts:
+			if have_shapes:
 				_solve_contacts()
+			if have_planes:
+				_solve_local_planes()
 		for i in count:
 			if inv_mass[i] != 0.0:
 				velocities[i] = (positions[i] - prev_positions[i]) / h
@@ -312,11 +456,36 @@ func _solve_contacts() -> void:
 		var col: Dictionary = colliders[ci]
 		var shape: int = col.shape
 		var params: Vector3 = col.params
+		# Per-sample reject before the exact probe. The rope-wide cull in
+		# _cull_colliders only decides whether a collider is near the rope AT
+		# ALL; after it says yes, every particle used to pay for a full probe
+		# against it, every iteration of every substep. Measured on the gate 5
+		# bench: four scenery boxes beside a 38-segment rope at 16 substeps x 4
+		# iterations came to ~20k probe calls a tick and 22 ms a frame — the
+		# whole frame budget, spent proving that a rope is not touching a
+		# pillar two metres to its left. A squared distance against the
+		# collider's bounding sphere answers that for the price of a
+		# subtraction, and cannot miss a contact: the bound encloses the shape.
+		var center := _c_xf[ci].origin
+		var reach := radius
+		match shape:
+			SHAPE_SPHERE:
+				reach += params.x
+			SHAPE_BOX:
+				reach += params.length()
+			_:
+				reach = INF  # a plane is everywhere; nothing to reject against
+		var reach_sq := reach * reach
 		# Detection samples: every particle, then every segment midpoint —
 		# spacing of half a segment is the honest resolution limit (ADR 0006).
 		for i in count:
+			if positions[i].distance_squared_to(center) > reach_sq:
+				continue
 			_contact_sample(ci, shape, params, i, i)
 		for j in rest_lengths.size():
+			var mid := (positions[j] + positions[j + 1]) * 0.5
+			if mid.distance_squared_to(center) > reach_sq:
+				continue
 			# Midpoints exist to catch what slips BETWEEN particles (an edge
 			# poking into the gap). When both endpoints already carry
 			# contact, the chord cutting the corner is a discretization
@@ -330,6 +499,13 @@ func _solve_contacts() -> void:
 
 
 func _contact_sample(ci: int, shape: int, params: Vector3, a: int, b: int) -> void:
+	# A proxy stands for a body the physics engine is already colliding on its
+	# own. Solving a world contact on it would have the rope shove its own
+	# anchor, and the host throws the result away at reseat anyway. Pins fall
+	# out below on inverse mass 0; this is the same exemption for the ends that
+	# are dynamic but still not the rope's to move.
+	if _proxy_mass[a] > 0.0 or _proxy_mass[b] > 0.0:
+		return
 	var wa := inv_mass[a]
 	var wb := inv_mass[b]
 	var midpoint := a != b
@@ -365,6 +541,26 @@ func _contact_sample(ci: int, shape: int, params: Vector3, a: int, b: int) -> vo
 	else:
 		positions[a] += n * (dl * wa)
 		_note_contact(a, dl, n, surface_vel)
+
+
+## The host's per-particle planes, solved as ordinary contact rows so they
+## share the friction and velocity passes with the analytic shapes. No
+## midpoint sampling: a plane is only claimed to be true where it was
+## measured, and between two particles nobody measured anything.
+func _solve_local_planes() -> void:
+	for i in positions.size():
+		var w := inv_mass[i]
+		if w == 0.0 or _proxy_mass[i] > 0.0:
+			continue
+		var plane := local_planes[i]
+		var n := Vector3(plane.x, plane.y, plane.z)
+		if n.length_squared() < 1e-12 or not is_finite(plane.w):
+			continue
+		var pen := radius - (n.dot(positions[i]) - plane.w)
+		if pen <= 0.0:
+			continue
+		positions[i] += n * pen
+		_note_contact(i, pen / w, n, Vector3.ZERO)
 
 
 func _note_contact(i: int, lambda_share: float, n: Vector3, surface_vel: Vector3) -> void:

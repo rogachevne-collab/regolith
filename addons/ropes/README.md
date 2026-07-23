@@ -4,11 +4,16 @@ Physically based ropes for Godot 4. Target: XPBD solver in a C++ GDExtension,
 believable rope behavior on low-end hardware. Works with stock Godot — no
 engine fork, no custom physics server.
 
-**Status: pre-alpha, gate 4 slice 1.** Shipping today is the XPBD reference
-core in GDScript (ADR 0002) with collision and two-way pin reactions on
-[PhysicsBody3D] anchors (gate 4). Next: concave shapes / voxel terrain (slice
-2), smooth winch on `length` (gate 5). The C++ GDExtension port is still the
-production performance path — not landed yet. AVBD (ADR 0007/0008) is parked.
+**Status: pre-alpha, gate 5.** Shipping today is the XPBD reference core in
+GDScript (ADR 0002) with collision against the analytic shapes *and* against
+concave / voxel geometry, mass-coupled `RigidBody3D` anchors, and `length` as
+a live winch. A rope can hold a rover off the ground and reel it in. Next: the
+C++ GDExtension port, which is still the production performance path — nothing
+here is fast yet. AVBD (ADR 0007/0008) is parked.
+
+`demos/gate5_lift.tscn` is the bench for all three: a concave trimesh floor, a
+free rope draped over it, and a 300 kg rover winched off the ground by a rope
+running to a kinematic piston head.
 
 ## Target usage
 
@@ -55,11 +60,34 @@ Properties:
 - `collision_enabled: bool`, `collision_mask: int`
 - `friction: float` — Coulomb coefficient; static friction is what makes a
   wrap hold and a laid cable stay put
+- `concave_collision: bool` — also collide with geometry that has no analytic
+  form: concave meshes, heightmaps, voxel terrain. One physics query per
+  particle per tick, on the same `collision_mask`
+- `probe_margin: float` — how far ahead of the rope that query looks, and
+  therefore the rope's speed limit against such geometry: whatever it crosses
+  in one tick beyond this margin was never sampled and is not there
 
-Properties are hot or cold. Hot ones (stiffness, damping, drag, budget,
-radius) apply immediately. Cold ones (length, resolution, density, end mass,
-anchors) change topology and re-seed the rope at the start of the next
-physics tick, discarding its motion.
+Properties are hot or cold. Hot ones (length, stiffness, damping, drag,
+budget, radius, collision) apply immediately. Cold ones (resolution, density,
+end mass, anchors) change topology and re-seed the rope at the start of the
+next physics tick, discarding its motion.
+
+### Anchors are pins or masses
+
+An anchor node the rope cannot move — a crane arm, an `AnimatableBody3D`
+piston head, a frozen body, a bare `Node3D` — is a **kinematic pin**: the host
+says where it is and the rope obeys.
+
+An anchor that resolves to a live `RigidBody3D` (itself, or the nearest one
+above it, so a `Marker3D` hook bolted under a chassis couples the chassis) is
+**coupled by mass** instead. Its end particle carries the body's mass, so the
+rope's own constraints have to hold the body up, and the momentum they spend
+is handed back to the body each tick.
+
+The difference is the whole reason a rope can lift anything. A kinematic end
+has inverse mass 0, so the only mass the rope's constraints ever see is its
+own fibre: a rope tied to a 500 kg rover reports the same tension as one tied
+to a nail, and the reaction the rover gets is the weight of the rope.
 
 Methods:
 
@@ -80,7 +108,17 @@ Methods:
   size (AVBD; parked). Both return nothing on the XPBD core shipping today,
   whose tension holds at every length measured.
 
-## Open problem
+## Open problems
+
+A mass-coupled body does not hang steadily, it hangs in catches. Measured on
+`demos/gate5_lift.tscn` (300 kg rover, 5 m rope, 0.6 kg/m, 60 Hz): the rover
+holds its height to about ±5 cm and the tension readout swings between ~170 N
+and ~2400 N rather than sitting at the rover's 2940 N weight. Budget buys
+stretch, not steadiness — going from 16 substeps / 4 iterations to 32 / 8 cut
+the rope's stretch under load from 1.0% to 0.2% and left the bob unchanged.
+It looks like a load being caught and dropped each cycle rather than carried,
+so read `get_segment_tension` as a spiky signal, and do not use a single
+sample of it for a break check yet.
 
 A very compliant rope carrying a heavy weight does not settle: at
 `stretch_compliance` 0.005 m/N with 10 kg the peak-velocity envelope holds a
@@ -132,14 +170,17 @@ candidates in the research note become worth their complexity.
 1. Public API draft (this document) — done
 2. XPBD core, no collision — done (catenary, free fall, compliance,
    unilateral gates)
-3. Collision, solved in the same constraint loop — slice 1 done
-   (box/sphere/plane, friction, moving colliders; regression test is the
-   old rope's killer scenario: an asymmetric drape over a box must settle,
-   hold, not creep, not penetrate, and slide off only at zero friction);
-   slice 2 is concave shapes / voxel terrain
-4. Two-way coupling with rigid bodies — slice 1 done (pin reactions from λ;
-   Regolith via XpbdCableRopeSolver)
-5. Smooth winch on `length` (no re-seed)
+3. Collision, solved in the same constraint loop — done. Slice 1: the
+   analytic set (box/sphere/plane, friction, moving colliders; regression
+   test is the old rope's killer scenario: an asymmetric drape over a box
+   must settle, hold, not creep, not penetrate, and slide off only at zero
+   friction). Slice 2: concave shapes and voxel terrain, as one host-sampled
+   contact plane per particle per tick
+4. Two-way coupling with rigid bodies — done. A `RigidBody3D` anchor is
+   coupled by mass, not pinned, so the rope carries it (Regolith's
+   `XpbdCableRopeSolver` still pins: its cables run between parts of one
+   machine, where two anchor reactions are a torque couple)
+5. Winch on `length`, no re-seed — done
 6. C++ GDExtension port of the XPBD core; performance, LOD, demos
 
 AVBD remains a researched alternative for load-bearing mass ratios

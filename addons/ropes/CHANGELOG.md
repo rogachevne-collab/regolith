@@ -2,6 +2,78 @@
 
 ## 0.1.0-dev (unreleased)
 
+- A rope no longer cuts through the block it is tied to. `Rope3D` used to
+  exclude its anchor bodies from collision entirely, so a swinging load passed
+  straight through its own cable. The exemption was on the wrong object: it
+  belongs to the attachment POINTS, not to the body. Pins were already exempt
+  by inverse mass 0; proxies now are too, in the core, because a proxy stands
+  for a body the physics engine is already colliding on its own and the host
+  discards its solved position anyway. Everything between the two ends is
+  entitled to lie against the hull like any other surface. Measured on the
+  gate 5 bench with the rover kicked into a swing: deepest approach into the
+  block went from unbounded to +3.5 mm outside its face.
+- Gate 5 bench: the rover's lifting eye stands proud of the hull instead of
+  sitting flush with it. An attachment flush with a face means the rope leaves
+  the body tangent to it, so the first segment grazes the surface on every
+  swing and the rendered tube reads as sunk into the block — geometry asking
+  for it, not a contact failure. With the lug the rope stays 22 cm clear.
+
+- Collision broadphase was costing more than the solver it feeds: the gate 5
+  bench ran at 38.8 ms a frame, and 22 ms of that was contact detection
+  proving, twenty thousand times a tick, that a rope was not touching a pillar
+  two metres to its left. Two fixes, both measured on that scene, together
+  38.8 ms -> 6.9 ms a frame with the simulation bit-identical (same rover
+  height to the millimetre after 14 s):
+  - `RopeColliders.cull` compares real boxes instead of bounding spheres.
+    Spheres lied in both directions: a rope is a line, so its sphere is mostly
+    empty, and a gantry leg is a tall thin box whose sphere is 4.8 m of
+    nothing. Everything in the scene read as "near"; now the scenery is
+    rejected outright.
+  - `XPBDRope._solve_contacts` rejects each sample against the collider's
+    bounding sphere before the exact probe. The rope-wide cull only ever
+    decided whether a collider is near the rope AT ALL; after it said yes,
+    every particle paid for a full probe, every iteration of every substep.
+  Neither changes what a contact is or how it is solved. The cost was
+  proportional to substeps x iterations x colliders x particles, which is why
+  it was invisible at gate 3's budget and fatal at gate 5's.
+
+- Gate 3 slice 2 — collision with geometry that has no analytic form: concave
+  meshes, heightmaps, voxel terrain. The host samples the world once per tick
+  per particle (`RopeColliders.sample_local_planes`) and hands the core a
+  contact plane each (`XPBDRope.local_planes`), solved as ordinary unilateral
+  rows in the same loop, sharing the friction and velocity passes with the
+  analytic shapes. The analytic pass keeps its shapes; whatever it already
+  solves is excluded from the probe, because the same wall solved twice is
+  the same wall with twice the friction. Limits, stated rather than
+  discovered later: a plane per particle resolves nothing sharper than the
+  particle spacing, and `probe_margin` is a speed limit — a rope crossing more
+  than that in one tick meets a wall nobody sampled. Regolith's cables get the
+  moon this way too (`XpbdCableRopeSolver`, 0.3 m margin).
+- Gate 4 slice 2 — a `RigidBody3D` anchor is coupled by mass instead of
+  pinned, which is what makes a rope able to lift. A pin has inverse mass 0,
+  so the only mass a rope's constraints ever saw was its own fibre: tied to a
+  300 kg rover it reported the same tension as tied to a nail, and handed the
+  rover the weight of the rope. The end particle now carries the body's mass
+  (`attach_proxy`), the constraint chain has to hold it up, and the momentum
+  that costs is handed back each tick, minus gravity — the host's physics
+  engine already applies that to the body, and leaving it in makes every rope
+  a second gravity well. The anchor node no longer has to *be* the body: the
+  nearest `RigidBody3D` above it is used, so a `Marker3D` hook couples its
+  chassis. Frozen bodies stay pins, and switch back live.
+- Gate 5 — `length` is a winch. Assigning it pays rope out or reels it in
+  without re-seeding: shape, motion, pins, hooks and coupled bodies all
+  survive (`XPBDRope.set_rest_length`). Lumped masses follow the new length,
+  because a rope reeled in to a third of its length that still weighs the same
+  hangs wrong and reads wrong. Resolution does not follow — the rope keeps the
+  segment count it was seeded with, so a rope winched far past its original
+  length gets coarse and the host decides when that deserves a `rebuild()`.
+- New bench `demos/gate5_lift.tscn`: concave trimesh ground, a free rope
+  draped over it, and a 300 kg rover lifted off it by a winch running to a
+  kinematic piston head. Measured on it: the rover leaves the ground, holds
+  height to ±5 cm, and the rope stretches 1.0% under load at 16 substeps / 4
+  iterations, 0.2% at 32 / 8. The bob is unchanged by budget and is in the
+  README's open problems.
+
 - AVBD's beta derivation no longer reads the segment's own live multiplier
   (`core/avbd_rope.gd`, `_beta_for`'s call sites in `_substep` and
   `_update_contact_duals`). It used to be `maxf(lambda, floor)`, which is a
