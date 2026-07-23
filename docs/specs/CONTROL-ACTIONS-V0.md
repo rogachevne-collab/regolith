@@ -367,14 +367,83 @@ gameplay-инпут подавлен; закрытие возвращает уп
 
 ## Persistence и кооп
 
-- Слоты бара пекутся в `Blueprint` (там уже перечислены `bindings`) и
-  сохраняются как instance-override в snapshot (`capture_snapshot`), тем же
-  механизмом, что остальное состояние сборки. Baked Blueprint — deterministic
-  Resource.
-- Кооп: управляющие команды — «частые, last-write-wins» (Physical Language →
-  «Граница владения»). Право бить по слотам бара имеет только **текущий
-  occupant** хоста; редактирование бара (drag-drop) — тоже occupant. Отдельного
-  пути репликации не нужно: команды идут host-authoritative, snapshot несёт бар.
+**Уточнение по факту реализации (было заявлено раньше срока):** в `Blueprint`
+(`scripts/simulation/resources/blueprint.gd`) поля `bindings` не существует —
+там всего 4 поля (`blueprint_id`, `version`, `allow_disconnected`,
+`placements`), и `placements` несёт только геометрию (`archetype`,
+`origin_cell`, `orientation_index`, `pose_offset`), без единого instance-
+override. Более того, в коде нет вообще ни одной работающей связки «сохранить
+живую сборку в Blueprint»: даже `custom_name` — простейший instance-override
+из этого же среза — явно помечен `## instance-состояние... в Blueprint не
+пекётся`. Печь бар в Blueprint здесь **не делаем**: это отдельная фича
+(«захватить сборку в Blueprint»), которой в кодовой базе не существует ни для
+чего, не только для бара — заводить её ради одного поля было бы избыточно.
+
+Что делаем — авторитетная персистентность через snapshot:
+
+- **Хранилище.** Бар — side-table `ActionBarState` (`page → slot_index →
+  Dictionary`), по образцу `WheelInstanceState`/`SuspensionInstanceState`:
+  `SimulationWorld._action_bars: Dictionary[element_id, ActionBarState]`,
+  `ensure_action_bar_state`/`register_action_bar_state`/`list_action_bar_rows`.
+  Не поле на `SimulationElement`: бар (81 слот) на порядок крупнее любого
+  текущего прямого поля и нужен только горстке `ControlSeat`-хостов на
+  сборку — как и колёсный side-table, стоит нулю байт для всех остальных
+  элементов, пока не тронут.
+- **Ключ — `element_id` хоста**, не `assembly_id` (нормативно уже решено выше,
+  п. 3: «Разные сиденья на одной сборке имеют разные бары» — сборка ключом не
+  годится ещё и потому, что не переживает split/merge).
+- **Гейт — роль, не типизированный Definition.** В отличие от колеса
+  (`wheel_definition` — типизированный ресурс с границами), у `ControlSeat`
+  нет своего `*Definition`, только тег `roles.has("ControlSeat")` — та же
+  проверка, что уже делает `WheelPlacementUtil.enrich_control_seat_metadata`.
+  Хранилище само не гейтует (как и `ensure_wheel_instance_state`); гейт — на
+  границах: снапшот-валидация и команда bind/clear.
+- **Команда — одна, по образцу `set_element_name`** (надёжная, упорядоченная,
+  не структурная — двигает `state_revision` хоста, не `Assembly.revision`):
+  `configure_action_slot{host_element_id, page, index, payload}`. Пустой `payload`
+  = очистить слот (тот же приём, что пустое имя = сброс на авто-подпись).
+  Валидация на этой границе — структурная (диапазоны `page`/`index`, тип
+  `payload` — только `Dictionary`, без границы на размер: свободный формат
+  не даёт естественной границы, как у числовых полей колеса/подвески),
+  **не** проверка `action_id`/`param_id` по каталогу: этому
+  языку не нужен typed `ActionCatalog`-ресурс — авторитетная проверка глагола
+  всё равно происходит там, где слот реально стреляет (`configure_actuator`,
+  `set_actuator_target`, `configure_wheel`, `configure_suspension` — те же
+  команды, что и раньше). Бар — это просто память «какая команда на какой
+  клавише», а не второй путь авторства.
+- **Кооп-гейт на команде.** «Право бить/редактировать бар — только текущий
+  occupant хоста» проверяется в обработчике команды в гейтвее (сверка
+  `command.source` с occupant-ом хоста — тем же способом, каким
+  `_toggle_control_seat` уже знает, кто сидит), не отдельным путём
+  репликации: команда host-authoritative, snapshot несёт бар целиком.
+- **Snapshot.** `SimulationSnapshot.capture()` добавляет
+  `"action_bars": world.list_action_bar_rows()`; `_validate_and_populate()`
+  гейтует каждую запись по `roles.has("ControlSeat")` (как колёсный ряд
+  гейтует по `wheel_definition == null`); `VERSION` увеличивается.
+
+## Хосты бара
+
+- **`cockpit`** (уже есть, роль `ControlSeat`+`Frame`) — без изменений.
+- **`control_terminal`** (новый архетип, роль `ControlSeat`+`Frame`) —
+  **не садит**. Роль `ControlSeat` в коде сегодня жёстко привязана к посадке
+  (`enrich_control_seat_metadata` → `KIND_CONTROL_SEAT` → `toggle_control_seat`
+  → `_enter_rover_seat` → `player.enter_vehicle`, плюс жёсткий гейт
+  `ThrusterSimulationService.is_mobile_assembly` — стационарный пульт на
+  неподвижной базе получил бы `blocked/not_mobile`). Перехват — **до**
+  эмита `toggle_control_seat`: `ToolController._try_emit_context_interaction`
+  получает `_try_open_control_terminal(hit)` (по образцу
+  `_try_open_wheel_panel`/`_try_open_actuator_panel`/`_try_open_terminal`),
+  гейтует по `archetype_id == "control_terminal"`, зовёт
+  `hud_control_terminal.gd`'s `try_open_on_target(hit)` (новый метод, тот же
+  контракт, что у остальных панелей) и возвращает `true` — `toggle_control_seat`
+  для этого архетипа никогда не эмитится. Второй слой защиты — сам
+  `WorldCommandGateway._toggle_control_seat` явно отклоняет
+  `archetype_id == "control_terminal"`, если что-то всё же до него дойдёт.
+- **Резолв хоста для бара.** `ControlTerminalSnapshotBuilder.build()` находит
+  `ControlSeat`-элемент сборки (перебор `assembly.element_ids`, тот же
+  паттерн, что везде в кодовой базе — общего хелпера «найти элемент по
+  предикату» нет) и кладёт `control_seat_element_id` в снапшот. Полное окно
+  адресует бар этим id, не `assembly_id`.
 
 ## Диагностика
 
@@ -480,27 +549,52 @@ gameplay-инпут подавлен; закрытие возвращает уп
 - бар принадлежит **сборке**: у каждой техники свои клавиши;
 - отказ команды выводится причиной в статус-баре.
 
-Осталось (не входило в этот срез):
+Дополнительно сделано (следующий срез — архетип, персистентность, компактный
+HUD):
 
-- **архетипа `control_terminal` нет** — окно открывается временной клавишей `K`
-  и цепляется к сборке, на которую смотрит игрок (цель защёлкивается на момент
-  открытия). Штатное «встал у пульта → `E`» появится вместе с архетипом;
-- **persistence бара** — рантайм-овый. Слоты пекутся в `Blueprint`/snapshot
-  только когда у бара появится хост-элемент (`ControlSeat`), иначе их некуда
-  привязать; ключом по сборке это делать нельзя — сборка живёт до первого
-  split/merge;
-- компактный ActionBar HUD в кокпите; группы; быстрый бинд по прицелу;
-  переключатель Авто/Ручн (нет автоматической половины — «Авто» погашено).
+- архетип `control_terminal` (`resources/archetypes/slice01/control_terminal.tres`,
+  роль `ControlSeat`+`Frame`) — стоя в interaction-range, `E` открывает полное
+  окно, не садит (см. «Хосты бара» выше);
+- бар — авторитетное состояние симуляции: side-table `ActionBarState` по
+  `element_id` хоста, команда `configure_action_slot`, snapshot save/load
+  переживает рестарт игры;
+- компактный ActionBar HUD (`scripts/ui/hud_compact_action_bar.gd`) — активная
+  страница 9 слотов снизу экрана, **пока сидишь в кокпите** и полное окно
+  закрыто; строй-тулбар (`hud_toolbar.gd`) на это время скрыт. `control_terminal`
+  никогда не садит, поэтому у него нет отдельного «сижу/стою, окно ещё
+  закрыто» состояния — `E` сразу открывает полное окно (своя лента 9×9 внизу
+  окна), у ленты вне окна для него просто нет момента, когда её показывать.
+
+Осталось (P1, не начато сознательно — не входит в этот срез):
+
+- **бар не печётся в Blueprint** — печь в Blueprint сейчас нечего ни для чего
+  (см. «Persistence и кооп» выше, тот же предел, что у `custom_name`); нужна
+  отдельная фича «захват живой сборки в Blueprint», не тема этой спеки;
+- **host `power_gate` / safe-freeze не реализован.** Диагностика ниже
+  описывает его как часть модели `ControlSeatHost`, но в коде нет никакого
+  host-уровневого «бар без питания не шлёт команды»: `configure_action_slot`
+  (bind/clear клавиши) гейтуется только структурной готовностью хоста
+  (`is_operational()`), не питанием; а у уже привязанного и выстрелившего
+  слота защита от `no_power` — это защита **цели** глагола (`configure_wheel`
+  и т.п. уже сами отказывают без питания через собственные проверки), не
+  отдельный host-уровневый freeze. Реальный `power_gate` — отдельная задача;
+- группы, подсветка узла в мире, быстрый бинд по прицелу, переключатель
+  Авто/Ручн (нет автоматической половины — «Авто» погашено).
 
 ## Лестница внедрения
 
-1. Спека (этот документ) + якорь в Physical Language «ControlSeat и Binding».
-2. `ActionCatalog` — вынести глаголы из `hud_actuator_panel` в data-driven per-role.
-3. `ControllableTarget` resolve + слот→команда bridge (headless).
-4. `control_terminal` архетип + host `ActionBar` + persistence.
-5. Компактный ActionBar HUD: seat-owned вкладки, скрытие строй-бара при посадке.
-6. Полное окно «Пульт управления»: навигатор + полный инспектор + пульт;
-   drag-drop бинда + SensorChannel live-состояние.
-7. P1: группы, подсветка узла в мире, быстрый бинд по прицелу, имена вкладок,
-   data-link кросс-сборка.
+1. ✅ Спека (этот документ) + якорь в Physical Language «ControlSeat и Binding».
+2. ⚠️ `ActionCatalog` — глаголы data-driven по параметрам (`ParameterCatalog` в
+   `game_balance.json`), но команды piston/rotor/hinge/wheel остаются
+   хардкод-таблицами в `hud_control_terminal.gd` (`COMMANDS`/`SETPOINTS`), не
+   вынесены в отдельный per-role ресурс — рефактор без изменения контракта,
+   не блокирует остальное.
+3. ✅ `ControllableTarget` resolve + слот→команда bridge (работает в игре;
+   headless-тест — задача R2 этого среза, `test_control_actions.gd`).
+4. ✅ `control_terminal` архетип + host `ActionBar` + persistence.
+5. ✅ Компактный ActionBar HUD: seat-owned вкладки, скрытие строй-бара при посадке.
+6. ✅ Полное окно «Пульт управления»: навигатор + полный инспектор + пульт;
+   drag-drop бинда + живое состояние из `control_terminal_snapshot`.
+7. P1, не начато: группы, подсветка узла в мире, быстрый бинд по прицелу,
+   имена вкладок, data-link кросс-сборка.
 8. Позже: `CONTROL-AXES-V0` (оси вождения), затем Control Graph поверх ядра.

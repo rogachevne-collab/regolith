@@ -78,6 +78,8 @@ const LOAD_REFRESH_INTERVAL := 0.2
 var _tools: ToolController
 var _gateway: WorldCommandGateway
 var _preview: ConstructionPreview
+var _player: Node
+var _control_terminal: Node
 
 var _slots_root: Control
 var _slots: Array = []            # [{panel, glyph, underline}]
@@ -101,6 +103,8 @@ func setup(ctx: Dictionary) -> void:
 	_tools = ctx.get("tools")
 	_gateway = ctx.get("gateway")
 	_preview = ctx.get("preview")
+	_player = ctx.get("player")
+	_control_terminal = ctx.get("control_terminal")
 
 
 func _ready() -> void:
@@ -162,6 +166,23 @@ func _add_info_sep() -> Label:
 func _process(delta: float) -> void:
 	if _tools == null:
 		return
+	# CONTROL-ACTIONS-V0 «пока игрок в сиденье/у пульта, тулбар показывает
+	# только управляющие вкладки; строй-бар скрыт» — прячем целиком, не только
+	# инпут (тот гейтуется отдельно в ToolController._physics_process).
+	var seated := (
+		_player != null
+		and _player.has_method("is_in_vehicle")
+		and bool(_player.call("is_in_vehicle"))
+	)
+	var at_terminal := (
+		_control_terminal != null
+		and _control_terminal.has_method("is_open")
+		and bool(_control_terminal.call("is_open"))
+	)
+	if seated or at_terminal:
+		visible = false
+		return
+	visible = true
 	_load_accum += delta
 	if _load_accum >= LOAD_REFRESH_INTERVAL:
 		_load_accum = 0.0

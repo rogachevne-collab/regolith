@@ -49,8 +49,11 @@ const SLOT_ACTIONS: Array[StringName] = [
 	&"toolbar_slot_4", &"toolbar_slot_5", &"toolbar_slot_6",
 	&"toolbar_slot_7", &"toolbar_slot_8", &"toolbar_slot_9",
 ]
-const PAGE_COUNT := 9
-const SLOTS_PER_PAGE := 9
+## Единственный источник размерности бара — ActionBarState (симуляция);
+## своей константы тут больше нет, иначе рассинхрон с сервером ловится не
+## компилятором, а игроком в проде (Dictionary-ключи GDScript не типизирует).
+const PAGE_COUNT := ActionBarState.PAGE_COUNT
+const SLOTS_PER_PAGE := ActionBarState.SLOTS_PER_PAGE
 
 ## Перетаскиваемая команда/параметр. Payload несёт всё, что нужно слоту, чтобы
 ## потом собрать команду без обратных ссылок на UI. Не кликается: единственный
@@ -146,10 +149,16 @@ class SliderTrack:
 
 var _frame: PanelContainer
 var _icon_font: FontFile
-## Бары пультов: assembly_id → 9 страниц × 9 слотов. Бар принадлежит технике, а
-## не игроку, поэтому переключение между сборками не затирает чужие клавиши.
-## (Спека: хост бара — ControlSeat; до появления архетипа ключ — сборка.)
-var _bars: Dictionary = {}
+## Локальный кэш бара текущего хоста — источник правды теперь
+## SimulationWorld (ActionBarState по element_id ControlSeat-хоста), сюда
+## приезжает из control_terminal_snapshot.action_bar. bind_slot/clear_slot
+## шлют команду в симуляцию, а не мутируют это напрямую (кроме фолбэка без
+## гейтвея — см. _submit_action_slot).
+var _bar_pages: Array = []
+## Хост текущего бара (element_id элемента с ролью ControlSeat), 0 = не
+## резолвлен. Отдельно от _target_assembly: бар принадлежит хосту, список
+## узлов — сборке, это разные скоупы (CONTROL-ACTIONS-V0 «Хосты бара»).
+var _host_element_id := 0
 var _page := 0
 var _strip: HBoxContainer
 var _page_row: HBoxContainer
@@ -309,15 +318,46 @@ func toggle() -> void:
 		open()
 
 
+## Точка входа из ToolController (`E` в interaction-range архетипа
+## `control_terminal`) — тот же контракт `try_open_on_target`, что у
+## actuator/wheel/industry-панелей. Архетип несёт роль `ControlSeat`, поэтому
+## перехватывается ДО того, как интеракт успеет собраться в `toggle_control_seat`
+## и попытаться посадить игрока в стационарную консоль (CONTROL-ACTIONS-V0
+## «Хосты бара»).
+const INTERACT_RANGE_M := 4.0
+
+
+func try_open_on_target(hit: InteractionHit) -> bool:
+	if (
+		hit == null
+		or not hit.valid
+		or hit.distance > INTERACT_RANGE_M
+		or str(hit.metadata.get("archetype_id", "")) != "control_terminal"
+	):
+		return false
+	open()
+	return true
+
+
 func open() -> void:
 	if _open:
 		return
 	if not UIWindowStack.push(self, Callable(self, "close"), Callable(self, "_on_stack_escape")):
 		return
 	_open = true
-	# Цель фиксируется один раз, на открытии: дальше игрок работает мышью и
-	# прицел стоит там, где его бросили.
-	_target_assembly = 0
+	# Сидя — бар и так резолвится непрерывно фоном (см. _process), сбрасывать
+	# цель незачем: это стёрло бы страницу/выбор узла, которые игрок уже
+	# выставил через компактную ленту, закрытым окном. Не сидя — прицел мог
+	# уйти на другую машину с прошлого открытия, тут сброс на месте: цель
+	# фиксируется заново, дальше игрок работает мышью и прицел стоит там, где
+	# его бросили.
+	var seated := (
+		_player != null
+		and _player.has_method("is_in_vehicle")
+		and bool(_player.call("is_in_vehicle"))
+	)
+	if not seated:
+		_target_assembly = 0
 	_refresh_left = 0.0
 	_apply_open_state()
 	_refresh()
@@ -358,9 +398,18 @@ func _process(delta: float) -> void:
 	if _interact_release_latch and not Input.is_action_pressed(&"interact"):
 		_interact_release_latch = false
 	_release_stale_holds()
-	if not _open:
+	# Бар обновляется, пока игрок сидит, даже если окно закрыто — компактная
+	# лента (hud_compact_action_bar.gd) переиспользует именно этот бар и эту
+	# же _fire_slot, а не дублирует резолв цели и исполнение глаголов.
+	# Список узлов/фейсплейт/аварии — тяжелее и нужны только открытому окну.
+	var seated := (
+		_player != null
+		and _player.has_method("is_in_vehicle")
+		and bool(_player.call("is_in_vehicle"))
+	)
+	if not _open and not seated:
 		return
-	if _fault_left > 0.0:
+	if _open and _fault_left > 0.0:
 		_fault_left = maxf(_fault_left - delta, 0.0)
 		if _fault_left <= 0.0:
 			_fault_text = ""
@@ -391,15 +440,70 @@ func _refresh() -> void:
 		# Молча оставлять на экране mock-данные нельзя: пульт врал бы живыми на
 		# вид показаниями несуществующей техники.
 		_set_target_assembly(0)
-		_fill_unit(snap)
-		_fill_nodes([])
-		_fill_alarms([])
+		_apply_bar_snapshot(0, [])
+		if _open:
+			_fill_unit(snap)
+			_fill_nodes([])
+			_fill_alarms([])
 		return
 	if _target_assembly <= 0:
 		_set_target_assembly(int(snap.get("assembly_id", 0)))
-	_fill_unit(snap)
-	_fill_nodes(snap.get("nodes", []))
-	_fill_alarms(snap.get("alarms", []))
+	var bar: Dictionary = snap.get("action_bar", {})
+	_apply_bar_snapshot(
+		int(snap.get("control_seat_element_id", 0)),
+		bar.get("pages", [])
+	)
+	if _open:
+		_fill_unit(snap)
+		_fill_nodes(snap.get("nodes", []))
+		_fill_alarms(snap.get("alarms", []))
+
+
+# ---------- компактная лента (hud_compact_action_bar.gd) ----------
+# Читает и стреляет через тот же бар и ту же _fire_slot, что и полное окно —
+# не копия логики, один источник правды на оба поверхности пульта.
+
+func active_page_slots() -> Array:
+	return _page_slots()
+
+
+func active_page_number() -> int:
+	return _page
+
+
+func fire_slot(index: int, pressed: bool, source := "") -> void:
+	_fire_slot(index, pressed, source)
+
+
+func set_active_page(index: int) -> void:
+	_set_page(index)
+
+
+## Бар приезжает целиком из снапшота — это хостовое авторитетное состояние,
+## не то, что рисует сама панель. Смена хоста (в т.ч. на «нет хоста») сбрасывает
+## текущую страницу: чужая страница №7 на новом хосте ничего не значит.
+func _apply_bar_snapshot(host_element_id: int, pages: Array) -> void:
+	var host_changed := host_element_id != _host_element_id
+	_host_element_id = host_element_id
+	_bar_pages = pages if not pages.is_empty() else _empty_bar_pages()
+	if host_changed:
+		_page = 0
+	# Полоса пульта — часть закрытого окна (_frame.visible=false), пока
+	# не открыто перестраивать её незачем: данные (_bar_pages) для компактной
+	# ленты уже свежие вне зависимости от этого.
+	if _open:
+		_fill_pages()
+		_fill_slots()
+
+
+static func _empty_bar_pages() -> Array:
+	var pages: Array = []
+	for _page_index in range(PAGE_COUNT):
+		var slots: Array = []
+		for _slot_index in range(SLOTS_PER_PAGE):
+			slots.append({})
+		pages.append(slots)
+	return pages
 
 
 ## Смена цели тянет за собой бар: клавиши принадлежат технике, а не игроку,
@@ -775,10 +879,12 @@ func _release_stale_holds() -> void:
 		if key == "mouse":
 			alive = Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
 		elif key.begins_with("slot:"):
+			# Не гейтуем на _open: тот же хоткей держит слот и через окно
+			# (открыто), и через компактную ленту (окно закрыто, сидя) —
+			# живо, пока физически зажата клавиша, а не пока видно окно.
 			var index := int(key.substr(5))
 			alive = (
-				_open
-				and index >= 0
+				index >= 0
 				and index < SLOT_ACTIONS.size()
 				and Input.is_action_pressed(SLOT_ACTIONS[index])
 			)
@@ -2211,26 +2317,16 @@ func _set_page(index: int) -> void:
 		return
 	_release_holds()
 	_page = next
-	_fill_pages()
-	_fill_slots()
-
-
-## Бар текущей цели: assembly_id → страницы. Пустая цель получает свой бар,
-## чтобы вёрстка и дев-харнес работали без симуляции.
-func _bar() -> Array:
-	if not _bars.has(_target_assembly):
-		var pages: Array = []
-		for _page_index in range(PAGE_COUNT):
-			var slots: Array = []
-			for _slot_index in range(SLOTS_PER_PAGE):
-				slots.append({})
-			pages.append(slots)
-		_bars[_target_assembly] = pages
-	return _bars[_target_assembly]
+	if _open:
+		_fill_pages()
+		_fill_slots()
 
 
 func _page_slots(page := -1) -> Array:
-	return _bar()[_page if page < 0 else wrapi(page, 0, PAGE_COUNT)]
+	var page_index := _page if page < 0 else wrapi(page, 0, PAGE_COUNT)
+	if page_index >= 0 and page_index < _bar_pages.size():
+		return _bar_pages[page_index]
+	return [{}, {}, {}, {}, {}, {}, {}, {}, {}]
 
 
 func _page_has_bindings(page: int) -> bool:
@@ -2256,22 +2352,69 @@ func _fill_slots() -> void:
 			_strip.add_child(_vrule())
 
 
-## Привязка брошенной команды/параметра к клавише. Слот хранит только данные
-## (цель + глагол + аргументы), поэтому переживает перестройку UI.
+## Привязка брошенной команды/параметра к клавише — идёт командой в
+## симуляцию (`configure_action_slot`), не мутирует бар напрямую: бар —
+## авторитетное состояние хоста, не локальный UI-стейт (CONTROL-ACTIONS-V0
+## «Persistence и кооп»). Слот на экране обновится из следующего снапшота
+## (до ~100 мс), тот же принцип, что и у остальных команд пульта.
 func bind_slot(index: int, payload: Dictionary) -> void:
 	if index < 0 or index >= SLOTS_PER_PAGE or payload.is_empty():
 		return
-	_page_slots()[index] = payload.duplicate(true)
-	_fill_slots()
-	_fill_pages()
+	_submit_action_slot(index, payload)
 
 
 func clear_slot(index: int) -> void:
 	if index < 0 or index >= SLOTS_PER_PAGE:
 		return
-	_page_slots()[index] = {}
-	_fill_slots()
-	_fill_pages()
+	_submit_action_slot(index, {})
+
+
+## Пустой payload = снять клавишу (тот же приём, что пустое имя в
+## SetElementNameCommand сбрасывает custom_name).
+func _submit_action_slot(index: int, payload: Dictionary) -> void:
+	if _gateway == null or not _gateway.has_method("submit"):
+		# Изолированная сцена вёрстки (scenes/ui/test_control_terminal.tscn) —
+		# гейтвея нет, но бар обязан оставаться кликабельным для проверки
+		# вёрстки. _page_slots() без гейтвея возвращает новый пустой Array на
+		# каждый вызов (_bar_pages никогда не заполняется), поэтому мутировать
+		# нужно ЕГО ЖЕ элемент _bar_pages напрямую, а не то, что вернул
+		# _page_slots() — иначе правка тут же теряется.
+		_ensure_local_bar_pages()
+		var page_index := wrapi(_page, 0, PAGE_COUNT)
+		if index >= 0 and index < SLOTS_PER_PAGE and page_index < _bar_pages.size():
+			_bar_pages[page_index][index] = payload.duplicate(true)
+			_fill_slots()
+			_fill_pages()
+		return
+	if _host_element_id <= 0:
+		return
+	var command_id: int = _gateway.call("submit", {
+		"kind": &"configure_action_slot",
+		# Источник — игрок, не панель: гейтвей сверяет его с текущим occupant
+		# хоста (единственная команда пульта, для которой это важно).
+		"source": _player,
+		"target": {
+			"valid": true,
+			"target_kind": &"element",
+			"metadata": {"element_id": _host_element_id},
+		},
+		"parameters": {
+			"host_element_id": _host_element_id,
+			"page": _page,
+			"index": index,
+			"payload": payload,
+		},
+	})
+	# Без этого отказ (occupant не тот / хост неполный) молчал бы — статус-бар
+	# получает reason только для команд, зарегистрированных здесь.
+	_pending_commands[command_id] = true
+
+
+## Только для фолбэка без гейтвея (см. _submit_action_slot) — держит
+## _bar_pages настоящим 9×9-массивом, чтобы мутация клавиши не терялась.
+func _ensure_local_bar_pages() -> void:
+	if _bar_pages.size() != PAGE_COUNT:
+		_bar_pages = _empty_bar_pages()
 
 
 ## Клавиша пульта → глагол. Пустой слот молчит. `source` различает удержание

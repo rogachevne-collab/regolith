@@ -23,6 +23,9 @@ func _ready() -> void:
 		"camera": get_node_or_null(camera_path),
 		"player": get_node_or_null(player_path),
 		"suit": get_node_or_null(suit_path),
+		# Компактному бару и строй-тулбару нужно знать, открыто ли полное окно
+		# пульта — оно и так занимает весь экран, дублировать под ним нечего.
+		"control_terminal": _screen.get_node_or_null("ControlTerminal"),
 	}
 	for widget: Node in _screen.get_children():
 		if widget.has_method("setup"):

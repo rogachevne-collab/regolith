@@ -68,6 +68,7 @@ const TOOL_CODES := {
 	"suspension_small": "SUS",
 	"wheel_med": "WHL",
 	"cockpit": "CPT",
+	"control_terminal": "TRM",
 	"power_battery_small": "BAT",
 	"power_distributor_small": "DST",
 	"thruster": "THR",
