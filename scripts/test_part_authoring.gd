@@ -14,7 +14,9 @@ func _run_tests() -> void:
 	_HeadlessTestHarness.arm_watchdog(self, "PART-AUTHORING")
 	var tests: Array[Callable] = [
 		_test_wheel_bakes_valid,
+		_test_wheel_tire_cylinder_drives_hub,
 		_test_suspension_bakes_valid,
+		_test_suspension_travel_stick_drives_bake,
 		_test_wheel_needs_one_marker,
 		_test_forward_axis_auto_perpendicular,
 		_test_bake_saves_and_reloads,
@@ -128,6 +130,47 @@ func _test_wheel_bakes_valid() -> bool:
 	return true
 
 
+## Цилиндр шины задаёт хаб качения и radius/width; точка plug остаётся стыком.
+func _test_wheel_tire_cylinder_drives_hub() -> bool:
+	var root := _make_root(PartAuthoringRoot.PartKind.WHEEL)
+	root.part_id = "test_wheel_tire"
+	root.wheel_radius_m = 0.4
+	var plug := _face_center(Vector3i(0, 0, 0), OrientationUtil.Face.NEG_X)
+	var plug_marker := MountPadMarker.new()
+	plug_marker.socket_kind = MountPadMarker.SocketKind.WHEEL_PLUG
+	plug_marker.snap_to_face = false
+	root.add_child(plug_marker)
+	plug_marker.position = plug
+	var tire := WheelTireMarker.new()
+	root.add_child(tire)
+	tire.position = plug + Vector3(0.2, 0.0, 0.0)
+	tire.radius_m = 0.55
+	tire.width_m = 0.42
+	var hub_authored := tire.position
+	var errors: Array[String] = []
+	var archetype := root._build_archetype(errors)
+	if not errors.is_empty():
+		root.free()
+		return _fail("tire cylinder build errors: %s" % [errors])
+	var definition := archetype.wheel_definition
+	var hub := WheelBodyProjectionUtil.axle_point_local(archetype)
+	var mate := WheelBodyProjectionUtil.plug_point_local(archetype)
+	root.free()
+	if definition == null or not definition.hub_local_authored:
+		return _fail("tire cylinder must author hub_local")
+	if not is_equal_approx(definition.radius_m, 0.55):
+		return _fail("tire radius not baked: %f" % definition.radius_m)
+	if not is_equal_approx(definition.width_m, 0.42):
+		return _fail("tire width not baked: %f" % definition.width_m)
+	if not hub.is_equal_approx(hub_authored):
+		return _fail("hub must be tire centre, got %s" % hub)
+	if not mate.is_equal_approx(plug):
+		return _fail("plug mate must stay on tip, got %s" % mate)
+	if hub.is_equal_approx(mate):
+		return _fail("hub and plug must differ when cylinder is offset")
+	return true
+
+
 func _test_suspension_bakes_valid() -> bool:
 	var root := _make_root(PartAuthoringRoot.PartKind.SUSPENSION)
 	root.part_id = "test_susp"
@@ -163,6 +206,85 @@ func _test_suspension_bakes_valid() -> bool:
 		return _fail("suspension should expose a structural pad")
 	if socket_face != OrientationUtil.Face.NEG_Y:
 		return _fail("suspension socket face should follow the marker (NEG_Y)")
+	return true
+
+
+## Палка хода задаёт и точку гнезда (её низ), и suspension_travel_m (проекция
+## на ось хода). Лишний маркер «гнездо колеса» при этом молча игнорируется, а
+## не ломает бак вторым гнездом.
+func _test_suspension_travel_stick_drives_bake() -> bool:
+	var root := _make_root(PartAuthoringRoot.PartKind.SUSPENSION)
+	root.part_id = "test_susp_travel"
+	root.size_cells = Vector3i(1, 2, 1)
+	root.suspension_travel_m = 0.9  # инспекторное значение должно проиграть палке
+	_add_marker(
+		root,
+		MountPadMarker.SocketKind.STRUCTURAL,
+		Vector3i(0, 1, 0),
+		OrientationUtil.Face.POS_X
+	)
+	_add_marker(
+		root,
+		MountPadMarker.SocketKind.WHEEL_SOCKET,
+		Vector3i(0, 0, 0),
+		OrientationUtil.Face.NEG_Z
+	)
+	var bottom := _face_center(Vector3i(0, 0, 0), OrientationUtil.Face.NEG_Y)
+	var travel := SuspensionTravelMarker.new()
+	root.add_child(travel)
+	travel.position = bottom
+	# Слегка косая палка: в бак должна уйти вертикальная составляющая (0.4),
+	# а не её длина (~0.412).
+	travel.top_offset = Vector3(0.1, 0.4, 0.0)
+
+	var errors: Array[String] = []
+	var archetype := root._build_archetype(errors)
+	if not errors.is_empty():
+		root.free()
+		return _fail("travel stick build errors: %s" % [errors])
+	var definition := archetype.suspension_definition
+	var susp_errors := definition.validate(archetype)
+	var socket_pads: Array[StructuralMountPad] = []
+	for pad: StructuralMountPad in archetype.structural_mount_pads:
+		if pad.socket_tag == "wheel_socket":
+			socket_pads.append(pad)
+	var socket_count := socket_pads.size()
+	var socket_pad: StructuralMountPad = (
+		socket_pads[0] if socket_count == 1 else null
+	)
+	root.free()
+
+	if not susp_errors.is_empty():
+		return _fail("travel stick definition invalid: %s" % [susp_errors])
+	if socket_count != 1:
+		return _fail("travel stick should own the single socket, got %d" % socket_count)
+	if not socket_pad.exact_point:
+		return _fail("travel stick socket should be an exact point")
+	if not socket_pad.local_position.is_equal_approx(bottom):
+		return _fail(
+			"socket should sit on the stick's low end, got %s" % socket_pad.local_position
+		)
+	if socket_pad.local_face != OrientationUtil.Face.NEG_Y:
+		return _fail("socket face should follow the stick's low end (NEG_Y)")
+	if not is_equal_approx(definition.suspension_travel_m, 0.4):
+		return _fail(
+			"travel should be the axis projection 0.4, got %f"
+			% definition.suspension_travel_m
+		)
+	# Палка — физический предел стойки: пульт не должен предлагать игроку ход
+	# длиннее, чем деталь вообще умеет.
+	if not is_equal_approx(definition.max_travel_m, 0.4):
+		return _fail(
+			"max travel should be the stick itself, got %f"
+			% definition.max_travel_m
+		)
+	if not is_equal_approx(
+		definition.min_travel_m,
+		PartAuthoringRoot.travel_tune_floor(0.4)
+	):
+		return _fail(
+			"min travel should follow the stick, got %f" % definition.min_travel_m
+		)
 	return true
 
 

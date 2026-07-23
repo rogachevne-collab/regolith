@@ -79,6 +79,7 @@ func place(
 	place_cmd.origin_cell = origin_cell
 	place_cmd.orientation_index = orientation_index
 	place_cmd.store_id = store_id
+	place_cmd.pose_offset = _precise_pose_offset(place_cmd)
 	var result := world.apply_structural_command_now(place_cmd)
 	if not result.is_ok():
 		last_error = "%s@%s:%s" % [archetype.archetype_id, origin_cell, result.reason]
@@ -100,6 +101,23 @@ func place(
 		if joint_id > 0:
 			element_ids["%s_joint" % key] = joint_id
 	return true
+
+
+## Точная посадка, та же что и при ручной установке: точка крепления детали
+## садится ровно на точку цели (центр грани блока), а не на ближайший узел
+## сетки. Для деталей без точных площадок расчёт даёт identity, поэтому
+## стоковая сборка не меняется — двигаются только детали из визарда.
+func _precise_pose_offset(command: PlaceElementCommand) -> Transform3D:
+	if command.assembly_id <= 0:
+		return Transform3D.IDENTITY
+	var preview := world.preview_place_element(command)
+	if not preview.is_ok():
+		return Transform3D.IDENTITY
+	return ConstructionPlacement.precise_attach_offset(
+		world,
+		command,
+		preview.data
+	)
 
 
 func weld_all() -> void:

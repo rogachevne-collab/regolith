@@ -123,21 +123,21 @@ func _footprint_cells() -> Array[Vector3i]:
 	return root.footprint_cells()
 
 
-## Find the external footprint face nearest to the marker's local position.
-## Sets _resolved_cell / _resolved_face; snaps position onto that face.
-func resolve() -> bool:
-	_resolved_ok = false
-	var cells := _footprint_cells()
+## Nearest external footprint face to an arbitrary part-local point.
+## Returns { cell, face, center }, or {} when nothing can mount there.
+## Shared with SuspensionTravelMarker so the travel stick's low end resolves to
+## a face exactly like a hand-placed pad does.
+static func resolve_face_for_point(
+	cells: Array[Vector3i],
+	point: Vector3
+) -> Dictionary:
 	if cells.is_empty():
-		_last_snapped_position = position
-		return false
+		return {}
 	var occupied: Dictionary = {}
 	for cell: Vector3i in cells:
 		occupied[cell] = true
 
-	var best_cell := Vector3i.ZERO
-	var best_face := OrientationUtil.Face.POS_Y
-	var best_center := Vector3.ZERO
+	var best: Dictionary = {}
 	var best_distance := INF
 	for cell: Vector3i in cells:
 		for face: OrientationUtil.Face in _all_faces():
@@ -149,24 +149,96 @@ func resolve() -> bool:
 				+ Vector3(OrientationUtil.face_to_vector(face))
 				* GridMetric.HALF_CELL_SIZE_M
 			)
-			var distance := position.distance_to(center)
+			var distance := point.distance_to(center)
 			if distance < best_distance:
 				best_distance = distance
-				best_cell = cell
-				best_face = face
-				best_center = center
+				best = {"cell": cell, "face": face, "center": center}
+	return best
 
-	if best_distance == INF:
+
+## Find the external footprint face nearest to the marker's local position.
+## Sets _resolved_cell / _resolved_face; snaps position onto that face.
+func resolve() -> bool:
+	_resolved_ok = false
+	var best := resolve_face_for_point(_footprint_cells(), position)
+	if best.is_empty():
 		_last_snapped_position = position
 		return false
 
+	var best_cell: Vector3i = best["cell"]
+	var best_face: OrientationUtil.Face = best["face"]
+	var best_center: Vector3 = best["center"]
 	_resolved_cell = best_cell
-	_resolved_face = best_face
+	# Precise marker: автор крутит ноду гизмо, стрелка превью — child и
+	# крутится вместе с ней. В бак должна уйти нормаль в part-space после
+	# этого поворота, иначе «задом наперёд» (стрелка +X, а в .tres NEG_X).
+	if snap_to_face:
+		_resolved_face = best_face
+	else:
+		var visual_normal := (
+			transform.basis
+			* Vector3(OrientationUtil.face_to_vector(best_face))
+		).normalized()
+		_resolved_face = _nearest_face_to_direction(visual_normal)
+		_resolved_cell = _cell_for_face_at_point(
+			_footprint_cells(),
+			position,
+			_resolved_face
+		)
 	_resolved_ok = true
 	if snap_to_face and Engine.is_editor_hint():
 		position = best_center
 	_last_snapped_position = position
 	return true
+
+
+static func _nearest_face_to_direction(direction: Vector3) -> OrientationUtil.Face:
+	if direction.is_zero_approx():
+		return OrientationUtil.Face.POS_X
+	var axis := direction.normalized()
+	var best_face := OrientationUtil.Face.POS_X
+	var best_dot := -INF
+	for face: OrientationUtil.Face in [
+		OrientationUtil.Face.POS_X,
+		OrientationUtil.Face.NEG_X,
+		OrientationUtil.Face.POS_Y,
+		OrientationUtil.Face.NEG_Y,
+		OrientationUtil.Face.POS_Z,
+		OrientationUtil.Face.NEG_Z,
+	]:
+		var alignment := Vector3(OrientationUtil.face_to_vector(face)).dot(axis)
+		if alignment > best_dot:
+			best_dot = alignment
+			best_face = face
+	return best_face
+
+
+## Клетка, у которой `face` наружная и её центр ближе всего к точке.
+static func _cell_for_face_at_point(
+	cells: Array[Vector3i],
+	point: Vector3,
+	face: OrientationUtil.Face
+) -> Vector3i:
+	if cells.is_empty():
+		return Vector3i.ZERO
+	var occupied: Dictionary = {}
+	for cell: Vector3i in cells:
+		occupied[cell] = true
+	var face_vec := OrientationUtil.face_to_vector(face)
+	var best_cell := cells[0]
+	var best_distance := INF
+	for cell: Vector3i in cells:
+		if occupied.has(cell + face_vec):
+			continue
+		var center := (
+			GridMetric.cell_center_meters(cell)
+			+ Vector3(face_vec) * GridMetric.HALF_CELL_SIZE_M
+		)
+		var distance := point.distance_to(center)
+		if distance < best_distance:
+			best_distance = distance
+			best_cell = cell
+	return best_cell
 
 
 func resolved_cell() -> Vector3i:
@@ -241,7 +313,7 @@ func get_diagnostics() -> PackedStringArray:
 	return messages
 
 
-func _all_faces() -> Array:
+static func _all_faces() -> Array:
 	return [
 		OrientationUtil.Face.POS_X,
 		OrientationUtil.Face.NEG_X,
@@ -285,6 +357,9 @@ func _update_preview() -> void:
 	var preview_root := Node3D.new()
 	preview_root.name = PREVIEW_NODE_NAME
 	preview_root.set_meta("_edit_lock_", true)
+	# Стрелка в part-space: отменяем поворот самой ноды, иначе автор видит
+	# повёрнутый гизмо, а resolve без учёта basis пишет старую грань.
+	preview_root.transform = Transform3D(transform.basis.inverse(), Vector3.ZERO)
 	add_child(preview_root, false, Node.INTERNAL_MODE_BACK)
 
 	var color := _tag_color()
@@ -401,7 +476,9 @@ func _kind_label() -> String:
 	return ""
 
 
-func _basis_aligning_up_to(direction: Vector3) -> Basis:
+## Basis whose +Y points along `direction` — meshes here (cylinders, cones,
+## tori) are all authored around +Y. Static so the travel stick reuses it.
+static func basis_aligning_up_to(direction: Vector3) -> Basis:
 	if direction.is_zero_approx():
 		return Basis.IDENTITY
 	var up := direction.normalized()
@@ -409,6 +486,10 @@ func _basis_aligning_up_to(direction: Vector3) -> Basis:
 	var x_axis := reference.cross(up).normalized()
 	var z_axis := x_axis.cross(up).normalized()
 	return Basis(x_axis, up, z_axis)
+
+
+func _basis_aligning_up_to(direction: Vector3) -> Basis:
+	return basis_aligning_up_to(direction)
 
 
 func _remove_preview() -> void:

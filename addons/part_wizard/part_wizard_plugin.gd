@@ -27,7 +27,11 @@ func _handles(object: Object) -> bool:
 	# Claim the 3D viewport whenever a part scene is being edited so the
 	# click-to-place-connector mode receives input — no matter which node
 	# inside the part scene happens to be selected.
-	if object is PartAuthoringRoot or object is MountPadMarker:
+	if (
+		object is PartAuthoringRoot
+		or object is MountPadMarker
+		or object is SuspensionTravelMarker
+	):
 		return true
 	return (
 		object is Node
@@ -54,7 +58,7 @@ func _forward_3d_gui_input(
 	var hit := _raycast_part_meshes(viewport_camera, button.position, root)
 	if hit.is_empty():
 		return EditorPlugin.AFTER_GUI_INPUT_PASS
-	_dock.place_connector_at(root, hit["point"], hit["normal"])
+	_dock.handle_viewport_click(root, hit["point"], hit["normal"])
 	return EditorPlugin.AFTER_GUI_INPUT_STOP
 
 
@@ -108,11 +112,25 @@ func _raycast_part_meshes(
 	return best
 
 
+## Editor decoration is not clickable geometry: the footprint ghost, the
+## connector balls and the travel stick would otherwise swallow the click that
+## was aimed at the model behind them. The visual preview IS the model, so it
+## stays in.
+const _NON_CLICKABLE := [
+	PartAuthoringRoot.FOOTPRINT_PREVIEW_NAME,
+	MountPadMarker.PREVIEW_NODE_NAME,
+	SuspensionTravelMarker.PREVIEW_NODE_NAME,
+	WheelTireMarker.PREVIEW_NODE_NAME,
+]
+
+
 func _collect_mesh_instances(node: Node) -> Array[MeshInstance3D]:
 	var result: Array[MeshInstance3D] = []
 	var stack: Array[Node] = [node]
 	while not stack.is_empty():
 		var current: Node = stack.pop_back()
+		if _NON_CLICKABLE.has(str(current.name)):
+			continue
 		var mesh_instance := current as MeshInstance3D
 		if mesh_instance != null:
 			result.append(mesh_instance)

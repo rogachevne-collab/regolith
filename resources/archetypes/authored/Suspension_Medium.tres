@@ -8,31 +8,34 @@
 [ext_resource type="Script" uid="uid://bfuxth8e6lccw" path="res://scripts/simulation/resources/structural_mount_pad.gd" id="6_kddbu"]
 [ext_resource type="Script" uid="uid://dxjvr18phvd54" path="res://scripts/simulation/resources/suspension_definition.gd" id="7_jbwls"]
 
-[sub_resource type="Resource" id="Resource_bom"]
+[sub_resource type="Resource" id="Resource_sr1lk"]
 script = ExtResource("1_to3n7")
 resource_id = "mechanism"
 amount = 2.0
 
-[sub_resource type="Resource" id="Resource_to3n7"]
+[sub_resource type="Resource" id="Resource_x68wj"]
 script = ExtResource("2_y87g7")
 size = Vector3(0.5, 1, 0.5)
 offset_in_cell = Vector3(0.25, 0.5, 0.25)
 
-[sub_resource type="Resource" id="Resource_y87g7"]
+[sub_resource type="Resource" id="Resource_pqx85"]
 script = ExtResource("6_kddbu")
 local_face = 1
 socket_tag = "wheel_socket"
 exact_point = true
-local_position = Vector3(0, 0.29862154712613975, 0.24885538134802457)
+local_position = Vector3(0.0933167724609374, 0.24739061020639108, 0.24925439800814836)
 
-[sub_resource type="Resource" id="Resource_r7jv5"]
+[sub_resource type="Resource" id="Resource_yrxo8"]
 script = ExtResource("6_kddbu")
 exact_point = true
 local_position = Vector3(0.5032895516625148, 0.49817753622143257, 0.2517734489112369)
 
-[sub_resource type="Resource" id="Resource_7d0bw"]
+[sub_resource type="Resource" id="Resource_mjwnk"]
 script = ExtResource("7_jbwls")
 wheel_socket_face = 1
+suspension_travel_m = 0.5204161543951314
+min_travel_m = 0.2602080771975657
+max_travel_m = 0.5204161543951314
 
 [resource]
 script = ExtResource("5_plwec")
@@ -41,11 +44,11 @@ display_name = "Подвеска"
 roles = PackedStringArray("Support")
 mass_kg = 16.0
 footprint_cells = Array[Vector3i]([Vector3i(0, 0, 0), Vector3i(0, 1, 0)])
-colliders = Array[ExtResource("2_y87g7")]([SubResource("Resource_to3n7")])
+colliders = Array[ExtResource("2_y87g7")]([SubResource("Resource_x68wj")])
 structural_surface_policy = 2
-structural_mount_pads = Array[ExtResource("6_kddbu")]([SubResource("Resource_y87g7"), SubResource("Resource_r7jv5")])
-build_requirements = Array[ExtResource("1_to3n7")]([SubResource("Resource_bom")])
-suspension_definition = SubResource("Resource_7d0bw")
+structural_mount_pads = Array[ExtResource("6_kddbu")]([SubResource("Resource_pqx85"), SubResource("Resource_yrxo8")])
+build_requirements = Array[ExtResource("1_to3n7")]([SubResource("Resource_sr1lk")])
+suspension_definition = SubResource("Resource_mjwnk")
 default_orientation_index = 20
 visual_scene_path = "res://resources/models/suspension_small.fbx"
 visual_offset = Vector3(0.5078167724609375, 0.5, 0.25)

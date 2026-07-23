@@ -31,6 +31,11 @@ const _ALL_FACES: Array[OrientationUtil.Face] = [
 	OrientationUtil.Face.NEG_Z,
 ]
 
+## Насколько игрок может ужать ход в пульте относительно авторской палки.
+## Больше палки — нельзя (стойки такой длины нет), меньше половины — уже не
+## подвеска, а распорка.
+const TRAVEL_TUNE_FLOOR_FRACTION := 0.5
+
 const FOOTPRINT_PREVIEW_NAME := "_EditorFootprintPreview"
 const VISUAL_PREVIEW_NAME := "_EditorVisualPreview"
 const AUTHORED_DIR := "res://resources/archetypes/authored/"
@@ -77,10 +82,23 @@ const AUTHORED_DIR := "res://resources/archetypes/authored/"
 @export var wheel_radius_m: float = 0.4
 @export var wheel_drive_torque_n_m: float = 65.0
 @export var wheel_steerable: bool = false
+## Сцепление: предел силы = прижимающая сила × коэффициент. Вдоль — тяга и
+## тормоз, поперёк — сопротивление сносу. Оба делят один запас (эллипс трения),
+## поэтому газ в повороте съедает боковое держание.
+@export var wheel_grip_longitudinal: float = 1.2
+@export var wheel_grip_lateral: float = 0.9
+## Как круто нарастает сила от проскальзывания (Н на м/с), пока не упрётся в
+## предел выше. Меньше — резина мягче и «расползается» плавнее.
+@export var wheel_slip_stiffness: float = 800.0
+@export var wheel_lateral_stiffness: float = 1000.0
 
 # --- Suspension fields (shown only when part_kind == SUSPENSION) ---
 @export var suspension_travel_m: float = 0.6
+## Жёсткость — сила от того, НАСКОЛЬКО сжата подвеска. Держит вес.
 @export var suspension_stiffness_n_per_m: float = 1600.0
+## Демпфирование — сила от того, КАК БЫСТРО она сжимается. Гасит раскачку,
+## веса не держит. Критическое ≈ 2·√(жёсткость · масса на колесо).
+@export var suspension_damping_n_s_per_m: float = 400.0
 
 # --- Battery fields (shown only when part_kind == BATTERY) ---
 @export var battery_capacity_kwh: float = 10.0
@@ -206,6 +224,30 @@ func collect_structural_markers() -> Array[MountPadMarker]:
 	return markers
 
 
+## Нижняя граница ползунка «ход» в пульте для стойки с таким ходом.
+static func travel_tune_floor(travel_m: float) -> float:
+	return clampf(travel_m * TRAVEL_TUNE_FLOOR_FRACTION, 0.05, travel_m)
+
+
+## Палка хода подвески, если автор её поставил. Она задаёт и точку гнезда
+## колеса (низ), и suspension_travel_m (длина вдоль оси хода).
+func travel_marker() -> SuspensionTravelMarker:
+	for child: Node in get_children():
+		var marker := child as SuspensionTravelMarker
+		if marker != null:
+			return marker
+	return null
+
+
+## Цилиндр шины: центр вращения + радиус/ширина. Точка wheel_plug — стык.
+func tire_marker() -> WheelTireMarker:
+	for child: Node in get_children():
+		var marker := child as WheelTireMarker
+		if marker != null:
+			return marker
+	return null
+
+
 ## Optional electrical connection points — most parts have none.
 func collect_electric_markers() -> Array[MountPadMarker]:
 	var markers: Array[MountPadMarker] = []
@@ -327,7 +369,9 @@ func _guess_socket_kind(face: OrientationUtil.Face) -> MountPadMarker.SocketKind
 			if face == OrientationUtil.Face.POS_Y:
 				return MountPadMarker.SocketKind.WHEEL_PLUG
 		PartKind.SUSPENSION:
-			if face == OrientationUtil.Face.NEG_Y:
+			# С палкой хода гнездо уже задано её низом — не плодим маркер,
+			# который потом придётся удалять.
+			if face == OrientationUtil.Face.NEG_Y and travel_marker() == null:
 				return MountPadMarker.SocketKind.WHEEL_SOCKET
 		PartKind.PLAIN:
 			pass
@@ -553,18 +597,46 @@ func _build_pads(
 		PartKind.SUSPENSION:
 			var sockets := 0
 			var structurals := 0
+			# Палка идёт ПЕРВОЙ: её низ — это гнездо, и если на ту же грань
+			# автор посадил ещё и обычное крепление, побеждать должно гнездо.
+			var travel := travel_marker()
+			if travel != null:
+				var travel_pad := travel.to_socket_pad()
+				if travel_pad == null:
+					errors.append(
+						"Подвеска: низ палки хода не привязался к детали —"
+						+ " придвинь его к модели"
+					)
+				else:
+					socket_face_holder[0] = travel_pad.local_face
+					_insert_pad(travel_pad, by_key, pads)
+					sockets += 1
 			for marker: MountPadMarker in markers:
 				var pad := marker.to_pad()
 				if pad == null:
 					continue
 				if marker.socket_kind == MountPadMarker.SocketKind.WHEEL_SOCKET:
+					if travel != null:
+						last_bake_diagnostics.append(
+							"маркер «гнездо колеса» (%s) не нужен: точку берём"
+							% marker.name
+							+ " с низа палки хода — удали маркер"
+						)
+						continue
 					pad.socket_tag = "wheel_socket"
+				else:
+					pad.socket_tag = ""
+				if not _insert_pad(pad, by_key, pads):
+					last_bake_diagnostics.append(
+						"маркер «%s» встал на уже занятую грань — пропущен"
+						% marker.name
+					)
+					continue
+				if marker.socket_kind == MountPadMarker.SocketKind.WHEEL_SOCKET:
 					socket_face_holder[0] = pad.local_face
 					sockets += 1
 				else:
-					pad.socket_tag = ""
 					structurals += 1
-				_insert_pad(pad, by_key, pads)
 			if sockets != 1:
 				errors.append(
 					"Подвеска: нужен ровно один маркер «сюда встаёт колесо» (%d)"
@@ -615,13 +687,56 @@ func _build_wheel_definition(
 	definition.width_m = maxf(wheel_radius_m * 0.75, 0.05)
 	definition.drive_torque_n_m = wheel_drive_torque_n_m
 	definition.steerable_default = wheel_steerable
+	definition.longitudinal_grip = wheel_grip_longitudinal
+	definition.lateral_grip = wheel_grip_lateral
+	definition.slip_stiffness = wheel_slip_stiffness
+	definition.lateral_stiffness = wheel_lateral_stiffness
 	var plug_face := OrientationUtil.Face.POS_Y
 	for pad: StructuralMountPad in pads:
 		if pad.socket_tag == "wheel_plug":
 			plug_face = pad.local_face
 			break
-	definition.forward_axis_face = _perpendicular_face(plug_face)
+	# Стабильный forward при перепеке: если прошлый выбор всё ещё ⊥ plug —
+	# оставляем. Иначе лотерея _perpendicular_face даёт флип по оси ступицы.
+	definition.forward_axis_face = _stable_forward_axis_face(plug_face)
+	var tire := tire_marker()
+	if tire != null:
+		definition.radius_m = tire.radius_m
+		definition.width_m = tire.width_m
+		definition.hub_local_authored = true
+		definition.hub_local = tire.hub_point_local()
+		wheel_radius_m = tire.radius_m
+		last_bake_diagnostics.append(
+			"шина: Ø %.2f м, ширина %.2f м, хаб %s (цилиндр); стык — точка plug"
+			% [tire.radius_m * 2.0, tire.width_m, tire.hub_point_local()]
+		)
+	else:
+		last_bake_diagnostics.append(
+			"цилиндр шины не поставлен — радиус из инспектора, хаб = точка plug"
+		)
 	return definition
+
+
+func _stable_forward_axis_face(
+	plug_face: OrientationUtil.Face
+) -> OrientationUtil.Face:
+	var fallback := _perpendicular_face(plug_face)
+	if last_baked_path.is_empty() or not ResourceLoader.exists(last_baked_path):
+		return fallback
+	var baked := load(last_baked_path) as ElementArchetype
+	if baked == null or baked.wheel_definition == null:
+		return fallback
+	var previous := baked.wheel_definition.forward_axis_face
+	var plug_axis := OrientationUtil.face_to_vector(plug_face)
+	var forward_axis := OrientationUtil.face_to_vector(previous)
+	if (
+		forward_axis.x * plug_axis.x
+		+ forward_axis.y * plug_axis.y
+		+ forward_axis.z * plug_axis.z
+		!= 0
+	):
+		return fallback
+	return previous
 
 
 func _build_suspension_definition(
@@ -629,10 +744,41 @@ func _build_suspension_definition(
 ) -> SuspensionDefinition:
 	var definition := SuspensionDefinition.new()
 	definition.wheel_socket_face = socket_face
-	definition.suspension_travel_m = clampf(
-		suspension_travel_m, definition.min_travel_m, definition.max_travel_m
+	var travel := travel_marker()
+	var travel_m := suspension_travel_m
+	if travel != null:
+		travel_m = travel.travel_m()
+		# Палка — ФИЗИЧЕСКИЙ предел стойки, а не «примерно столько». Игроку в
+		# пульте остаётся ужимать ход, но не выдумывать сантиметры, которых у
+		# детали нет: иначе колесо уезжает ниже собственной модели.
+		definition.max_travel_m = travel_m
+		definition.min_travel_m = travel_tune_floor(travel_m)
+		definition.suspension_travel_m = travel_m
+		definition.spring_stiffness_n_per_m = suspension_stiffness_n_per_m
+		definition.spring_damping_n_s_per_m = suspension_damping_n_s_per_m
+		last_bake_diagnostics.append(
+			"ход подвески: %.2f м (палка %.2f м, отклонение %.0f°);"
+			% [travel_m, travel.stick_length_m(), travel.off_axis_deg()]
+			+ " регулировка в игре %.2f…%.2f м"
+			% [definition.min_travel_m, definition.max_travel_m]
+		)
+		return definition
+	last_bake_diagnostics.append(
+		"ход подвески не отмечен палкой — беру %.2f м из инспектора" % travel_m
 	)
+	# Раздвигаем пределы под авторский ход вместо молчаливой обрезки: короткая
+	# стойка на 0.15 м — это выбор автора, а не ошибка. Пределы заодно задают
+	# диапазон ползунка настройки в игре.
+	if travel_m < definition.min_travel_m or travel_m > definition.max_travel_m:
+		definition.min_travel_m = minf(definition.min_travel_m, travel_m)
+		definition.max_travel_m = maxf(definition.max_travel_m, travel_m)
+		last_bake_diagnostics.append(
+			"пределы настройки хода раздвинуты под деталь: %.2f…%.2f м"
+			% [definition.min_travel_m, definition.max_travel_m]
+		)
+	definition.suspension_travel_m = travel_m
 	definition.spring_stiffness_n_per_m = suspension_stiffness_n_per_m
+	definition.spring_damping_n_s_per_m = suspension_damping_n_s_per_m
 	return definition
 
 
@@ -732,11 +878,13 @@ func _hub_point_local() -> Vector3:
 	return Vector3(size_cells) * GridMetric.CELL_SIZE_M * 0.5
 
 
+## false when another pad already owns this (cell, face) — the caller decides
+## whether a dropped pad is worth telling the author about.
 func _insert_pad(
 	pad: StructuralMountPad,
 	by_key: Dictionary,
 	ordered: Array[StructuralMountPad]
-) -> void:
+) -> bool:
 	var key := "%d,%d,%d,%d" % [
 		pad.local_cell.x,
 		pad.local_cell.y,
@@ -744,9 +892,10 @@ func _insert_pad(
 		int(pad.local_face),
 	]
 	if by_key.has(key):
-		return
+		return false
 	by_key[key] = true
 	ordered.append(pad)
+	return true
 
 
 func _ensure_dir(dir: String) -> void:

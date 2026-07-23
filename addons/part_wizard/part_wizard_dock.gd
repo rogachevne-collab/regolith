@@ -27,6 +27,18 @@ var _pose_pivot: Node3D
 var _pose_viewport: SubViewport
 var _pose_camera: Camera3D
 var _place_button: Button
+var _suspension_box: VBoxContainer
+var _travel_button: Button
+var _travel_label: Label
+var _travel_spin: SpinBox
+var _wheel_preview_spin: SpinBox
+var _travel_first_point := Vector3.ZERO
+var _travel_has_first := false
+var _wheel_box: VBoxContainer
+var _tire_button: Button
+var _tire_label: Label
+var _tire_radius_spin: SpinBox
+var _tire_width_spin: SpinBox
 var _socket_option: OptionButton
 var _port_role_option: OptionButton
 var _kind_option: OptionButton
@@ -60,14 +72,31 @@ func _process(delta: float) -> void:
 
 
 func place_mode_active() -> bool:
+	if _root == null:
+		return false
 	return (
-		_place_button != null
-		and _place_button.button_pressed
-		and _root != null
+		(_place_button != null and _place_button.button_pressed)
+		or (_travel_button != null and _travel_button.button_pressed)
+		or (_tire_button != null and _tire_button.button_pressed)
 	)
 
 
 ## Called by the plugin when the author clicks the model in the 3D view.
+## Which armed mode gets the click is decided here, not in the plugin.
+func handle_viewport_click(
+	root: PartAuthoringRoot,
+	local_point: Vector3,
+	local_normal: Vector3
+) -> void:
+	if _travel_button != null and _travel_button.button_pressed:
+		_capture_travel_point(root, local_point)
+		return
+	if _tire_button != null and _tire_button.button_pressed:
+		_capture_tire_center(root, local_point)
+		return
+	place_connector_at(root, local_point, local_normal)
+
+
 func place_connector_at(
 	root: PartAuthoringRoot,
 	local_point: Vector3,
@@ -185,6 +214,11 @@ func _build_ui() -> void:
 	generate.pressed.connect(_on_generate_pressed)
 	_steps_box.add_child(generate)
 
+	# --- Шаг 3б: ход подвески (только для подвески) ---
+	_steps_box.add_child(_build_suspension_step())
+	# --- Шаг 3в: цилиндр шины (только для колеса) ---
+	_steps_box.add_child(_build_wheel_tire_step())
+
 	# --- Шаг 4: испечь ---
 	_steps_box.add_child(_step_header("4. Испечь"))
 	_kind_option = OptionButton.new()
@@ -242,6 +276,150 @@ func _build_ui() -> void:
 	_stale_dialog.cancel_button_text = "Оставить"
 	_stale_dialog.confirmed.connect(_on_stale_delete_confirmed)
 	add_child(_stale_dialog)
+
+
+## Ход подвески палкой: два конца — колесо на отбое и на сжатии. Раньше это
+## было число в инспекторе, которое никак не соотносилось с моделью.
+func _build_suspension_step() -> Control:
+	_suspension_box = VBoxContainer.new()
+	_suspension_box.visible = false
+	_suspension_box.add_child(_step_header("3б. Ход подвески"))
+	var hint := Label.new()
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint.text = (
+		"Отметь два предела: где колесо на полном ОТБОЕ (ниже всего — так"
+		+ " деталь и встанет при постройке) и где оно на полном СЖАТИИ."
+		+ " Порядок кликов неважен. Нижний конец палки — он же гнездо колеса,"
+		+ " отдельный маркер гнезда не нужен."
+	)
+	_suspension_box.add_child(hint)
+
+	_travel_button = Button.new()
+	_travel_button.toggle_mode = true
+	_travel_button.tooltip_text = (
+		"Включи и кликни в ОСНОВНОМ 3D-окне два раза: первый клик — один\n"
+		+ "предел хода, второй — другой. Потом концы можно таскать мышкой."
+	)
+	_travel_button.toggled.connect(_on_travel_mode_toggled)
+	_suspension_box.add_child(_travel_button)
+	_update_travel_button_look(false)
+
+	var seed_button := Button.new()
+	seed_button.text = "➕ Палка по умолчанию (от гнезда / низа детали)"
+	seed_button.tooltip_text = (
+		"Ставит палку без кликов: низ берётся с маркера «гнездо колеса»,\n"
+		+ "а если его нет — с середины нижней грани футпринта. Дальше тащи."
+	)
+	seed_button.pressed.connect(_on_travel_seed_pressed)
+	_suspension_box.add_child(seed_button)
+
+	_travel_label = Label.new()
+	_travel_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_travel_label.text = "палка не поставлена"
+	_suspension_box.add_child(_travel_label)
+
+	_travel_spin = _add_spin_row(
+		_suspension_box,
+		"ход, м",
+		SuspensionTravelMarker.MIN_TRAVEL_M,
+		3.0,
+		0.01,
+		"Задать ход числом: низ остаётся на месте, палка выпрямляется вдоль оси."
+	)
+	_travel_spin.value_changed.connect(_on_travel_value_changed)
+
+	_wheel_preview_spin = _add_spin_row(
+		_suspension_box,
+		"колесо Ø, м (превью)",
+		0.0,
+		2.0,
+		0.05,
+		"Радиус колеса для колец на пределах хода. В деталь не пекётся."
+	)
+	_wheel_preview_spin.value_changed.connect(_on_wheel_preview_changed)
+	return _suspension_box
+
+
+## Цилиндр шины: центр вращения отдельно от точки стыка на ступице.
+func _build_wheel_tire_step() -> Control:
+	_wheel_box = VBoxContainer.new()
+	_wheel_box.visible = false
+	_wheel_box.add_child(_step_header("3в. Шина (цилиндр)"))
+	var hint := Label.new()
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint.text = (
+		"Точка «ось колеса» — стык (кончик ступицы к гнезду). Цилиндр — сама"
+		+ " крутящаяся шина: центр, радиус и ширина. Без него хаб = точка стыка"
+		+ " и колесо насаживается на подвеску."
+	)
+	_wheel_box.add_child(hint)
+
+	_tire_button = Button.new()
+	_tire_button.toggle_mode = true
+	_tire_button.tooltip_text = (
+		"Включи и кликни в ОСНОВНОМ 3D-окне по ЦЕНТРУ шины.\n"
+		+ "Потом подгони радиус/ширину спиннерами или гизмо."
+	)
+	_tire_button.toggled.connect(_on_tire_mode_toggled)
+	_wheel_box.add_child(_tire_button)
+	_update_tire_button_look(false)
+
+	var seed_button := Button.new()
+	seed_button.text = "➕ Цилиндр по умолчанию (от ступицы)"
+	seed_button.tooltip_text = (
+		"Ставит цилиндр без клика: центр смещён от точки ступицы\n"
+		+ "внутрь на половину ширины, радиус из инспектора."
+	)
+	seed_button.pressed.connect(_on_tire_seed_pressed)
+	_wheel_box.add_child(seed_button)
+
+	_tire_label = Label.new()
+	_tire_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_tire_label.text = "цилиндр не поставлен"
+	_wheel_box.add_child(_tire_label)
+
+	_tire_radius_spin = _add_spin_row(
+		_wheel_box,
+		"радиус, м",
+		WheelTireMarker.MIN_RADIUS_M,
+		3.0,
+		0.01,
+		"Наружный радиус шины — уходит в WheelDefinition.radius_m."
+	)
+	_tire_radius_spin.value_changed.connect(_on_tire_radius_changed)
+	_tire_width_spin = _add_spin_row(
+		_wheel_box,
+		"ширина, м",
+		WheelTireMarker.MIN_WIDTH_M,
+		3.0,
+		0.01,
+		"Ширина шины вдоль оси — уходит в WheelDefinition.width_m."
+	)
+	_tire_width_spin.value_changed.connect(_on_tire_width_changed)
+	return _wheel_box
+
+
+func _add_spin_row(
+	box: VBoxContainer,
+	text: String,
+	minimum: float,
+	maximum: float,
+	step: float,
+	tooltip: String
+) -> SpinBox:
+	var row := HBoxContainer.new()
+	var label := Label.new()
+	label.text = text
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(label)
+	var spin := SpinBox.new()
+	spin.min_value = minimum
+	spin.max_value = maximum
+	spin.step = step
+	spin.tooltip_text = tooltip
+	row.add_child(spin)
+	box.add_child(row)
+	return spin
 
 
 func _build_pose_viewport() -> Control:
@@ -315,6 +493,8 @@ func _sync_to_edited_scene() -> void:
 			(child as Control).modulate.a = 0.45
 		elif child is Control:
 			(child as Control).modulate.a = 1.0
+	_refresh_suspension_ui()
+	_refresh_wheel_tire_ui()
 	if not has_root:
 		return
 	_model_label.text = (
@@ -491,6 +671,10 @@ func _on_place_mode_toggled(enabled: bool) -> void:
 		return
 	if _root == null:
 		return
+	if _travel_button != null:
+		_travel_button.button_pressed = false
+	if _tire_button != null:
+		_tire_button.button_pressed = false
 	# The 3D gizmo input only reaches our plugin while it "handles" the
 	# selection — put the part root in focus so clicks land immediately.
 	EditorInterface.get_selection().clear()
@@ -518,6 +702,317 @@ func _update_place_button_look(enabled: bool) -> void:
 			_place_button.remove_theme_color_override(state)
 
 
+func _on_travel_mode_toggled(enabled: bool) -> void:
+	_update_travel_button_look(enabled)
+	_travel_has_first = false
+	if not enabled:
+		_show_message("режим хода выключен")
+		return
+	if _root == null:
+		return
+	# Два режима кликов сразу — верный способ поставить не то, что хотел.
+	if _place_button != null:
+		_place_button.button_pressed = false
+	if _tire_button != null:
+		_tire_button.button_pressed = false
+	EditorInterface.get_selection().clear()
+	EditorInterface.get_selection().add_node(_root)
+	_show_message("клик 1 из 2 — один предел хода (низ или верх, неважно)")
+
+
+func _update_travel_button_look(enabled: bool) -> void:
+	if _travel_button == null:
+		return
+	if enabled:
+		_travel_button.text = "🟢 КЛИКАЙ ДВА ПРЕДЕЛА — нажми, чтобы выключить"
+		for state: String in ["font_color", "font_hover_color", "font_pressed_color", "font_hover_pressed_color"]:
+			_travel_button.add_theme_color_override(state, Color(0.55, 1.0, 0.6))
+	else:
+		_travel_button.text = "📏 Отметить ход: 2 клика по модели"
+		for state: String in ["font_color", "font_hover_color", "font_pressed_color", "font_hover_pressed_color"]:
+			_travel_button.remove_theme_color_override(state)
+
+
+func _capture_travel_point(
+	root: PartAuthoringRoot,
+	local_point: Vector3
+) -> void:
+	if not _travel_has_first:
+		_travel_first_point = local_point
+		_travel_has_first = true
+		_show_message("клик 2 из 2 — второй предел хода")
+		return
+	_travel_has_first = false
+	var marker := _ensure_travel_marker(root)
+	marker.set_points(_travel_first_point, local_point)
+	_travel_button.button_pressed = false
+	EditorInterface.get_selection().clear()
+	EditorInterface.get_selection().add_node(marker)
+	EditorInterface.mark_scene_as_unsaved()
+	_refresh_suspension_ui()
+	_show_message("ход отмечен: %.2f м — концы можно доводить мышкой" % marker.travel_m())
+
+
+func _ensure_travel_marker(root: PartAuthoringRoot) -> SuspensionTravelMarker:
+	var marker := root.travel_marker()
+	if marker != null:
+		return marker
+	marker = SuspensionTravelMarker.new()
+	marker.name = "SuspensionTravel"
+	root.add_child(marker)
+	var tree := root.get_tree()
+	marker.owner = (
+		tree.edited_scene_root
+		if tree != null and tree.edited_scene_root != null
+		else root
+	)
+	return marker
+
+
+## Палка без единого клика: для уже нарисованных подвесок, где гнездо стоит,
+## а ход до сих пор был числом в инспекторе.
+func _on_travel_seed_pressed() -> void:
+	if _root == null:
+		return
+	var existed := _root.travel_marker() != null
+	var marker := _ensure_travel_marker(_root)
+	if not existed:
+		var up := marker.up_axis_local()
+		var bottom := _default_travel_bottom(_root, up)
+		var travel := maxf(
+			_root.suspension_travel_m,
+			SuspensionTravelMarker.MIN_TRAVEL_M
+		)
+		marker.set_points(bottom, bottom + up * travel)
+	EditorInterface.get_selection().clear()
+	EditorInterface.get_selection().add_node(marker)
+	EditorInterface.mark_scene_as_unsaved()
+	_refresh_suspension_ui()
+	_show_message(
+		"палка стоит: %.2f м — тащи концы или правь число" % marker.travel_m()
+	)
+
+
+func _default_travel_bottom(
+	root: PartAuthoringRoot,
+	up: Vector3
+) -> Vector3:
+	for child: Node in root.get_children():
+		var marker := child as MountPadMarker
+		if (
+			marker != null
+			and marker.socket_kind == MountPadMarker.SocketKind.WHEEL_SOCKET
+		):
+			return marker.position
+	# Нет гнезда — берём середину нижней грани футпринта вдоль оси хода.
+	var size_m := Vector3(root.size_cells) * GridMetric.CELL_SIZE_M
+	var extent_along_up := absf(size_m.dot(up))
+	return size_m * 0.5 - up * extent_along_up * 0.5
+
+
+func _on_travel_value_changed(value: float) -> void:
+	if _root == null:
+		return
+	var marker := _root.travel_marker()
+	if marker == null:
+		return
+	if is_equal_approx(marker.travel_m(), value):
+		return
+	marker.set_travel_m(value)
+	EditorInterface.mark_scene_as_unsaved()
+	_refresh_suspension_ui()
+
+
+func _on_wheel_preview_changed(value: float) -> void:
+	if _root == null:
+		return
+	var marker := _root.travel_marker()
+	if marker == null or is_equal_approx(marker.preview_wheel_radius_m, value):
+		return
+	marker.preview_wheel_radius_m = value
+	EditorInterface.mark_scene_as_unsaved()
+
+
+func _on_tire_mode_toggled(enabled: bool) -> void:
+	_update_tire_button_look(enabled)
+	if not enabled:
+		_show_message("режим шины выключен")
+		return
+	if _root == null:
+		return
+	if _place_button != null:
+		_place_button.button_pressed = false
+	if _travel_button != null:
+		_travel_button.button_pressed = false
+	EditorInterface.get_selection().clear()
+	EditorInterface.get_selection().add_node(_root)
+	_show_message("кликни по ЦЕНТРУ шины в 3D-окне")
+
+
+func _update_tire_button_look(enabled: bool) -> void:
+	if _tire_button == null:
+		return
+	if enabled:
+		_tire_button.text = "🟢 КЛИКНИ ЦЕНТР ШИНЫ — нажми, чтобы выключить"
+		for state: String in ["font_color", "font_hover_color", "font_pressed_color", "font_hover_pressed_color"]:
+			_tire_button.add_theme_color_override(state, Color(0.55, 1.0, 0.6))
+	else:
+		_tire_button.text = "⏺ Отметить шину: клик по центру"
+		for state: String in ["font_color", "font_hover_color", "font_pressed_color", "font_hover_pressed_color"]:
+			_tire_button.remove_theme_color_override(state)
+
+
+func _capture_tire_center(
+	root: PartAuthoringRoot,
+	local_point: Vector3
+) -> void:
+	var marker := _ensure_tire_marker(root)
+	marker.set_from_click(local_point)
+	if marker.radius_m <= WheelTireMarker.MIN_RADIUS_M + 0.001:
+		marker.fit_defaults_from_root()
+		marker.set_from_click(local_point)
+	_tire_button.button_pressed = false
+	EditorInterface.get_selection().clear()
+	EditorInterface.get_selection().add_node(marker)
+	EditorInterface.mark_scene_as_unsaved()
+	_refresh_wheel_tire_ui()
+	_show_message(
+		"шина: Ø %.2f × %.2f м — крути спиннеры или тащи маркер"
+		% [marker.radius_m * 2.0, marker.width_m]
+	)
+
+
+func _ensure_tire_marker(root: PartAuthoringRoot) -> WheelTireMarker:
+	var marker := root.tire_marker()
+	if marker != null:
+		return marker
+	marker = WheelTireMarker.new()
+	marker.name = "WheelTire"
+	root.add_child(marker)
+	var tree := root.get_tree()
+	marker.owner = (
+		tree.edited_scene_root
+		if tree != null and tree.edited_scene_root != null
+		else root
+	)
+	return marker
+
+
+func _on_tire_seed_pressed() -> void:
+	if _root == null:
+		return
+	var marker := _ensure_tire_marker(_root)
+	marker.fit_defaults_from_root()
+	EditorInterface.get_selection().clear()
+	EditorInterface.get_selection().add_node(marker)
+	EditorInterface.mark_scene_as_unsaved()
+	_refresh_wheel_tire_ui()
+	_show_message(
+		"цилиндр стоит: Ø %.2f × %.2f м — подгони под модель"
+		% [marker.radius_m * 2.0, marker.width_m]
+	)
+
+
+func _on_tire_radius_changed(value: float) -> void:
+	if _root == null:
+		return
+	var marker := _root.tire_marker()
+	if marker == null or is_equal_approx(marker.radius_m, value):
+		return
+	marker.radius_m = value
+	EditorInterface.mark_scene_as_unsaved()
+	_refresh_wheel_tire_ui()
+
+
+func _on_tire_width_changed(value: float) -> void:
+	if _root == null:
+		return
+	var marker := _root.tire_marker()
+	if marker == null or is_equal_approx(marker.width_m, value):
+		return
+	marker.width_m = value
+	EditorInterface.mark_scene_as_unsaved()
+	_refresh_wheel_tire_ui()
+
+
+func _refresh_wheel_tire_ui() -> void:
+	if _wheel_box == null:
+		return
+	var is_wheel := (
+		_root != null and _root.part_kind == PartAuthoringRoot.PartKind.WHEEL
+	)
+	_wheel_box.visible = is_wheel
+	if not is_wheel:
+		return
+	var marker := _root.tire_marker()
+	var has_marker := marker != null
+	_tire_radius_spin.editable = has_marker
+	_tire_width_spin.editable = has_marker
+	if not has_marker:
+		_tire_label.text = (
+			"цилиндр не поставлен — хаб = точка ступицы, радиус %.2f м из инспектора"
+			% _root.wheel_radius_m
+		)
+		return
+	var warnings := marker.get_diagnostics()
+	var text := (
+		"шина: Ø %.2f м × ширина %.2f м\nхаб %s"
+		% [marker.radius_m * 2.0, marker.width_m, marker.hub_point_local()]
+	)
+	for warning: String in warnings:
+		if warning.find("не помечена") >= 0:
+			continue
+		text += "\n⚠ " + warning
+	_tire_label.text = text
+	if not _tire_radius_spin.get_line_edit().has_focus():
+		_tire_radius_spin.set_value_no_signal(marker.radius_m)
+	if not _tire_width_spin.get_line_edit().has_focus():
+		_tire_width_spin.set_value_no_signal(marker.width_m)
+
+
+func _refresh_suspension_ui() -> void:
+	if _suspension_box == null:
+		return
+	var is_suspension := (
+		_root != null
+		and _root.part_kind == PartAuthoringRoot.PartKind.SUSPENSION
+	)
+	_suspension_box.visible = is_suspension
+	if not is_suspension:
+		return
+	var marker := _root.travel_marker()
+	var has_marker := marker != null
+	_travel_spin.editable = has_marker
+	_wheel_preview_spin.editable = has_marker
+	if not has_marker:
+		_travel_label.text = (
+			"палка не поставлена — в бак уйдёт %.2f м из инспектора"
+			% _root.suspension_travel_m
+		)
+		return
+	var text := (
+		"ход: %.2f м\nв пульте: регулировка %.2f…%.2f м"
+		% [
+			marker.travel_m(),
+			PartAuthoringRoot.travel_tune_floor(marker.travel_m()),
+			marker.travel_m(),
+		]
+	)
+	if marker.off_axis_deg() > SuspensionTravelMarker.MAX_OFF_AXIS_DEG:
+		text += (
+			"\n⚠ палка косая (%.0f°): длина %.2f м, но ход считается вдоль оси"
+			% [marker.off_axis_deg(), marker.stick_length_m()]
+		)
+	if marker.to_socket_pad() == null:
+		text += "\n⚠ низ палки не привязался к детали — придвинь его к модели"
+	_travel_label.text = text
+	# Пока автор печатает в поле — не перебивать его значением из сцены.
+	if not _travel_spin.get_line_edit().has_focus():
+		_travel_spin.set_value_no_signal(marker.travel_m())
+	if not _wheel_preview_spin.get_line_edit().has_focus():
+		_wheel_preview_spin.set_value_no_signal(marker.preview_wheel_radius_m)
+
+
 func _on_generate_pressed() -> void:
 	if _root == null:
 		return
@@ -531,6 +1026,8 @@ func _on_kind_selected(index: int) -> void:
 		return
 	_root.part_kind = index as PartAuthoringRoot.PartKind
 	EditorInterface.mark_scene_as_unsaved()
+	_refresh_suspension_ui()
+	_refresh_wheel_tire_ui()
 
 
 func _on_part_id_changed(text: String) -> void:
