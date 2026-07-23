@@ -1,16 +1,18 @@
 # Ropes!
 
-Physically based ropes for Godot 4. XPBD solver in a C++ GDExtension, aimed at
+Physically based ropes for Godot 4. Target: XPBD solver in a C++ GDExtension,
 believable rope behavior on low-end hardware. Works with stock Godot — no
 engine fork, no custom physics server.
 
-**Status: pre-alpha, gate 3 slice 1.** XPBD core as a reference GDScript
-implementation (ADR 0002) with collision: contacts solved in the same
+**Status: pre-alpha, gate 3 slice 1.** Shipping today is the XPBD reference
+core in GDScript (ADR 0002) with collision: contacts solved in the same
 constraint loop, analytic narrow phase against box/sphere/plane colliders
 cached once per tick, moving-collider transform interpolation, Coulomb
-friction with honest stick/slide split (ADR 0006). Concave shapes and voxel
-terrain are the next slice; anchors remain one-way kinematic pins (rigid-body
-reaction is gate 4). Visual playground: demos/gate2_playground.tscn.
+friction with honest stick/slide split (ADR 0006). Next: concave shapes /
+voxel terrain (slice 2), then two-way rigid-body coupling (gate 4) and a
+smooth winch on `length` (gate 5). The C++ GDExtension port of this core is
+still the production path — not landed yet. AVBD (ADR 0007/0008) is parked;
+`Rope3D` drives XPBD only. Visual playground: `demos/gate2_playground.tscn`.
 
 ## Target usage
 
@@ -20,8 +22,9 @@ Crane (RigidBody3D)
 Rope3D            length = 8.0, anchor_a = ../Crane, anchor_b = ../Player
 ```
 
-Add a `Rope3D`, point its anchors at two nodes, press play. Free ends, world
-collision and two-way forces on rigid bodies work out of the box.
+Add a `Rope3D`, point its anchors at two nodes, press play. Free ends and
+world collision (box/sphere/plane) work today. Two-way forces on rigid
+bodies are gate 4.
 
 ## Public API
 
@@ -29,9 +32,9 @@ collision and two-way forces on rigid bodies work out of the box.
 
 Properties:
 
-- `length: float` — rest length, meters; mutable at runtime — the rope pays
-  out / reels in at anchor A (the winch end), so a winch is just a tween on
-  `length`
+- `length: float` — rest length, meters. Today cold: changing it re-seeds
+  the rope and drops motion. Gate 5 makes pay-out / reel-in a smooth winch
+  at anchor A (a tween on `length` then, not a snap)
 - `segments_per_meter: float` — simulation resolution
 - `mass_per_meter: float` — linear density, kg/m
 - `radius: float` — visual and collision radius, meters. Keep particle
@@ -76,12 +79,10 @@ Methods:
   motion; use when an anchor jumps rather than travels
 - `rebuild()` — re-seed immediately instead of waiting for the next tick
 - `segment_count() -> int` — `length * segments_per_meter`, rounded up
-- `solver_iterations() -> int`, `tension_readout_warning() -> String` — the
-  size envelope of the solver core in use. A core whose tension readout
-  degrades with rope size (AVBD, see the research note) has its budget raised
-  to a measured rule automatically, and says so in the inspector and the log
-  when the rule outruns what it will spend unasked. Both return nothing on the
-  XPBD core shipping today, whose tension holds at every length measured.
+- `solver_iterations() -> int`, `tension_readout_warning() -> String` —
+  size-envelope hooks for a core whose tension readout degrades with rope
+  size (AVBD; parked). Both return nothing on the XPBD core shipping today,
+  whose tension holds at every length measured.
 
 ## Open problem
 
@@ -132,17 +133,21 @@ candidates in the research note become worth their complexity.
 
 ## Roadmap
 
-1. Public API draft (this document)
-2. XPBD core, no collision — verified against the analytic catenary (shape
-   and tension), analytic free fall (damping model, determinism), the
-   compliance constitutive relation, and unilateral behavior
+1. Public API draft (this document) — done
+2. XPBD core, no collision — done (catenary, free fall, compliance,
+   unilateral gates)
 3. Collision, solved in the same constraint loop — slice 1 done
    (box/sphere/plane, friction, moving colliders; regression test is the
    old rope's killer scenario: an asymmetric drape over a box must settle,
    hold, not creep, not penetrate, and slide off only at zero friction);
    slice 2 is concave shapes / voxel terrain
 4. Two-way coupling with rigid bodies
-5. Performance, LOD, demos
+5. Smooth winch on `length` (no re-seed)
+6. C++ GDExtension port of the XPBD core; performance, LOD, demos
+
+AVBD remains a researched alternative for load-bearing mass ratios
+(ADR 0007/0008, spikes under `spikes/`) but is not on the shipping path
+while paused.
 
 ## Open API questions
 

@@ -1,0 +1,11 @@
+[gd_scene format=3 uid="uid://cbe115y65kfbq"]
+
+[ext_resource type="PackedScene" uid="uid://cr8tkngjj7bre" path="res://resources/models/base_block_05m.fbx" id="1_fbx"]
+[ext_resource type="Material" uid="uid://cscifipanel1mat" path="res://resources/materials/sci_fi_panel1.tres" id="2_mat"]
+
+[node name="BaseBlock05mVisual" type="Node3D"]
+
+[node name="Model" parent="." instance=ExtResource("1_fbx")]
+
+[node name="Box009" parent="Model" index="0"]
+material_override = ExtResource("2_mat")

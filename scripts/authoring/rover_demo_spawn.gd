@@ -111,7 +111,7 @@ static func _assembly_transform_on_surface(
 	tool: VoxelTool = null,
 	space_state: PhysicsDirectSpaceState3D = null
 ) -> Transform3D:
-	var archetype := Slice01Archetypes.rover_frame()
+	var archetype := Slice01Archetypes.frame()
 	var contact := GridPoseUtil.ground_contact_local(archetype, 0)
 	var clearance := Slice01Archetypes.rover_wheel_clearance_m()
 	var up := GravityField.resolve_up(terrain, surface_point)
@@ -207,7 +207,7 @@ static func reseat_parked_locomotives(
 	):
 		return
 	var world := session.world
-	var archetype := Slice01Archetypes.rover_frame()
+	var archetype := Slice01Archetypes.frame()
 	var contact := GridPoseUtil.ground_contact_local(archetype, 0)
 	var clearance := Slice01Archetypes.rover_wheel_clearance_m()
 	for assembly: SimulationAssembly in world.list_assemblies():

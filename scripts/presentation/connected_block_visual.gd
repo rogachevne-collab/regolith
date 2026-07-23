@@ -17,7 +17,6 @@ const CONNECTED_ARCHETYPES := {
 	"frame": true,
 	"frame_basalt": true,
 	"large_frame": true,
-	"rover_frame": true,
 }
 
 const RIM_FRACTION := 0.08
@@ -26,6 +25,9 @@ const RIM_MAX_M := 0.10
 ## Keep 0 so perpendicular faces of one cube share edges. A positive outward
 ## bias opens visible cracks at cube edges under soft rendering.
 const FACE_BIAS_M := 0.0
+## Procedural SE-style rim frames. Off while art meshes own the silhouette;
+## keep make_rim_mesh / _add_face_rim — flip true to restore.
+const RIMS_ENABLED := false
 
 static var _mesh_cache: Dictionary = {}
 
@@ -136,13 +138,15 @@ static func rim_thickness(size: Vector3) -> float:
 
 
 static func make_fill_mesh(size: Vector3, face_mask: int) -> ArrayMesh:
-	var cached := _cache_get(size, face_mask, "fill")
+	var kind := "fill" if RIMS_ENABLED else "fill_norim"
+	var cached := _cache_get(size, face_mask, kind)
 	if cached != null:
 		return cached
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var half := size * 0.5
-	var rim := rim_thickness(size)
+	## When rims are off, fill must reach the full face edge (no rim inset).
+	var rim := rim_thickness(size) if RIMS_ENABLED else 0.0
 	var wrote := false
 	for face: OrientationUtil.Face in FACE_ORDER:
 		if is_face_occluded(face_mask, face):
@@ -150,7 +154,7 @@ static func make_fill_mesh(size: Vector3, face_mask: int) -> ArrayMesh:
 		_add_face_fill(st, face, half, rim, face_mask)
 		wrote = true
 	var mesh := _commit_or_empty(st, wrote)
-	_cache_put(size, face_mask, "fill", mesh)
+	_cache_put(size, face_mask, kind, mesh)
 	return mesh
 
 
@@ -200,11 +204,12 @@ static func attach_element_visual(
 	fill.material_override = fill_material
 	root.add_child(fill)
 
-	var rim := MeshInstance3D.new()
-	rim.name = "Rim"
-	rim.mesh = make_rim_mesh(collider.size, face_mask)
-	rim.material_override = rim_material
-	root.add_child(rim)
+	if RIMS_ENABLED:
+		var rim := MeshInstance3D.new()
+		rim.name = "Rim"
+		rim.mesh = make_rim_mesh(collider.size, face_mask)
+		rim.material_override = rim_material
+		root.add_child(rim)
 
 	body.add_child(root)
 

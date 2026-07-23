@@ -6,7 +6,6 @@ const ARCHETYPE_DIR := "res://resources/archetypes/slice01/"
 ## no lists to edit by hand.
 const AUTHORED_DIR := "res://resources/archetypes/authored/"
 const ROVER_IDS: PackedStringArray = [
-	"rover_frame",
 	"cockpit",
 	"control_terminal",
 	"power_battery_small",
@@ -244,10 +243,6 @@ static func gyro() -> ElementArchetype:
 
 static func landing_leg() -> ElementArchetype:
 	return load_required("landing_leg")
-
-
-static func rover_frame() -> ElementArchetype:
-	return load_required("rover_frame")
 
 
 ## Просвет под днищем ровера: ход подвески + радиус колеса той пары, которую

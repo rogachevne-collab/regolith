@@ -41,7 +41,7 @@ static func _compose_batched(
 			world.get_archetype_registry().register(archetype)
 	var helper := AssemblyBuildHelper.new(world, store_id)
 	helper.ensure_materials(800.0)
-	if not helper.spawn_anchor(Slice01Archetypes.rover_frame(), grid_frame):
+	if not helper.spawn_anchor(Slice01Archetypes.frame(), grid_frame):
 		return {"ok": false, "error": helper.last_error}
 	if not _place_chassis(helper, intent):
 		return {"ok": false, "error": helper.last_error}
@@ -162,7 +162,7 @@ static func _place_chassis(helper: AssemblyBuildHelper, intent: RoverIntent) -> 
 				if x == 0 and y == 0 and z == 0:
 					continue
 				if not helper.place(
-					Slice01Archetypes.rover_frame(),
+					Slice01Archetypes.frame(),
 					Vector3i(x, y, z),
 					0,
 					"frame_%d_%d_%d" % [x, y, z]

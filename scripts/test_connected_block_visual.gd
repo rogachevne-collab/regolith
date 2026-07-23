@@ -20,8 +20,6 @@ func _run() -> void:
 		return
 	if not _test_adjacent_large_frames_merge():
 		return
-	if not _test_adjacent_rover_frames_merge():
-		return
 	print("CONNECTED-BLOCK-VISUAL-POC: PASS")
 	get_tree().quit(0)
 
@@ -238,50 +236,6 @@ func _test_adjacent_large_frames_merge() -> bool:
 		return false
 	if not _assert_cw_outward_mesh(rim, "large rim"):
 		return false
-	return true
-
-
-func _test_adjacent_rover_frames_merge() -> bool:
-	var left := _make_element(
-		1,
-		Slice01Archetypes.rover_frame(),
-		Vector3i.ZERO
-	)
-	var right := _make_element(
-		2,
-		Slice01Archetypes.rover_frame(),
-		Vector3i.RIGHT
-	)
-	var occupancy := {
-		Vector3i.ZERO: 1,
-		Vector3i.RIGHT: 2,
-	}
-	var archetypes := {1: "rover_frame", 2: "rover_frame"}
-	var left_mask := ConnectedBlockVisual.face_occlusion_mask(
-		left,
-		occupancy,
-		archetypes
-	)
-	if not ConnectedBlockVisual.is_face_occluded(
-		left_mask,
-		OrientationUtil.Face.POS_X
-	):
-		return _fail("rover_frame +X should be occluded by neighbour")
-	if ConnectedBlockVisual.visible_face_count(left_mask) != 5:
-		return _fail("merged rover_frame should expose 5 faces")
-	if ConnectedBlockVisual.visible_edge_count(left_mask) != 8:
-		return _fail("merged rover_frame should expose 8 rim edges")
-	## Must not merge with base construction frame.
-	var base := _make_element(3, Slice01Archetypes.frame(), Vector3i.LEFT)
-	occupancy[Vector3i.LEFT] = 3
-	archetypes[3] = "frame"
-	var mixed := ConnectedBlockVisual.face_occlusion_mask(
-		left,
-		occupancy,
-		archetypes
-	)
-	if ConnectedBlockVisual.is_face_occluded(mixed, OrientationUtil.Face.NEG_X):
-		return _fail("rover_frame must not merge with construction frame")
 	return true
 
 

@@ -43,11 +43,11 @@ static func _spawn_batched(
 	var helper := AssemblyBuildHelper.new(session.world, store_id)
 	helper.ensure_materials(500.0)
 	var grid_frame := GridSpawnUtil.grid_frame_from_transform(assembly_transform)
-	if not helper.spawn_anchor(Slice01Archetypes.rover_frame(), grid_frame):
+	if not helper.spawn_anchor(Slice01Archetypes.frame(), grid_frame):
 		return {"ok": false, "error": helper.last_error}
 	# Deck row x=0..2 at z=0.
 	for cell: Vector3i in [Vector3i(1, 0, 0), Vector3i(2, 0, 0)]:
-		if not helper.place(Slice01Archetypes.rover_frame(), cell, 0, "deck_%d" % cell.x):
+		if not helper.place(Slice01Archetypes.frame(), cell, 0, "deck_%d" % cell.x):
 			return {"ok": false, "error": helper.last_error}
 	# Cockpit forward (3×2×2 footprint).
 	if not helper.place(Slice01Archetypes.cockpit(), Vector3i(0, 0, 1), 0, "cockpit"):

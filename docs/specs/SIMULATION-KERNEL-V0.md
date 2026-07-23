@@ -308,7 +308,7 @@ resources/blueprints/baked/*.tres   (deterministic output, committed)
 
 ## Rover modules (composition)
 
-Ровер — композиция placeable модулей (`ROVER-MODULES-V1`): `rover_frame`,
+Ровер — композиция placeable модулей (`ROVER-MODULES-V1`): `frame` (шасси),
 `wheel_suspension`, `drive_wheel`, `cockpit`, power blocks. Headless gate:
 `scenes/test_simulation_wheel.tscn`. Legacy цельный `cart_rover` / `CartLocomotion`
 сняты.

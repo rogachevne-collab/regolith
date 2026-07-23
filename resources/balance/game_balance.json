@@ -1180,15 +1180,6 @@
       "mass_kg": 500.0,
       "build_requirements": []
     },
-    "rover_frame": {
-      "mass_kg": 30.90909090909091,
-      "build_requirements": [
-        {
-          "resource_id": "plate_metal",
-          "amount": 2.0
-        }
-      ]
-    },
     "stationary_drill": {
       "mass_kg": 180.0,
       "build_requirements": [

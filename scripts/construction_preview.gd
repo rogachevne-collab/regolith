@@ -536,7 +536,9 @@ func _build_collider_preview_nodes(
 	var use_connected := CONNECTED_BLOCK_VISUAL_SCRIPT.is_connected_archetype(
 		archetype.archetype_id
 	)
-	var rim_material := _connected_rim_preview_material(preview_material)
+	var rim_material: Material = null
+	if CONNECTED_BLOCK_VISUAL_SCRIPT.RIMS_ENABLED:
+		rim_material = _connected_rim_preview_material(preview_material)
 	for collider: ColliderDefinition in archetype.colliders:
 		if (
 			use_connected
@@ -556,14 +558,15 @@ func _build_collider_preview_nodes(
 			fill.material_override = preview_material
 			fill.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			root.add_child(fill)
-			var rim := MeshInstance3D.new()
-			rim.mesh = CONNECTED_BLOCK_VISUAL_SCRIPT.make_rim_mesh(
-				collider.size,
-				0
-			)
-			rim.material_override = rim_material
-			rim.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-			root.add_child(rim)
+			if CONNECTED_BLOCK_VISUAL_SCRIPT.RIMS_ENABLED:
+				var rim := MeshInstance3D.new()
+				rim.mesh = CONNECTED_BLOCK_VISUAL_SCRIPT.make_rim_mesh(
+					collider.size,
+					0
+				)
+				rim.material_override = rim_material
+				rim.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+				root.add_child(rim)
 			nodes.append(root)
 			continue
 		var mesh := collider.make_preview_mesh(1.015)

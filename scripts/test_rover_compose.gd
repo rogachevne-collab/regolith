@@ -226,6 +226,27 @@ func _test_compose_authored_pair() -> bool:
 	):
 		if WheelSimulationService.is_complete_pair(wheel_pair):
 			complete += 1
+	# Tip (wheel_plug) must sit inboard of the tire hub on every board —
+	# starboard hubs facing out means compose/orientation flipped the axle.
+	var assembly := world.get_assembly_raw(assembly_id)
+	for element_id: int in assembly.element_ids:
+		var element := world.get_element(element_id)
+		if element == null or element.get_archetype() == null:
+			continue
+		if not element.get_archetype().is_wheel():
+			continue
+		var tip := WheelBodyProjectionUtil.plug_point_assembly_local(element)
+		var hub := WheelBodyProjectionUtil.axle_point_assembly_local(element)
+		var outboard := Vector3(signf(tip.x), 0.0, 0.0)
+		if outboard.is_zero_approx():
+			continue
+		var stub_out := (tip - hub).normalized().dot(outboard)
+		if stub_out > 0.3:
+			world.free()
+			return _fail(
+				"wheel %d tip faces outboard (stub·out=%.2f tip=%s hub=%s)"
+				% [element_id, stub_out, tip, hub]
+			)
 	world.free()
 	if complete != intent.wheel_count:
 		return _fail(
@@ -252,7 +273,7 @@ func _test_bad_com_fixture() -> bool:
 	var world := _boot_world()
 	var helper := AssemblyBuildHelper.new(world, PlayerIdentity.store_id("player"))
 	helper.ensure_materials(800.0)
-	if not helper.spawn_anchor(Slice01Archetypes.rover_frame()):
+	if not helper.spawn_anchor(Slice01Archetypes.frame()):
 		world.free()
 		return _fail("bad com anchor")
 	for cell: Vector3i in [
@@ -263,7 +284,7 @@ func _test_bad_com_fixture() -> bool:
 		Vector3i(3, 0, 1), Vector3i(4, 0, 1), Vector3i(5, 0, 1),
 		Vector3i(6, 0, 1), Vector3i(7, 0, 1), Vector3i(8, 0, 1),
 	]:
-		if not helper.place(Slice01Archetypes.rover_frame(), cell):
+		if not helper.place(Slice01Archetypes.frame(), cell):
 			world.free()
 			return _fail("bad com frame %s: %s" % [cell, helper.last_error])
 	var pair_intent := RoverIntent.defaults()

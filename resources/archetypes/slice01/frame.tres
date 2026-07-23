@@ -24,3 +24,5 @@ mass_kg = 50.0
 colliders = Array[ExtResource("2_cijrg")]([SubResource("Resource_rbwyb")])
 structural_surface_policy = 1
 build_requirements = Array[ExtResource("1_ts8i3")]([SubResource("Resource_pgwiu")])
+visual_scene_path = "res://scenes/presentation/base_block_05m_visual.tscn"
+visual_offset = Vector3(0.25, 0.25, 0.25)

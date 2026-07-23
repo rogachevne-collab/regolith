@@ -1,0 +1,19 @@
+[gd_resource type="StandardMaterial3D" format=3 uid="uid://qlo5jto2x2mx"]
+
+[ext_resource type="Texture2D" uid="uid://cfb740dmyx6ff" path="res://resources/textures/sci_fi_panel1/sci-fi-panel1-albedo.png" id="1_albedo"]
+[ext_resource type="Texture2D" uid="uid://dneuitje1d3aa" path="res://resources/textures/sci_fi_panel1/sci-fi-panel1-normal-ogl.png" id="2_normal"]
+[ext_resource type="Texture2D" uid="uid://djtx2wyr3aswd" path="res://resources/textures/sci_fi_panel1/sci-fi-panel1-metallic.png" id="3_metallic"]
+[ext_resource type="Texture2D" uid="uid://dfgivu8hoq37u" path="res://resources/textures/sci_fi_panel1/sci-fi-panel1-roughness.png" id="4_roughness"]
+[ext_resource type="Texture2D" uid="uid://v37xkd2bbrgs" path="res://resources/textures/sci_fi_panel1/sci-fi-panel1-ao.png" id="5_ao"]
+
+[resource]
+albedo_texture = ExtResource("1_albedo")
+metallic = 1.0
+metallic_texture = ExtResource("3_metallic")
+roughness_texture = ExtResource("4_roughness")
+normal_enabled = true
+normal_texture = ExtResource("2_normal")
+ao_enabled = true
+ao_texture = ExtResource("5_ao")
+ao_texture_channel = 0
+texture_filter = 2

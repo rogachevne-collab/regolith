@@ -21,7 +21,7 @@
 Дать игроку построить управляемый ровер из отдельных placeable блоков, не из
 baked blueprint:
 
-- рама (`rover_frame`) как шасси;
+- рама (`frame`, стандартный 0.5 m каркас) как шасси;
 - подвеска (`wheel_suspension`) крепится к раме и несёт raycast-модель хода;
 - колесо (`drive_wheel`) крепится **только** к подвеске и даёт drive/brake/steer;
 - кокпит (`cockpit`, роль `ControlSeat`) — точка управления;
@@ -74,7 +74,7 @@ electric budget, что у Industry v1.
 
 ### Входит
 
-- 6 archetypes: `rover_frame`, `wheel_suspension`, `drive_wheel`, `cockpit`,
+- шасси на стандартном `frame` + modules: `wheel_suspension`, `drive_wheel`, `cockpit`,
   `power_battery_small`, `power_distributor_small`;
 - typed socket `wheel_socket`/`wheel_plug` и placement-валидация;
 - `WheelPair` discovery, drive/brake/steer, raycast suspension;
@@ -112,7 +112,7 @@ archetypes»).
 
 | `archetype_id` | SE-аналог (small grid) | Footprint cells | Физический габарит |
 |---|---|---:|---:|
-| `rover_frame` | Light Armor Block | 1×1×1 | 0.5×0.5×0.5 m |
+| `frame` (шасси) | Light Armor Block | 1×1×1 | 0.5×0.5×0.5 m |
 | `wheel_suspension` | Suspension strut | 1×2×1 | 0.5×1×0.5 m |
 | `drive_wheel` | Wheel | 1×1×1 | 0.5×0.5×0.5 m |
 | `cockpit` | Cockpit / control seat | 3×2×2 | 1.5×1×1 m |
@@ -126,14 +126,15 @@ archetypes»).
 
 | `archetype_id` | Роли | Definition | Настраивается игроком |
 |---|---|---|---|
-| `rover_frame` | `Frame` | — | — |
+| `frame` (шасси) | `Frame` | — | — |
 | `wheel_suspension` | `Support` | `SuspensionDefinition` | ход, жёсткость, демпфер |
 | `drive_wheel` | `Support`, `Actuator` | `WheelDefinition` | момент, тормоз, grip, `steerable` |
 | `cockpit` | `ControlSeat`, `Frame` | seat offset | — |
 | `power_battery_small` | `Tank` | — (electric fixture) | — |
 | `power_distributor_small` | `Hub` | — (electric fixture) | — |
 
-`rover_frame` материализуется как slice01-fixture в player construction path.
+Шасси ровера — тот же slice01 `frame`, что и строительный каркас (общий
+visual / cost / mass).
 
 ### SuspensionDefinition
 
@@ -557,7 +558,7 @@ emission (R3 — VisualShader не создавать).
 | `scenes/presentation/drive_wheel_visual.tscn` | hub + шина; **оранжевый** plug сверху; светлая полоса протектора = `forward_axis` (направление качения) |
 | `scenes/presentation/cockpit_visual.tscn` | остекление спереди, спинка сиденья сзади — виден «перёд» |
 
-Кубическая форма остаётся только у `rover_frame` и малых энергоблоков.
+Кубическая форма остаётся у шасси (`frame`) и малых энергоблоков.
 
 ### Preview gizmos (`ConstructionPreview`)
 

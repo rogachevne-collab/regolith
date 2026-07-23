@@ -89,7 +89,7 @@ func _test_flight_assembly_detection() -> bool:
 	var world := _boot_world()
 	var helper := AssemblyBuildHelper.new(world, PlayerIdentity.store_id("player"))
 	helper.ensure_materials(200.0)
-	if not helper.spawn_anchor(Slice01Archetypes.rover_frame()):
+	if not helper.spawn_anchor(Slice01Archetypes.frame()):
 		return _fail("spawn frame: %s" % helper.last_error)
 	if ThrusterSimulationService.is_flight_assembly(world, helper.assembly_id):
 		return _fail("frame-only must not be flight")
@@ -181,7 +181,7 @@ func _test_power_demand_scales_with_throttle() -> bool:
 	var world := _boot_world()
 	var helper := AssemblyBuildHelper.new(world, PlayerIdentity.store_id("player"))
 	helper.ensure_materials(300.0)
-	if not helper.spawn_anchor(Slice01Archetypes.rover_frame()):
+	if not helper.spawn_anchor(Slice01Archetypes.frame()):
 		return _fail("spawn: %s" % helper.last_error)
 	if not helper.place(Slice01Archetypes.thruster(), Vector3i(0, -1, 0), 0, "thruster"):
 		return _fail("thruster: %s" % helper.last_error)

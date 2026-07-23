@@ -13,8 +13,9 @@ extends Node3D
 ## start of the next physics tick, discarding its current motion — so a
 ## smooth winch is not yet this, it is gate 5.
 ##
-## STATUS: gate 2. No collision yet; anchors are one-way kinematic pins
-## (rigid-body coupling is gate 4).
+## STATUS: gate 3 slice 1. Collision (box/sphere/plane) is live; anchors are
+## one-way kinematic pins (rigid-body coupling is gate 4). Shipping core is
+## XPBD; AVBD is parked (ADR 0007/0008).
 
 const XPBDRope := preload("res://addons/ropes/core/xpbd_rope.gd")
 const AVBDRope := preload("res://addons/ropes/core/avbd_rope.gd")
@@ -22,11 +23,12 @@ const RopeRenderer := preload("res://addons/ropes/render/rope_renderer.gd")
 
 ## Which core this node drives, as a constant rather than a setting: exposing
 ## two solvers as a choice means every feature has to exist twice or the
-## setting silently changes which ones work (ADR 0007). XPBD today, because
-## AVBD has no contacts yet and a rope that cannot touch the world is not
-## shippable. Flipping this is a deliberate edit, never a runtime decision —
-## AVBD carries multipliers across frames, so entering it cold reproduces the
-## free-fall-and-bounce transient exactly when the rope becomes loaded.
+## setting silently changes which ones work (ADR 0007). XPBD today; AVBD is
+## parked. Kept as a compile-time constant so a deliberate revive is an edit,
+## never a runtime switch — AVBD carries multipliers across frames, so
+## entering it cold reproduces the free-fall-and-bounce transient exactly
+## when the rope becomes loaded. [method rebuild] always constructs XPBD while
+## this is false; the guard helpers below are the only AVBD-aware path.
 const CORE_IS_AVBD := false
 
 ## Lateral deviation used when seeding the rope, in meters: no real rope is

@@ -661,7 +661,7 @@ func _test_piston_multibody_projection() -> bool:
 	var carriage_frame := _place_element_for_projection(
 		world,
 		assembly_id,
-		Slice01Archetypes.rover_frame(),
+		Slice01Archetypes.frame(),
 		Vector3i(5, 1, -1),
 		piston
 	)

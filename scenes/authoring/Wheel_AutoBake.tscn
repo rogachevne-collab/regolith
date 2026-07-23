@@ -14,11 +14,15 @@ visual_scene = ExtResource("2_sgpl2")
 size_cells = Vector3i(2, 3, 3)
 mass_kg = 40.0
 wheel_radius_m = 0.75
-wheel_drive_torque_n_m = 250.0
+wheel_drive_torque_n_m = 500.0
+wheel_grip_longitudinal = 2.0
+wheel_grip_lateral = 1.5
+wheel_slip_stiffness = 1500.0
+wheel_lateral_stiffness = 2000.0
 model_offset = Vector3(0.7327766603221566, 0.75000001279264, 0.7386058044433595)
 mount_generation = 1
 default_orientation_index = 16
-last_bake_diagnostics = PackedStringArray("шина: Ø 1.50 м, ширина 0.73 м, хаб (0.36743235785838, 0.75001802191487, 0.73800035704911) (цилиндр); стык — точка plug", "baked \'Wheel_Medium_01\' -> OK res://resources/archetypes/authored/Wheel_Medium_01.tres")
+last_bake_diagnostics = PackedStringArray("шина: Ø 1.50 м, ширина 0.73 м, хаб (0.30650791571194, 0.75001802191487, 0.73800035704911) (цилиндр); стык — точка plug", "baked \'Wheel_Medium_01\' -> OK res://resources/archetypes/authored/Wheel_Medium_01.tres")
 last_baked_path = "res://resources/archetypes/authored/Wheel_Medium_01.tres"
 
 [node name="Mount_click" type="Node3D" parent="." unique_id=2074594343]
@@ -28,7 +32,7 @@ socket_kind = 2
 snap_to_face = false
 
 [node name="WheelTire" type="Node3D" parent="." unique_id=555818902]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.3674323578583819, 0.750018021914873, 0.7380003570491135)
+transform = Transform3D(0.7832350357790778, 0, 0, 0, 1, 0, 0, 0, 1, 0.3065079157119358, 0.750018021914873, 0.7380003570491135)
 script = ExtResource("4_tire")
 radius_m = 0.75
 width_m = 0.734

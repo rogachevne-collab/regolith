@@ -2,7 +2,7 @@ extends Node
 
 const _HeadlessTestHarness := preload("res://scripts/testing/headless_test_harness.gd")
 const ROVER_FRAME := preload(
-	"res://resources/archetypes/slice01/rover_frame.tres"
+	"res://resources/archetypes/slice01/frame.tres"
 )
 
 ## Пара «подвеска + колесо» — та, что ставит игра: сеточных деталей без точных

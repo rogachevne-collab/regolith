@@ -30,8 +30,12 @@ script = ExtResource("7_w1jtj")
 radius_m = 0.75
 width_m = 0.734
 hub_local_authored = true
-hub_local = Vector3(0.3674323578583819, 0.750018021914873, 0.7380003570491135)
-drive_torque_n_m = 250.0
+hub_local = Vector3(0.3065079157119358, 0.750018021914873, 0.7380003570491135)
+drive_torque_n_m = 500.0
+longitudinal_grip = 2.0
+lateral_grip = 1.5
+slip_stiffness = 1500.0
+lateral_stiffness = 2000.0
 forward_axis_face = 5
 
 [resource]

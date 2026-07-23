@@ -407,8 +407,9 @@ func _wrap_spinning_wheel(
 	root.add_child(steer)
 	var spin := Node3D.new()
 	spin.name = "SpinRoot"
-	# Align with the PHYSICS axle (forward×up), not the connector normal.
-	# Connector −X vs physics +X was a silent 180° flip after rebake.
+	# Align model +X with the tip side of the axle line (hub→plug), not the
+	# unsigned forward×up sign — that sign is the same on both boards and
+	# flipped every right-side hub stub outboard.
 	spin.basis = _axle_to_spin_basis(element, root.transform.basis)
 	steer.add_child(spin)
 	# Centre the tire on the spin origin by measuring it, not by trusting the
@@ -474,18 +475,26 @@ func _axle_to_spin_basis(
 	var frame := WheelBodyProjectionUtil.wheel_frame_assembly_local(element)
 	if frame.is_empty():
 		return Basis.IDENTITY
+	# Physics axle is forward×up — a signed spin axis, same on both boards
+	# when both roll forward. The mesh stub lives on the TIP side of the tire
+	# (part +X / wheel_plug). On the right board tip is anti-parallel to that
+	# axle; aligning model +X to unsigned axle flipped every starboard hub
+	# outboard. Prefer the tip direction on the same line.
 	var axle_assembly: Vector3 = Vector3(frame["axle"]).normalized()
-	var axle := (root_basis.inverse() * axle_assembly).normalized()
-	if axle.is_equal_approx(Vector3.RIGHT):
-		return Basis.IDENTITY
-	var rotation_axis := Vector3.RIGHT.cross(axle)
-	if rotation_axis.length_squared() <= 0.000001:
-		# Anti-parallel to +X: 180° about any perpendicular.
-		return Basis(Vector3.UP, PI)
-	return Basis(
-		rotation_axis.normalized(),
-		Vector3.RIGHT.signed_angle_to(axle, rotation_axis.normalized())
+	var tip_assembly := (
+		WheelBodyProjectionUtil.plug_point_assembly_local(element)
+		- WheelBodyProjectionUtil.axle_point_assembly_local(element)
 	)
+	if tip_assembly.length_squared() > 0.000001:
+		var tip_dir := tip_assembly.normalized()
+		if axle_assembly.dot(tip_dir) < 0.0:
+			axle_assembly = -axle_assembly
+	var axle := (root_basis.inverse() * axle_assembly).normalized()
+	var up := (root_basis.inverse() * Vector3(frame["up"])).normalized()
+	up = (up - axle * up.dot(axle)).normalized()
+	if axle.length_squared() <= 0.000001 or up.length_squared() <= 0.000001:
+		return Basis.IDENTITY
+	return Basis(axle, up, axle.cross(up).normalized())
 
 
 func _refresh_connected_neighbours(
