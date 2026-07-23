@@ -1258,8 +1258,6 @@ func _enter_rover_seat(
 		_session.visuals.rebuild_assembly(assembly_id)
 	if _session.piston_visuals != null:
 		_session.piston_visuals.rebuild_assembly(assembly_id)
-	if _session.wheel_visuals != null:
-		_session.wheel_visuals.rebuild_assembly(assembly_id)
 	return _result(&"ok", {
 		"assembly_id": assembly_id,
 		"element_id": element_id,
@@ -1347,9 +1345,9 @@ func _wake_rover_body(assembly_id: int) -> void:
 			_session.projection.project_assembly_now(assembly_id, motion)
 			body = _session.projection.get_physics_body(assembly_id)
 	if body is RigidBody3D:
-		var rigid := body as RigidBody3D
-		rigid.freeze = false
-		rigid.sleeping = false
+		# All bodies, not just the root: a frozen wheel body under a live
+		# chassis is a statue the constraint drags around.
+		_session.projection.wake_assembly_bodies(assembly_id)
 
 
 func _exit_rover_seat(player: Node3D) -> Dictionary:
@@ -2448,6 +2446,8 @@ func _configure_wheel(
 		)
 	if parameters.has("brake_torque_n_m"):
 		configure.brake_torque_n_m = float(parameters["brake_torque_n_m"])
+	if parameters.has("grip_scale"):
+		configure.grip_scale = float(parameters["grip_scale"])
 	var result := _session.apply_configure_wheel(configure)
 	return _result(
 		StringName(result.get("reason", &"invalid_target")),

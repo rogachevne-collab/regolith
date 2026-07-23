@@ -183,9 +183,12 @@ func _spawn_demo_rover_near_player() -> void:
 	var ground := ground_variant as Vector3
 	var result: Dictionary
 	if demo_rover_phrase.strip_edges().is_empty():
-		result = RoverDemoSpawn.spawn_on_terrain(
+		# Пустая фраза = дефолтная сборка, тот же композер, что и по фразе.
+		# Отдельного «демо-ровера» по зашитым клеткам больше нет.
+		result = RoverComposer.spawn_on_terrain(
 			_session,
 			ground,
+			null,
 			RoverDemoSpawn.STORE_ID,
 			_terrain,
 			tool,

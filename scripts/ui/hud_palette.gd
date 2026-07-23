@@ -23,6 +23,7 @@ class PaletteEntry:
 
 	var archetype_id := ""
 	var code := ""
+	var name_label: Label
 
 	func _get_drag_data(_at_position: Vector2) -> Variant:
 		set_drag_preview(_make_preview())
@@ -58,11 +59,19 @@ var _panel_overlay: ColorRect
 var _scroll: ScrollContainer
 var _grid: GridContainer
 var _open := false
+var _entries: Array[PaletteEntry] = []
 
 
 func setup(ctx: Dictionary) -> void:
 	_gateway = ctx.get("gateway")
 	_player = ctx.get("player")
+	# _build() runs in _ready(), which fires before the parent HUDRoot's own
+	# _ready() calls setup() (Godot readies children before parents) — so every
+	# entry is first labelled with _gateway still null. Re-stamp labels now that
+	# the gateway reference exists so archetypes without a static HudTokens
+	# translation (control_terminal, wizard-baked parts) don't stay frozen on
+	# the raw archetype_id fallback.
+	_refresh_display_names()
 
 
 func _ready() -> void:
@@ -194,7 +203,16 @@ func _make_entry(archetype_id: String) -> Control:
 	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vb.add_child(name_label)
 
+	entry.name_label = name_label
+	_entries.append(entry)
 	return entry
+
+
+## Re-stamps every card's name label from the current _gateway. Safe to call
+## repeatedly: cheap text-only refresh, no grid rebuild.
+func _refresh_display_names() -> void:
+	for entry in _entries:
+		entry.name_label.text = _display_name(entry.archetype_id)
 
 
 func _display_name(archetype_id: String) -> String:
@@ -262,6 +280,7 @@ func _apply_open_state() -> void:
 		return
 	_panel.visible = _open
 	if _open:
+		_refresh_display_names()
 		call_deferred("_update_panel_layout")
 	# While the palette is open the cursor must be visible to drag, and gameplay
 	# input is paused so WASD/drill do not fire behind the overlay. Both are

@@ -90,12 +90,10 @@ func _prompt_for(hit: InteractionHit) -> String:
 		hit.valid
 		and hit.distance <= 4.0
 		and hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
-		and str(hit.metadata.get("archetype_id", "")) in [
-			"drive_wheel",
-			"wheel_suspension",
-				"wheel_med",
-				"suspension_small",
-		]
+		and (
+			hit.metadata.has("wheel_element_id")
+			or hit.metadata.has("suspension_element_id")
+		)
 	):
 		return "E — настройки модуля"
 	if _tools.active_tool == &"scoop":

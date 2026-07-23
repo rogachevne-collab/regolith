@@ -63,10 +63,6 @@ const TOOL_CODES := {
 	"rotor_base_large": "RTL",
 	"hinge_base": "HNG",
 	"rover_frame": "RFR",
-	"wheel_suspension": "SUS",
-	"drive_wheel": "WHL",
-	"suspension_small": "SUS",
-	"wheel_med": "WHL",
 	"cockpit": "CPT",
 	"control_terminal": "TRM",
 	"power_battery_small": "BAT",
@@ -103,10 +99,6 @@ const ARCHETYPE_LABELS := {
 	"rotor_top_large": "ПЛАТФОРМА Б. РОТОРА",
 	"hinge_base": "ШАРНИР",
 	"hinge_top": "ПЛАТФОРМА ШАРНИРА",
-	"wheel_suspension": "ПОДВЕСКА",
-	"drive_wheel": "КОЛЕСО",
-	"suspension_small": "ПОДВЕСКА S",
-	"wheel_med": "КОЛЕСО M",
 	"cockpit": "КОКПИТ",
 	"power_battery_small": "БАТАРЕЯ М",
 	"power_distributor_small": "РАСПРЕД М",
@@ -117,10 +109,6 @@ const ARCHETYPE_LABELS := {
 
 ## Short orientation hints shown in build mode for rover modules.
 const ROVER_ORIENTATION_HINTS := {
-	"wheel_suspension": "↑ рама  ↓ гнездо",
-	"drive_wheel": "↑ подвеска  ↔ протектор = ход",
-	"suspension_small": "↑ рама  ↓ гнездо",
-	"wheel_med": "↑ подвеска  ↔ протектор = ход",
 	"cockpit": "↔ стекло = перед",
 }
 

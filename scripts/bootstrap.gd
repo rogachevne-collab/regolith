@@ -69,7 +69,9 @@ const MAP_HEIGHTMAP_SIZE := Vector2i(2048, 1024)
 @export var spawn_demo_rover := true
 ## Flight hopper for POC-THRUSTERS-V0 manual hop/land checks.
 @export var spawn_demo_hopper := true
-@export var demo_rover_phrase := "колбаса на 12 колес, низкая"
+## «На новых» = пара колесо+подвеска, испечённая визардом (authored). Прежнее
+## значение — "колбаса на 12 колес, низкая".
+@export var demo_rover_phrase := "ровер на 4 колёсах на новых подвесках"
 @export var persist_digs := true
 ## VoxelInstancer decorative rocks (streams with terrain chunks).
 @export var enable_boulder_instancer := true
@@ -848,9 +850,12 @@ func _spawn_rover_at_hint(
 	var t0 := Time.get_ticks_msec()
 	var result: Dictionary
 	if phrase.is_empty():
-		result = RoverDemoSpawn.spawn_on_terrain(
+		# Пустая фраза = дефолтная сборка тем же композером, что и по фразе.
+		# Отдельного «демо-ровера» по зашитым клеткам больше нет.
+		result = RoverComposer.spawn_on_terrain(
 			_session,
 			ground,
+			null,
 			RoverDemoSpawn.STORE_ID,
 			_terrain,
 			tool,

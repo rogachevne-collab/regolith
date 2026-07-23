@@ -1,6 +1,6 @@
-[gd_resource type="ShaderMaterial" format=3]
+[gd_resource type="ShaderMaterial" format=3 uid="uid://dmi86jt82ske4"]
 
-[ext_resource type="Shader" path="res://resources/sky/lunar_starfield.gdshader" id="1"]
+[ext_resource type="Shader" uid="uid://d217ep72xj1vn" path="res://resources/sky/lunar_starfield.gdshader" id="1"]
 
 [resource]
 shader = ExtResource("1")

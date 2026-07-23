@@ -237,8 +237,9 @@ func _refresh_from_hit(hit: InteractionHit) -> void:
 	if hit == null or not hit.valid:
 		return
 	_title.text = HudWheelTuneUtil.panel_title(hit)
-	var archetype_id := str(hit.metadata.get("archetype_id", ""))
-	var is_wheel := archetype_id == "drive_wheel" or archetype_id == "wheel_med"
+	# По возможностям детали, а не по списку id: испечённая визардом деталь
+	# иначе молча остаётся без строки руля.
+	var is_wheel := hit.metadata.has("wheel_element_id")
 	_steer_row.visible = is_wheel
 	if is_wheel:
 		var powered := bool(hit.metadata.get("wheel_powered", false))

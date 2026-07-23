@@ -1,20 +1,8 @@
 class_name RoverModuleVisual
 extends RefCounted
 
-const SUSPENSION_SCENE := preload(
-	"res://scenes/presentation/wheel_suspension_visual.tscn"
-)
-const WHEEL_SCENE := preload(
-	"res://scenes/presentation/drive_wheel_visual.tscn"
-)
 const COCKPIT_SCENE := preload(
 	"res://scenes/presentation/cockpit_visual.tscn"
-)
-const SUSPENSION_SMALL_SCENE := preload(
-	"res://scenes/presentation/suspension_small_visual.tscn"
-)
-const WHEEL_MED_SCENE := preload(
-	"res://scenes/presentation/wheel_med_visual.tscn"
 )
 
 const DEFAULT_SUSPENSION_TRAVEL_M := 0.6
@@ -25,27 +13,12 @@ const SOCKET_HALO_RADIUS_M := 0.11
 
 
 static func is_rover_module(archetype_id: String) -> bool:
-	return (
-		archetype_id == "wheel_suspension"
-		or archetype_id == "drive_wheel"
-		or archetype_id == "cockpit"
-		or archetype_id == "suspension_small"
-		or archetype_id == "wheel_med"
-	)
+	return archetype_id == "cockpit"
 
 
 static func scene_for(archetype_id: String) -> PackedScene:
-	match archetype_id:
-		"wheel_suspension":
-			return SUSPENSION_SCENE
-		"drive_wheel":
-			return WHEEL_SCENE
-		"cockpit":
-			return COCKPIT_SCENE
-		"suspension_small":
-			return SUSPENSION_SMALL_SCENE
-		"wheel_med":
-			return WHEEL_MED_SCENE
+	if archetype_id == "cockpit":
+		return COCKPIT_SCENE
 	return null
 
 
@@ -177,36 +150,32 @@ static func build_placement_preview_nodes(
 		visual.name = "Preview%s" % archetype.archetype_id.capitalize()
 		apply_preview_material(visual, body_material)
 		nodes.append(visual)
-	match archetype.archetype_id:
-		"wheel_suspension", "suspension_small":
-			nodes.append_array(
-				_build_suspension_gizmos(
-					origin_cell,
-					orientation_index,
-					archetype,
-					valid
-				)
+	# Гизмо хода подвески и дуги руля рисуются по возможностям детали, а не по
+	# списку id: иначе каждая новая деталь из визарда остаётся без подсказок.
+	if archetype.is_suspension():
+		nodes.append_array(
+			_build_suspension_gizmos(
+				origin_cell,
+				orientation_index,
+				archetype,
+				valid
 			)
-		"drive_wheel", "wheel_med":
-			nodes.append_array(
-				_build_wheel_gizmos(
-					origin_cell,
-					orientation_index,
-					archetype,
-					valid
-				)
+		)
+	elif archetype.is_wheel():
+		nodes.append_array(
+			_build_wheel_gizmos(
+				origin_cell,
+				orientation_index,
+				archetype,
+				valid
 			)
+		)
 	return nodes
 
 
 static func build_orientation_hint(archetype_id: String) -> String:
-	match archetype_id:
-		"wheel_suspension", "suspension_small":
-			return "↑ рама  ↓ гнездо"
-		"drive_wheel", "wheel_med":
-			return "↑ подвеска  ↔ протектор = ход"
-		"cockpit":
-			return "↔ стекло = перед"
+	if archetype_id == "cockpit":
+		return "↔ стекло = перед"
 	return ""
 
 
@@ -241,11 +210,15 @@ static func update_runtime(
 			"wheel_center_body_local",
 			root_base.origin
 		)
-		steer.position = root_base.affine_inverse() * wheel_center_body_local
-		steer.rotation = Vector3(
-			0.0,
-			float(runtime.get("steering_angle_rad", 0.0)),
-			0.0
+		# Руль крутим вокруг вертикали КУЗОВА. Локальный +Y тут не годится: на
+		# одном борту колесо стоит докрученным на 180° вокруг оси хода (оно же
+		# симметричное), и его локальный верх смотрит вниз — передние колёса
+		# поворачивались в разные стороны. Физика всегда крутила вокруг нормали
+		# грунта, так что расходилась только картинка.
+		var up_local: Vector3 = record.get("up_local", Vector3.UP)
+		steer.transform = Transform3D(
+			Basis(up_local, float(runtime.get("steering_angle_rad", 0.0))),
+			root_base.affine_inverse() * wheel_center_body_local
 		)
 	var spin := spin_root(record)
 	if spin != null and is_instance_valid(spin):
@@ -254,8 +227,20 @@ static func update_runtime(
 		# Physics wheel_speed > 0 means rolling along wheel forward (-Z local).
 		# Positive rotate around +X moves the contact patch the wrong way for
 		# that forward, so visual spin is negated.
+		#
+		# Ось качения считаем как «вперёд × вверх», а не берём локальный +X: у
+		# докрученного на 180° колеса он смотрит в другую сторону, и это колесо
+		# крутилось бы назад при движении вперёд. Для неповёрнутой детали
+		# (-Z × +Y) даёт ровно прежний +X.
+		var spin_axis: Vector3 = (
+			Vector3(record.get("forward_local", Vector3.FORWARD)).cross(
+				Vector3(record.get("up_local", Vector3.UP))
+			)
+		)
+		if spin_axis.length_squared() <= 0.0001:
+			spin_axis = Vector3.RIGHT
 		spin.rotate_object_local(
-			Vector3.RIGHT,
+			spin_axis.normalized(),
 			-float(runtime.get("wheel_speed", 0.0)) * delta
 		)
 
@@ -345,18 +330,6 @@ static func _wheel_steerable_default(archetype: ElementArchetype) -> bool:
 
 static func _preview_body_color(archetype_id: String, valid: bool) -> Color:
 	match archetype_id:
-		"wheel_suspension", "suspension_small":
-			return (
-				Color(0.18, 0.34, 0.58, 0.44)
-				if valid
-				else Color(0.45, 0.08, 0.06, 0.38)
-			)
-		"drive_wheel", "wheel_med":
-			return (
-				Color(0.2, 0.22, 0.26, 0.46)
-				if valid
-				else Color(0.5, 0.1, 0.08, 0.4)
-			)
 		"cockpit":
 			return (
 				Color(0.16, 0.42, 0.58, 0.42)

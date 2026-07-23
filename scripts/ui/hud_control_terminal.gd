@@ -222,7 +222,7 @@ const SETPOINTS := {
 		"hinge.forward_velocity", "hinge.reverse_velocity", "hinge.torque",
 		"hinge.lower_limit", "hinge.upper_limit",
 	],
-	"wheel": ["wheel.drive_torque", "wheel.brake_torque"],
+	"wheel": ["wheel.drive_torque", "wheel.brake_torque", "wheel.grip"],
 	"suspension": [
 		"suspension.stiffness", "suspension.damping", "suspension.travel",
 	],

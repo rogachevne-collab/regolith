@@ -221,6 +221,7 @@ static func _wheel_detail(world: SimulationWorld, element: SimulationElement) ->
 		"steerable": state.steerable,
 		"drive_inverted": state.drive_inverted,
 		"drive_torque_scale": state.drive_torque_scale,
+		"grip_scale": state.grip_scale,
 		"brake_torque_n_m": (
 			state.brake_torque_n_m
 			if state.brake_torque_n_m >= 0.0

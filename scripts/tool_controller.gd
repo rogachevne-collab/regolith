@@ -89,10 +89,6 @@ const CONSTRUCTION_ARCHETYPES: PackedStringArray = [
 	"rotor_base_large",
 	"hinge_base",
 	"rover_frame",
-	"wheel_suspension",
-	"drive_wheel",
-	"suspension_small",
-	"wheel_med",
 	"cockpit",
 	"control_terminal",
 	"power_battery_small",
@@ -116,6 +112,11 @@ static func construction_archetype_ids() -> PackedStringArray:
 			ids.append(authored_id)
 	_construction_ids_cache = ids
 	return _construction_ids_cache
+
+## Слоты «подвеска» и «колесо» на роверных страницах: конкретную деталь даёт
+## визард, зашивать её id в движок нельзя. Резолвятся в _ensure_runtime_state.
+const SUSPENSION_SLOT := "@rover_suspension"
+const WHEEL_SLOT := "@rover_wheel"
 
 const TOOLBAR_SLOTS_PER_PAGE := 9
 ## Continuous demolition rate when drilling construction blocks (integrity/s).
@@ -164,8 +165,8 @@ const TOOLBAR_PAGES: Array = [
 	],
 	[
 		{"type": &"block", "archetype_id": "rover_frame"},
-		{"type": &"block", "archetype_id": "wheel_suspension"},
-		{"type": &"block", "archetype_id": "drive_wheel"},
+		{"type": &"block", "archetype_id": SUSPENSION_SLOT},
+		{"type": &"block", "archetype_id": WHEEL_SLOT},
 		{"type": &"block", "archetype_id": "cockpit"},
 		{"type": &"block", "archetype_id": "power_battery_small"},
 		{"type": &"block", "archetype_id": "power_distributor_small"},
@@ -187,8 +188,8 @@ const TOOLBAR_PAGES: Array = [
 	],
 	[
 		{"type": &"block", "archetype_id": "rover_frame"},
-		{"type": &"block", "archetype_id": "suspension_small"},
-		{"type": &"block", "archetype_id": "wheel_med"},
+		{"type": &"block", "archetype_id": SUSPENSION_SLOT},
+		{"type": &"block", "archetype_id": WHEEL_SLOT},
 		{"type": &"block", "archetype_id": "cockpit"},
 		{"type": &"block", "archetype_id": "power_battery_small"},
 		{"type": &"block", "archetype_id": "power_distributor_small"},
@@ -822,11 +823,35 @@ func _ensure_runtime_state() -> void:
 					else {}
 				)
 			_toolbar_layout.append(page_copy)
+		_resolve_rover_pair_slots()
 		_sync_toolbar_from_inventory()
 	if _toolbar_slot_by_page.size() != _toolbar_layout.size():
 		_toolbar_slot_by_page.resize(_toolbar_layout.size())
 		for page_index: int in range(_toolbar_slot_by_page.size()):
 			_toolbar_slot_by_page[page_index] = 0
+
+
+## Подставить в слоты-заглушки пару, испечённую визардом. Пары нет — слоты
+## остаются пустыми: лучше дырка в палитре, чем ссылка на несуществующую деталь.
+func _resolve_rover_pair_slots() -> void:
+	var pair := Slice01Archetypes.authored_wheel_pair()
+	var resolved := {
+		SUSPENSION_SLOT: str(pair.get("suspension", "")),
+		WHEEL_SLOT: str(pair.get("wheel", "")),
+	}
+	for page: Array in _toolbar_layout:
+		for slot_index: int in range(page.size()):
+			var entry: Variant = page[slot_index]
+			if not entry is Dictionary:
+				continue
+			var archetype_id := str((entry as Dictionary).get("archetype_id", ""))
+			if not resolved.has(archetype_id):
+				continue
+			var replacement := str(resolved[archetype_id])
+			if replacement.is_empty():
+				page[slot_index] = {}
+			else:
+				(entry as Dictionary)["archetype_id"] = replacement
 
 
 ## Latin/archetype id shown by a slot: "drill" / "weld" / archetype_id / "" for

@@ -1,6 +1,6 @@
 [gd_resource type="Environment" format=3 uid="uid://c0l8ygmmmkgxx"]
 
-[ext_resource type="Material" path="res://resources/sky/lunar_starfield_sky_material.tres" id="1_sky"]
+[ext_resource type="Material" uid="uid://dmi86jt82ske4" path="res://resources/sky/lunar_starfield_sky_material.tres" id="1_sky"]
 
 [sub_resource type="Sky" id="Sky_moon"]
 sky_material = ExtResource("1_sky")
@@ -11,9 +11,7 @@ sky = SubResource("Sky_moon")
 ambient_light_source = 2
 ambient_light_color = Color(0.16, 0.18, 0.26, 1)
 ambient_light_sky_contribution = 0.0
-ambient_light_energy = 1.0
 tonemap_mode = 3
-tonemap_exposure = 1.0
 ssao_enabled = true
 ssao_radius = 1.2
 ssao_intensity = 0.65

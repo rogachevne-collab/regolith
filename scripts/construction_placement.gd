@@ -163,7 +163,7 @@ static func plan(
 		validation.is_ok()
 		and target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
 	):
-		command.pose_offset = _precise_attach_offset(
+		command.pose_offset = precise_attach_offset(
 			world,
 			command,
 			validation.data
@@ -464,7 +464,7 @@ static func _plan_for_attach_origin(
 	)
 	var validation := world.preview_place_element(command)
 	if validation.is_ok():
-		command.pose_offset = _precise_attach_offset(
+		command.pose_offset = precise_attach_offset(
 			world,
 			command,
 			validation.data
@@ -579,7 +579,10 @@ static func precise_attach_pose_offset(
 	return Transform3D(Basis.IDENTITY, delta)
 
 
-static func _precise_attach_offset(
+## Публичная: тем же расчётом пользуется скриптовая сборка (AssemblyBuildHelper),
+## иначе собранный композером ровер садится по сетке, а поставленный руками —
+## точка в точку, и это два разных ровера.
+static func precise_attach_offset(
 	world: SimulationWorld,
 	command: PlaceElementCommand,
 	validation_data: Dictionary
