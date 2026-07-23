@@ -242,11 +242,10 @@ static func validate_place_element(world,
 			)
 		var occupancy: Dictionary = ConstructionOccupancyUtil.assembly_occupancy_index(world, assembly)
 		var preview_cells := preview.occupied_cells()
-		for cell: Vector3i in preview_cells:
-			if occupancy.has(cell):
-				return StructuralCommandResult.failed(
-					StructuralCommandResult.REASON_OVERLAP
-				)
+		if ConstructionOccupancyUtil.preview_overlaps_occupancy(preview_cells, occupancy):
+			return StructuralCommandResult.failed(
+				StructuralCommandResult.REASON_OVERLAP
+			)
 		# A rigid edge requires adjacent derived structural surface faces, so only
 		# elements occupying a neighbour of the preview footprint can ever connect.
 		var neighbour_ids: Array[int] = ConstructionOccupancyUtil.neighbour_element_ids(preview_cells, occupancy)
@@ -378,11 +377,10 @@ static func validate_wheel_place_element(world,
 		)
 	var occupancy: Dictionary = ConstructionOccupancyUtil.assembly_occupancy_index(world, assembly)
 	var preview_cells := preview.occupied_cells()
-	for cell: Vector3i in preview_cells:
-		if occupancy.has(cell):
-			return StructuralCommandResult.failed(
-				StructuralCommandResult.REASON_OVERLAP
-			)
+	if ConstructionOccupancyUtil.preview_overlaps_occupancy(preview_cells, occupancy):
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_OVERLAP
+		)
 	var connections: Array[Dictionary] = []
 	var neighbour_ids: Array[int] = ConstructionOccupancyUtil.neighbour_element_ids(preview_cells, occupancy)
 	for existing_id: int in neighbour_ids:

@@ -1,0 +1,20 @@
+[configuration]
+
+entry_symbol = "regolith_construction_preview_library_init"
+compatibility_minimum = "4.5"
+reloadable = true
+
+[libraries]
+
+macos.debug = "./bin/libregolith_construction_preview.macos.template_debug.universal.dylib"
+macos.release = "./bin/libregolith_construction_preview.macos.template_release.universal.dylib"
+
+linux.debug.x86_64 = "./bin/libregolith_construction_preview.linux.template_debug.x86_64.so"
+linux.release.x86_64 = "./bin/libregolith_construction_preview.linux.template_release.x86_64.so"
+
+; Double-precision entries come first (project runs precision=double Godot).
+windows.debug.double.x86_64 = "./bin/libregolith_construction_preview.windows.template_debug.double.x86_64.dll"
+windows.release.double.x86_64 = "./bin/libregolith_construction_preview.windows.template_debug.double.x86_64.dll"
+
+windows.debug.x86_64 = "./bin/libregolith_construction_preview.windows.template_debug.x86_64.dll"
+windows.release.x86_64 = "./bin/libregolith_construction_preview.windows.template_release.x86_64.dll"

@@ -124,6 +124,14 @@ static func frame_beam() -> ElementArchetype:
 	return load_required("frame_beam")
 
 
+static func frame_basalt() -> ElementArchetype:
+	return load_required("frame_basalt")
+
+
+static func cargo_pipe() -> ElementArchetype:
+	return load_required("cargo_pipe")
+
+
 static func power_source() -> ElementArchetype:
 	return load_required("power_source")
 

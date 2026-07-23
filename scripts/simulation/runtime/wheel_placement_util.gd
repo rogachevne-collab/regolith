@@ -184,6 +184,14 @@ static func _enrich_wheel_metadata(
 		else definition.brake_torque_n_m
 	)
 	metadata["wheel_max_brake_torque_n_m"] = definition.brake_torque_n_m
+	metadata["wheel_max_steering_angle_rad"] = (
+		state.max_steering_angle_rad
+		if state.max_steering_angle_rad >= 0.0
+		else definition.max_steering_angle_rad
+	)
+	metadata["wheel_authored_max_steering_angle_rad"] = (
+		definition.max_steering_angle_rad
+	)
 	metadata["wheel_authored_drive_torque_n_m"] = definition.drive_torque_n_m
 	var runtime := world.ensure_industry_element_runtime(element.element_id)
 	metadata["wheel_powered"] = runtime.machine_enabled and runtime.powered

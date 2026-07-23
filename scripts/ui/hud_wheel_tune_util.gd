@@ -5,6 +5,7 @@ const WHEEL_TUNE_STEP := {
 	"drive_torque_scale": 0.1,
 	"grip_scale": 0.1,
 	"brake_torque_n_m": 20.0,
+	"max_steering_angle_rad": 0.05,
 	"travel_m": 0.05,
 	"spring_stiffness_n_per_m": 100.0,
 	"spring_damping_n_s_per_m": 25.0,
@@ -14,6 +15,7 @@ const WHEEL_ROWS: Array[Dictionary] = [
 	{"key": "МОМ", "field": "drive_torque_scale"},
 	{"key": "ТОРМ", "field": "brake_torque_n_m"},
 	{"key": "СЦЕП", "field": "grip_scale"},
+	{"key": "УГОЛ", "field": "max_steering_angle_rad"},
 ]
 
 const SUSPENSION_ROWS: Array[Dictionary] = [
@@ -56,6 +58,10 @@ static func format_value(field: String, meta: Dictionary) -> String:
 			return "%.0f Н·м" % float(meta.get("wheel_brake_torque_n_m", 0.0))
 		"grip_scale":
 			return "%.0f%%" % (float(meta.get("wheel_grip_scale", 1.0)) * 100.0)
+		"max_steering_angle_rad":
+			return "%.0f°" % rad_to_deg(
+				float(meta.get("wheel_max_steering_angle_rad", 0.0))
+			)
 		"travel_m":
 			return "%.2f М" % float(meta.get("suspension_travel_m", 0.0))
 		"spring_stiffness_n_per_m":
@@ -91,6 +97,13 @@ static func next_value(meta: Dictionary, field: String, delta: float) -> float:
 				float(meta.get("wheel_grip_scale", 1.0)) + delta * step,
 				0.0,
 				1.0
+			)
+		"max_steering_angle_rad":
+			return clampf(
+				float(meta.get("wheel_max_steering_angle_rad", 0.0))
+				+ delta * step,
+				0.0,
+				float(meta.get("wheel_authored_max_steering_angle_rad", 0.4887))
 			)
 		"travel_m":
 			return clampf(

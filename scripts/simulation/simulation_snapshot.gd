@@ -245,6 +245,9 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 			or not is_finite(state.brake_torque_n_m)
 			or state.brake_torque_n_m < -1.0
 			or state.brake_torque_n_m > definition.brake_torque_n_m
+			or not is_finite(state.max_steering_angle_rad)
+			or state.max_steering_angle_rad < -1.0
+			or state.max_steering_angle_rad > definition.max_steering_angle_rad
 		):
 			return false
 		wheel_instances[element_id] = state

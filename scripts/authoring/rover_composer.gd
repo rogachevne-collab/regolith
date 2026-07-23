@@ -36,6 +36,10 @@ static func _compose_batched(
 	for archetype: ElementArchetype in [
 		intent.suspension_archetype(),
 		intent.wheel_archetype(),
+		Slice01Archetypes.frame(),
+		Slice01Archetypes.frame_basalt(),
+		Slice01Archetypes.frame_beam(),
+		Slice01Archetypes.cargo_pipe(),
 	]:
 		if archetype != null:
 			world.get_archetype_registry().register(archetype)
@@ -48,6 +52,8 @@ static func _compose_batched(
 	if not _place_wheels(helper, intent):
 		return {"ok": false, "error": helper.last_error}
 	if not _place_modules(helper, intent):
+		return {"ok": false, "error": helper.last_error}
+	if not _place_decor(helper, intent):
 		return {"ok": false, "error": helper.last_error}
 	helper.weld_all()
 	if not _wire_power(helper):
@@ -150,6 +156,47 @@ static func spawn_on_terrain_from_phrase(
 		tool,
 		space_state
 	)
+
+
+## Cosmetic 0.5 m Frame blocks: bumpers, side skirts, short sensor mast.
+## No new archetypes — only frame / frame_basalt / cargo_pipe.
+static func _place_decor(helper: AssemblyBuildHelper, intent: RoverIntent) -> bool:
+	var width := intent.width_cells()
+	var length := intent.length_cells()
+	var axle_set: Dictionary = {}
+	for z: int in intent.axle_z_cells():
+		axle_set[z] = true
+	var basalt := Slice01Archetypes.frame_basalt()
+	var frame := Slice01Archetypes.frame()
+	var pipe := Slice01Archetypes.cargo_pipe()
+	if basalt == null or frame == null or pipe == null:
+		helper.last_error = "missing_decor_archetypes"
+		return false
+	# Front / rear bumpers (basalt contrasts metal deck).
+	for x: int in range(width):
+		if not helper.place(basalt, Vector3i(x, 0, -1), 0, "bumper_f_%d" % x):
+			return false
+		if not helper.place(basalt, Vector3i(x, 0, length), 0, "bumper_r_%d" % x):
+			return false
+	# Side skirts between axles — skip axle Z (suspension owns that bay).
+	for z: int in range(length):
+		if axle_set.has(z):
+			continue
+		if not helper.place(basalt, Vector3i(-1, 0, z), 0, "skirt_L_%d" % z):
+			return false
+		if not helper.place(basalt, Vector3i(width, 0, z), 0, "skirt_R_%d" % z):
+			return false
+	# Starboard-forward mast on the free outboard column (cockpit is x=0..2).
+	if width >= 4 and length >= 5:
+		var mast_x := width - 1
+		var mast_z := 1
+		if not helper.place(frame, Vector3i(mast_x, 1, mast_z), 0, "mast_base"):
+			return false
+		if not helper.place(frame, Vector3i(mast_x, 2, mast_z), 0, "mast_mid"):
+			return false
+		if not helper.place(pipe, Vector3i(mast_x, 3, mast_z), 0, "mast_tip"):
+			return false
+	return true
 
 
 static func _place_chassis(helper: AssemblyBuildHelper, intent: RoverIntent) -> bool:

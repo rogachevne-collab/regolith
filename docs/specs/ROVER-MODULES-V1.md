@@ -76,6 +76,8 @@ electric budget, что у Industry v1.
 
 - шасси на стандартном `frame` + modules: `wheel_suspension`, `drive_wheel`, `cockpit`,
   `power_battery_small`, `power_distributor_small`;
+- косметика композера из существующих 0.5 m Frame-блоков (`frame_basalt` бамперы/юбки,
+  короткая мачта `frame` + `cargo_pipe`) — без новых element types;
 - typed socket `wheel_socket`/`wheel_plug` и placement-валидация;
 - `WheelPair` discovery, drive/brake/steer, raycast suspension;
 - per-instance настройки подвески и колеса (`configure_suspension`,
@@ -530,7 +532,9 @@ ConfigureWheelCommand {
   wheel_element_id
   steerable                # опционально
   drive_torque_scale       # опционально, clamp к limits
-  brake_torque_n_m         # опционально, clamp
+  brake_torque_n_m         # опционально, clamp ≤ authored
+  grip_scale               # опционально, 0..1 от authored grip
+  max_steering_angle_rad   # опционально, clamp ≤ authored
 }
 ConfigureSuspensionCommand {
   suspension_element_id

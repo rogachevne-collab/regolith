@@ -82,6 +82,10 @@ const AUTHORED_DIR := "res://resources/archetypes/authored/"
 @export var wheel_radius_m: float = 0.4
 @export var wheel_drive_torque_n_m: float = 65.0
 @export var wheel_steerable: bool = false
+## Макс. угол руля (рад). 0.4887 ≈ 28°. Потолок для уставки в пульте.
+@export var wheel_max_steering_angle_rad: float = 0.4887
+## Скорость доворота к цели руля (рад/с на единицу команды).
+@export var wheel_steering_response: float = 2.5
 ## Сцепление: предел силы = прижимающая сила × коэффициент. Вдоль — тяга и
 ## тормоз, поперёк — сопротивление сносу. Оба делят один запас (эллипс трения),
 ## поэтому газ в повороте съедает боковое держание.
@@ -687,6 +691,8 @@ func _build_wheel_definition(
 	definition.width_m = maxf(wheel_radius_m * 0.75, 0.05)
 	definition.drive_torque_n_m = wheel_drive_torque_n_m
 	definition.steerable_default = wheel_steerable
+	definition.max_steering_angle_rad = wheel_max_steering_angle_rad
+	definition.steering_response = wheel_steering_response
 	definition.longitudinal_grip = wheel_grip_longitudinal
 	definition.lateral_grip = wheel_grip_lateral
 	definition.slip_stiffness = wheel_slip_stiffness

@@ -100,6 +100,8 @@ func _test_wheel_bakes_valid() -> bool:
 	root.part_id = "test_wheel"
 	root.wheel_radius_m = 0.5
 	root.wheel_drive_torque_n_m = 80.0
+	root.wheel_max_steering_angle_rad = 0.6
+	root.wheel_steering_response = 3.0
 	_add_marker(
 		root,
 		MountPadMarker.SocketKind.WHEEL_PLUG,
@@ -125,6 +127,13 @@ func _test_wheel_bakes_valid() -> bool:
 		return _fail("wheel should expose exactly one wheel_plug pad")
 	if not is_equal_approx(archetype.wheel_definition.radius_m, 0.5):
 		return _fail("wheel radius not carried through")
+	if not is_equal_approx(
+		archetype.wheel_definition.max_steering_angle_rad,
+		0.6
+	):
+		return _fail("wheel max steering angle not carried through")
+	if not is_equal_approx(archetype.wheel_definition.steering_response, 3.0):
+		return _fail("wheel steering response not carried through")
 	if archetype.colliders.size() != 1:
 		return _fail("1-cell wheel should have 1 auto collider")
 	return true

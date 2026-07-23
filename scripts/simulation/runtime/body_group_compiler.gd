@@ -8,6 +8,9 @@ static func compile(
 	elements_by_id: Dictionary,
 	joints: Array[SimulationJoint]
 ) -> Dictionary:
+	var native := _try_compile_native(element_ids, elements_by_id, joints)
+	if not native.is_empty():
+		return native
 	# Suspension↔wheel RIGID joints do not glue rigid groups: the wheel is a
 	# real body on a 6DOF constraint (WHEEL-BODY-V1). The sim joint stays RIGID
 	# (snapshots, composer, placement untouched); only the partition changes.
@@ -100,6 +103,78 @@ static func compile(
 		"driven_specs": driven_specs,
 		"wheel_specs": wheel_specs,
 	}
+
+
+## Native joint kind codes must match ConstructionPreviewKernel compile_body_groups.
+const _NATIVE_KIND_RIGID := 0
+const _NATIVE_KIND_ANCHOR := 1
+const _NATIVE_KIND_PISTON := 2
+const _NATIVE_KIND_ROTOR := 3
+const _NATIVE_KIND_HINGE := 4
+const _NATIVE_FLAG_SUSPENSION := 1
+const _NATIVE_FLAG_WHEEL := 2
+
+
+static func _try_compile_native(
+	element_ids: Array[int],
+	elements_by_id: Dictionary,
+	joints: Array[SimulationJoint]
+) -> Dictionary:
+	var kernel := ConstructionPreviewKernelAccess.get_kernel()
+	if kernel == null:
+		return {}
+	var ids := PackedInt32Array()
+	var flags := PackedInt32Array()
+	ids.resize(element_ids.size())
+	flags.resize(element_ids.size())
+	for index: int in range(element_ids.size()):
+		var element_id := int(element_ids[index])
+		ids[index] = element_id
+		var element: SimulationElement = elements_by_id.get(element_id)
+		var flag := 0
+		if element != null:
+			if _is_suspension(element):
+				flag |= _NATIVE_FLAG_SUSPENSION
+			if _is_wheel(element):
+				flag |= _NATIVE_FLAG_WHEEL
+		flags[index] = flag
+	var packed_joints := PackedInt32Array()
+	packed_joints.resize(joints.size() * 4)
+	for index: int in range(joints.size()):
+		var joint: SimulationJoint = joints[index]
+		packed_joints[index * 4] = _native_joint_kind(joint.kind)
+		packed_joints[index * 4 + 1] = joint.element_a_id
+		packed_joints[index * 4 + 2] = joint.element_b_id
+		packed_joints[index * 4 + 3] = joint.joint_id
+	var compiled: Dictionary = kernel.call(
+		"compile_body_groups",
+		ids,
+		flags,
+		packed_joints
+	)
+	if compiled.is_empty() or not bool(compiled.get("valid", false)):
+		# Keep GDScript path for invalid reasons too — parity with existing
+		# reason codes (native uses the same StringNames).
+		if compiled.has("reason"):
+			return compiled
+		return {}
+	return compiled
+
+
+static func _native_joint_kind(kind: int) -> int:
+	match kind:
+		SimulationJoint.Kind.RIGID:
+			return _NATIVE_KIND_RIGID
+		SimulationJoint.Kind.ANCHOR:
+			return _NATIVE_KIND_ANCHOR
+		SimulationJoint.Kind.PISTON:
+			return _NATIVE_KIND_PISTON
+		SimulationJoint.Kind.ROTOR:
+			return _NATIVE_KIND_ROTOR
+		SimulationJoint.Kind.HINGE:
+			return _NATIVE_KIND_HINGE
+		_:
+			return _NATIVE_KIND_RIGID
 
 
 static func _is_wheel_pair_joint(

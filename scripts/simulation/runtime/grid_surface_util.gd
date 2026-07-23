@@ -169,6 +169,27 @@ static func find_rigid_connection_specs(
 	right_origin: Vector3i,
 	right_orientation: int
 ) -> Dictionary:
+	var kernel := ConstructionPreviewKernelAccess.get_kernel()
+	if kernel != null:
+		var native: Dictionary = kernel.call(
+			"find_rigid_connection",
+			ConstructionPreviewKernelAccess.side_spec_from_archetype(
+				left_archetype,
+				left_origin,
+				left_orientation
+			),
+			ConstructionPreviewKernelAccess.side_spec_from_archetype(
+				right_archetype,
+				right_origin,
+				right_orientation
+			)
+		)
+		if native.is_empty():
+			return {}
+		return {
+			"left_port_id": str(native.get("left_port_id", "")),
+			"right_port_id": str(native.get("right_port_id", "")),
+		}
 	var canonical := _find_canonical_pair_specs(
 		left_archetype,
 		left_origin,

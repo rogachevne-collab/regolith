@@ -1592,6 +1592,11 @@ func _build_wheel_constraints(
 			if suspension_state.spring_damping_n_s_per_m >= 0.0
 			else suspension_def.spring_damping_n_s_per_m
 		)
+		var max_steer_rad := (
+			wheel_state.max_steering_angle_rad
+			if wheel_state.max_steering_angle_rad >= 0.0
+			else definition.max_steering_angle_rad
+		)
 		WheelBodyProjectionUtil.configure_wheel_joint(
 			joint,
 			travel_m,
@@ -1599,7 +1604,7 @@ func _build_wheel_constraints(
 			spring_damping,
 			suspension_def.max_suspension_force_n,
 			wheel_state.steerable,
-			definition.max_steering_angle_rad,
+			max_steer_rad,
 			bind_compression
 		)
 		# SE-style own-grid filter: the wheel is solid for the world but never
@@ -1910,13 +1915,25 @@ func _tick_wheel_record(
 		)
 		record["cfg_stiffness"] = spring_stiffness
 		record["cfg_damping"] = spring_damping
-	if wheel_state.steerable != bool(record.get("cfg_steerable", false)):
+	var max_steer_rad := (
+		wheel_state.max_steering_angle_rad
+		if wheel_state.max_steering_angle_rad >= 0.0
+		else wheel_def.max_steering_angle_rad
+	)
+	if (
+		wheel_state.steerable != bool(record.get("cfg_steerable", false))
+		or not is_equal_approx(
+			max_steer_rad,
+			float(record.get("cfg_max_steer_rad", NAN))
+		)
+	):
 		WheelBodyProjectionUtil.update_steer_limit(
 			constraint,
 			wheel_state.steerable,
-			wheel_def.max_steering_angle_rad
+			max_steer_rad
 		)
 		record["cfg_steerable"] = wheel_state.steerable
+		record["cfg_max_steer_rad"] = max_steer_rad
 	var friction := WheelBodyProjectionUtil.tire_friction(
 		wheel_def,
 		wheel_state.grip_scale
@@ -1967,13 +1984,17 @@ func _tick_wheel_record(
 	# --- Steering servo target (rate-limited, like the raycast model) ---
 	var steer_goal := 0.0
 	if wheel_state.steerable:
-		steer_goal = steering_command * wheel_def.max_steering_angle_rad
+		steer_goal = steering_command * max_steer_rad
 	var steer_target := move_toward(
 		float(record.get("steer_target_rad", 0.0)),
 		steer_goal,
 		wheel_def.steering_response * delta
 	)
 	record["steer_target_rad"] = steer_target
+	var grounded_now := (
+		float(measured.get("compression_m", 0.0))
+		> WheelBodyProjectionUtil.GROUNDED_COMPRESSION_EPS_M
+	)
 	if wheel_state.steerable:
 		var up_world: Vector3 = measured.get("up_world", Vector3.UP)
 		var steer_rate := (
@@ -1991,6 +2012,11 @@ func _tick_wheel_record(
 			float(measured.get("steering_angle_rad", 0.0)),
 			steer_rate
 		)
+		# В воздухе жёсткий PD + раскрутка = гироскопический «ходун».
+		if not grounded_now:
+			steer_torque *= (
+				WheelBodyProjectionUtil.AIRBORNE_STEER_TORQUE_SCALE
+			)
 		wheel_body.apply_torque(up_world * steer_torque)
 		if strut_body is RigidBody3D:
 			(strut_body as RigidBody3D).apply_torque(-up_world * steer_torque)
@@ -2011,12 +2037,14 @@ func _tick_wheel_record(
 			-wheel_def.max_angular_speed_rad_s,
 			wheel_def.max_angular_speed_rad_s
 		)
-		# Grounded: slip-limited ramp near the friction peak (traction
-		# control). Airborne: no contact to slip against — spin freely.
-		if (
+		var grounded_drive := (
 			float(measured.get("compression_m", 0.0))
 			> WheelBodyProjectionUtil.GROUNDED_COMPRESSION_EPS_M
-		):
+		)
+		# Grounded: slip-limited near the friction peak (traction control).
+		# Airborne: soft free-spin — full slam shook the strut (reaction +
+		# gyro vs steer PD).
+		if grounded_drive:
 			target_forward_rad_s = (
 				WheelBodyProjectionUtil.slip_limited_target_rad_s(
 					commanded_rad_s,
@@ -2025,11 +2053,20 @@ func _tick_wheel_record(
 				)
 			)
 		else:
-			target_forward_rad_s = commanded_rad_s
+			var prev_target := float(record.get("motor_target_v", 0.0))
+			if not is_finite(prev_target):
+				prev_target = float(measured.get("wheel_speed_rad_s", 0.0))
+			target_forward_rad_s = move_toward(
+				prev_target,
+				commanded_rad_s,
+				WheelBodyProjectionUtil.AIRBORNE_SPIN_ACCEL_RAD_S2 * delta
+			)
 		torque_limit = (
 			wheel_def.drive_torque_n_m
 			* clampf(wheel_state.drive_torque_scale, 0.0, 1.0)
 		)
+		if not grounded_drive:
+			torque_limit *= WheelBodyProjectionUtil.AIRBORNE_DRIVE_TORQUE_SCALE
 	elif absf(brake_command) > 0.0001:
 		torque_limit = absf(brake_command) * brake_torque
 	if (

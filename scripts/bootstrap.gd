@@ -71,7 +71,8 @@ const MAP_HEIGHTMAP_SIZE := Vector2i(2048, 1024)
 @export var spawn_demo_hopper := true
 ## «На новых» = пара колесо+подвеска, испечённая визардом (authored). Прежнее
 ## значение — "колбаса на 12 колес, низкая".
-@export var demo_rover_phrase := "ровер на 4 колёсах на новых подвесках"
+## Длинная база + центр масс + батареи сбоку: меньше клевка на газе и кувырка на тормозе.
+@export var demo_rover_phrase := "колбаса низкая на 6 колёсах, кокпит в центре, питание сбоку"
 @export var persist_digs := true
 ## VoxelInstancer decorative rocks (streams with terrain chunks).
 @export var enable_boulder_instancer := true

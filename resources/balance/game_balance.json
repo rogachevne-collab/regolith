@@ -888,6 +888,18 @@
       "target": "element",
       "soft_min": 0,
       "soft_max": 1.0
+    },
+    "wheel.steering_angle": {
+      "label": "Угол руля",
+      "unit": "°",
+      "step": 0.05,
+      "precision": 0,
+      "display_scale": 57.295779513,
+      "command": "configure_wheel",
+      "field": "max_steering_angle_rad",
+      "target": "element",
+      "soft_min": 0,
+      "soft_max": 0.7853981634
     }
   },
   "elements": {

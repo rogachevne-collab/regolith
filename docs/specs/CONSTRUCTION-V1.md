@@ -323,6 +323,16 @@ single-body assembly обновляет colliders in-place (без destroy Rigid
 `find_rigid_connection` сканирует меньший footprint и кэширует world-face
 lookup (семантика контакта без изменений).
 
+**Native preview kernel (optional GDExtension).** `addons/regolith_construction_preview`
+exposes `ConstructionPreviewKernel` + `ConstructionPhysicsMath`. Hot geometry
+paths (`find_rigid_connection`, magnet face scan, occupancy overlap/neighbours/
+prefilter, body-group compile math, split/merge momentum) may run in C++ when
+the library is present; GDScript remains authority for `validate_place_element`,
+`ConstructionPlacement.plan()`, structural commands, and scene-tree projection.
+Missing DLL → identical GDScript fallbacks. Snapshot for native magnet scan is
+built by `ConstructionPreviewSnapshot` (POD occupancy + transforms; no
+`SimulationWorld` pointer in C++).
+
 ### Preview parity
 
 Preview ghost повторяет projection path:

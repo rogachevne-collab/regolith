@@ -230,6 +230,18 @@ static func _wheel_detail(world: SimulationWorld, element: SimulationElement) ->
 		"max_brake_torque_n_m": (
 			definition.brake_torque_n_m if definition != null else 0.0
 		),
+		"max_steering_angle_rad": (
+			state.max_steering_angle_rad
+			if state.max_steering_angle_rad >= 0.0
+			else (
+				definition.max_steering_angle_rad
+				if definition != null
+				else 0.0
+			)
+		),
+		"authored_max_steering_angle_rad": (
+			definition.max_steering_angle_rad if definition != null else 0.0
+		),
 		"powered": runtime.machine_enabled and runtime.powered,
 		"grounded": bool(wheel_runtime.get("grounded", false)),
 		"slip_speed_mps": float(wheel_runtime.get("slip_speed_mps", 0.0)),

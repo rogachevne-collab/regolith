@@ -410,6 +410,11 @@ Legacy port-wire (оба `port_id` непустые) остаётся валид
 fallback (`use_xpbd_cable_rope = false`). Voxel-drape по-прежнему сильнее на
 verlet; XPBD v1 — подъём/буксир по box/sphere/plane.
 
+**TEMP:** если оба конца каната на одном `RigidBody3D` (короткий power-кабель
+на шасси), pin-reaction **не применяется** — иначе пара сил переворачивает
+машину. Меш и electric link остаются. Убрать, когда будет политика для
+intra-assembly кабелей.
+
 **Физика (`CableTensionUtil`).** Пока верёвка короче `rest_length_m` — канат не
 делает ничего. На натяге — max-distance constraint одним импульсом за тик.
 Меряется **длина по фактической трассе** (`solve_routed`), а тянет каждый конец

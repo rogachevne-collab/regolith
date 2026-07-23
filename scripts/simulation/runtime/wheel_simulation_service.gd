@@ -121,6 +121,7 @@ static func apply_configure_wheel(
 	if (
 		not is_finite(command.drive_torque_scale)
 		or not is_finite(command.brake_torque_n_m)
+		or not is_finite(command.max_steering_angle_rad)
 	):
 		return {"status": &"failed", "reason": &"invalid_reference"}
 	if command.steerable_set:
@@ -141,6 +142,11 @@ static func apply_configure_wheel(
 		):
 			return {"status": &"failed", "reason": &"invalid_reference"}
 		state.brake_torque_n_m = command.brake_torque_n_m
+	if command.max_steering_angle_rad >= 0.0:
+		# Потолок — авторский угол детали: пульт только ужимает ход руля.
+		if command.max_steering_angle_rad > definition.max_steering_angle_rad:
+			return {"status": &"failed", "reason": &"invalid_reference"}
+		state.max_steering_angle_rad = command.max_steering_angle_rad
 	if command.grip_scale >= 0.0:
 		# Потолок — авторское сцепление детали: ползунок в пульте только
 		# ужимает его, выдумать держание сверх резины нельзя.

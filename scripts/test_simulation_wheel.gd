@@ -34,6 +34,7 @@ func _run_tests() -> void:
 		_test_locomotive_requires_complete_pair,
 		_test_configure_wheel_steerable,
 		_test_configure_wheel_grip_scale,
+		_test_configure_wheel_max_steering_angle,
 		_test_configure_suspension_rejects_invalid_travel,
 		_test_wheel_snapshot_roundtrip,
 		_test_dismantle_wheel_breaks_locomotive,
@@ -400,6 +401,45 @@ func _test_configure_wheel_grip_scale() -> bool:
 		definition.longitudinal_grip
 	):
 		return _fail("tire friction must cap at the authored grip")
+	return true
+
+
+## Пульт ужимает ход руля до авторского потолка; сверх — reject.
+func _test_configure_wheel_max_steering_angle() -> bool:
+	var world := _boot_world()
+	var built := _build_complete_pair(world)
+	if built.is_empty() or built.has("error"):
+		world.free()
+		return _fail(
+			"complete pair setup failed: %s" % built.get("error", "unknown")
+		)
+	var wheel_id := int(built["wheel_id"])
+	var definition := _wheel_archetype().wheel_definition
+	var target := definition.max_steering_angle_rad * 0.5
+	var command := ConfigureWheelCommand.new()
+	command.wheel_element_id = wheel_id
+	command.max_steering_angle_rad = target
+	var result := world.apply_configure_wheel(command)
+	if StringName(result.get("reason", &"")) != &"ok":
+		world.free()
+		return _fail("steering angle rejected: %s" % result.get("reason"))
+	var state := world.ensure_wheel_instance_state(wheel_id)
+	if not is_equal_approx(state.max_steering_angle_rad, target):
+		world.free()
+		return _fail(
+			"steering angle not persisted: %f" % state.max_steering_angle_rad
+		)
+	var over := ConfigureWheelCommand.new()
+	over.wheel_element_id = wheel_id
+	over.max_steering_angle_rad = definition.max_steering_angle_rad + 0.1
+	var denied := world.apply_configure_wheel(over)
+	var denied_reason := StringName(denied.get("reason", &""))
+	var still := world.ensure_wheel_instance_state(wheel_id).max_steering_angle_rad
+	world.free()
+	if denied_reason == &"ok":
+		return _fail("steering angle above authored ceiling must be rejected")
+	if not is_equal_approx(still, target):
+		return _fail("rejected steering angle must not change state")
 	return true
 
 

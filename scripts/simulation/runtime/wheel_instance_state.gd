@@ -4,6 +4,8 @@ extends RefCounted
 var steerable: bool = false
 var drive_torque_scale: float = 1.0
 var brake_torque_n_m: float = -1.0
+## −1 = как в архетипе. Иначе абсолютный макс. угол руля, не выше авторского.
+var max_steering_angle_rad: float = -1.0
 ## Направление привода, настраивается с терминала/кокпита. Тяга клампится в
 ## [0..1], поэтому знак живёт отдельным флагом, а не отрицательным scale.
 var drive_inverted: bool = false
@@ -17,6 +19,7 @@ func duplicate_state() -> WheelInstanceState:
 	copy.steerable = steerable
 	copy.drive_torque_scale = drive_torque_scale
 	copy.brake_torque_n_m = brake_torque_n_m
+	copy.max_steering_angle_rad = max_steering_angle_rad
 	copy.drive_inverted = drive_inverted
 	copy.grip_scale = grip_scale
 	return copy
@@ -27,6 +30,7 @@ func to_dict() -> Dictionary:
 		"steerable": steerable,
 		"drive_torque_scale": drive_torque_scale,
 		"brake_torque_n_m": brake_torque_n_m,
+		"max_steering_angle_rad": max_steering_angle_rad,
 		"drive_inverted": drive_inverted,
 		"grip_scale": grip_scale,
 	}
@@ -37,6 +41,9 @@ static func from_dict(data: Dictionary) -> WheelInstanceState:
 	state.steerable = bool(data.get("steerable", false))
 	state.drive_torque_scale = float(data.get("drive_torque_scale", 1.0))
 	state.brake_torque_n_m = float(data.get("brake_torque_n_m", -1.0))
+	state.max_steering_angle_rad = float(
+		data.get("max_steering_angle_rad", -1.0)
+	)
 	state.drive_inverted = bool(data.get("drive_inverted", false))
 	state.grip_scale = float(data.get("grip_scale", 1.0))
 	return state

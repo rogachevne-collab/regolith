@@ -34,6 +34,8 @@ local_position = Vector3(0.5032895516625148, 0.49817753622143257, 0.251773448911
 script = ExtResource("7_jbwls")
 wheel_socket_face = 1
 suspension_travel_m = 0.5204161543951314
+spring_stiffness_n_per_m = 4000.0
+spring_damping_n_s_per_m = 1000.0
 min_travel_m = 0.2602080771975657
 max_travel_m = 0.5204161543951314
 

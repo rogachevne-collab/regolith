@@ -21,11 +21,15 @@ extends RefCounted
 ##
 ## Gains are derived per wheel from its real inertia about the steering axis
 ## (see steering_torque_nm), so a 0.4 m and a 0.75 m tire behave the same.
-const STEER_NATURAL_FREQUENCY_RAD_S := 12.0
+## ω≈12 (~2 Hz) — руль расхлябанный на кочках. ω=40 (~6.4 Hz) даёт
+## жёсткость ×11 при ζ=1: серво держит цель против контакта, без
+## механического упора (упор на полном вывороте клинил стенд).
+const STEER_NATURAL_FREQUENCY_RAD_S := 40.0
 const STEER_DAMPING_RATIO := 1.0
 ## Ceiling as a multiple of the torque needed to hit natural frequency; keeps a
-## jammed wheel from dumping unbounded torque into the chassis.
-const STEER_TORQUE_HEADROOM := 3.0
+## jammed wheel from dumping unbounded torque into the chassis. Above the bare
+## PD peak so a bump impulse can be rejected quickly.
+const STEER_TORQUE_HEADROOM := 8.0
 ## Suspension compression above this reads as "carrying load" → grounded.
 const GROUNDED_COMPRESSION_EPS_M := 0.004
 ## Slip-limited drive: the motor target chases the wheel's CURRENT speed with
@@ -34,6 +38,15 @@ const GROUNDED_COMPRESSION_EPS_M := 0.004
 ## ground, the reaction torque wheelies the chassis, and the rover hops in
 ## place instead of driving (seen on the stand).
 const DRIVE_SLIP_MARGIN_MPS := 1.5
+## Airborne throttle used to slam target = max_angular_speed at full drive
+## torque — reaction into the strut + gyro vs steer PD shook the wheel
+## «ходуном». Soft spin-up: less torque, ramped target. Still reaches a
+## visible free-spin; stand gate is only ≥5 rad/s in ~1.5 s.
+const AIRBORNE_DRIVE_TORQUE_SCALE := 0.2
+const AIRBORNE_SPIN_ACCEL_RAD_S2 := 80.0
+## Steer PD vs spinning tire in free air → gyro precession fight. Soften hold
+## until the tire is loaded again.
+const AIRBORNE_STEER_TORQUE_SCALE := 0.35
 ## Tire friction cannot exceed the authored ceiling even if grip tuning grows.
 const MAX_TIRE_FRICTION := 4.0
 

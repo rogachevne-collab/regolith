@@ -1,0 +1,4 @@
+*.os
+*.o
+*.obj
+.sconsign.dblite

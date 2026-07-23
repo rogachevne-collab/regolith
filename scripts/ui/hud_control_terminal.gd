@@ -222,7 +222,12 @@ const SETPOINTS := {
 		"hinge.forward_velocity", "hinge.reverse_velocity", "hinge.torque",
 		"hinge.lower_limit", "hinge.upper_limit",
 	],
-	"wheel": ["wheel.drive_torque", "wheel.brake_torque", "wheel.grip"],
+	"wheel": [
+		"wheel.drive_torque",
+		"wheel.brake_torque",
+		"wheel.grip",
+		"wheel.steering_angle",
+	],
 	"suspension": [
 		"suspension.stiffness", "suspension.damping", "suspension.travel",
 	],
@@ -653,6 +658,8 @@ func _effective_bounds(param_id: String, detail: Dictionary, entry: Dictionary) 
 			hi = float(detail.get("max_travel_m", hi))
 		"wheel.brake_torque":
 			hi = float(detail.get("max_brake_torque_n_m", hi))
+		"wheel.steering_angle":
+			hi = float(detail.get("authored_max_steering_angle_rad", hi))
 	return Vector2(lo, hi)
 
 
@@ -1269,6 +1276,8 @@ static func _mock_nodes() -> Array:
 			"kind": "wheel", "detail": {
 				"steerable": true, "drive_inverted": false,
 				"drive_torque_scale": 0.8, "brake_torque_n_m": 180.0,
+				"max_steering_angle_rad": 0.4887,
+				"authored_max_steering_angle_rad": 0.4887,
 			},
 			"value_text": "", "status": &"ok", "severity": "ok"},
 		{"archetype_id": "stationary_drill", "ordinal": 1, "custom_name": "",

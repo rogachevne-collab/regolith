@@ -2,12 +2,25 @@ class_name AssemblyPhysicsMath
 extends RefCounted
 
 
+static func _native_available() -> bool:
+	return ClassDB.class_exists(&"ConstructionPhysicsMath")
+
+
 static func velocity_at_point(
 	linear_velocity: Vector3,
 	angular_velocity: Vector3,
 	point_world: Vector3,
 	reference_com_world: Vector3
 ) -> Vector3:
+	if _native_available():
+		return ClassDB.class_call_static(
+			&"ConstructionPhysicsMath",
+			&"velocity_at_point",
+			linear_velocity,
+			angular_velocity,
+			point_world,
+			reference_com_world
+		)
 	return (
 		linear_velocity
 		+ angular_velocity.cross(point_world - reference_com_world)
@@ -20,6 +33,15 @@ static func inherit_split_motion(
 	parent_com_world: Vector3,
 	child_com_world: Vector3
 ) -> Dictionary:
+	if _native_available():
+		return ClassDB.class_call_static(
+			&"ConstructionPhysicsMath",
+			&"inherit_split_motion",
+			parent_linear,
+			parent_angular,
+			parent_com_world,
+			child_com_world
+		)
 	return {
 		"linear_velocity": velocity_at_point(
 			parent_linear,
@@ -81,6 +103,27 @@ static func merge_dynamic_momentum(
 	merged_inertia: Vector3,
 	merged_basis: Basis
 ) -> Dictionary:
+	if _native_available():
+		return ClassDB.class_call_static(
+			&"ConstructionPhysicsMath",
+			&"merge_dynamic_momentum",
+			mass_a,
+			com_a_world,
+			linear_a,
+			angular_a,
+			inertia_a,
+			basis_a,
+			mass_b,
+			com_b_world,
+			linear_b,
+			angular_b,
+			inertia_b,
+			basis_b,
+			merged_com_world,
+			merged_mass,
+			merged_inertia,
+			merged_basis
+		)
 	var linear_momentum: Vector3 = (
 		total_linear_momentum(mass_a, linear_a)
 		+ total_linear_momentum(mass_b, linear_b)
@@ -127,6 +170,15 @@ static func compensate_com_change(
 	linear_velocity: Vector3,
 	angular_velocity: Vector3
 ) -> Vector3:
+	if _native_available():
+		return ClassDB.class_call_static(
+			&"ConstructionPhysicsMath",
+			&"compensate_com_change",
+			old_com_world,
+			new_com_world,
+			linear_velocity,
+			angular_velocity
+		)
 	return linear_velocity + angular_velocity.cross(
 		new_com_world - old_com_world
 	)

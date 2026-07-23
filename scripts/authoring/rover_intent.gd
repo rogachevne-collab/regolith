@@ -121,11 +121,13 @@ func length_cells() -> int:
 		base = maxi(base, axles * 2)
 	elif wheel_count >= 10:
 		base = maxi(base, axles + 2)
-	if cockpit == "center":
-		base = maxi(base, 6)
 	# Room for distributor bay + battery rows behind cockpit.
 	var battery_rows := ceili(float(battery_count()) / float(_batteries_per_row()))
 	base = maxi(base, 4 + battery_rows * 2)
+	if cockpit == "center":
+		# Mid cockpit + distributor + rear packs. With 2+ packs on a normal
+		# row one pack shares distributor X and needs a gap cell between bays.
+		base = maxi(base, 8 + battery_rows * 2)
 	return base
 
 

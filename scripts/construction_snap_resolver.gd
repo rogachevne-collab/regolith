@@ -300,23 +300,31 @@ func _collect_face_candidates(
 	held_attach_pivot: Vector3 = Vector3(INF, INF, INF)
 ) -> Array[Dictionary]:
 	var ranked: Array[Dictionary] = []
-	for assembly: SimulationAssembly in world.list_assemblies():
-		if assembly == null or assembly.tombstoned:
-			continue
-		var faces := _scan_assembly_faces(
+	if ConstructionPreviewKernelAccess.available():
+		ranked = _scan_faces_native(
 			world,
-			assembly,
 			ray_origin,
 			ray_direction,
 			camera
 		)
-		if faces.is_empty():
-			continue
-		# Attach permission is checked only for assemblies the aim actually
-		# reaches — it is the (joint-scan) expensive check, not the scan.
-		if not world.construction_attach_allowed(assembly.assembly_id):
-			continue
-		ranked.append_array(faces)
+	else:
+		for assembly: SimulationAssembly in world.list_assemblies():
+			if assembly == null or assembly.tombstoned:
+				continue
+			var faces := _scan_assembly_faces(
+				world,
+				assembly,
+				ray_origin,
+				ray_direction,
+				camera
+			)
+			if faces.is_empty():
+				continue
+			# Attach permission is checked only for assemblies the aim actually
+			# reaches — it is the (joint-scan) expensive check, not the scan.
+			if not world.construction_attach_allowed(assembly.assembly_id):
+				continue
+			ranked.append_array(faces)
 
 	ranked.sort_custom(
 		func(left: Dictionary, right: Dictionary) -> bool:
@@ -402,12 +410,105 @@ func _prefilter_attach_fits(
 		metadata.get("snap_dir", Vector3i.UP),
 		orientation_index
 	)
+	var kernel := ConstructionPreviewKernelAccess.get_kernel()
+	if kernel != null and archetype != null:
+		return bool(
+			kernel.call(
+				"prefilter_attach_fits",
+				ConstructionPreviewKernelAccess.pack_occupancy(occupancy),
+				ConstructionPreviewKernelAccess.pack_cells(archetype.footprint_cells),
+				origin,
+				orientation_index
+			)
+		)
 	for cell: Vector3i in archetype.footprint_cells:
 		if occupancy.has(
 			origin + OrientationUtil.rotate_cell(cell, orientation_index)
 		):
 			return false
 	return true
+
+
+func _scan_faces_native(
+	world: SimulationWorld,
+	ray_origin: Vector3,
+	ray_direction: Vector3,
+	camera: Camera3D
+) -> Array[Dictionary]:
+	var kernel := ConstructionPreviewKernelAccess.get_kernel()
+	if kernel == null or world == null:
+		return []
+	var ray := {
+		"origin": ray_origin,
+		"direction": ray_direction.normalized(),
+		"has_camera": false,
+		"viewport_center": Vector2.ZERO,
+	}
+	if camera != null:
+		var viewport := camera.get_viewport()
+		if viewport != null:
+			ray["has_camera"] = true
+			ray["viewport_center"] = viewport.get_visible_rect().size * 0.5
+			ray["unproject"] = func(world_point: Vector3) -> Vector2:
+				return camera.unproject_position(world_point)
+	var limits := {
+		"max_ray_distance": MAX_RAY_DISTANCE,
+		"max_lateral": MAX_RAY_LATERAL,
+		"min_forward_dot": MIN_FORWARD_DOT,
+		"ray_step": _RAY_STEP_M,
+		"max_screen_penalty_radius": MAX_SCREEN_PENALTY_RADIUS,
+	}
+	var snapshot := ConstructionPreviewSnapshot.build(world)
+	var native_faces: Array = kernel.call(
+		"scan_magnetic_faces",
+		snapshot,
+		ray,
+		limits
+	)
+	if native_faces.is_empty():
+		return []
+	var ranked: Array[Dictionary] = []
+	var assemblies_seen: Dictionary = {}
+	var attach_cache: Dictionary = {}
+	for entry_variant: Variant in native_faces:
+		var entry: Dictionary = entry_variant
+		var metadata: Dictionary = entry.get("target_metadata", {})
+		var assembly_id := int(metadata.get("assembly_id", 0))
+		if not attach_cache.has(assembly_id):
+			attach_cache[assembly_id] = world.construction_attach_allowed(assembly_id)
+		if not bool(attach_cache[assembly_id]):
+			continue
+		assemblies_seen[assembly_id] = true
+		var world_point: Vector3 = entry.get("world_point", Vector3.ZERO)
+		var world_normal: Vector3 = entry.get("world_normal", Vector3.UP)
+		var distance := float(entry.get("distance", ray_origin.distance_to(world_point)))
+		var target := InteractionHit.create(
+			world_point,
+			world_normal,
+			distance,
+			InteractionHit.KIND_SIMULATION_ELEMENT,
+			null,
+			StringName(str(metadata.get("element_id", -1))),
+			{
+				"element_id": int(metadata.get("element_id", -1)),
+				"assembly_id": assembly_id,
+				"collider_local_cell": metadata.get(
+					"collider_local_cell",
+					Vector3i.ZERO
+				),
+				"aim_direction": ray_direction,
+				"snap_cell": metadata.get("snap_cell", Vector3i.ZERO),
+				"snap_dir": metadata.get("snap_dir", Vector3i.ZERO),
+			}
+		).snapshot()
+		ranked.append({
+			"key": str(entry.get("key", "")),
+			"target": target,
+			"score": float(entry.get("score", 0.0)),
+		})
+	last_stats["assemblies_scanned"] = assemblies_seen.size()
+	last_stats["faces_scanned"] = ranked.size()
+	return ranked
 
 
 ## March the aim ray through the assembly's occupancy grid and derive exposed

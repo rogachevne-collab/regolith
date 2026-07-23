@@ -64,6 +64,17 @@ static func neighbour_element_ids(
 	preview_cells: Array[Vector3i],
 	occupancy: Dictionary
 ) -> Array[int]:
+	var kernel := ConstructionPreviewKernelAccess.get_kernel()
+	if kernel != null and not occupancy.is_empty():
+		var packed_ids: PackedInt32Array = kernel.call(
+			"neighbour_element_ids",
+			ConstructionPreviewKernelAccess.pack_cells(preview_cells),
+			ConstructionPreviewKernelAccess.pack_occupancy(occupancy)
+		)
+		var native_ids: Array[int] = []
+		for index: int in range(packed_ids.size()):
+			native_ids.append(int(packed_ids[index]))
+		return native_ids
 	var seen: Dictionary = {}
 	for cell: Vector3i in preview_cells:
 		for offset: Vector3i in CELL_NEIGHBOURS:
@@ -75,6 +86,25 @@ static func neighbour_element_ids(
 		ids.append(int(element_id))
 	ids.sort()
 	return ids
+
+
+static func preview_overlaps_occupancy(
+	preview_cells: Array[Vector3i],
+	occupancy: Dictionary
+) -> bool:
+	var kernel := ConstructionPreviewKernelAccess.get_kernel()
+	if kernel != null and not occupancy.is_empty():
+		return bool(
+			kernel.call(
+				"check_preview_overlap",
+				ConstructionPreviewKernelAccess.pack_cells(preview_cells),
+				ConstructionPreviewKernelAccess.pack_occupancy(occupancy)
+			)
+		)
+	for cell: Vector3i in preview_cells:
+		if occupancy.has(cell):
+			return true
+	return false
 
 static func joint_belongs_to_component(
 	joint: SimulationJoint,

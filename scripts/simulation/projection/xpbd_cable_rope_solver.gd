@@ -118,6 +118,12 @@ static func step(
 	if break_force_n > 0.0 and result.tension_n > CableTensionUtil.break_force_n(break_force_n):
 		result.snapped = true
 		return result
+	# TEMP (gate-4 ship): same RigidBody both ends — e.g. battery↔distributor on
+	# one rover chassis. Pin reactions at two anchors become a torque couple and
+	# flip the machine. Mesh + electric link stay; forces wait for a real
+	# intra-assembly policy (or CableTensionUtil-style soft catch).
+	if body_a != null and body_a == body_b:
+		return result
 	_apply_pin_reaction(sim, 0, anchor_a, body_a, backing_a, delta)
 	_apply_pin_reaction(sim, sim.segment_count(), anchor_b, body_b, backing_b, delta)
 	return result

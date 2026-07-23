@@ -63,6 +63,9 @@ battery_discharge_w)` из актуальных `drive_wheel.power_draw_w` и п
 
 «Колбаса» в фразе → `length=long` + равномерные оси по длине шасси.
 
+Декор (всегда): бамперы/юбки `frame_basalt` + короткая мачта `frame`/`cargo_pipe`
+на свободной колонке — без новых archetype types.
+
 ## Поведение агента
 
 1. Распарси фразу → `RoverIntent` (не спрашивай юзера).

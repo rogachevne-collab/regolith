@@ -2446,6 +2446,10 @@ func _configure_wheel(
 		)
 	if parameters.has("brake_torque_n_m"):
 		configure.brake_torque_n_m = float(parameters["brake_torque_n_m"])
+	if parameters.has("max_steering_angle_rad"):
+		configure.max_steering_angle_rad = float(
+			parameters["max_steering_angle_rad"]
+		)
 	if parameters.has("grip_scale"):
 		configure.grip_scale = float(parameters["grip_scale"])
 	var result := _session.apply_configure_wheel(configure)

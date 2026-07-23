@@ -85,6 +85,17 @@ godot-cpp). macOS `template_debug` binary в `addons/regolith_moon_bake/bin/`.
 .\native\build_moon_bake.ps1     # Windows (MSVC x64 .dll)
 ```
 
+### Construction preview kernel (`regolith_construction_preview`)
+
+C++ GDExtension for construction hot paths: rigid face matching, magnet scan,
+occupancy helpers, body-group compile math, split/merge momentum. GDScript
+keeps authority for `validate_place` / plan / scene projection; missing DLL
+falls back to the existing GDScript implementations.
+
+```bash
+.\native\build_construction_preview.ps1   # Windows double-precision .dll
+```
+
 По умолчанию скрипты ждут Erebus godot-cpp:
 `~/Desktop/Erebus/thirdparty/godot-cpp` (macOS) или
 `Y:\Erebus\thirdparty\godot-cpp` (Windows). Переопределение: `$EREBUS_CPP`.
