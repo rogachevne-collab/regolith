@@ -171,6 +171,8 @@ static func _wheel_definition_row(
 	return {
 		"radius_m": definition.radius_m,
 		"width_m": definition.width_m,
+		"hub_local_authored": definition.hub_local_authored,
+		"hub_local": definition.hub_local,
 		"drive_torque_n_m": definition.drive_torque_n_m,
 		"brake_torque_n_m": definition.brake_torque_n_m,
 		"longitudinal_grip": definition.longitudinal_grip,

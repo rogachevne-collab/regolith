@@ -45,7 +45,7 @@ func validate(archetype: ElementArchetype) -> Array[String]:
 			socket_pads += 1
 			socket_face = pad.local_face
 	if socket_pads != 1:
-		errors.append("wheel_suspension must expose exactly one wheel_socket pad")
+		errors.append("a suspension must expose exactly one wheel_socket pad")
 	elif socket_face != wheel_socket_face:
 		errors.append("wheel socket face differs from suspension definition")
 	return errors

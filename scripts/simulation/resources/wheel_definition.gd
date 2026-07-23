@@ -3,12 +3,24 @@ extends Resource
 
 @export var radius_m: float = 0.4
 @export var width_m: float = 0.3
+## Центр шины в part-local метрах (цилиндр визарда). Когда false — хаб
+## берётся из wheel_plug / футпринта, как раньше (сеточные детали).
+@export var hub_local_authored: bool = false
+@export var hub_local: Vector3 = Vector3.ZERO
 @export var drive_torque_n_m: float = 65.0
 @export var brake_torque_n_m: float = 180.0
 @export var longitudinal_grip: float = 1.2
+## УСТАРЕЛО (WHEEL-BODY-V1): контактное трение изотропно; боковой грип
+## отдельно от продольного физика больше не читает. Поле хранится ради
+## совместимости визарда/архетипов.
 @export var lateral_grip: float = 0.9
+## УСТАРЕЛО (WHEEL-BODY-V1): жёсткость псевдо-щётки raycast-модели; реальный
+## контакт считает движок. Не читается.
 @export var slip_stiffness: float = 800.0
+## УСТАРЕЛО (WHEEL-BODY-V1): см. slip_stiffness. Не читается.
 @export var lateral_stiffness: float = 1000.0
+## УСТАРЕЛО (WHEEL-BODY-V1): инерция колеса теперь считается движком из
+## цилиндра и массы архетипа. Не читается.
 @export var wheel_inertia: float = 0.65
 @export var angular_damping: float = 0.2
 @export var max_angular_speed_rad_s: float = 150.0
@@ -76,7 +88,7 @@ func validate(archetype: ElementArchetype) -> Array[String]:
 	var forward_axis := OrientationUtil.face_to_vector(forward_axis_face)
 	var plug_axis := OrientationUtil.face_to_vector(plug_face)
 	if plug_pads != 1:
-		errors.append("drive_wheel must expose exactly one wheel_plug pad")
+		errors.append("a wheel must expose exactly one wheel_plug pad")
 	elif (
 		forward_axis.x * plug_axis.x
 		+ forward_axis.y * plug_axis.y

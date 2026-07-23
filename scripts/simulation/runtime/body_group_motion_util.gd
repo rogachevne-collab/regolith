@@ -91,6 +91,25 @@ static func reconstruct_all_group_motions(
 			head_motion = _reconstruct_head_from_base(world, spec, base_motion)
 		if head_motion != null:
 			result[head_group_id] = head_motion
+	# Wheel groups (WHEEL-BODY-V1) reseat at their suspension group's pose: all
+	# group bodies share the assembly frame, and the build pose (full droop) IS
+	# that frame. Runs after driven specs so a wheel on a rotated/extended
+	# actuator subassembly follows its strut, not the root.
+	for spec_variant: Variant in compiled.get("wheel_specs", []):
+		if not spec_variant is Dictionary:
+			continue
+		var wheel_spec: Dictionary = spec_variant
+		var wheel_group_id := int(wheel_spec.get("wheel_group_id", 0))
+		if live_overrides.has(wheel_group_id):
+			continue
+		var strut_motion: AssemblyMotionState = result.get(
+			int(wheel_spec.get("suspension_group_id", 0))
+		)
+		if strut_motion == null or wheel_group_id <= 0:
+			continue
+		var wheel_motion: AssemblyMotionState = strut_motion.duplicate_state()
+		wheel_motion.frozen = false
+		result[wheel_group_id] = wheel_motion
 	return result
 
 

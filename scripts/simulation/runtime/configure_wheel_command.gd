@@ -9,6 +9,8 @@ var invert_drive_set: bool = false
 var invert_drive: bool = false
 var drive_torque_scale: float = -1.0
 var brake_torque_n_m: float = -1.0
+## −1 = не трогать. 0..1 — доля авторского сцепления.
+var grip_scale: float = -1.0
 
 
 func kind() -> StringName:

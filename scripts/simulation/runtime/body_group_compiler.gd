@@ -8,10 +8,20 @@ static func compile(
 	elements_by_id: Dictionary,
 	joints: Array[SimulationJoint]
 ) -> Dictionary:
+	# Suspension↔wheel RIGID joints do not glue rigid groups: the wheel is a
+	# real body on a 6DOF constraint (WHEEL-BODY-V1). The sim joint stays RIGID
+	# (snapshots, composer, placement untouched); only the partition changes.
+	var wheel_joints: Array[SimulationJoint] = []
+	var glue_joints: Array[SimulationJoint] = []
+	for joint: SimulationJoint in joints:
+		if _is_wheel_pair_joint(joint, elements_by_id):
+			wheel_joints.append(joint)
+		else:
+			glue_joints.append(joint)
 	var rigid_components := RuntimeConnectivity.rigid_connected_components(
 		element_ids,
 		elements_by_id,
-		joints
+		glue_joints
 	)
 	var groups: Dictionary = {}
 	var element_to_group: Dictionary = {}
@@ -20,6 +30,30 @@ static func compile(
 		groups[group_id] = component.duplicate()
 		for element_id: int in component:
 			element_to_group[element_id] = group_id
+
+	var wheel_specs: Array[Dictionary] = []
+	for joint: SimulationJoint in wheel_joints:
+		var suspension_id := joint.element_a_id
+		var wheel_id := joint.element_b_id
+		var suspension: SimulationElement = elements_by_id.get(suspension_id)
+		if suspension == null or not _is_suspension(suspension):
+			suspension_id = joint.element_b_id
+			wheel_id = joint.element_a_id
+		var suspension_group := int(element_to_group.get(suspension_id, 0))
+		var wheel_group := int(element_to_group.get(wheel_id, 0))
+		if (
+			suspension_group <= 0
+			or wheel_group <= 0
+			or suspension_group == wheel_group
+		):
+			return {"valid": false, "reason": &"invalid_wheel_groups"}
+		wheel_specs.append({
+			"joint_id": joint.joint_id,
+			"suspension_element_id": suspension_id,
+			"wheel_element_id": wheel_id,
+			"suspension_group_id": suspension_group,
+			"wheel_group_id": wheel_group,
+		})
 
 	var driven_specs: Array[Dictionary] = []
 	for joint: SimulationJoint in joints:
@@ -38,11 +72,15 @@ static func compile(
 			"head_group_id": head_group,
 		})
 
+	var wheel_group_ids: Dictionary = {}
+	for spec: Dictionary in wheel_specs:
+		wheel_group_ids[int(spec["wheel_group_id"])] = true
 	var root_group_id := _pick_root_group_id(
 		groups,
 		element_ids,
 		elements_by_id,
-		joints
+		joints,
+		wheel_group_ids
 	)
 	if groups.size() > 1 and root_group_id <= 0:
 		return {"valid": false, "reason": &"ambiguous_root_group"}
@@ -60,7 +98,34 @@ static func compile(
 		"element_to_group": element_to_group,
 		"root_group_id": root_group_id,
 		"driven_specs": driven_specs,
+		"wheel_specs": wheel_specs,
 	}
+
+
+static func _is_wheel_pair_joint(
+	joint: SimulationJoint,
+	elements_by_id: Dictionary
+) -> bool:
+	if joint.kind != SimulationJoint.Kind.RIGID:
+		return false
+	var left: SimulationElement = elements_by_id.get(joint.element_a_id)
+	var right: SimulationElement = elements_by_id.get(joint.element_b_id)
+	if left == null or right == null:
+		return false
+	return (
+		(_is_suspension(left) and _is_wheel(right))
+		or (_is_wheel(left) and _is_suspension(right))
+	)
+
+
+static func _is_suspension(element: SimulationElement) -> bool:
+	var archetype := element.get_archetype()
+	return archetype != null and archetype.is_suspension()
+
+
+static func _is_wheel(element: SimulationElement) -> bool:
+	var archetype := element.get_archetype()
+	return archetype != null and archetype.is_wheel()
 
 ## Prospective compile after placing a driven base+head with rigid snaps.
 ## Preview elements often use negative placeholder ids (-1/-2); body-group ids
@@ -169,7 +234,8 @@ static func _pick_root_group_id(
 	groups: Dictionary,
 	_element_ids: Array[int],
 	_elements_by_id: Dictionary,
-	joints: Array[SimulationJoint]
+	joints: Array[SimulationJoint],
+	wheel_group_ids: Dictionary = {}
 ) -> int:
 	var anchored_groups: Dictionary = {}
 	for joint: SimulationJoint in joints:
@@ -185,6 +251,12 @@ static func _pick_root_group_id(
 	if anchored_ids.is_empty():
 		if groups.is_empty():
 			return 0
+		# Wheel groups can never be the motion root: assembly.motion follows the
+		# root body, and a root that spins with the tire would corkscrew the
+		# whole assembly frame.
+		for group_id: int in _sorted_int_keys(groups):
+			if not wheel_group_ids.has(group_id):
+				return group_id
 		return int(_sorted_int_keys(groups).min())
 	if anchored_ids.size() == 1:
 		return anchored_ids[0]

@@ -719,7 +719,8 @@ func _test_piston_multibody_projection() -> bool:
 		_elements_by_id(world, assembly_id),
 		_joints_for_assembly(world, assembly_id)
 	)
-	if not bool(compiled.get("valid", false)) or compiled["groups"].size() != 2:
+	# WHEEL-BODY-V1: root + carriage + the wheel's own body group.
+	if not bool(compiled.get("valid", false)) or compiled["groups"].size() != 3:
 		return _fail("piston projection body groups invalid")
 	var root_group := int(compiled.get("root_group_id", 0))
 	var head_group := int(
@@ -731,12 +732,17 @@ func _test_piston_multibody_projection() -> bool:
 	var suspension_group := int(
 		(compiled["element_to_group"] as Dictionary).get(suspension_id, 0)
 	)
+	var wheel_group := int(
+		(compiled["element_to_group"] as Dictionary).get(wheel_id, 0)
+	)
 	if (
 		drill_group <= 0
 		or drill_group != head_group
 		or suspension_group != head_group
 	):
 		return _fail("drill/wheel modules did not join piston carriage body")
+	if wheel_group <= 0 or wheel_group == head_group:
+		return _fail("wheel must live in its own body group")
 	var root_body := projection.get_group_physics_body(assembly_id, root_group)
 	var head_body := projection.get_group_physics_body(assembly_id, head_group)
 	if not root_body is RigidBody3D or not head_body is RigidBody3D:
@@ -748,11 +754,20 @@ func _test_piston_multibody_projection() -> bool:
 	) as PhysicsBody3D
 	if drill_body != head_body:
 		return _fail("drill projection did not follow carriage body")
-	var wheel_body := projection.get_element_projection(suspension_id).get(
+	var strut_body := projection.get_element_projection(suspension_id).get(
 		"body"
 	) as PhysicsBody3D
-	if wheel_body != head_body:
-		return _fail("wheel projection did not follow carriage body")
+	if strut_body != head_body:
+		return _fail("suspension projection did not follow carriage body")
+	var wheel_body := projection.get_element_projection(wheel_id).get(
+		"body"
+	) as PhysicsBody3D
+	if (
+		wheel_body == null
+		or wheel_body == head_body
+		or not wheel_body is RigidBody3D
+	):
+		return _fail("wheel projection did not get its own rigid body")
 
 	var command := SetActuatorTargetCommand.new()
 	command.joint_id = int(piston.data["piston_joint_id"])
@@ -768,10 +783,9 @@ func _test_piston_multibody_projection() -> bool:
 	var wheel_runtime := world.get_wheel_runtime(wheel_id)
 	if (
 		wheel_runtime.is_empty()
-		or int(wheel_runtime.get("body_group_id", 0))
-		!= int(head_body.get_meta("body_group_id", 0))
+		or int(wheel_runtime.get("body_group_id", 0)) != wheel_group
 	):
-		return _fail("wheel tick did not use carriage body group")
+		return _fail("wheel tick did not report the wheel body group")
 	if end_extension <= start_extension + 0.05:
 		return _fail(
 			"piston projection did not extend head: %.3f -> %.3f"

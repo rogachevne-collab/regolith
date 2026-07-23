@@ -380,10 +380,11 @@ func _attach_scene_visual(
 	return true
 
 
-## Wheels need SteerRoot/SteerRoot/SpinRoot for the runtime to steer and spin
-## them (WheelVisualProjection looks those up by name). A plain authored model
-## has no such nodes, so build the rig around it: the wheel's own connector
-## point is the axle, and the spin axis is +X the way the rig expects.
+## Wheels ride their own rigid body (WHEEL-BODY-V1), so travel, steering and
+## spin all come from the body itself — nothing here moves per frame. What the
+## rig still has to get right is the SEAT: the model must be centred on the
+## axle, because that is the point the body turns about. Off-centre and the
+## tire orbits the strut instead of rolling.
 func _wrap_spinning_wheel(
 	instance: Node3D,
 	element: SimulationElement,
@@ -400,56 +401,86 @@ func _wrap_spinning_wheel(
 	)
 	var steer := Node3D.new()
 	steer.name = "SteerRoot"
-	# Seat the rig on the axle straight away. The runtime overwrites this every
-	# tick, but wheels only tick once the assembly is driven — before that
-	# (fresh load, parked rover) an unseated rig left the wheel hanging off in
-	# space until the player sat down.
 	steer.position = root.transform.affine_inverse() * (
-		GridPoseUtil.element_metric_transform(
-			element.origin_cell,
-			element.orientation_index,
-			element.pose_offset
-		) * _axle_point_local(archetype)
+		WheelBodyProjectionUtil.axle_point_assembly_local(element)
 	)
 	root.add_child(steer)
 	var spin := Node3D.new()
 	spin.name = "SpinRoot"
-	# Turn the part's own axle direction into the rig's +X spin axis.
-	spin.basis = _axle_to_spin_basis(archetype)
+	# Align with the PHYSICS axle (forward×up), not the connector normal.
+	# Connector −X vs physics +X was a silent 180° flip after rebake.
+	spin.basis = _axle_to_spin_basis(element, root.transform.basis)
 	steer.add_child(spin)
-	# Seat the model so its axle sits on the spin origin, else it wobbles
-	# around a point that is not its centre.
+	# Centre the tire on the spin origin by measuring it, not by trusting the
+	# model's own origin: exporters routinely drop that origin on a side face
+	# or a corner (both of ours do), and the part's `visual_offset` records
+	# where the AUTHOR's pivot was, which is a different question. A tire that
+	# is already centred measures a zero correction, so this costs nothing when
+	# the art is right and saves the wheel when it is not.
 	instance.transform = Transform3D(
 		Basis.IDENTITY,
-		archetype.visual_offset - _axle_point_local(archetype)
+		-_tire_centre_local(instance)
 	)
 	spin.add_child(instance)
 	return root
 
 
-func _axle_point_local(archetype: ElementArchetype) -> Vector3:
-	for connector: ConnectorDefinition in archetype.effective_connectors():
-		if connector != null and connector.normalized_tag() == "wheel_plug":
-			return connector.local_position
-	if archetype.footprint_cells.is_empty():
-		return Vector3.ZERO
-	var sum := Vector3.ZERO
-	for local_cell: Vector3i in archetype.footprint_cells:
-		sum += GridMetric.cell_center_meters(local_cell)
-	return sum / float(archetype.footprint_cells.size())
+## Centre of the biggest mesh under `node`, in `node`'s own frame. Biggest,
+## not merged: a wheel model may carry a hub cap or a mount stub, and those
+## must not drag the tire off the axle.
+func _tire_centre_local(node: Node3D) -> Vector3:
+	var best_volume := 0.0
+	var centre := Vector3.ZERO
+	for entry: Dictionary in _meshes_with_local_transform(node, Transform3D.IDENTITY):
+		var mesh_instance: MeshInstance3D = entry["mesh_instance"]
+		var bounds: AABB = mesh_instance.mesh.get_aabb()
+		var volume := bounds.size.x * bounds.size.y * bounds.size.z
+		if volume <= best_volume:
+			continue
+		best_volume = volume
+		centre = (
+			(entry["local_transform"] as Transform3D)
+			* (bounds.position + bounds.size * 0.5)
+		)
+	return centre
 
 
-func _axle_to_spin_basis(archetype: ElementArchetype) -> Basis:
-	var axle := Vector3.RIGHT
-	for connector: ConnectorDefinition in archetype.effective_connectors():
-		if connector != null and connector.normalized_tag() == "wheel_plug":
-			axle = connector.direction_normalized()
-			break
+## Meshes under `node` with their transform relative to it. The scene is not
+## in the tree yet when the rig is built, so global_transform is unusable.
+func _meshes_with_local_transform(
+	node: Node,
+	accumulated: Transform3D
+) -> Array[Dictionary]:
+	var found: Array[Dictionary] = []
+	if node is MeshInstance3D and (node as MeshInstance3D).mesh != null:
+		found.append({
+			"mesh_instance": node as MeshInstance3D,
+			"local_transform": accumulated,
+		})
+	for child: Node in node.get_children():
+		var child_transform := accumulated
+		if child is Node3D:
+			child_transform = accumulated * (child as Node3D).transform
+		found.append_array(
+			_meshes_with_local_transform(child, child_transform)
+		)
+	return found
+
+
+func _axle_to_spin_basis(
+	element: SimulationElement,
+	root_basis: Basis
+) -> Basis:
+	var frame := WheelBodyProjectionUtil.wheel_frame_assembly_local(element)
+	if frame.is_empty():
+		return Basis.IDENTITY
+	var axle_assembly: Vector3 = Vector3(frame["axle"]).normalized()
+	var axle := (root_basis.inverse() * axle_assembly).normalized()
 	if axle.is_equal_approx(Vector3.RIGHT):
 		return Basis.IDENTITY
 	var rotation_axis := Vector3.RIGHT.cross(axle)
 	if rotation_axis.length_squared() <= 0.000001:
-		# Axle points at -X: flip about any perpendicular axis.
+		# Anti-parallel to +X: 180° about any perpendicular.
 		return Basis(Vector3.UP, PI)
 	return Basis(
 		rotation_axis.normalized(),
@@ -630,8 +661,6 @@ func _material_for(element: SimulationElement) -> StandardMaterial3D:
 			)
 			and (
 				element.archetype_id.begins_with("rover_")
-				or element.archetype_id.begins_with("wheel_")
-				or element.archetype_id == "drive_wheel"
 				or element.archetype_id == "cockpit"
 			)
 		)
@@ -649,8 +678,6 @@ func _material_for(element: SimulationElement) -> StandardMaterial3D:
 func _rim_material_for(element: SimulationElement) -> StandardMaterial3D:
 	if (
 		element.archetype_id.begins_with("rover_")
-		or element.archetype_id.begins_with("wheel_")
-		or element.archetype_id == "drive_wheel"
 		or element.archetype_id == "cockpit"
 	):
 		return _materials["rim_rover"]

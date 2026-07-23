@@ -4,13 +4,20 @@ const _HeadlessTestHarness := preload("res://scripts/testing/headless_test_harne
 const ROVER_FRAME := preload(
 	"res://resources/archetypes/slice01/rover_frame.tres"
 )
-const WHEEL_SUSPENSION := preload(
-	"res://resources/archetypes/slice01/wheel_suspension.tres"
-)
-const ROVER_DEMO_SPAWN := preload("res://scripts/authoring/rover_demo_spawn.gd")
-const DRIVE_WHEEL := preload(
-	"res://resources/archetypes/slice01/drive_wheel.tres"
-)
+
+## Пара «подвеска + колесо» — та, что ставит игра: сеточных деталей без точных
+## точек крепления больше нет, и зашивать id испечённой визардом детали в тест
+## нельзя.
+static func _pair_intent() -> RoverIntent:
+	return RoverIntent.defaults()
+
+
+static func _suspension_archetype() -> ElementArchetype:
+	return _pair_intent().suspension_archetype()
+
+
+static func _wheel_archetype() -> ElementArchetype:
+	return _pair_intent().wheel_archetype()
 
 
 func _ready() -> void:
@@ -26,18 +33,19 @@ func _run_tests() -> void:
 		_test_wheel_pair_discovery,
 		_test_locomotive_requires_complete_pair,
 		_test_configure_wheel_steerable,
+		_test_configure_wheel_grip_scale,
 		_test_configure_suspension_rejects_invalid_travel,
 		_test_wheel_snapshot_roundtrip,
 		_test_dismantle_wheel_breaks_locomotive,
 		_test_demo_rover_spawn,
-		_test_demo_rover_wheel_sockets_point_down,
 		_test_incremental_build_releases_on_activation,
-		_test_custom_com_point_velocity,
-		_test_ten_wheel_runtime_snapshots,
+		_test_wheel_frame_axes,
 	]
 	for test: Callable in tests:
 		if not bool(test.call()):
 			return
+	if not await _test_ten_wheel_runtime_snapshots():
+		return
 	if not await _test_demo_rover_drive_and_steer():
 		return
 	print("SIMULATION-WHEEL-V1: PASS")
@@ -113,62 +121,59 @@ func _orientation_with_local_face(
 	return 0
 
 
+## Шасси + одна стойка без колеса. Клетки не зашиваем: у точной детали гнездо
+## смотрит вбок, позу считает тот же планировщик, что и композер.
 func _build_suspension_only(world: SimulationWorld) -> Dictionary:
-	var foundation := _spawn_foundation(world)
-	if foundation.is_empty():
-		return {"error": "foundation"}
-	var assembly_id := int(foundation["assembly_id"])
-	var revision := int(foundation["topology_revision"])
-	var chassis := _place(
-		world,
-		assembly_id,
-		revision,
-		Slice01Archetypes.frame(),
-		Vector3i(4, 0, 0)
-	)
-	if not chassis.is_ok():
-		return {"error": "chassis: %s" % chassis.reason}
-	revision = int(chassis.data["topology_revision"])
-	var suspension_orientation := _orientation_with_local_face(
-		Vector3i.RIGHT,
+	var helper := AssemblyBuildHelper.new(world, PlayerIdentity.store_id("player"))
+	helper.ensure_materials(800.0)
+	if not helper.spawn_anchor(ROVER_FRAME, GridTransform.identity()):
+		return {"error": "anchor: %s" % helper.last_error}
+	for cell: Vector3i in [Vector3i(1, 0, 0), Vector3i(2, 0, 0)]:
+		if not helper.place(ROVER_FRAME, cell):
+			return {"error": "chassis: %s" % helper.last_error}
+	# Крепимся к БОРТОВОЙ грани клетки шасси наружу — как это делает композер.
+	var plan := RoverComposer._plan_wheel_pair(
+		_suspension_archetype(),
+		_wheel_archetype(),
+		Vector3i(0, 0, 0),
 		Vector3i.LEFT
 	)
-	var suspension := _place(
-		world,
-		assembly_id,
-		revision,
-		WHEEL_SUSPENSION,
-		Vector3i(5, 0, 0),
-		suspension_orientation
-	)
-	if not suspension.is_ok():
-		return {"error": "suspension: %s" % suspension.reason}
-	_weld(world, int(chassis.data["element_id"]))
-	_weld(world, int(suspension.data["element_id"]))
+	if plan.is_empty():
+		return {"error": "no wheel pair pose"}
+	if not helper.place(
+		_suspension_archetype(),
+		plan["suspension_origin"],
+		int(plan["suspension_orientation"]),
+		"suspension"
+	):
+		return {"error": "suspension: %s" % helper.last_error}
+	helper.weld_all()
+	var assembly := world.get_assembly_raw(helper.assembly_id)
 	return {
 		"world": world,
-		"assembly_id": assembly_id,
-		"suspension_id": int(suspension.data["element_id"]),
-		"suspension_orientation": suspension_orientation,
-		"revision": int(suspension.data["topology_revision"]),
+		"assembly_id": helper.assembly_id,
+		"suspension_id": int(helper.element_ids.get("suspension", 0)),
+		"plan": plan,
+		"revision": assembly.topology_revision,
 	}
 
 
 func _build_complete_pair(world: SimulationWorld) -> Dictionary:
 	var partial := _build_suspension_only(world)
 	if partial.has("error"):
-		return {}
-	var wheel := _place(
-		partial["world"],
-		int(partial["assembly_id"]),
-		int(partial["revision"]),
-		DRIVE_WHEEL,
-		Vector3i(5, -1, 0)
-	)
+		return partial
+	var plan: Dictionary = partial["plan"]
+	var place := PlaceElementCommand.new()
+	place.assembly_id = int(partial["assembly_id"])
+	place.expected_assembly_revision = int(partial["revision"])
+	place.archetype = _wheel_archetype()
+	place.origin_cell = plan["wheel_origin"]
+	place.orientation_index = int(plan["wheel_orientation"])
+	place.store_id = PlayerIdentity.store_id("player")
+	var wheel := world.apply_structural_command_now(place)
 	if not wheel.is_ok():
-		partial["world"].free()
 		return {"error": "wheel: %s" % wheel.reason}
-	_weld(partial["world"], int(wheel.data["element_id"]))
+	_weld(world, int(wheel.data["element_id"]))
 	partial["wheel_id"] = int(wheel.data["element_id"])
 	partial["revision"] = int(wheel.data["topology_revision"])
 	return partial
@@ -183,13 +188,14 @@ func _test_socket_tag_blocks_frame_to_wheel_socket() -> bool:
 			"suspension setup failed: %s"
 			% partial.get("error", "unknown")
 		)
+	var socket_plan: Dictionary = partial["plan"]
 	var deny := _place(
 		world,
 		int(partial["assembly_id"]),
 		int(partial["revision"]),
 		ROVER_FRAME,
-		Vector3i(5, -1, 0),
-		int(partial["suspension_orientation"])
+		socket_plan["wheel_origin"],
+		int(socket_plan["wheel_orientation"])
 	)
 	world.free()
 	if deny.is_ok():
@@ -212,8 +218,8 @@ func _test_wheel_placement_requires_suspension() -> bool:
 		world,
 		int(partial["assembly_id"]),
 		int(partial["revision"]),
-		DRIVE_WHEEL,
-		Vector3i(7, 0, 0)
+		_wheel_archetype(),
+		Vector3i(12, 0, 0)
 	)
 	world.free()
 	if deny.is_ok():
@@ -237,13 +243,14 @@ func _test_wheel_placement_rejects_occupied_socket() -> bool:
 		)
 	var command := PlaceElementCommand.new()
 	command.assembly_id = int(built["assembly_id"])
-	command.archetype = DRIVE_WHEEL
-	command.origin_cell = Vector3i(5, -1, 0)
-	command.orientation_index = 0
+	command.archetype = _wheel_archetype()
+	var occupied_plan: Dictionary = built["plan"]
+	command.origin_cell = occupied_plan["wheel_origin"]
+	command.orientation_index = int(occupied_plan["wheel_orientation"])
 	var preview := SimulationElement.frame(
 		-1,
 		command.assembly_id,
-		DRIVE_WHEEL,
+		_wheel_archetype(),
 		command.origin_cell,
 		command.orientation_index,
 		{"plate_metal": 1.0}
@@ -347,6 +354,55 @@ func _test_configure_wheel_steerable() -> bool:
 	return true
 
 
+## Ползунок «Сцепление» ужимает авторское сцепление и не даёт выдумать его
+## сверх резины: 1.0 — потолок детали, больше отклоняется.
+func _test_configure_wheel_grip_scale() -> bool:
+	var world := _boot_world()
+	var built := _build_complete_pair(world)
+	if built.is_empty() or built.has("error"):
+		world.free()
+		return _fail(
+			"complete pair setup failed: %s" % built.get("error", "unknown")
+		)
+	var wheel_id := int(built["wheel_id"])
+	var command := ConfigureWheelCommand.new()
+	command.wheel_element_id = wheel_id
+	command.grip_scale = 0.4
+	var result := world.apply_configure_wheel(command)
+	if StringName(result.get("reason", &"")) != &"ok":
+		world.free()
+		return _fail("grip scale rejected: %s" % result.get("reason"))
+	var state := world.ensure_wheel_instance_state(wheel_id)
+	if not is_equal_approx(state.grip_scale, 0.4):
+		world.free()
+		return _fail("grip scale not persisted: %f" % state.grip_scale)
+	var over := ConfigureWheelCommand.new()
+	over.wheel_element_id = wheel_id
+	over.grip_scale = 1.5
+	var denied := world.apply_configure_wheel(over)
+	var denied_reason := StringName(denied.get("reason", &""))
+	var still := world.ensure_wheel_instance_state(wheel_id).grip_scale
+	world.free()
+	var definition := _wheel_archetype().wheel_definition
+	if denied_reason == &"ok":
+		return _fail("grip scale above authored ceiling must be rejected")
+	if not is_equal_approx(still, 0.4):
+		return _fail("rejected grip scale must not change state")
+	# Сцепление доезжает до физики: трение шины = авторское × ползунок,
+	# потолок — авторское значение (WHEEL-BODY-V1: трение материала тела).
+	if not is_equal_approx(
+		WheelBodyProjectionUtil.tire_friction(definition, 0.4),
+		definition.longitudinal_grip * 0.4
+	):
+		return _fail("tire friction not scaled by grip slider")
+	if not is_equal_approx(
+		WheelBodyProjectionUtil.tire_friction(definition, 5.0),
+		definition.longitudinal_grip
+	):
+		return _fail("tire friction must cap at the authored grip")
+	return true
+
+
 func _test_configure_suspension_rejects_invalid_travel() -> bool:
 	var world := _boot_world()
 	var partial := _build_suspension_only(world)
@@ -387,9 +443,17 @@ func _test_wheel_snapshot_roundtrip() -> bool:
 	) != &"ok":
 		world.free()
 		return _fail("wheel snapshot configure failed")
+	# Ход берём из самой детали: у испечённой визардом подвески свой диапазон,
+	# и зашитые 0.8 м в него не попадают.
+	var suspension_definition: SuspensionDefinition = (
+		_suspension_archetype().suspension_definition
+	)
+	var target_travel := 0.5 * (
+		suspension_definition.min_travel_m + suspension_definition.max_travel_m
+	)
 	var suspension_command := ConfigureSuspensionCommand.new()
 	suspension_command.suspension_element_id = int(built["suspension_id"])
-	suspension_command.travel_m = 0.8
+	suspension_command.travel_m = target_travel
 	if StringName(
 		world.apply_configure_suspension(suspension_command).get("reason", &"")
 	) != &"ok":
@@ -420,7 +484,7 @@ func _test_wheel_snapshot_roundtrip() -> bool:
 	var valid: bool = (
 		wheel_state.steerable
 		and is_equal_approx(wheel_state.drive_torque_scale, 0.6)
-		and is_equal_approx(suspension_state.travel_m, 0.8)
+		and is_equal_approx(suspension_state.travel_m, target_travel)
 		and equal
 	)
 	restored.free()
@@ -458,138 +522,84 @@ func _test_dismantle_wheel_breaks_locomotive() -> bool:
 	return true
 
 
+## Ровер, собранный тем же путём, что в игре: питание раздаётся всем колёсам,
+## а его пропажа обесточивает все. Пары ищем через discover_pairs, а не по
+## ключам раскладки: колёс может быть сколько угодно.
 func _test_demo_rover_spawn() -> bool:
 	var session := _boot_demo_session()
 	var world := session.world
-	var result: Dictionary = ROVER_DEMO_SPAWN.spawn_on_terrain(
+	var result: Dictionary = RoverComposer.spawn_on_terrain(
 		session,
 		Vector3(8.0, 0.0, 0.0)
 	)
-	var assembly_id := int(result.get("assembly_id", 0))
-	var ok := bool(result.get("ok", false))
-	var locomotive := (
-		ok
-		and WheelSimulationService.is_locomotive_assembly(world, assembly_id)
-	)
-	var activated := (
-		ok
-		and world.get_locomotion_controller(assembly_id).is_activated()
-	)
-	if ok and not activated:
-		world.get_locomotion_controller(assembly_id).activate()
-		activated = true
-	var module_ids: Dictionary = result.get("element_ids", {})
-	var wheelbase_m := -1.0
-	var front_pair: Dictionary = module_ids.get("fl", {})
-	var rear_pair: Dictionary = module_ids.get("rl", {})
-	var front_suspension := world.get_element(
-		int(front_pair.get("suspension", 0))
-	)
-	var rear_suspension := world.get_element(
-		int(rear_pair.get("suspension", 0))
-	)
-	if front_suspension != null and rear_suspension != null:
-		wheelbase_m = (
-			absf(
-				float(
-					rear_suspension.origin_cell.z
-					- front_suspension.origin_cell.z
-				)
-			)
-			* GridMetric.CELL_SIZE_M
-		)
-	world.get_locomotion_controller(assembly_id).set_drive_command(1.0)
+	if not bool(result.get("ok", false)):
+		var error := str(result.get("error", ""))
+		var failures: Variant = result.get("failures", [])
+		session.free()
+		return _fail("rover spawn failed: %s %s" % [error, failures])
+	var assembly_id := int(result["assembly_id"])
+	if not WheelSimulationService.is_locomotive_assembly(world, assembly_id):
+		session.free()
+		return _fail("composed rover should be locomotive")
+	var locomotion := world.get_locomotion_controller(assembly_id)
+	if not locomotion.is_activated():
+		locomotion.activate()
+	var wheel_ids: Array[int] = []
+	for pair: Dictionary in WheelSimulationService.discover_pairs(
+		world,
+		assembly_id
+	):
+		if WheelSimulationService.is_complete_pair(pair):
+			wheel_ids.append(int(pair.get("wheel_element_id", 0)))
+	if wheel_ids.size() != 4:
+		session.free()
+		return _fail("composed rover has %d wheel pairs" % wheel_ids.size())
+
+	locomotion.set_drive_command(1.0)
 	IndustryElectricBudget.apply_tick(world, 1.0)
 	var powered_wheels := 0
-	var dynamic_demand_w := 0.0
-	for key: String in ["fl", "fr", "rl", "rr"]:
-		var pair_variant: Variant = module_ids.get(key, {})
-		if not pair_variant is Dictionary:
-			continue
-		var wheel_id := int((pair_variant as Dictionary).get("wheel", 0))
-		if wheel_id <= 0:
-			continue
+	var demand_w := 0.0
+	var expected_demand_w := 0.0
+	for wheel_id: int in wheel_ids:
 		var runtime := world.get_industry_element_runtime(wheel_id)
 		if runtime != null and runtime.powered:
 			powered_wheels += 1
 		if runtime != null:
-			dynamic_demand_w += runtime.dynamic_power_w
-	var battery_id := int(module_ids.get("battery", 0))
-	if battery_id > 0:
-		world.ensure_industry_element_runtime(battery_id).machine_enabled = false
+			demand_w += runtime.dynamic_power_w
+		expected_demand_w += (
+			world.get_element(wheel_id).get_archetype()
+				.wheel_definition.power_draw_w
+		)
+
+	# Обесточиваем всё, что не колесо: где именно стоит батарея, тест знать не
+	# обязан — важно, что без питания колёса встают.
+	for element: SimulationElement in world.list_elements():
+		if element.assembly_id != assembly_id or wheel_ids.has(element.element_id):
+			continue
+		world.ensure_industry_element_runtime(
+			element.element_id
+		).machine_enabled = false
 	IndustryElectricBudget.apply_tick(world, 1.0)
 	var unpowered_wheels := 0
-	for key: String in ["fl", "fr", "rl", "rr"]:
-		var pair: Dictionary = module_ids.get(key, {})
-		var wheel_id := int(pair.get("wheel", 0))
+	for wheel_id: int in wheel_ids:
 		var runtime := world.get_industry_element_runtime(wheel_id)
 		if runtime != null and not runtime.powered:
 			unpowered_wheels += 1
 	session.free()
-	if not ok:
-		return _fail("demo rover spawn failed: %s" % result.get("error", ""))
-	if not locomotive:
-		return _fail("demo rover should be locomotive")
-	if not activated:
-		return _fail("demo rover should activate for drive/power checks")
-	# Spawn leaves parking_brake on; construction uses near-zero speed.
-	if not is_equal_approx(wheelbase_m, 2.5):
+
+	if powered_wheels != wheel_ids.size():
 		return _fail(
-			"demo rover wheelbase should be 2.5 m, got %.3f" % wheelbase_m
+			"rover should power all %d wheels, got %d"
+			% [wheel_ids.size(), powered_wheels]
 		)
-	if powered_wheels != 4:
+	if not is_equal_approx(demand_w, expected_demand_w):
 		return _fail(
-			"demo rover should power all 4 wheels, got %d" % powered_wheels
+			"drive demand should be %.1f W, got %.1f" % [expected_demand_w, demand_w]
 		)
-	if not is_equal_approx(dynamic_demand_w, 1200.0):
-		return _fail(
-			"drive demand should be 1200 W, got %.1f" % dynamic_demand_w
-		)
-	if unpowered_wheels != 4:
+	if unpowered_wheels != wheel_ids.size():
 		return _fail(
 			"power loss should disable all wheels, got %d" % unpowered_wheels
 		)
-	return true
-
-
-func _test_demo_rover_wheel_sockets_point_down() -> bool:
-	var session := _boot_demo_session()
-	var world := session.world
-	var projection := session.projection
-	var result: Dictionary = ROVER_DEMO_SPAWN.spawn_on_terrain(
-		session,
-		Vector3(8.0, 0.0, 0.0)
-	)
-	var assembly_id := int(result.get("assembly_id", 0))
-	if not bool(result.get("ok", false)):
-		session.free()
-		return _fail("demo rover spawn failed for socket test")
-	var body := projection.get_physics_body(assembly_id) as RigidBody3D
-	if body == null:
-		session.free()
-		return _fail("demo rover missing rigid body for socket test")
-	for pair: Dictionary in WheelSimulationService.discover_pairs(world, assembly_id):
-		if not WheelSimulationService.is_complete_pair(pair):
-			continue
-		var suspension: SimulationElement = pair.get("suspension_element")
-		var socket_pose := WheelProjectionUtil.mount_pad_anchor_assembly_local(
-			suspension,
-			"wheel_socket"
-		)
-		if socket_pose.is_empty():
-			session.free()
-			return _fail("suspension missing wheel_socket pose")
-		var ray_dir_world := (
-			body.global_transform.basis
-			* Vector3(socket_pose["direction"])
-		).normalized()
-		if ray_dir_world.dot(Vector3.DOWN) < 0.7:
-			session.free()
-			return _fail(
-				"wheel socket should raycast down, got %s"
-				% str(ray_dir_world)
-			)
-	session.free()
 	return true
 
 
@@ -633,41 +643,68 @@ func _test_incremental_build_releases_on_activation() -> bool:
 	return true
 
 
-func _test_custom_com_point_velocity() -> bool:
-	var body := RigidBody3D.new()
-	add_child(body)
-	body.center_of_mass_mode = RigidBody3D.CENTER_OF_MASS_MODE_CUSTOM
-	body.center_of_mass = Vector3(0.75, 0.5, -0.25)
-	body.global_transform = Transform3D(
-		Basis.IDENTITY.rotated(Vector3.UP, 0.35),
-		Vector3(3.0, 2.0, -4.0)
+## Оси колёсного кадра (WHEEL-BODY-V1): хаб — СВОЯ ось колеса (центр шины, он
+## же центр меша), а не точка стыковки с подвеской; вверх против направления
+## socket; тройка ортогональна и правая.
+##
+## Хаб в точке стыковки — ровно тот баг, из-за которого шина обходила стойку по
+## кругу: у сеточной детали эта точка на полклетки выше центра колеса.
+func _test_wheel_frame_axes() -> bool:
+	var world := _boot_world()
+	var built := _build_complete_pair(world)
+	if built.is_empty() or built.has("error"):
+		world.free()
+		return _fail("wheel frame fixture failed")
+	var suspension := world.get_element(int(built["suspension_id"]))
+	var wheel := world.get_element(int(built["wheel_id"]))
+	var frame := WheelBodyProjectionUtil.wheel_frame_assembly_local(wheel)
+	var socket := WheelBodyProjectionUtil.mount_pad_anchor_assembly_local(
+		suspension,
+		"wheel_socket"
 	)
-	body.linear_velocity = Vector3(1.5, -0.25, 0.75)
-	body.angular_velocity = Vector3(0.0, 2.0, 0.0)
-	var center_world := body.to_global(body.center_of_mass)
-	var center_velocity := WheelProjectionUtil.velocity_at_world_point(
-		body,
-		center_world
-	)
-	if not center_velocity.is_equal_approx(body.linear_velocity):
-		body.queue_free()
-		return _fail("point velocity did not use custom COM")
-	var point := center_world + Vector3(0.0, 0.0, 2.0)
-	var expected := (
-		body.linear_velocity
-		+ body.angular_velocity.cross(point - center_world)
-	)
-	var actual := WheelProjectionUtil.velocity_at_world_point(body, point)
-	body.queue_free()
-	if not actual.is_equal_approx(expected):
-		return _fail("point velocity angular term is incorrect")
+	var expected_hub := WheelBodyProjectionUtil.axle_point_assembly_local(wheel)
+	world.free()
+	if frame.is_empty() or socket.is_empty():
+		return _fail("wheel frame did not resolve")
+	var up: Vector3 = frame["up"]
+	var axle: Vector3 = frame["axle"]
+	var forward: Vector3 = frame["forward"]
+	if not Vector3(frame["hub"]).is_equal_approx(expected_hub):
+		return _fail("hub must sit on the wheel's own axle point")
+	var socket_gap := (Vector3(frame["hub"]) - Vector3(socket["origin"])).length()
+	if socket_gap < GridMetric.HALF_CELL_SIZE_M - 0.001:
+		return _fail(
+			"grid wheel axle must sit half a cell below the socket, got %.3f"
+			% socket_gap
+		)
+	# Ход подвески — по «вверх» самого шасси, НЕ по грани гнезда: у точной
+	# подвески гнездо смотрит вбок, вдоль оси колеса, и привязка к нему кладёт
+	# пружину набок, а шину ставит бочкой на попа.
+	if not up.is_equal_approx(Vector3.UP):
+		return _fail("travel axis must be the chassis' own up, got %s" % str(up))
+	if absf(axle.dot(Vector3.UP)) > 0.0001:
+		return _fail("axle must be horizontal, got %s" % str(axle))
+	if (
+		absf(up.dot(axle)) > 0.0001
+		or absf(up.dot(forward)) > 0.0001
+		or absf(axle.dot(forward)) > 0.0001
+	):
+		return _fail("wheel frame must be orthogonal")
+	if not axle.cross(up).is_equal_approx(-forward):
+		return _fail("wheel frame must satisfy axle×up = -forward")
 	return true
 
 
+## 10 колёс на настоящей проекции: телеметрия пишется для каждого колеса и
+## конечна; потребление энергии как раньше.
 func _test_ten_wheel_runtime_snapshots() -> bool:
 	var world := _boot_world()
+	var projection := SimulationPhysicsProjection.new()
+	add_child(projection)
+	projection.bind_world(world)
 	var built := _build_multi_axle_rover(world, 5)
 	if not bool(built.get("ok", false)):
+		projection.queue_free()
 		world.free()
 		return _fail(
 			"10-wheel fixture failed: %s" % built.get("error", "unknown")
@@ -675,10 +712,17 @@ func _test_ten_wheel_runtime_snapshots() -> bool:
 	var assembly_id := int(built["assembly_id"])
 	var pairs := WheelSimulationService.discover_pairs(world, assembly_id)
 	if pairs.size() != 10:
+		projection.queue_free()
 		world.free()
 		return _fail("expected 10 wheel pairs, got %d" % pairs.size())
 	var locomotion := world.get_locomotion_controller(assembly_id)
 	locomotion.activate()
+	# Compose alone can leave the projection stale; bind joints after activate
+	# the same way the incremental-build test does.
+	projection.project_assembly_now(
+		assembly_id,
+		world.get_assembly_raw(assembly_id).motion.duplicate_state()
+	)
 	locomotion.set_drive_command(1.0)
 	WheelSimulationService.sync_power_demand(world)
 	var total_dynamic_demand_w := 0.0
@@ -689,36 +733,43 @@ func _test_ten_wheel_runtime_snapshots() -> bool:
 			).dynamic_power_w
 		)
 	if not is_equal_approx(total_dynamic_demand_w, 3000.0):
+		projection.queue_free()
 		world.free()
 		return _fail(
 			"10 wheels should request 3000 W, got %.1f"
 			% total_dynamic_demand_w
 		)
 	locomotion.set_drive_command(0.0)
-	var body := RigidBody3D.new()
-	body.freeze = true
-	body.global_position = Vector3(0.0, 1.0, 0.0)
-	add_child(body)
 	for pair: Dictionary in pairs:
 		var wheel_id := int(pair.get("wheel_element_id", 0))
 		var power := world.ensure_industry_element_runtime(wheel_id)
 		power.machine_enabled = true
 		power.powered = true
-	var resolver := func(_element_id: int) -> RigidBody3D:
-		return body
-	WheelSimulationService.tick_assembly(
-		world,
-		assembly_id,
-		1.0 / 60.0,
-		resolver,
-		[body.get_rid()]
-	)
+	var constraint_count := projection.list_wheel_constraint_records(
+		assembly_id
+	).size()
+	if constraint_count != pairs.size():
+		var compiled := world.compile_body_groups(assembly_id)
+		projection.queue_free()
+		world.free()
+		return _fail(
+			"10-wheel rover got %d wheel constraints for %d pairs (compile %s/%s, wheel_specs %d)"
+			% [
+				constraint_count,
+				pairs.size(),
+				str(compiled.get("valid", false)),
+				str(compiled.get("reason", "")),
+				(compiled.get("wheel_specs", []) as Array).size(),
+			]
+		)
+	for _step: int in range(10):
+		await get_tree().physics_frame
 	for pair: Dictionary in pairs:
 		var runtime := world.get_wheel_runtime(
 			int(pair.get("wheel_element_id", 0))
 		)
 		if runtime.is_empty():
-			body.queue_free()
+			projection.queue_free()
 			world.free()
 			return _fail("10-wheel tick omitted a runtime snapshot")
 		for key: String in [
@@ -727,7 +778,7 @@ func _test_ten_wheel_runtime_snapshots() -> bool:
 			"normal_force_n",
 		]:
 			if not is_finite(float(runtime.get(key, NAN))):
-				body.queue_free()
+				projection.queue_free()
 				world.free()
 				return _fail("10-wheel snapshot contains non-finite %s" % key)
 		var center: Vector3 = runtime.get(
@@ -735,11 +786,12 @@ func _test_ten_wheel_runtime_snapshots() -> bool:
 			Vector3(INF, INF, INF)
 		)
 		if not center.is_finite():
-			body.queue_free()
+			projection.queue_free()
 			world.free()
 			return _fail("10-wheel snapshot contains invalid wheel center")
-	body.queue_free()
+	projection.queue_free()
 	world.free()
+	await get_tree().process_frame
 	return true
 
 
@@ -751,7 +803,7 @@ func _test_demo_rover_drive_and_steer() -> bool:
 	add_child(session)
 	for archetype: ElementArchetype in Slice01Archetypes.load_rover_archetypes():
 		session.world.get_archetype_registry().register(archetype)
-	var result := ROVER_DEMO_SPAWN.spawn_on_terrain(
+	var result := RoverComposer.spawn_on_terrain(
 		session,
 		Vector3.ZERO
 	)
@@ -764,7 +816,7 @@ func _test_demo_rover_drive_and_steer() -> bool:
 	var locomotion := session.world.get_locomotion_controller(assembly_id)
 	locomotion.activate()
 	locomotion.set_parking_brake(false)
-	ROVER_DEMO_SPAWN._wake_locomotive_body(session, assembly_id)
+	session.projection.wake_assembly_bodies(assembly_id)
 	var body := session.projection.get_physics_body(assembly_id) as RigidBody3D
 	if body == null:
 		session.queue_free()
@@ -784,13 +836,33 @@ func _test_demo_rover_drive_and_steer() -> bool:
 	if grounded != 4:
 		session.queue_free()
 		return _fail("demo rover should settle on 4 wheels, got %d" % grounded)
+	for pair: Dictionary in WheelSimulationService.discover_pairs(
+		session.world,
+		assembly_id
+	):
+		var probe_id := int(pair.get("wheel_element_id", 0))
+		var rt := session.world.get_wheel_runtime(probe_id)
+		if not rt.has("contact_world"):
+			print("DEBUG wheel %d: NOT GROUNDED %s" % [probe_id, rt.get("status", "?")])
+			continue
+		var centre_world: Vector3 = body.global_transform * Vector3(
+			rt.get("wheel_center_body_local", Vector3.ZERO)
+		)
+		print("DEBUG wheel %d: gap %.3f m (radius 0.4), compression %.3f, grounded %s" % [
+			probe_id,
+			centre_world.distance_to(Vector3(rt["contact_world"])),
+			float(rt.get("compression_m", -1.0)),
+			rt.get("grounded", false),
+		])
 	var drive_start := body.global_position
 	locomotion.set_drive_command(1.0)
 	for _step: int in range(180):
 		await get_tree().physics_frame
 	var drive_delta := body.global_position - drive_start
 	drive_delta.y = 0.0
-	if drive_delta.length() < 0.5:
+	print("DEMO drive distance: %.3f m in 180 frames" % drive_delta.length())
+	# Порог приёмки WHEEL-BODY-V1: ≥ 3.0 м (raycast-база была 3.241 м).
+	if drive_delta.length() < 3.0:
 		session.queue_free()
 		return _fail(
 			"demo rover drove only %.3f m" % drive_delta.length()
@@ -805,7 +877,8 @@ func _test_demo_rover_drive_and_steer() -> bool:
 	var module_ids: Dictionary = result.get("element_ids", {})
 	var front_steering := 0.0
 	var rear_steering := 0.0
-	for key: String in ["fl", "fr"]:
+	# Composer keys: pair_L_0 / pair_R_0 (front), pair_L_1 / pair_R_1 (next axle).
+	for key: String in ["pair_L_0", "pair_R_0"]:
 		var pair: Dictionary = module_ids.get(key, {})
 		front_steering = maxf(
 			front_steering,
@@ -817,7 +890,7 @@ func _test_demo_rover_drive_and_steer() -> bool:
 				)
 			)
 		)
-	for key: String in ["rl", "rr"]:
+	for key: String in ["pair_L_1", "pair_R_1"]:
 		var pair: Dictionary = module_ids.get(key, {})
 		rear_steering = maxf(
 			rear_steering,
@@ -836,7 +909,10 @@ func _test_demo_rover_drive_and_steer() -> bool:
 		return _fail(
 			"demo rover heading changed only %.4f rad" % heading_change
 		)
-	if front_steering < 0.1 or rear_steering > 0.001:
+	# Задние — замок [0,0], но замер идёт с живого тела: под боковой нагрузкой
+	# жёсткий угловой стоп Jolt даёт ~0.02 рад люфта (кинематического нуля
+	# больше нет — WHEEL-BODY-V1). Порог отделяет люфт от настоящей рулёжки.
+	if front_steering < 0.1 or rear_steering > 0.05:
 		session.queue_free()
 		return _fail(
 			"steering ownership invalid front=%.3f rear=%.3f"
@@ -855,79 +931,24 @@ func _test_demo_rover_drive_and_steer() -> bool:
 	return true
 
 
+## Многоосный ровер строит композер: он умеет и точные детали, и «колбасу».
 func _build_multi_axle_rover(
 	world: SimulationWorld,
 	axle_count: int
 ) -> Dictionary:
-	if world == null or axle_count <= 0:
-		return {"ok": false, "error": "invalid_axle_count"}
-	var anchor := PlaceElementCommand.new()
-	anchor.assembly_id = 0
-	anchor.archetype = ROVER_FRAME
-	anchor.origin_cell = Vector3i.ZERO
-	anchor.orientation_index = 0
-	anchor.new_assembly_grid_frame = GridTransform.identity()
-	anchor.initial_motion = AssemblyMotionState.from_grid_frame(
-		GridTransform.identity()
-	)
-	anchor.store_id = PlayerIdentity.store_id("player")
-	var anchor_result := world.apply_structural_command_now(anchor)
-	if not anchor_result.is_ok():
-		return {"ok": false, "error": "anchor"}
-	var assembly_id := int(anchor_result.data["assembly_id"])
-	var revision := int(anchor_result.data["topology_revision"])
-	for z: int in range(axle_count):
-		for x: int in range(3):
-			if x == 0 and z == 0:
-				continue
-			var frame := _place(
-				world,
-				assembly_id,
-				revision,
-				ROVER_FRAME,
-				Vector3i(x, 0, z)
-			)
-			if not frame.is_ok():
-				return {
-					"ok": false,
-					"error": "frame_%d_%d:%s" % [x, z, frame.reason],
-				}
-			revision = int(frame.data["topology_revision"])
-	for z: int in range(axle_count):
-		for side: int in [-1, 1]:
-			var x := -1 if side < 0 else 3
-			var face := Vector3i.RIGHT if side < 0 else Vector3i.LEFT
-			var suspension := _place(
-				world,
-				assembly_id,
-				revision,
-				WHEEL_SUSPENSION,
-				Vector3i(x, 0, z),
-				_orientation_with_local_face(Vector3i.RIGHT, face)
-			)
-			if not suspension.is_ok():
-				return {
-					"ok": false,
-					"error": "suspension_%d_%d:%s" % [x, z, suspension.reason],
-				}
-			revision = int(suspension.data["topology_revision"])
-			var wheel := _place(
-				world,
-				assembly_id,
-				revision,
-				DRIVE_WHEEL,
-				Vector3i(x, -1, z)
-			)
-			if not wheel.is_ok():
-				return {
-					"ok": false,
-					"error": "wheel_%d_%d:%s" % [x, z, wheel.reason],
-				}
-			revision = int(wheel.data["topology_revision"])
-	var assembly := world.get_assembly_raw(assembly_id)
-	for element_id: int in assembly.element_ids:
-		_weld(world, element_id)
-	return {"ok": true, "assembly_id": assembly_id}
+	var intent := RoverIntent.defaults()
+	intent.wheel_count = axle_count * 2
+	if not intent.unsupported_reason().is_empty():
+		return {"ok": false, "error": intent.unsupported_reason()}
+	var composed := RoverComposer.compose(world, intent)
+	if not bool(composed.get("ok", false)):
+		return {
+			"ok": false,
+			"error": "%s %s" % [
+				composed.get("error", ""), composed.get("failures", []),
+			],
+		}
+	return {"ok": true, "assembly_id": int(composed["assembly_id"])}
 
 
 func _weld(world: SimulationWorld, element_id: int) -> void:

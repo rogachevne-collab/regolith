@@ -1,10 +1,10 @@
-[gd_resource type="Resource" script_class="Blueprint" format=3]
+[gd_resource type="Resource" script_class="Blueprint" format=3 uid="uid://dvvg52dtu1mbo"]
 
-[ext_resource type="Script" path="res://scripts/simulation/resources/blueprint_element_placement.gd" id="1_bej37"]
-[ext_resource type="Resource" path="res://resources/archetypes/slice01/foundation.tres" id="2_otr36"]
-[ext_resource type="Resource" path="res://resources/archetypes/slice01/frame.tres" id="3_k7ly5"]
-[ext_resource type="Resource" path="res://resources/archetypes/slice01/frame_beam.tres" id="4_8qory"]
-[ext_resource type="Script" path="res://scripts/simulation/resources/blueprint.gd" id="5_7mk2u"]
+[ext_resource type="Script" uid="uid://cxpajkrkuyait" path="res://scripts/simulation/resources/blueprint_element_placement.gd" id="1_bej37"]
+[ext_resource type="Resource" uid="uid://bsl3lufw5dje4" path="res://resources/archetypes/slice01/foundation.tres" id="2_otr36"]
+[ext_resource type="Resource" uid="uid://bwacwcrg1xqsx" path="res://resources/archetypes/slice01/frame.tres" id="3_k7ly5"]
+[ext_resource type="Resource" uid="uid://d3q2ocmnvhukj" path="res://resources/archetypes/slice01/frame_beam.tres" id="4_8qory"]
+[ext_resource type="Script" uid="uid://c5ny2pwh16hww" path="res://scripts/simulation/resources/blueprint.gd" id="5_7mk2u"]
 
 [sub_resource type="Resource" id="Resource_vkvs6"]
 script = ExtResource("1_bej37")

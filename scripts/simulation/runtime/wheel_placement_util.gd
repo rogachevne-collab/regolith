@@ -177,6 +177,7 @@ static func _enrich_wheel_metadata(
 	metadata["wheel_element_id"] = element.element_id
 	metadata["wheel_steerable"] = state.steerable
 	metadata["wheel_drive_torque_scale"] = state.drive_torque_scale
+	metadata["wheel_grip_scale"] = state.grip_scale
 	metadata["wheel_brake_torque_n_m"] = (
 		state.brake_torque_n_m
 		if state.brake_torque_n_m >= 0.0

@@ -6,6 +6,7 @@ const GROUP_BODY_NAME_PREFIX := "AssemblyGroupBody_"
 const PISTON_JOINT_NAME_PREFIX := "PistonJoint_"
 const ROTOR_JOINT_NAME_PREFIX := "RotorJoint_"
 const HINGE_JOINT_NAME_PREFIX := "HingeJoint_"
+const WHEEL_JOINT_NAME_PREFIX := "WheelJoint_"
 const MIN_MASS := 0.001
 const SUSTAINED_V_EPS := 0.05
 ## Physics frames a parked rover must stay below the brake eps before its
@@ -48,9 +49,8 @@ const COLLISION_LAYER_ASSEMBLY := 2
 const COLLISION_MASK_ASSEMBLY := (
 	COLLISION_LAYER_TERRAIN | COLLISION_LAYER_ASSEMBLY
 )
-## Wheel locomotives still collide with terrain: raycast wheels alone cannot
-## catch tip-over / bad seating (mask=assembly-only freefalls through crust).
-## FPS: CCD off, bounce 0, wheel/suspension solid colliders disabled.
+## Wheel locomotives still collide with terrain (tip-over / bad seating).
+## FPS: CCD off, bounce 0. Wheels are their own solid bodies (WHEEL-BODY-V1).
 const COLLISION_MASK_WHEEL_LOCOMOTIVE := COLLISION_MASK_ASSEMBLY
 
 var _world: SimulationWorld
@@ -67,6 +67,8 @@ var _body_groups: Dictionary = {}
 var _assembly_group_bodies: Dictionary = {}
 var _piston_constraints: Dictionary = {}
 var _rotor_constraints: Dictionary = {}
+## assembly_id -> Array[Dictionary] wheel constraint records (WHEEL-BODY-V1).
+var _wheel_constraints: Dictionary = {}
 var _root_group_ids: Dictionary = {}
 var _impact_service: ImpactResolverService
 var _cable_anchor_probe_cooldown := 0.0
@@ -118,6 +120,14 @@ func list_piston_constraint_records(assembly_id: int) -> Array:
 	if not _piston_constraints.has(assembly_id):
 		return []
 	var records: Variant = _piston_constraints[assembly_id]
+	if records is Array:
+		return (records as Array).duplicate()
+	return []
+
+func list_wheel_constraint_records(assembly_id: int) -> Array:
+	if not _wheel_constraints.has(assembly_id):
+		return []
+	var records: Variant = _wheel_constraints[assembly_id]
 	if records is Array:
 		return (records as Array).duplicate()
 	return []
@@ -216,7 +226,7 @@ func _physics_process(delta: float) -> void:
 		return
 	_tick_rotor_actuators(delta)
 	_tick_piston_actuators(delta)
-	_tick_wheel_pairs(delta)
+	_tick_wheel_bodies(delta)
 	_tick_thrusters(delta)
 	_tick_cable_ropes(delta)
 	_tick_cable_tension(delta)
@@ -321,6 +331,11 @@ func _try_append_placed_element(
 			fail_reason = &"compile_invalid"
 		elif not (compiled.get("driven_specs", []) as Array).is_empty():
 			fail_reason = &"driven_specs"
+		elif not (compiled.get("wheel_specs", []) as Array).is_empty():
+			# Колесо обязано стать своим телом на своём констрейнте. Прилепить
+			# его к единому телу «на месте» — значит молча оставить ровер без
+			# колёсной физики до следующей полной пересборки.
+			fail_reason = &"wheel_specs"
 	var element: SimulationElement = null
 	if fail_reason == &"":
 		element = _world.get_element(element_id)
@@ -337,7 +352,6 @@ func _try_append_placed_element(
 			fail_reason = &"empty_colliders"
 	if fail_reason != &"":
 		return false
-	WheelSimulationService.invalidate_park_anchors(_world, assembly_id)
 	_attach_colliders_to_body(
 		body,
 		records,
@@ -383,7 +397,6 @@ func _try_append_multibody_element(
 	)
 	if records.is_empty():
 		return false
-	WheelSimulationService.invalidate_park_anchors(_world, assembly_id)
 	_attach_colliders_to_body(
 		body,
 		records,
@@ -428,10 +441,17 @@ func _multibody_topology_matches(
 			projected_joint_ids[
 				int((record_variant as Dictionary).get("joint_id", 0))
 			] = true
+	for record_variant: Variant in _wheel_constraints.get(assembly_id, []):
+		if record_variant is Dictionary:
+			projected_joint_ids[
+				int((record_variant as Dictionary).get("joint_id", 0))
+			] = true
 	var specs: Array = compiled.get("driven_specs", [])
-	if specs.size() != projected_joint_ids.size():
+	var all_specs: Array = specs.duplicate()
+	all_specs.append_array(compiled.get("wheel_specs", []))
+	if all_specs.size() != projected_joint_ids.size():
 		return false
-	for spec_variant: Variant in specs:
+	for spec_variant: Variant in all_specs:
 		if not spec_variant is Dictionary:
 			return false
 		if not projected_joint_ids.has(
@@ -505,6 +525,7 @@ func _try_remove_projected_element(
 	if (
 		not bool(compiled.get("valid", false))
 		or not (compiled.get("driven_specs", []) as Array).is_empty()
+		or not (compiled.get("wheel_specs", []) as Array).is_empty()
 	):
 		return false
 	var record: Variant = _element_records.get(element_id)
@@ -517,7 +538,6 @@ func _try_remove_projected_element(
 			collider.disabled = true
 			collider.queue_free()
 	_element_records.erase(element_id)
-	WheelSimulationService.invalidate_park_anchors(_world, assembly_id)
 	_refresh_single_body_mass_com(assembly_id, body as RigidBody3D, assembly)
 	_sync_wheel_loco_body_physics(assembly_id, body as RigidBody3D)
 	_projected_revision[assembly_id] = assembly.topology_revision
@@ -557,7 +577,6 @@ func _reproject_assembly(assembly_id: int) -> void:
 		if body != null
 		else null
 	)
-	WheelSimulationService.invalidate_park_anchors(_world, assembly_id)
 	_remove_body(assembly_id)
 	_project_assembly(assembly_id, motion, live_capture)
 
@@ -791,9 +810,10 @@ func _project_assembly(
 		return
 	var compiled := _compile_assembly_groups(assembly)
 	var driven_specs: Array = compiled.get("driven_specs", [])
+	var wheel_specs: Array = compiled.get("wheel_specs", [])
 	if (
 		bool(compiled.get("valid", false))
-		and not driven_specs.is_empty()
+		and not (driven_specs.is_empty() and wheel_specs.is_empty())
 		and not _mounted_bodies.has(assembly_id)
 	):
 		_project_assembly_multibody(
@@ -866,8 +886,6 @@ func _project_assembly_single(
 			"collider_local_cell",
 			record["collider_local_cell"]
 		)
-		if _should_disable_wheel_module_collider(assembly_id, element_id):
-			collider.disabled = true
 		body.add_child(collider)
 		if not colliders_by_element.has(element_id):
 			colliders_by_element[element_id] = []
@@ -1035,26 +1053,69 @@ func _project_assembly_multibody(
 	for spec_variant: Variant in compiled.get("driven_specs", []):
 		if spec_variant is Dictionary:
 			carriage_group_ids[int(spec_variant.get("head_group_id", 0))] = true
+	# Wheel groups (WHEEL-BODY-V1): group_id -> {spec, frame, wheel_element,
+	# definition}. A wheel group whose frame cannot be resolved degrades to a
+	# plain rigid group (visible in the warning, not a silent fall-through).
+	var wheel_groups: Dictionary = {}
+	for spec_variant: Variant in compiled.get("wheel_specs", []):
+		if not spec_variant is Dictionary:
+			continue
+		var wheel_spec: Dictionary = spec_variant
+		var spec_wheel: SimulationElement = _world.get_element(
+			int(wheel_spec.get("wheel_element_id", 0))
+		)
+		var frame := WheelBodyProjectionUtil.wheel_frame_assembly_local(
+			spec_wheel
+		)
+		if frame.is_empty():
+			push_warning(
+				"wheel spec %d has no resolvable frame; wheel stays a plain body"
+				% int(wheel_spec.get("joint_id", 0))
+			)
+			continue
+		wheel_groups[int(wheel_spec.get("wheel_group_id", 0))] = {
+			"spec": wheel_spec,
+			"frame": frame,
+			"wheel_element": spec_wheel,
+			"definition": spec_wheel.get_archetype().wheel_definition,
+		}
 	for group_id: int in _sorted_int_keys(groups):
 		var members: Array = groups[group_id]
 		var element_ids: Array[int] = []
 		for member_variant: Variant in members:
 			element_ids.append(int(member_variant))
 		var is_root := group_id == root_group_id
+		# Mirrors the single-body `anchored` gate: a rover that has already
+		# released from its build anchor must stay dynamic (rovers are always
+		# multibody now, so this path sees them).
 		var is_static := (
 			is_root
 			and _world.assembly_has_anchor(assembly_id)
 			and not active_locomotive
+			and not locomotion.has_released_from_anchor()
 		)
 		var is_carriage := carriage_group_ids.has(group_id)
+		var wheel_group: Dictionary = wheel_groups.get(group_id, {})
+		var is_wheel_group := not wheel_group.is_empty()
 		var body := _create_group_body(assembly_id, group_id, is_static)
-		var records: Array[Dictionary] = (
-			PistonProjectionUtil.build_collision_shapes_for_elements(
-				_world,
-				assembly,
-				element_ids
+		var records: Array[Dictionary]
+		if is_wheel_group:
+			# The tire is one smooth cylinder sized from WheelDefinition; the
+			# authored micro-colliders stay off the physics wheel.
+			records = [
+				WheelBodyProjectionUtil.build_wheel_collider_record(
+					wheel_group["wheel_element"],
+					wheel_group["frame"]
+				)
+			]
+		else:
+			records = (
+				PistonProjectionUtil.build_collision_shapes_for_elements(
+					_world,
+					assembly,
+					element_ids
+				)
 			)
-		)
 		_attach_colliders_to_body(
 			body,
 			records,
@@ -1077,11 +1138,15 @@ func _project_assembly_multibody(
 			rigid.center_of_mass_mode = (
 				RigidBody3D.CENTER_OF_MASS_MODE_CUSTOM
 			)
-			rigid.center_of_mass = (
-				PistonProjectionUtil.center_of_mass_local_for_records(
-					records
+			if is_wheel_group:
+				rigid.center_of_mass = Vector3(wheel_group["frame"]["hub"])
+				_configure_wheel_rigid(rigid, wheel_group)
+			else:
+				rigid.center_of_mass = (
+					PistonProjectionUtil.center_of_mass_local_for_records(
+						records
+					)
 				)
-			)
 			if is_static:
 				rigid.linear_velocity = Vector3.ZERO
 				rigid.angular_velocity = Vector3.ZERO
@@ -1094,14 +1159,17 @@ func _project_assembly_multibody(
 				rigid.freeze = false
 				# Impact bodies never enable custom_integrator (Jolt would
 				# drop piston forces); carriage keeps the signal-based mode.
-				if _impact_service != null:
+				# Wheel bodies are never impact bodies: rolling contact must
+				# not feed the damage pipeline.
+				if _impact_service != null and not is_wheel_group:
 					var impact_mode := (
 						ImpactResolverService.ImpactBodyMode.MONITOR_ONLY
 						if is_carriage
 						else ImpactResolverService.ImpactBodyMode.FULL
 					)
 					_impact_service.configure_impact_body(rigid, impact_mode)
-				_apply_locomotive_rigid_tuning(assembly_id, rigid)
+				if not is_wheel_group:
+					_apply_locomotive_rigid_tuning(assembly_id, rigid)
 		add_child(body)
 		_apply_collision_profile(assembly_id, body)
 		_apply_body_groups(assembly_id, body)
@@ -1348,6 +1416,11 @@ func _project_assembly_multibody(
 		})
 	_piston_constraints[assembly_id] = piston_records
 	_rotor_constraints[assembly_id] = rotor_records
+	_wheel_constraints[assembly_id] = _build_wheel_constraints(
+		assembly_id,
+		wheel_groups,
+		groups_map
+	)
 	var motion: AssemblyMotionState = seed_motion.duplicate_state()
 	if _world.assembly_has_anchor(assembly_id):
 		if not active_locomotive:
@@ -1386,6 +1459,182 @@ func _create_group_body(
 	body.set_meta("body_group_id", group_id)
 	return body
 
+## Wheel-body specifics on top of the shared group-body setup: tire friction
+## material (grip slider → friction), rolling drag, no locomotive tuning.
+func _configure_wheel_rigid(
+	rigid: RigidBody3D,
+	wheel_group: Dictionary
+) -> void:
+	var definition: WheelDefinition = wheel_group.get("definition")
+	var wheel_element: SimulationElement = wheel_group.get("wheel_element")
+	if definition == null or wheel_element == null:
+		return
+	var state := _world.ensure_wheel_instance_state(wheel_element.element_id)
+	var material := PhysicsMaterial.new()
+	material.friction = WheelBodyProjectionUtil.tire_friction(
+		definition,
+		state.grip_scale
+	)
+	material.bounce = 0.0
+	rigid.physics_material_override = material
+	rigid.angular_damp = definition.angular_damping
+	rigid.continuous_cd = false
+
+
+## One 6DOF per wheel: strut group body ↔ wheel body. The wheel body's
+## rotation is snapped to the strut frame first (spin/steer are cosmetic on a
+## cylinder; a clean bind pose keeps Jolt's angular limits absolute), the
+## compression offset keeps the travel range absolute (droop = 0).
+func _build_wheel_constraints(
+	assembly_id: int,
+	wheel_groups: Dictionary,
+	groups_map: Dictionary
+) -> Array[Dictionary]:
+	var records: Array[Dictionary] = []
+	for group_id: int in _sorted_int_keys(wheel_groups):
+		var wheel_group: Dictionary = wheel_groups[group_id]
+		var spec: Dictionary = wheel_group["spec"]
+		var frame: Dictionary = wheel_group["frame"]
+		var definition: WheelDefinition = wheel_group["definition"]
+		var strut_body: PhysicsBody3D = groups_map.get(
+			int(spec.get("suspension_group_id", 0))
+		) as PhysicsBody3D
+		var wheel_body: RigidBody3D = groups_map.get(group_id) as RigidBody3D
+		if strut_body == null or wheel_body == null or definition == null:
+			continue
+		var suspension_element_id := int(spec.get("suspension_element_id", 0))
+		var wheel_element_id := int(spec.get("wheel_element_id", 0))
+		var suspension: SimulationElement = _world.get_element(
+			suspension_element_id
+		)
+		var suspension_def: SuspensionDefinition = (
+			suspension.get_archetype().suspension_definition
+			if suspension != null and suspension.get_archetype() != null
+			else null
+		)
+		if suspension_def == null:
+			continue
+		var suspension_state := _world.ensure_suspension_instance_state(
+			suspension_element_id
+		)
+		var wheel_state := _world.ensure_wheel_instance_state(wheel_element_id)
+		var hub_local: Vector3 = frame["hub"]
+		var up_local: Vector3 = frame["up"]
+		var wheel_element: SimulationElement = wheel_group["wheel_element"]
+		# Seat the MATE tip (wheel_plug) on the suspension socket. The spin
+		# hub is a different point on the same axle (Wizard tire cylinder);
+		# putting the hub on the socket shoved the tire into the strut.
+		var socket := WheelBodyProjectionUtil.mount_pad_anchor_assembly_local(
+			suspension,
+			"wheel_socket"
+		)
+		var plug_local: Vector3 = (
+			WheelBodyProjectionUtil.plug_point_assembly_local(wheel_element)
+		)
+		var socket_local: Vector3 = (
+			socket["origin"] if not socket.is_empty() else plug_local
+		)
+		wheel_body.global_transform = Transform3D(
+			strut_body.global_transform.basis,
+			strut_body.global_transform * socket_local
+				- strut_body.global_transform.basis * plug_local
+		)
+		# COM at the tire centre in body-local (= assembly − body origin).
+		if wheel_body is RigidBody3D:
+			(wheel_body as RigidBody3D).center_of_mass = (
+				hub_local - socket_local + plug_local
+			)
+		var up_world := (
+			strut_body.global_transform.basis * up_local
+		).normalized()
+		var travel_m := (
+			suspension_state.travel_m
+			if suspension_state.travel_m > 0.0
+			else suspension_def.suspension_travel_m
+		)
+		# Tip on socket → droop; compression is hub rise along up.
+		var bind_compression := clampf(
+			(
+				wheel_body.to_global(hub_local)
+				- strut_body.to_global(socket_local)
+			).dot(up_world),
+			0.0,
+			travel_m
+		)
+		var joint := Generic6DOFJoint3D.new()
+		joint.name = "%s%d_%d" % [
+			WHEEL_JOINT_NAME_PREFIX,
+			assembly_id,
+			int(spec.get("joint_id", 0)),
+		]
+		add_child(joint)
+		joint.global_transform = Transform3D(
+			strut_body.global_transform.basis
+				* WheelBodyProjectionUtil.joint_basis(frame),
+			strut_body.global_transform * socket_local
+		)
+		joint.node_a = joint.get_path_to(strut_body)
+		joint.node_b = joint.get_path_to(wheel_body)
+		var spring_stiffness := (
+			suspension_state.spring_stiffness_n_per_m
+			if suspension_state.spring_stiffness_n_per_m >= 0.0
+			else suspension_def.spring_stiffness_n_per_m
+		)
+		var spring_damping := (
+			suspension_state.spring_damping_n_s_per_m
+			if suspension_state.spring_damping_n_s_per_m >= 0.0
+			else suspension_def.spring_damping_n_s_per_m
+		)
+		WheelBodyProjectionUtil.configure_wheel_joint(
+			joint,
+			travel_m,
+			spring_stiffness,
+			spring_damping,
+			suspension_def.max_suspension_force_n,
+			wheel_state.steerable,
+			definition.max_steering_angle_rad,
+			bind_compression
+		)
+		# SE-style own-grid filter: the wheel is solid for the world but never
+		# for its own assembly (tire overlaps the strut by construction).
+		for other_variant: Variant in groups_map.values():
+			var other := other_variant as PhysicsBody3D
+			if other == null or other == wheel_body:
+				continue
+			wheel_body.add_collision_exception_with(other)
+			other.add_collision_exception_with(wheel_body)
+		records.append({
+			"joint_id": int(spec.get("joint_id", 0)),
+			"wheel_element_id": wheel_element_id,
+			"suspension_element_id": suspension_element_id,
+			"constraint": joint,
+			"strut_body": strut_body,
+			"wheel_body": wheel_body,
+			"hub_local": hub_local,
+			"socket_local": socket_local,
+			"plug_local": plug_local,
+			"up_local": up_local,
+			"axle_local": Vector3(frame["axle"]),
+			"forward_local": Vector3(frame["forward"]),
+			"bind_compression_m": bind_compression,
+			"cfg_travel_m": travel_m,
+			"cfg_stiffness": spring_stiffness,
+			"cfg_damping": spring_damping,
+			"cfg_max_force": suspension_def.max_suspension_force_n,
+			"cfg_steerable": wheel_state.steerable,
+			"cfg_friction": (
+				wheel_body.physics_material_override.friction
+				if wheel_body.physics_material_override != null
+				else 1.0
+			),
+			"motor_target_v": 0.0,
+			"motor_limit_n": 0.0,
+			"steer_target_rad": 0.0,
+			"steer_written_rad": 0.0,
+		})
+	return records
+
+
 func _attach_colliders_to_body(
 	body: PhysicsBody3D,
 	records: Array[Dictionary],
@@ -1412,8 +1661,6 @@ func _attach_colliders_to_body(
 			"collider_local_cell",
 			record["collider_local_cell"]
 		)
-		if _should_disable_wheel_module_collider(assembly_id, element_id):
-			collider.disabled = true
 		body.add_child(collider)
 		if not colliders_by_element.has(element_id):
 			colliders_by_element[element_id] = []
@@ -1438,12 +1685,11 @@ func _is_active_locomotive(assembly_id: int) -> bool:
 		and _world.get_locomotion_controller(assembly_id).is_activated()
 	)
 
-## A parked rover held only by per-frame bristle/suspension forces never
-## sleeps: wheel raycasts, spring forces and terrain contacts grind every
-## physics frame forever. Once it has settled under the parking brake, freeze
-## the body (static pose, zero per-frame cost) and stop ticking wheels.
+## Once a parked rover has settled under the parking brake, freeze every body
+## of the assembly (static pose, zero per-frame cost) and stop ticking wheels.
 ## Wake paths: driver input / brake release (here), seat entry
-## (gateway._wake_rover_body), terrain digs nearby (wake_frozen_near).
+## (gateway._wake_rover_body → wake_assembly_bodies), terrain digs nearby
+## (wake_frozen_near).
 func _update_parking_freeze(assembly_id: int) -> void:
 	if (
 		_world == null
@@ -1471,27 +1717,63 @@ func _update_parking_freeze(assembly_id: int) -> void:
 	)
 	if rigid.freeze:
 		if not parked:
-			rigid.freeze = false
-			rigid.sleeping = false
+			_set_assembly_bodies_frozen(assembly_id, false)
 			_park_settle_frames[assembly_id] = 0
 		return
 	if not parked:
 		_park_settle_frames[assembly_id] = 0
 		return
 	var eps := AssemblyLocomotionController.PARKING_BRAKE_SPEED_EPS
-	if (
-		rigid.linear_velocity.length() >= eps
-		or rigid.angular_velocity.length() >= eps
-	):
-		_park_settle_frames[assembly_id] = 0
-		return
+	# Every body of the assembly must be quiet — a spinning wheel body under a
+	# still chassis is exactly the state the brake has not finished with yet.
+	for body_variant: Variant in _assembly_rigid_bodies(assembly_id):
+		var group_rigid := body_variant as RigidBody3D
+		if (
+			group_rigid.linear_velocity.length() >= eps
+			or group_rigid.angular_velocity.length() >= eps
+		):
+			_park_settle_frames[assembly_id] = 0
+			return
 	var settled := int(_park_settle_frames.get(assembly_id, 0)) + 1
 	_park_settle_frames[assembly_id] = settled
 	if settled < PARK_FREEZE_SETTLE_FRAMES:
 		return
-	rigid.linear_velocity = Vector3.ZERO
-	rigid.angular_velocity = Vector3.ZERO
-	rigid.freeze = true
+	_set_assembly_bodies_frozen(assembly_id, true)
+
+
+## Every dynamic body of the assembly: the root/single body plus all group
+## bodies (wheels, carriages). Static roots are skipped.
+func _assembly_rigid_bodies(assembly_id: int) -> Array[RigidBody3D]:
+	var bodies: Array[RigidBody3D] = []
+	var groups: Variant = _assembly_group_bodies.get(assembly_id)
+	if groups is Dictionary:
+		for body_variant: Variant in (groups as Dictionary).values():
+			if body_variant is RigidBody3D and is_instance_valid(body_variant):
+				bodies.append(body_variant as RigidBody3D)
+		return bodies
+	var body := get_physics_body(assembly_id)
+	if body is RigidBody3D and is_instance_valid(body):
+		bodies.append(body as RigidBody3D)
+	return bodies
+
+
+func _set_assembly_bodies_frozen(assembly_id: int, frozen: bool) -> void:
+	for rigid: RigidBody3D in _assembly_rigid_bodies(assembly_id):
+		if frozen:
+			rigid.linear_velocity = Vector3.ZERO
+			rigid.angular_velocity = Vector3.ZERO
+			rigid.freeze = true
+		else:
+			rigid.freeze = false
+			rigid.sleeping = false
+
+
+## Wake every dynamic body of the assembly (seat entry, drive input, dig).
+## Root-only wakes leave wheel bodies frozen mid-air with the chassis live —
+## the constraint then drags a static wheel around.
+func wake_assembly_bodies(assembly_id: int) -> void:
+	_set_assembly_bodies_frozen(assembly_id, false)
+	_park_settle_frames[assembly_id] = 0
 
 
 ## Frozen parked vehicles must not keep floating when the ground under them
@@ -1509,46 +1791,309 @@ func wake_frozen_near(center: Vector3, radius: float) -> void:
 			continue
 		if rigid.global_position.distance_to(center) > radius + WAKE_DIG_MARGIN_M:
 			continue
-		rigid.freeze = false
-		rigid.sleeping = false
-		_park_settle_frames[assembly_id] = 0
+		wake_assembly_bodies(assembly_id)
 
 
-func _should_tick_wheels(assembly_id: int) -> bool:
-	if (
-		_world == null
-		or not WheelSimulationService.is_locomotive_assembly(_world, assembly_id)
-	):
-		return false
-	var rigid: RigidBody3D = null
-	var body := get_physics_body(assembly_id)
-	if body is RigidBody3D:
-		rigid = body as RigidBody3D
-	else:
-		var groups: Variant = _assembly_group_bodies.get(assembly_id)
-		if groups is Dictionary:
-			for body_variant: Variant in (groups as Dictionary).values():
-				if body_variant is RigidBody3D:
-					rigid = body_variant as RigidBody3D
-					break
-	# Wheel/suspension solid colliders are disabled — raycast springs are the
-	# only support until park-freeze. Never skip the tick for a free body.
-	return rigid != null and not rigid.freeze
-
-func _tick_wheel_pairs(delta: float) -> void:
+func _tick_wheel_bodies(delta: float) -> void:
 	if _world == null or delta <= 0.0:
 		return
 	for assembly_id: int in _sorted_int_keys(_bodies):
 		_update_parking_freeze(assembly_id)
-		if not _should_tick_wheels(assembly_id):
+	for assembly_id: int in _sorted_int_keys(_wheel_constraints):
+		var assembly: SimulationAssembly = _world.get_assembly_raw(assembly_id)
+		if assembly == null or assembly.tombstoned:
 			continue
-		WheelSimulationService.tick_assembly(
-			_world,
-			assembly_id,
-			delta,
-			Callable(self, "_wheel_body_for_suspension"),
-			_wheel_exclude_rids(assembly_id)
+		var root_body := get_physics_body(assembly_id)
+		if root_body is RigidBody3D and (root_body as RigidBody3D).freeze:
+			continue
+		var locomotion := _world.get_locomotion_controller(assembly_id)
+		var active_input := locomotion != null and locomotion.has_active_input()
+		for record_variant: Variant in _wheel_constraints[assembly_id]:
+			if record_variant is Dictionary:
+				_tick_wheel_record(
+					record_variant,
+					locomotion,
+					root_body,
+					active_input,
+					delta
+				)
+
+
+func _tick_wheel_record(
+	record: Dictionary,
+	locomotion: AssemblyLocomotionController,
+	root_body: PhysicsBody3D,
+	active_input: bool,
+	delta: float
+) -> void:
+	var constraint: Generic6DOFJoint3D = (
+		record.get("constraint") as Generic6DOFJoint3D
+	)
+	var strut_body: PhysicsBody3D = record.get("strut_body")
+	var wheel_body: RigidBody3D = record.get("wheel_body")
+	var wheel_element_id := int(record.get("wheel_element_id", 0))
+	var suspension_element_id := int(record.get("suspension_element_id", 0))
+	if (
+		constraint == null
+		or not is_instance_valid(constraint)
+		or strut_body == null
+		or not is_instance_valid(strut_body)
+		or wheel_body == null
+		or not is_instance_valid(wheel_body)
+	):
+		_world.store_wheel_runtime(
+			wheel_element_id,
+			suspension_element_id,
+			{"status": &"invalid_body", "powered": false, "grounded": false}
 		)
+		return
+	var wheel_element := _world.get_element(wheel_element_id)
+	var suspension := _world.get_element(suspension_element_id)
+	var wheel_def: WheelDefinition = (
+		wheel_element.get_archetype().wheel_definition
+		if wheel_element != null and wheel_element.get_archetype() != null
+		else null
+	)
+	var suspension_def: SuspensionDefinition = (
+		suspension.get_archetype().suspension_definition
+		if suspension != null and suspension.get_archetype() != null
+		else null
+	)
+	if wheel_def == null or suspension_def == null:
+		return
+	var wheel_state := _world.ensure_wheel_instance_state(wheel_element_id)
+	var suspension_state := _world.ensure_suspension_instance_state(
+		suspension_element_id
+	)
+
+	# --- Slider drift → live joint retune (rare; guarded by cached values) ---
+	var bind_compression := float(record.get("bind_compression_m", 0.0))
+	var travel_m := (
+		suspension_state.travel_m
+		if suspension_state.travel_m > 0.0
+		else suspension_def.suspension_travel_m
+	)
+	if travel_m != float(record.get("cfg_travel_m", NAN)):
+		WheelBodyProjectionUtil.update_travel_limit(
+			constraint,
+			travel_m,
+			bind_compression
+		)
+		record["cfg_travel_m"] = travel_m
+	var spring_stiffness := (
+		suspension_state.spring_stiffness_n_per_m
+		if suspension_state.spring_stiffness_n_per_m >= 0.0
+		else suspension_def.spring_stiffness_n_per_m
+	)
+	var spring_damping := (
+		suspension_state.spring_damping_n_s_per_m
+		if suspension_state.spring_damping_n_s_per_m >= 0.0
+		else suspension_def.spring_damping_n_s_per_m
+	)
+	if (
+		spring_stiffness != float(record.get("cfg_stiffness", NAN))
+		or spring_damping != float(record.get("cfg_damping", NAN))
+	):
+		WheelBodyProjectionUtil.update_suspension_spring(
+			constraint,
+			spring_stiffness,
+			spring_damping,
+			suspension_def.max_suspension_force_n,
+			bind_compression
+		)
+		record["cfg_stiffness"] = spring_stiffness
+		record["cfg_damping"] = spring_damping
+	if wheel_state.steerable != bool(record.get("cfg_steerable", false)):
+		WheelBodyProjectionUtil.update_steer_limit(
+			constraint,
+			wheel_state.steerable,
+			wheel_def.max_steering_angle_rad
+		)
+		record["cfg_steerable"] = wheel_state.steerable
+	var friction := WheelBodyProjectionUtil.tire_friction(
+		wheel_def,
+		wheel_state.grip_scale
+	)
+	if (
+		absf(friction - float(record.get("cfg_friction", -1.0))) > 0.0005
+		and wheel_body.physics_material_override != null
+	):
+		wheel_body.physics_material_override.friction = friction
+		record["cfg_friction"] = friction
+
+	# --- Commands ---
+	var operational := (
+		wheel_element != null and wheel_element.is_operational()
+		and suspension != null and suspension.is_operational()
+	)
+	var powered := operational and _is_wheel_powered(wheel_element_id)
+	var drive_command := 0.0
+	var brake_command := 0.0
+	var steering_command := 0.0
+	var parking_hold := locomotion != null and locomotion.is_parking_brake()
+	if locomotion != null:
+		drive_command = locomotion.drive_command
+		brake_command = locomotion.brake_command
+		steering_command = locomotion.steering_command
+	if wheel_state.drive_inverted:
+		drive_command = -drive_command
+	if parking_hold:
+		drive_command = 0.0
+		brake_command = 1.0
+	var telemetry_drive := drive_command
+	if not powered:
+		drive_command = 0.0
+
+	var measured := WheelBodyProjectionUtil.measure_wheel_state(
+		strut_body,
+		wheel_body,
+		record.get("hub_local", Vector3.ZERO),
+		record.get("up_local", Vector3.UP),
+		record.get("axle_local", Vector3.RIGHT),
+		wheel_def.radius_m,
+		travel_m,
+		record.get("socket_local", Vector3(INF, INF, INF))
+	)
+	if measured.is_empty():
+		return
+
+	# --- Steering servo target (rate-limited, like the raycast model) ---
+	var steer_goal := 0.0
+	if wheel_state.steerable:
+		steer_goal = steering_command * wheel_def.max_steering_angle_rad
+	var steer_target := move_toward(
+		float(record.get("steer_target_rad", 0.0)),
+		steer_goal,
+		wheel_def.steering_response * delta
+	)
+	record["steer_target_rad"] = steer_target
+	if wheel_state.steerable:
+		var up_world: Vector3 = measured.get("up_world", Vector3.UP)
+		var steer_rate := (
+			wheel_body.angular_velocity
+			- (
+				(strut_body as RigidBody3D).angular_velocity
+				if strut_body is RigidBody3D
+				else Vector3.ZERO
+			)
+		).dot(up_world)
+		var steer_torque := WheelBodyProjectionUtil.steering_torque_nm(
+			wheel_body,
+			up_world,
+			steer_target,
+			float(measured.get("steering_angle_rad", 0.0)),
+			steer_rate
+		)
+		wheel_body.apply_torque(up_world * steer_torque)
+		if strut_body is RigidBody3D:
+			(strut_body as RigidBody3D).apply_torque(-up_world * steer_torque)
+
+	# --- Drive/brake motor (solver-side; write only on change) ---
+	var brake_torque := (
+		wheel_state.brake_torque_n_m
+		if wheel_state.brake_torque_n_m >= 0.0
+		else wheel_def.brake_torque_n_m
+	)
+	var target_forward_rad_s := 0.0
+	var torque_limit := 0.0
+	if parking_hold:
+		torque_limit = brake_torque
+	elif absf(drive_command) > 0.0001:
+		var commanded_rad_s := clampf(
+			drive_command * wheel_def.max_angular_speed_rad_s,
+			-wheel_def.max_angular_speed_rad_s,
+			wheel_def.max_angular_speed_rad_s
+		)
+		# Grounded: slip-limited ramp near the friction peak (traction
+		# control). Airborne: no contact to slip against — spin freely.
+		if (
+			float(measured.get("compression_m", 0.0))
+			> WheelBodyProjectionUtil.GROUNDED_COMPRESSION_EPS_M
+		):
+			target_forward_rad_s = (
+				WheelBodyProjectionUtil.slip_limited_target_rad_s(
+					commanded_rad_s,
+					float(measured.get("ground_speed_mps", 0.0)),
+					wheel_def.radius_m
+				)
+			)
+		else:
+			target_forward_rad_s = commanded_rad_s
+		torque_limit = (
+			wheel_def.drive_torque_n_m
+			* clampf(wheel_state.drive_torque_scale, 0.0, 1.0)
+		)
+	elif absf(brake_command) > 0.0001:
+		torque_limit = absf(brake_command) * brake_torque
+	if (
+		target_forward_rad_s != float(record.get("motor_target_v", NAN))
+		or torque_limit != float(record.get("motor_limit_n", NAN))
+	):
+		WheelBodyProjectionUtil.update_drive_motor(
+			constraint,
+			target_forward_rad_s,
+			torque_limit
+		)
+		record["motor_target_v"] = target_forward_rad_s
+		record["motor_limit_n"] = torque_limit
+	if active_input:
+		wheel_body.sleeping = false
+		if root_body is RigidBody3D:
+			(root_body as RigidBody3D).sleeping = false
+
+	# --- Telemetry (same keys the raycast model published) ---
+	var compression := float(measured.get("compression_m", 0.0))
+	var grounded := compression > (
+		WheelBodyProjectionUtil.GROUNDED_COMPRESSION_EPS_M
+	)
+	var status := &"ok"
+	if not powered:
+		status = &"no_power"
+	elif not grounded:
+		status = &"airborne"
+	var normal_force := clampf(
+		spring_stiffness * compression
+		+ spring_damping * float(measured.get("compression_rate_mps", 0.0)),
+		0.0,
+		suspension_def.max_suspension_force_n
+	)
+	var reference_body: PhysicsBody3D = (
+		root_body if root_body != null else strut_body
+	)
+	_world.store_wheel_runtime(wheel_element_id, suspension_element_id, {
+		"status": status,
+		"powered": powered,
+		"grounded": grounded,
+		"compression_m": compression,
+		"suspension_length_m": maxf(travel_m - compression, 0.0),
+		"wheel_speed": float(measured.get("wheel_speed_rad_s", 0.0)),
+		"wheel_speed_rad_s": float(measured.get("wheel_speed_rad_s", 0.0)),
+		"steering_angle_rad": float(measured.get("steering_angle_rad", 0.0)),
+		# Цель серво руля: без неё «руль не туда/не вернулся» неотличимо от
+		# «команда не доехала» — стенд ловил ровно эту неоднозначность.
+		"steering_target_rad": steer_target,
+		"socket_body_local": reference_body.to_local(
+			Vector3(measured.get("socket_world", Vector3.ZERO))
+		),
+		"wheel_center_body_local": reference_body.to_local(
+			Vector3(measured.get("hub_world", Vector3.ZERO))
+		),
+		"contact_world": Vector3(measured.get("contact_world", Vector3.ZERO)),
+		"contact_normal_world": Vector3(measured.get("up_world", Vector3.UP)),
+		"normal_force_n": normal_force if grounded else 0.0,
+		"longitudinal_force_n": 0.0,
+		"lateral_force_n": 0.0,
+		"slip_speed_mps": float(measured.get("slip_speed_mps", 0.0)),
+		"lateral_speed_mps": 0.0,
+		"drive_command": telemetry_drive,
+		"brake_command": brake_command,
+		"body_group_id": int(wheel_body.get_meta("body_group_id", 0)),
+	})
+
+
+func _is_wheel_powered(wheel_element_id: int) -> bool:
+	var runtime := _world.ensure_industry_element_runtime(wheel_element_id)
+	return runtime.machine_enabled and runtime.powered
 
 func _tick_thrusters(delta: float) -> void:
 	if _world == null or delta <= 0.0:
@@ -1964,25 +2509,6 @@ func _apply_gyro_torque(
 	body.sleeping = false
 	body.apply_torque(body.global_transform.basis * torque_local)
 
-func _wheel_body_for_suspension(
-	suspension_element_id: int
-) -> RigidBody3D:
-	var record := get_element_projection(suspension_element_id)
-	return record.get("body") as RigidBody3D
-
-func _wheel_exclude_rids(assembly_id: int) -> Array[RID]:
-	var result: Array[RID] = []
-	var groups: Variant = _assembly_group_bodies.get(assembly_id)
-	if groups is Dictionary:
-		for body_variant: Variant in (groups as Dictionary).values():
-			if body_variant is PhysicsBody3D:
-				result.append((body_variant as PhysicsBody3D).get_rid())
-		return result
-	var body := get_physics_body(assembly_id)
-	if body != null:
-		result.append(body.get_rid())
-	return result
-
 func _tick_rotor_actuators(delta: float) -> void:
 	if _world == null or delta <= 0.0:
 		return
@@ -2370,7 +2896,11 @@ func _carriage_touches_terrain(
 	return false
 
 func _clear_piston_constraints(assembly_id: int) -> void:
-	for constraints: Dictionary in [_piston_constraints, _rotor_constraints]:
+	for constraints: Dictionary in [
+		_piston_constraints,
+		_rotor_constraints,
+		_wheel_constraints,
+	]:
 		var records: Variant = constraints.get(assembly_id, [])
 		if records is Array:
 			for record_variant: Variant in records:
@@ -2453,7 +2983,8 @@ func _get_locomotive_physics_material() -> PhysicsMaterial:
 
 
 ## Soften locomotive↔terrain contact cost without removing the safety net:
-## no CCD, no bounce; wheel/suspension boxes disabled separately.
+## no CCD, no bounce. Applies to chassis/carriage bodies only — wheel bodies
+## carry their own tire material (see _configure_wheel_rigid).
 func _apply_locomotive_rigid_tuning(
 	assembly_id: int,
 	rigid: RigidBody3D
@@ -2472,25 +3003,6 @@ func _apply_locomotive_rigid_tuning(
 	rigid.collision_layer = COLLISION_LAYER_ASSEMBLY
 	rigid.collision_mask = COLLISION_MASK_WHEEL_LOCOMOTIVE
 	rigid.set_meta("wheel_loco_terrain_exempt", true)
-
-
-func _should_disable_wheel_module_collider(
-	assembly_id: int,
-	element_id: int
-) -> bool:
-	if (
-		_world == null
-		or not WheelSimulationService.is_locomotive_assembly(
-			_world,
-			assembly_id
-		)
-	):
-		return false
-	var element := _world.get_element(element_id)
-	if element == null:
-		return false
-	var archetype := element.get_archetype()
-	return archetype != null and (archetype.is_wheel() or archetype.is_suspension())
 
 
 func _sync_wheel_loco_body_physics(
@@ -2699,6 +3211,7 @@ func _clear_all_bodies() -> void:
 	_root_group_ids.clear()
 	_piston_constraints.clear()
 	_rotor_constraints.clear()
+	_wheel_constraints.clear()
 
 func _sorted_int_keys(dictionary: Dictionary) -> Array[int]:
 	var result: Array[int] = []

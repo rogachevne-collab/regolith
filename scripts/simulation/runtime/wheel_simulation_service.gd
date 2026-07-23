@@ -141,6 +141,12 @@ static func apply_configure_wheel(
 		):
 			return {"status": &"failed", "reason": &"invalid_reference"}
 		state.brake_torque_n_m = command.brake_torque_n_m
+	if command.grip_scale >= 0.0:
+		# Потолок — авторское сцепление детали: ползунок в пульте только
+		# ужимает его, выдумать держание сверх резины нельзя.
+		if not is_finite(command.grip_scale) or command.grip_scale > 1.0:
+			return {"status": &"failed", "reason": &"invalid_reference"}
+		state.grip_scale = command.grip_scale
 	return {
 		"status": &"ok",
 		"reason": &"ok",
@@ -197,61 +203,6 @@ static func apply_configure_suspension(
 	}
 
 
-static func tick_assembly(
-	world: SimulationWorld,
-	assembly_id: int,
-	delta: float,
-	body_resolver: Callable,
-	assembly_exclude_rids: Array[RID] = []
-) -> void:
-	if (
-		world == null
-		or delta <= 0.0
-		or not is_locomotive_assembly(world, assembly_id)
-	):
-		return
-	var locomotion := world.get_locomotion_controller(assembly_id)
-	for pair: Dictionary in discover_pairs(world, assembly_id):
-		if not is_complete_pair(pair):
-			continue
-		var tick_pair := _tick_context(world, pair)
-		tick_pair["exclude_rids"] = assembly_exclude_rids
-		var wheel_element: SimulationElement = pair.get("wheel_element")
-		var powered := _is_wheel_powered(world, wheel_element)
-		var body: RigidBody3D = null
-		if body_resolver.is_valid():
-			body = body_resolver.call(
-				int(pair.get("suspension_element_id", 0))
-			) as RigidBody3D
-		if body == null:
-			var invalid_result := WheelProjectionUtil.empty_result(
-				tick_pair,
-				powered,
-				&"invalid_body"
-			)
-			world.store_wheel_runtime(
-				int(pair.get("wheel_element_id", 0)),
-				int(pair.get("suspension_element_id", 0)),
-				invalid_result
-			)
-			continue
-		if locomotion.has_active_input():
-			body.sleeping = false
-		var tick_result := WheelProjectionUtil.tick_pair(
-			body,
-			tick_pair,
-			locomotion,
-			delta,
-			powered
-		)
-		tick_result["body_group_id"] = int(body.get_meta("body_group_id", 0))
-		world.store_wheel_runtime(
-			int(pair.get("wheel_element_id", 0)),
-			int(pair.get("suspension_element_id", 0)),
-			tick_result
-		)
-
-
 static func sync_power_demand(world: SimulationWorld) -> void:
 	if world == null:
 		return
@@ -285,67 +236,6 @@ static func sync_power_demand(world: SimulationWorld) -> void:
 				* state.drive_torque_scale
 				* drive_input
 			)
-
-
-static func _tick_context(
-	world: SimulationWorld,
-	pair: Dictionary
-) -> Dictionary:
-	var suspension: SimulationElement = pair.get("suspension_element")
-	var wheel_element: SimulationElement = pair.get("wheel_element")
-	var suspension_def := _suspension_definition_for_element(suspension)
-	var wheel_def := _wheel_definition_for_element(wheel_element)
-	var suspension_state := world.ensure_suspension_instance_state(
-		suspension.element_id
-	)
-	var wheel_state := world.ensure_wheel_instance_state(wheel_element.element_id)
-	var runtime := world.get_wheel_runtime(wheel_element.element_id)
-	var context := pair.duplicate(true)
-	context["travel_m"] = (
-		suspension_state.travel_m
-		if suspension_state.travel_m > 0.0
-		else suspension_def.suspension_travel_m
-	)
-	context["spring_stiffness"] = (
-		suspension_state.spring_stiffness_n_per_m
-		if suspension_state.spring_stiffness_n_per_m >= 0.0
-		else suspension_def.spring_stiffness_n_per_m
-	)
-	context["spring_damping"] = (
-		suspension_state.spring_damping_n_s_per_m
-		if suspension_state.spring_damping_n_s_per_m >= 0.0
-		else suspension_def.spring_damping_n_s_per_m
-	)
-	context["max_suspension_force_n"] = suspension_def.max_suspension_force_n
-	context["radius_m"] = wheel_def.radius_m
-	context["width_m"] = wheel_def.width_m
-	context["drive_torque"] = wheel_def.drive_torque_n_m
-	context["brake_torque"] = wheel_def.brake_torque_n_m
-	context["longitudinal_grip"] = wheel_def.longitudinal_grip
-	context["lateral_grip"] = wheel_def.lateral_grip
-	context["slip_stiffness"] = wheel_def.slip_stiffness
-	context["lateral_stiffness"] = wheel_def.lateral_stiffness
-	context["wheel_inertia"] = wheel_def.wheel_inertia
-	context["angular_damping"] = wheel_def.angular_damping
-	context["max_angular_speed_rad_s"] = wheel_def.max_angular_speed_rad_s
-	context["max_steering_angle_rad"] = wheel_def.max_steering_angle_rad
-	context["steering_response"] = wheel_def.steering_response
-	context["forward_axis_local"] = Vector3(
-		OrientationUtil.rotate_direction(
-			OrientationUtil.face_to_vector(wheel_def.forward_axis_face),
-			wheel_element.orientation_index
-		)
-	).normalized()
-	context["steerable"] = wheel_state.steerable
-	context["drive_torque_scale"] = wheel_state.drive_torque_scale
-	context["drive_inverted"] = wheel_state.drive_inverted
-	if wheel_state.brake_torque_n_m >= 0.0:
-		context["configured_brake_torque"] = wheel_state.brake_torque_n_m
-	context["wheel_speed"] = float(runtime.get("wheel_speed", 0.0))
-	context["steering_angle_rad"] = float(runtime.get("steering_angle_rad", 0.0))
-	context["park_anchor_world"] = runtime.get("park_anchor_world", Vector3.ZERO)
-	context["park_anchor_valid"] = bool(runtime.get("park_anchor_valid", false))
-	return context
 
 
 static func _build_pair_record(
@@ -408,44 +298,3 @@ static func _suspension_definition_for_element(
 	return archetype.suspension_definition
 
 
-static func _is_wheel_powered(
-	world: SimulationWorld,
-	wheel_element: SimulationElement
-) -> bool:
-	if wheel_element == null:
-		return false
-	var runtime := world.ensure_industry_element_runtime(
-		wheel_element.element_id
-	)
-	return runtime.machine_enabled and runtime.powered
-
-
-## Parking bristle anchors are world-space. After physics body recreate or
-## construction mass/COM change they must be cleared so the next grounded tick
-## reseats at the current contact (otherwise bristle springs fight the new COM).
-static func invalidate_park_anchors(
-	world: SimulationWorld,
-	assembly_id: int
-) -> int:
-	if world == null or assembly_id <= 0:
-		return 0
-	var cleared := 0
-	for pair: Dictionary in discover_pairs(world, assembly_id):
-		var wheel_element_id := int(pair.get("wheel_element_id", 0))
-		if wheel_element_id <= 0:
-			continue
-		var runtime: Dictionary = world.get_wheel_runtime(wheel_element_id)
-		if runtime.is_empty():
-			continue
-		if not bool(runtime.get("park_anchor_valid", false)):
-			continue
-		var next := runtime.duplicate(true)
-		next["park_anchor_valid"] = false
-		next["park_anchor_world"] = Vector3.ZERO
-		world.store_wheel_runtime(
-			wheel_element_id,
-			int(pair.get("suspension_element_id", 0)),
-			next
-		)
-		cleared += 1
-	return cleared
