@@ -327,7 +327,13 @@ func _add_box(parent: Node3D, centre: Vector3, size: Vector3) -> StaticBody3D:
 
 func _print_table() -> void:
 	print("")
-	print("ROPE BENCH — %s" % _adapter.get_class())
+	# get_class() reports the native engine class (RefCounted) for any
+	# GDScript adapter, not its class_name — useless the moment there is more
+	# than one adapter to tell apart. get_global_name() is what a class_name
+	# declaration actually registers.
+	var script: Script = _adapter.get_script()
+	var label := script.get_global_name() if script else _adapter.get_class()
+	print("ROPE BENCH — %s" % (label if not label.is_empty() else _adapter.get_class()))
 	print(
 		"scenario        phantom      settle   sleep  steady    penetr   ms/rope"
 	)

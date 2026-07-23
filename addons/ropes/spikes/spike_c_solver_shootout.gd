@@ -63,9 +63,13 @@ func _run(cfg: Dictionary, load_kg: float) -> void:
 	else:
 		sim = AVBDRope.new()
 		sim.substeps = 1
+		# This spike sweeps the iteration count on purpose, including values the
+		# length guard would raise; leaving the guard on would quietly replace
+		# every low row with the same number and the sweep would measure nothing.
+		sim.length_guard = false
 		sim.iterations = cfg.it
 		sim.dual_every = cfg.de
-		sim.beta = cfg.b
+		sim.beta_override = cfg.b
 		sim.penalty_start = 1.0
 		sim.alpha = 0.95
 		sim.gamma = 0.99

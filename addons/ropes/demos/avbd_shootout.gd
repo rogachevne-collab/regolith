@@ -106,8 +106,10 @@ func _make_rope(cfg: Dictionary, row: Dictionary) -> void:
 	else:
 		sim = AVBDRope.new()
 		sim.substeps = 1      # warm starting decays per step; do not substep
+		# A floor, not a budget: the length guard raises it for the longer and
+		# finer rows, which is the shipping behaviour and so is what a demo
+		# should be showing.
 		sim.iterations = 16
-		sim.dual_every = 4
 	sim.setup(segments, length, MASS_PER_M)
 	sim.gravity = Vector3(0, -G, 0)
 	sim.damping = 0.5
@@ -252,6 +254,16 @@ func _report() -> String:
 	for name: String in by_name:
 		var any: Dictionary = by_name[name].values()[0]
 		out += "%s %.0fN   " % [name.split(" ")[0], (any.end_mass + MASS_PER_M * any.rest) * G]
+	# What the length guard actually picked, per scenario. It is derived from
+	# the rope's own size (ADR 0007), so it changes as scenarios do and there is
+	# no other way to see it happen — the failure it prevents is invisible in
+	# every column above, which is the entire reason it exists.
+	out += "\nAVBD iterations chosen by the length guard: "
+	for name: String in by_name:
+		var r: Dictionary = by_name[name].get("AVBD", {})
+		if r.is_empty() or r.blown:
+			continue
+		out += "%s %d   " % [name.split(" ")[0], r.sim.effective_iterations()]
 	out += "\ncost per step, us: "
 	var grand := 0.0
 	for row: Dictionary in ROWS:

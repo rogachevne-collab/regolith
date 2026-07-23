@@ -75,6 +75,13 @@ Methods:
 - `teleport(delta: Vector3)` — rigidly move the rope, preserving shape and
   motion; use when an anchor jumps rather than travels
 - `rebuild()` — re-seed immediately instead of waiting for the next tick
+- `segment_count() -> int` — `length * segments_per_meter`, rounded up
+- `solver_iterations() -> int`, `tension_readout_warning() -> String` — the
+  size envelope of the solver core in use. A core whose tension readout
+  degrades with rope size (AVBD, see the research note) has its budget raised
+  to a measured rule automatically, and says so in the inspector and the log
+  when the rule outruns what it will spend unasked. Both return nothing on the
+  XPBD core shipping today, whose tension holds at every length measured.
 
 ## Open problem
 

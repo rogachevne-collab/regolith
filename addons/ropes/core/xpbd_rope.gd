@@ -26,9 +26,15 @@ extends RefCounted
 
 const MIN_MASS := 1e-6
 
-const SHAPE_PLANE := 0   # xform.basis.y = normal, xform.origin = point
-const SHAPE_SPHERE := 1  # params.x = radius
-const SHAPE_BOX := 2     # params = half extents
+## Narrow phase lives in one file for every core (ADR 0008): two solvers may
+## disagree about how to solve a contact, never about where the surface is.
+const RopeColliders := preload("res://addons/ropes/core/rope_colliders.gd")
+
+## Re-exported so the host (nodes/rope_3d.gd) keeps addressing shapes through
+## the core it drives rather than reaching past it.
+const SHAPE_PLANE := RopeColliders.SHAPE_PLANE
+const SHAPE_SPHERE := RopeColliders.SHAPE_SPHERE
+const SHAPE_BOX := RopeColliders.SHAPE_BOX
 
 var positions := PackedVector3Array()
 var prev_positions := PackedVector3Array()
@@ -278,49 +284,11 @@ func _solve_segment(j: int, alpha: float) -> void:
 ## full price for the ground five meters below it. Returns false if nothing
 ## is in reach at all.
 func _cull_colliders(dt: float) -> bool:
-	_c_near.resize(colliders.size())
-	var lo := positions[0]
-	var hi := lo
-	for i in positions.size():
-		lo = lo.min(positions[i])
-		hi = hi.max(positions[i])
-	var center := (lo + hi) * 0.5
-	# Margin covers this step's motion plus the contact skin, so a fast rope
-	# cannot be culled into something it is about to hit.
-	var reach := (hi - lo).length() * 0.5 + radius + max_speed() * dt
-	var any := false
-	for ci in colliders.size():
-		var col: Dictionary = colliders[ci]
-		var shape: int = col.shape
-		var near := true
-		if shape != SHAPE_PLANE:
-			var params: Vector3 = col.params
-			var bound: float = params.x if shape == SHAPE_SPHERE else params.length()
-			var xf: Transform3D = col.xform
-			var travel: float = (xf.origin - (col.prev_xform as Transform3D).origin).length()
-			near = center.distance_to(xf.origin) <= reach + bound + travel
-		_c_near[ci] = near
-		any = any or near
-	return any
+	return RopeColliders.cull(colliders, positions, radius, max_speed() * dt, _c_near)
 
 
 func _interpolate_colliders(t: float) -> void:
-	_c_xf.resize(colliders.size())
-	_c_inv.resize(colliders.size())
-	for ci in colliders.size():
-		if not _c_near[ci]:
-			continue
-		var col: Dictionary = colliders[ci]
-		var prev: Transform3D = col.prev_xform
-		var curr: Transform3D = col.xform
-		var xf: Transform3D
-		if prev == curr:
-			xf = curr
-		else:
-			var q := Quaternion(prev.basis).slerp(Quaternion(curr.basis), t)
-			xf = Transform3D(Basis(q), prev.origin.lerp(curr.origin, t))
-		_c_xf[ci] = xf
-		_c_inv[ci] = xf.affine_inverse()
+	RopeColliders.interpolate(colliders, t, _c_near, _c_xf, _c_inv)
 
 
 func _solve_contacts() -> void:
@@ -365,49 +333,17 @@ func _contact_sample(ci: int, shape: int, params: Vector3, a: int, b: int) -> vo
 			return
 		p = positions[a]
 
-	var dist: float
-	var n: Vector3
 	var xf := _c_xf[ci]
-	match shape:
-		SHAPE_PLANE:
-			n = xf.basis.y
-			dist = (p - xf.origin).dot(n)
-		SHAPE_SPHERE:
-			var v := p - xf.origin
-			var vl := v.length()
-			if vl < 1e-12:
-				return
-			n = v / vl
-			dist = vl - params.x
-		SHAPE_BOX:
-			var local := _c_inv[ci] * p
-			var q := local.abs() - params
-			if q.x > 0.0 or q.y > 0.0 or q.z > 0.0:
-				var outside := Vector3(maxf(q.x, 0.0), maxf(q.y, 0.0), maxf(q.z, 0.0))
-				dist = outside.length()
-				var n_local := (outside / dist) * local.sign()
-				n = xf.basis * n_local
-			else:
-				# Inside: push out through the nearest face.
-				dist = maxf(q.x, maxf(q.y, q.z))
-				var n_local := Vector3.ZERO
-				if q.x >= q.y and q.x >= q.z:
-					n_local.x = signf(local.x)
-				elif q.y >= q.z:
-					n_local.y = signf(local.y)
-				else:
-					n_local.z = signf(local.z)
-				n = xf.basis * n_local
-		_:
-			return
-
-	var pen := radius - dist
+	var hit := RopeColliders.probe(shape, params, xf, _c_inv[ci], p)
+	if not is_finite(hit.w):
+		return
+	var pen := radius - hit.w
 	if pen <= 0.0:
 		return
+	var n := Vector3(hit.x, hit.y, hit.z)
 	var dl := pen / w_eff
 	var col: Dictionary = colliders[ci]
-	var surface_vel: Vector3 = col.linear_velocity \
-			+ (col.angular_velocity as Vector3).cross(p - xf.origin)
+	var surface_vel := RopeColliders.surface_velocity(col, xf, p)
 	if midpoint:
 		positions[a] += n * (dl * 0.5 * wa)
 		positions[b] += n * (dl * 0.5 * wb)

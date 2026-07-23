@@ -25,15 +25,31 @@ const MAX_SOLVER_STEPS_PER_FRAME := 3
 @export var query_path: NodePath = NodePath("../InteractionQuery")
 @export var tool_controller_path: NodePath = NodePath("../ToolController")
 
+## Try the Ropes! addon's XPBD core for the rope in hand instead of
+## CableRopeSolver. Preview-only experiment (2026-07-23, addons/ropes):
+## this is presentation, never issues commands, so there is nothing for a
+## rough edge here to break — flip it off to go back to the shipping verlet
+## rope with no other change. See scripts/bench/xpbd_cable_rope_solver.gd for
+## what is and is not proven about this core yet.
+@export var use_xpbd: bool = true
+
 var _query: InteractionQuery
 var _tools: ToolController
 var _mesh_instance: MeshInstance3D
 var _material: StandardMaterial3D
-## Verlet state of the rope in hand — the same solver the built ropes use, so
-## what trails the cursor drapes over the ground instead of sinking through it.
+## Solver state of the rope in hand, shaped whichever way [member use_xpbd]
+## picks — the same solver a built rope will actually run, so what trails the
+## cursor drapes the way the real thing will.
 var _rope_state: Dictionary = {}
 ## Leftover render delta not yet consumed by a fixed solver step.
 var _step_accumulator: float = 0.0
+## Which solver [member _rope_state] currently belongs to — CableRopeSolver or
+## XpbdCableRopeSolver, held as the class itself so its static methods can be
+## called through this variable. Read fresh from [member use_xpbd] only when
+## the state is (re)created: flipping the export mid-preview must not hand a
+## running solve's Dictionary to the other solver's step(), which would read
+## garbage keys.
+var _solver = CableRopeSolver
 
 
 func _ready() -> void:
@@ -84,7 +100,8 @@ func _process(delta: float) -> void:
 		(anchor + free_end) * 0.5
 	)
 	if _rope_state.is_empty():
-		_rope_state = CableRopeSolver.create_state(
+		_solver = XpbdCableRopeSolver if use_xpbd else CableRopeSolver
+		_rope_state = _solver.create_state(
 			anchor,
 			free_end,
 			rest_length,
@@ -98,7 +115,7 @@ func _process(delta: float) -> void:
 	_step_accumulator += delta
 	var steps_run := 0
 	while _step_accumulator >= SOLVER_STEP_S and steps_run < MAX_SOLVER_STEPS_PER_FRAME:
-		CableRopeSolver.step(
+		_solver.step(
 			_rope_state,
 			anchor,
 			free_end,
@@ -117,14 +134,14 @@ func _process(delta: float) -> void:
 	# The build command needs the length of the rope as LAID, not the straight
 	# span: routed around a block the path is longer, and a rope built shorter
 	# than its own path is born overstretched and yanks whatever it is tied to.
-	_tools.report_rope_routed_m(CableRopeSolver.routed_length_m(_rope_state))
+	_tools.report_rope_routed_m(_solver.routed_length_m(_rope_state))
 	# Anchor/free_end are only ever consumed by a solver step, never read
 	# directly into the mesh, so a render frame that ran zero solver steps has
 	# an identical path to the last one that did — re-meshing it is wasted
 	# work. Rebuild only when steps_run actually moved the path, or on the
 	# first frame after activation when there is no mesh yet to show.
 	if steps_run > 0 or _mesh_instance.mesh == null:
-		var path := CableRopeSolver.path(_rope_state)
+		var path: PackedVector3Array = _solver.path(_rope_state)
 		if path.size() < 2:
 			_mesh_instance.visible = false
 			return

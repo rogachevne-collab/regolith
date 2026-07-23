@@ -17,7 +17,17 @@ extends Node3D
 ## (rigid-body coupling is gate 4).
 
 const XPBDRope := preload("res://addons/ropes/core/xpbd_rope.gd")
+const AVBDRope := preload("res://addons/ropes/core/avbd_rope.gd")
 const RopeRenderer := preload("res://addons/ropes/render/rope_renderer.gd")
+
+## Which core this node drives, as a constant rather than a setting: exposing
+## two solvers as a choice means every feature has to exist twice or the
+## setting silently changes which ones work (ADR 0007). XPBD today, because
+## AVBD has no contacts yet and a rope that cannot touch the world is not
+## shippable. Flipping this is a deliberate edit, never a runtime decision —
+## AVBD carries multipliers across frames, so entering it cold reproduces the
+## free-fall-and-bounce transient exactly when the rope becomes loaded.
+const CORE_IS_AVBD := false
 
 ## Lateral deviation used when seeding the rope, in meters: no real rope is
 ## manufactured perfectly straight, and an exactly straight one never leaves
@@ -175,7 +185,10 @@ func rebuild() -> void:
 	_needs_rebuild = false
 	_anchor_a_node = _resolve(anchor_a)
 	_anchor_b_node = _resolve(anchor_b)
-	var segs := maxi(1, ceili(length * segments_per_meter))
+	var segs := segment_count()
+	var warning := tension_readout_warning()
+	if not warning.is_empty():
+		push_warning("%s: %s" % [get_path() if is_inside_tree() else name, warning])
 	_sim = XPBDRope.new()
 	_sim.setup(segs, length, mass_per_meter)
 	_sim.gravity = _effective_gravity()
@@ -185,7 +198,7 @@ func rebuild() -> void:
 	_sim.radius = radius
 	_sim.friction = friction
 	_sim.substeps = substeps
-	_sim.iterations = iterations
+	_sim.iterations = maxi(iterations, solver_iterations())
 	if end_mass > 0.0:
 		_sim.add_point_mass(segs, end_mass)
 	var a := _anchor_a_node.global_position if _anchor_a_node else global_position
@@ -280,6 +293,65 @@ func get_segment_tension(i: int) -> float:
 	return _sim.tensions[i]
 
 
+# --- Tension readout guard ---------------------------------------------------
+#
+# The segment count is decided here, as length x segments_per_meter, so this is
+# where a core's size envelope has to be enforced (ADR 0007). AVBD's tension
+# readout collapses past a measured size — 400 segments free hanging reads
+# +947%, and +1549406% with a rover on the end — while its stretch stays at
+# 0.4% and the rope looks perfect. That is the one failure mode a user cannot
+# see, so the budget is raised to meet the measured rule and, when the rule
+# outruns the ceiling, the rope says so out loud.
+#
+# Dormant while [constant CORE_IS_AVBD] is false: XPBD's tension holds to a few
+# percent at every length measured (spikes/spike_f_catenary_and_length.gd) and
+# asks nothing of this. It lives here anyway, because the segment count is
+# authored here, and because a guard written after the solver switch is a guard
+# written after the first wrong number has already been believed.
+
+## Segments the current properties produce. This is the number the guard is
+## about, and it is not [member segments_per_meter] — a 100 m rope at the
+## default 4 per metre is 400 segments.
+func segment_count() -> int:
+	return maxi(1, ceili(length * segments_per_meter))
+
+
+## Iterations the core in use needs at this rope's size for its tension readout
+## to be trustworthy; 0 when the core has no size-dependent requirement.
+## Capped nowhere — compare against the core's own ceiling to find out whether
+## the requirement can actually be met.
+func solver_iterations() -> int:
+	if not CORE_IS_AVBD:
+		return 0
+	return AVBDRope.required_iterations(segment_count(), length, _is_loaded())
+
+
+## Why this rope's tension cannot be believed, or "" when it can. Non-empty
+## only when the requirement runs past what the core will spend on its own.
+func tension_readout_warning() -> String:
+	if not CORE_IS_AVBD:
+		return ""
+	return AVBDRope.guard_warning(segment_count(), length, _is_loaded(),
+			maxi(iterations, mini(solver_iterations(), AVBDRope.ITERATIONS_MAX)))
+
+
+func _get_configuration_warnings() -> PackedStringArray:
+	var out := PackedStringArray()
+	var w := tension_readout_warning()
+	if not w.is_empty():
+		out.append(w)
+	return out
+
+
+## A pinned B end is kinematic, so its mass never loads the rope — the guard
+## has to agree with [member end_mass]'s own documented behaviour or it picks
+## the wrong law for exactly the ropes that matter.
+func _is_loaded() -> bool:
+	if _resolve(anchor_b) != null:
+		return false
+	return end_mass > mass_per_meter * length * AVBDRope.GUARD_LOADED_FRACTION
+
+
 ## Instantaneous impulse (N*s) on one particle — poking, grabbing, wind gusts.
 func apply_impulse(particle: int, impulse: Vector3) -> void:
 	if _sim != null and particle >= 0 and particle < _sim.positions.size():
@@ -289,6 +361,9 @@ func apply_impulse(particle: int, impulse: Vector3) -> void:
 func _cold_changed() -> void:
 	if _sim != null:
 		_needs_rebuild = true
+	# Every cold property feeds the segment count, so every cold property can
+	# move the rope in or out of the envelope the guard is about.
+	update_configuration_warnings()
 
 
 func _effective_gravity() -> Vector3:

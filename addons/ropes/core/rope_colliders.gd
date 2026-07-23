@@ -1,0 +1,143 @@
+extends RefCounted
+# The narrow phase, shared by every solver core.
+#
+# This file exists because of one line in ADR 0008: "the moment the narrow
+# phase forks per solver, that bet has been lost." Two cores with contacts is a
+# maintenance cost taken on knowingly (ADR 0007); two cores with two *different*
+# ideas of where a box's surface is would be a different and much worse thing —
+# a bug reproducible in one solver and not the other, in geometry code where
+# neither answer looks obviously wrong.
+#
+# So: everything here is pure geometry over the collider list the host caches
+# once per tick (ADR 0006 decision 2). No positions are written, no constraint
+# is solved, nothing here knows whether it is being asked by a dual method or a
+# primal one. What each core does with a distance and a normal is its own
+# business and stays in its own file.
+#
+# All functions are static. There is no state to own — the caller keeps the
+# per-collider scratch arrays, because it knows how many colliders it has and
+# when they changed.
+
+## Collider shapes. The analytic set (ADR 0006 decision 9); concave meshes and
+## the host's voxel terrain are slice 2 and arrive as another case here rather
+## than as another code path in each core.
+const SHAPE_PLANE := 0   # xform.basis.y = normal, xform.origin = point
+const SHAPE_SPHERE := 1  # params.x = radius
+const SHAPE_BOX := 2     # params = half extents
+
+## Returned by [method probe] when the query has no answer — a point exactly at
+## a sphere's centre, or an unsupported shape. Callers check `is_finite(w)`.
+const NO_CONTACT := Vector4(0.0, 0.0, 0.0, INF)
+
+
+## Bounding-sphere reject, once per step. Without it every sample is tested
+## against every collider on every substep, so a rope hanging in mid-air pays
+## full price for the ground five meters below it (measured: 2195 -> 1472
+## us/step, ADR 0006). Fills `near` and returns false if nothing is in reach.
+static func cull(colliders: Array[Dictionary], positions: PackedVector3Array,
+		skin: float, motion: float, near: Array[bool]) -> bool:
+	near.resize(colliders.size())
+	var lo := positions[0]
+	var hi := lo
+	for i in positions.size():
+		lo = lo.min(positions[i])
+		hi = hi.max(positions[i])
+	var center := (lo + hi) * 0.5
+	# Margin covers this step's motion plus the contact skin, so a fast rope
+	# cannot be culled into something it is about to hit.
+	var reach := (hi - lo).length() * 0.5 + skin + motion
+	var any := false
+	for ci in colliders.size():
+		var col: Dictionary = colliders[ci]
+		var shape: int = col.shape
+		var is_near := true
+		if shape != SHAPE_PLANE:
+			var params: Vector3 = col.params
+			var bound: float = params.x if shape == SHAPE_SPHERE else params.length()
+			var xf: Transform3D = col.xform
+			var travel: float = (xf.origin - (col.prev_xform as Transform3D).origin).length()
+			is_near = center.distance_to(xf.origin) <= reach + bound + travel
+		near[ci] = is_near
+		any = any or is_near
+	return any
+
+
+## Collider transforms at substep fraction `t`, interpolated from last tick's.
+## A wall frozen for a whole tick teleports 1.7 m at 100 m/s and the rope ends
+## up inside the rocket's hull; a wall that advances 5 cm per substep pushes it
+## honestly (ADR 0006 decision 3).
+static func interpolate(colliders: Array[Dictionary], t: float,
+		near: Array[bool], xforms: Array[Transform3D],
+		inverses: Array[Transform3D]) -> void:
+	xforms.resize(colliders.size())
+	inverses.resize(colliders.size())
+	for ci in colliders.size():
+		if not near[ci]:
+			continue
+		var col: Dictionary = colliders[ci]
+		var prev: Transform3D = col.prev_xform
+		var curr: Transform3D = col.xform
+		var xf: Transform3D
+		if prev == curr:
+			xf = curr
+		else:
+			var q := Quaternion(prev.basis).slerp(Quaternion(curr.basis), t)
+			xf = Transform3D(Basis(q), prev.origin.lerp(curr.origin, t))
+		xforms[ci] = xf
+		inverses[ci] = xf.affine_inverse()
+
+
+## Signed distance from `p` to one collider's surface, and the outward normal
+## there, packed as (normal.xyz, distance).
+##
+## Packed into a Vector4 rather than returned as a Dictionary on purpose: this
+## runs per sample per collider per substep, and a Dictionary would allocate on
+## every one of those. Vector4 is a value type and costs nothing.
+##
+## Negative distance means inside. [constant NO_CONTACT] means no answer.
+static func probe(shape: int, params: Vector3, xf: Transform3D,
+		inv_xf: Transform3D, p: Vector3) -> Vector4:
+	var dist: float
+	var n: Vector3
+	match shape:
+		SHAPE_PLANE:
+			n = xf.basis.y
+			dist = (p - xf.origin).dot(n)
+		SHAPE_SPHERE:
+			var v := p - xf.origin
+			var vl := v.length()
+			if vl < 1e-12:
+				return NO_CONTACT
+			n = v / vl
+			dist = vl - params.x
+		SHAPE_BOX:
+			var local := inv_xf * p
+			var q := local.abs() - params
+			if q.x > 0.0 or q.y > 0.0 or q.z > 0.0:
+				var outside := Vector3(maxf(q.x, 0.0), maxf(q.y, 0.0), maxf(q.z, 0.0))
+				dist = outside.length()
+				var n_local := (outside / dist) * local.sign()
+				n = xf.basis * n_local
+			else:
+				# Inside: push out through the nearest face.
+				dist = maxf(q.x, maxf(q.y, q.z))
+				var n_local := Vector3.ZERO
+				if q.x >= q.y and q.x >= q.z:
+					n_local.x = signf(local.x)
+				elif q.y >= q.z:
+					n_local.y = signf(local.y)
+				else:
+					n_local.z = signf(local.z)
+				n = xf.basis * n_local
+		_:
+			return NO_CONTACT
+	return Vector4(n.x, n.y, n.z, dist)
+
+
+## Velocity of a collider's surface at world point `p` — a contact against a
+## moving body must be solved against the surface's velocity, not against zero,
+## or a rope inside an accelerating rocket is wrong in the one case ADR 0006
+## was written for.
+static func surface_velocity(col: Dictionary, xf: Transform3D, p: Vector3) -> Vector3:
+	return (col.linear_velocity as Vector3) \
+			+ (col.angular_velocity as Vector3).cross(p - xf.origin)
