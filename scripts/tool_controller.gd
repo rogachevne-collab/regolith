@@ -94,6 +94,7 @@ const CONSTRUCTION_ARCHETYPES: PackedStringArray = [
 	"suspension_small",
 	"wheel_med",
 	"cockpit",
+	"control_terminal",
 	"power_battery_small",
 	"power_distributor_small",
 	"thruster",
@@ -1288,6 +1289,12 @@ func _try_emit_context_interaction(hit: InteractionHit) -> bool:
 		return true
 	if active_tool != &"connect" and _try_open_terminal(hit):
 		return true
+	# Перед toggle_control_seat: control_terminal несёт роль ControlSeat (тот
+	# же тег, что кокпит), но не садит — стоя открывает окно. Если это не
+	# перехватить здесь, E на пульте дойдёт до toggle_control_seat и попробует
+	# посадить игрока в стационарную консоль (CONTROL-ACTIONS-V0 «Хосты бара»).
+	if active_tool != &"connect" and _try_open_control_terminal(hit):
+		return true
 	return false
 
 
@@ -1317,6 +1324,17 @@ func _try_open_terminal(hit: InteractionHit) -> bool:
 	if _ui_modal_blocks_world_interact():
 		return false
 	return bool(_terminal.call("try_open_on_target", hit))
+
+
+func _try_open_control_terminal(hit: InteractionHit) -> bool:
+	if (
+		_control_terminal == null
+		or not _control_terminal.has_method("try_open_on_target")
+	):
+		return false
+	if _ui_modal_blocks_world_interact():
+		return false
+	return bool(_control_terminal.call("try_open_on_target", hit))
 
 
 func _is_terminal_target_hit(hit: InteractionHit) -> bool:

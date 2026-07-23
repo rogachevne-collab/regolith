@@ -55,6 +55,8 @@ var _industry_network := IndustryNetworkState.create_default()
 var _industry_elements: Dictionary = {}
 var _wheel_instances: Dictionary = {}
 var _suspension_instances: Dictionary = {}
+## element_id хоста (роль ControlSeat) → ActionBarState (CONTROL-ACTIONS-V0).
+var _action_bars: Dictionary = {}
 var _wheel_runtime: Dictionary = {}
 var _assembly_locomotion: Dictionary = {}
 var _cargo_graph := CargoGraph.new()
@@ -332,6 +334,41 @@ func apply_set_element_name(command: SetElementNameCommand) -> Dictionary:
 	}
 
 
+## Привязка/снятие одной клавиши бара хоста. Instance-состояние, не топология:
+## как apply_set_element_name, меняет только `state_revision` хоста, не
+## `Assembly.revision`. Гейт по роли — на этой границе (снапшот-валидация
+## гейтует так же), хранилище само не гейтует (ensure_action_bar_state).
+func apply_configure_action_slot(
+	command: ConfigureActionSlotCommand
+) -> Dictionary:
+	if command == null or command.host_element_id <= 0:
+		return {"reason": &"invalid_target"}
+	var host := get_element(command.host_element_id)
+	if host == null:
+		return {"reason": &"invalid_target"}
+	var archetype := host.get_archetype()
+	if archetype == null or not archetype.roles.has("ControlSeat"):
+		return {"reason": &"invalid_target"}
+	if not host.is_operational():
+		return {"reason": &"element_incomplete"}
+	if (
+		command.page < 0
+		or command.page >= ActionBarState.PAGE_COUNT
+		or command.index < 0
+		or command.index >= ActionBarState.SLOTS_PER_PAGE
+	):
+		return {"reason": &"invalid_target"}
+	var state := ensure_action_bar_state(command.host_element_id)
+	state.set_slot(command.page, command.index, command.payload)
+	host.bump_state_revision()
+	return {
+		"reason": &"ok",
+		"host_element_id": command.host_element_id,
+		"page": command.page,
+		"index": command.index,
+	}
+
+
 func apply_set_actuator_target(
 	command: SetActuatorTargetCommand
 ) -> Dictionary:
@@ -449,6 +486,34 @@ func register_suspension_instance_state(
 	if element_id > 0 and state != null:
 		_suspension_instances[element_id] = state
 
+## Не гейтует по роли ControlSeat — как ensure_wheel_instance_state не гейтует
+## по wheel_definition. Гейт живёт на границах (snapshot-валидация, команда).
+func ensure_action_bar_state(element_id: int) -> ActionBarState:
+	if not _action_bars.has(element_id):
+		_action_bars[element_id] = ActionBarState.new()
+	return _action_bars[element_id] as ActionBarState
+
+## Для read-only путей (снапшот пульта для UI): просто посмотреть на хост не
+## должно создавать постоянную запись в side-table — иначе даже открытие
+## окна без единой привязки клавиши раздувает каждый будущий save пустым
+## рядом (тот же принцип, что у ensure_wheel_instance_state, но там создание
+## уже происходит при размещении колеса, здесь для бара такого триггера нет).
+func has_action_bar_state(element_id: int) -> bool:
+	return _action_bars.has(element_id)
+
+func register_action_bar_state(element_id: int, state: ActionBarState) -> void:
+	if element_id > 0 and state != null:
+		_action_bars[element_id] = state
+
+func list_action_bar_rows() -> Array[Dictionary]:
+	var rows: Array[Dictionary] = []
+	for element_id: int in _sorted_keys(_action_bars):
+		rows.append({
+			"element_id": element_id,
+			"state": (_action_bars[element_id] as ActionBarState).to_dict(),
+		})
+	return rows
+
 func get_wheel_runtime(wheel_element_id: int) -> Dictionary:
 	return _wheel_runtime.get(wheel_element_id, {})
 
@@ -492,10 +557,15 @@ func store_wheel_runtime(
 		runtime[key] = value
 	_wheel_runtime[wheel_element_id] = runtime
 
+## Название по историческому первому потребителю; на деле — общая точка
+## очистки instance side-table'ов при удалении элемента (см. единственный
+## вызов в topology_mutation_service.gd, он зовётся для любого удалённого
+## элемента, не только колёсного).
 func clear_wheel_element_state(element_id: int) -> void:
 	_wheel_instances.erase(element_id)
 	_suspension_instances.erase(element_id)
 	_wheel_runtime.erase(element_id)
+	_action_bars.erase(element_id)
 
 func sync_actuator_observation(
 	joint_id: int,
@@ -921,6 +991,7 @@ func restore_snapshot(snapshot: Dictionary, emit_event := true) -> bool:
 	_industry_elements = restored._industry_elements
 	_wheel_instances = restored._wheel_instances
 	_suspension_instances = restored._suspension_instances
+	_action_bars = restored._action_bars
 	_wheel_runtime.clear()
 	_assembly_locomotion = restored._assembly_locomotion
 	_world_loot_piles = restored._world_loot_piles

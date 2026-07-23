@@ -218,6 +218,8 @@ func _execute(command: Dictionary) -> Dictionary:
 			return _configure_wheel(command, target)
 		&"configure_suspension":
 			return _configure_suspension(command, target)
+		&"configure_action_slot":
+			return _configure_action_slot(command, target)
 		_:
 			return _result(&"invalid_target")
 
@@ -999,6 +1001,12 @@ func _toggle_control_seat(
 	target: Dictionary
 ) -> Dictionary:
 	var metadata: Dictionary = target.get("metadata", {})
+	# control_terminal несёт роль ControlSeat (нужна для бара), но не садит —
+	# ToolController перехватывает interact для него раньше toggle_control_seat
+	# (CONTROL-ACTIONS-V0 «Хосты бара»). Второй слой защиты: если что-то всё же
+	# дошло сюда, явно отказать, а не пытаться посадить игрока в консоль.
+	if str(metadata.get("archetype_id", "")) == "control_terminal":
+		return _result(&"invalid_target")
 	if (
 		StringName(target["target_kind"])
 		!= InteractionHit.KIND_CONTROL_SEAT
@@ -1558,15 +1566,29 @@ func control_terminal_snapshot(
 	if _session == null or _session.world == null:
 		return ControlTerminalSnapshotBuilder.failure(&"not_ready")
 	var resolved_id := assembly_id
+	# host_hint — конкретный ControlSeat-элемент, если он уже известен (сидим
+	# именно в нём / целимся именно в него), а не «первый попавшийся
+	# ControlSeat в сборке» — на одной сборке их может быть несколько
+	# (CONTROL-ACTIONS-V0 «Разные сиденья на одной сборке имеют разные бары»).
+	# Резолвится ВСЕГДА, а не только когда assembly_id ещё не известен: вызывающая
+	# сторона (hud_control_terminal.gd) кэширует assembly_id после первого
+	# тика и дальше шлёт его же — если host_hint резолвить только под
+	# `resolved_id <= 0`, начиная со второго тика он навсегда остаётся 0, и
+	# билдер молча откатывается на «первый попавшийся» — не туда, где реально
+	# сидит/целится игрок.
+	var host_hint := _rover_seat_element_id
 	if resolved_id <= 0:
-		resolved_id = _resolve_active_rover_assembly_id()
-	if resolved_id <= 0 and hint_element_id > 0:
-		var element := _session.world.get_element(hint_element_id)
-		if element != null:
-			resolved_id = element.assembly_id
+		if host_hint > 0:
+			resolved_id = _resolve_active_rover_assembly_id()
+		if resolved_id <= 0 and hint_element_id > 0:
+			var element := _session.world.get_element(hint_element_id)
+			if element != null:
+				resolved_id = element.assembly_id
+	if host_hint <= 0:
+		host_hint = hint_element_id
 	if resolved_id <= 0:
 		return ControlTerminalSnapshotBuilder.failure(&"no_target")
-	return ControlTerminalSnapshotBuilder.build(_session.world, resolved_id)
+	return ControlTerminalSnapshotBuilder.build(_session.world, resolved_id, host_hint)
 
 
 func player_inventory() -> PlayerInventoryRegistry:
@@ -2200,6 +2222,44 @@ func _set_element_name(
 		{
 			"element_id": rename.element_id,
 			"custom_name": result.get("custom_name", ""),
+		}
+	)
+
+
+## Право бить по слотам бара — только текущий occupant хоста (CONTROL-ACTIONS-V0
+## «Persistence и кооп»). Занят кем-то другим сейчас проверяется только для
+## кокпита (`_rover_seat_*` — эксклюзивная посадка); у control_terminal нет
+## персистентного occupant'а («occupied_by ... interaction range (пульт)» —
+## окно и так не откроется без interaction-range, дальше проверять нечего).
+func _configure_action_slot(
+	command: Dictionary,
+	target: Dictionary
+) -> Dictionary:
+	if _session == null:
+		return _result(&"not_ready")
+	var parameters: Dictionary = command.get("parameters", {})
+	var metadata: Dictionary = target.get("metadata", {})
+	var configure := ConfigureActionSlotCommand.new()
+	configure.host_element_id = int(
+		parameters.get("host_element_id", metadata.get("element_id", 0))
+	)
+	configure.page = int(parameters.get("page", 0))
+	configure.index = int(parameters.get("index", 0))
+	var payload_variant: Variant = parameters.get("payload", {})
+	configure.payload = payload_variant if payload_variant is Dictionary else {}
+	if (
+		_rover_seat_element_id > 0
+		and _rover_seat_element_id == configure.host_element_id
+		and command.get("source") != _rover_seat_player
+	):
+		return _result(&"blocked")
+	var result := _session.apply_configure_action_slot(configure)
+	return _result(
+		StringName(result.get("reason", &"invalid_target")),
+		{
+			"host_element_id": configure.host_element_id,
+			"page": configure.page,
+			"index": configure.index,
 		}
 	)
 

@@ -1,7 +1,7 @@
 class_name SimulationSnapshot
 extends RefCounted
 
-const VERSION := 8
+const VERSION := 9
 
 static var last_validate_error: String = ""
 
@@ -22,6 +22,7 @@ static func capture(world) -> Dictionary:
 		"industry_elements": world.list_industry_element_runtimes(),
 		"wheel_instances": world.list_wheel_instance_rows(),
 		"suspension_instances": world.list_suspension_instance_rows(),
+		"action_bars": world.list_action_bar_rows(),
 		"locomotion_assemblies": world.list_locomotion_rows(),
 		"world_loot_piles": world.list_world_loot_piles(),
 		"simulation_time_s": world.get_simulation_time_s(),
@@ -71,6 +72,7 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 		"suspension_instances",
 		[]
 	)
+	var action_bar_rows: Variant = snapshot.get("action_bars", [])
 	var locomotion_rows: Variant = snapshot.get("locomotion_assemblies", [])
 	var loot_rows: Variant = snapshot.get("world_loot_piles", [])
 	var simulation_time_s := float(snapshot.get("simulation_time_s", 0.0))
@@ -84,6 +86,7 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 		or not store_rows is Array
 		or not wheel_instance_rows is Array
 		or not suspension_instance_rows is Array
+		or not action_bar_rows is Array
 		or not locomotion_rows is Array
 		or not allocator_data is Dictionary
 	):
@@ -282,6 +285,29 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 		):
 			return false
 		suspension_instances[element_id] = state
+
+	# Гейт — роль ControlSeat, не типизированный Definition (у бара его нет,
+	# см. CONTROL-ACTIONS-V0 «Persistence и кооп»). Содержимое слота — свободный
+	# Dictionary без числовых границ здесь: авторитетная проверка глагола
+	# происходит там, где слот реально стреляет (configure_actuator и т.п.),
+	# не на этой границе.
+	var action_bars: Dictionary = {}
+	for row_variant: Variant in action_bar_rows:
+		if not row_variant is Dictionary:
+			return false
+		var row: Dictionary = row_variant
+		var element_id := int(row.get("element_id", 0))
+		var state_row: Variant = row.get("state", {})
+		var element := elements.get(element_id) as SimulationElement
+		if (
+			element == null
+			or action_bars.has(element_id)
+			or element.get_archetype() == null
+			or not element.get_archetype().roles.has("ControlSeat")
+			or not state_row is Dictionary
+		):
+			return false
+		action_bars[element_id] = ActionBarState.from_dict(state_row)
 
 	var joints: Dictionary = {}
 	var canonical_joints: Dictionary = {}
@@ -546,6 +572,8 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 			element_id,
 			suspension_instances[element_id]
 		)
+	for element_id: int in _sorted_int_keys(action_bars):
+		world.register_action_bar_state(element_id, action_bars[element_id])
 	for row_variant: Variant in locomotion_rows:
 		if not row_variant is Dictionary:
 			return false

@@ -13,6 +13,7 @@ KERNEL=(
 	test_simulation_runtime
 	test_simulation_actuator
 	test_simulation_wheel
+	test_control_actions
 	test_simulation_thruster
 	test_vehicle_power
 	test_rover_compose

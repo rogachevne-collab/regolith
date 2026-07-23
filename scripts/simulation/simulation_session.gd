@@ -81,6 +81,12 @@ func apply_configure_wheel(command: ConfigureWheelCommand) -> Dictionary:
 	return world.apply_configure_wheel(command)
 
 
+func apply_configure_action_slot(
+	command: ConfigureActionSlotCommand
+) -> Dictionary:
+	return world.apply_configure_action_slot(command)
+
+
 func apply_configure_suspension(
 	command: ConfigureSuspensionCommand
 ) -> Dictionary:

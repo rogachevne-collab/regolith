@@ -16,7 +16,11 @@ const FAULT_REASONS: Array[StringName] = [
 ]
 
 
-static func build(world: SimulationWorld, assembly_id: int) -> Dictionary:
+static func build(
+	world: SimulationWorld,
+	assembly_id: int,
+	host_hint_element_id: int = 0
+) -> Dictionary:
 	if world == null:
 		return failure(&"not_ready")
 	if assembly_id <= 0:
@@ -25,6 +29,11 @@ static func build(world: SimulationWorld, assembly_id: int) -> Dictionary:
 	if assembly == null:
 		return failure(&"invalid_assembly")
 
+	var host_element_id := _resolve_control_seat_host(
+		world,
+		assembly,
+		host_hint_element_id
+	)
 	var joint_by_element := _driven_joint_by_element(world, assembly_id)
 	var ordinals: Dictionary = {}
 	var nodes: Array[Dictionary] = []
@@ -58,6 +67,8 @@ static func build(world: SimulationWorld, assembly_id: int) -> Dictionary:
 		"nodes": nodes,
 		"alarms": alarms,
 		"power": VehiclePowerSnapshotBuilder.build(world, assembly_id),
+		"control_seat_element_id": host_element_id,
+		"action_bar": _action_bar_dict(world, host_element_id),
 	}
 
 
@@ -71,7 +82,50 @@ static func failure(reason: StringName = &"invalid_assembly") -> Dictionary:
 		"nodes": [] as Array[Dictionary],
 		"alarms": [] as Array[Dictionary],
 		"power": VehiclePowerSnapshotBuilder.failure(reason),
+		"control_seat_element_id": 0,
+		"action_bar": {"pages": []},
 	}
+
+
+## host_hint — уже известный ControlSeat-хост (сидим/только что открыли
+## именно его). Валиден только если реально несёт роль и принадлежит этой
+## сборке; иначе — скан сборки (первый попавшийся ControlSeat, детерминированно
+## по element_id, единственный на большинстве сборок сегодня).
+static func _resolve_control_seat_host(
+	world: SimulationWorld,
+	assembly: SimulationAssembly,
+	host_hint_element_id: int
+) -> int:
+	if host_hint_element_id > 0 and assembly.element_ids.has(host_hint_element_id):
+		var hinted := world.get_element(host_hint_element_id)
+		if (
+			hinted != null
+			and hinted.get_archetype() != null
+			and hinted.get_archetype().roles.has("ControlSeat")
+		):
+			return host_hint_element_id
+	var candidate_ids := assembly.element_ids.duplicate()
+	candidate_ids.sort()
+	for element_id: int in candidate_ids:
+		var element := world.get_element(element_id)
+		if (
+			element != null
+			and element.get_archetype() != null
+			and element.get_archetype().roles.has("ControlSeat")
+		):
+			return element_id
+	return 0
+
+
+## Просмотр не создаёт запись (has_ вместо ensure_): открыть окно/сидеть в
+## хосте, ни разу не привязав клавишу, не должно раздувать будущий save
+## пустым рядом. Форма пустого ответа — та же, что у ActionBarState.to_dict()
+## (9×9 пустых слотов), чтобы UI не знал разницы между «не тронуто» и
+## «тронуто, но пусто».
+static func _action_bar_dict(world: SimulationWorld, host_element_id: int) -> Dictionary:
+	if host_element_id <= 0 or not world.has_action_bar_state(host_element_id):
+		return ActionBarState.new().to_dict()
+	return world.ensure_action_bar_state(host_element_id).to_dict()
 
 
 static func _build_node(

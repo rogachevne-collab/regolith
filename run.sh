@@ -3,6 +3,10 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 
+# Bare ./run.sh opens the current visual test scene; pass args to override
+# (e.g. ./run.sh res://scenes/main.tscn, or any other engine args).
+DEFAULT_SCENE="res://addons/ropes/demos/avbd_shootout.tscn"
+
 pick_godot() {
 	if [[ -n "${GODOT:-}" && -x "$GODOT" ]]; then
 		echo "$GODOT"
@@ -69,4 +73,7 @@ fi
 
 cd "$ROOT"
 echo "Using: $("$GODOT_BIN" --version)"
+if [[ $# -eq 0 ]]; then
+	exec "$GODOT_BIN" --path "$ROOT" "$DEFAULT_SCENE"
+fi
 exec "$GODOT_BIN" --path "$ROOT" "$@"
