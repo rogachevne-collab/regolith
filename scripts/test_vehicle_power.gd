@@ -32,7 +32,7 @@ func _boot_demo_session() -> SimulationSession:
 
 
 func _spawn_demo_rover(session: SimulationSession) -> Dictionary:
-	return RoverDemoSpawn.spawn_on_terrain(session, Vector3(8.0, 0.0, 0.0))
+	return RoverComposer.spawn_on_terrain(session, Vector3(8.0, 0.0, 0.0))
 
 
 func _fail(message: String) -> bool:

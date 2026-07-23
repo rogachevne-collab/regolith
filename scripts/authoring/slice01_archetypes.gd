@@ -7,10 +7,6 @@ const ARCHETYPE_DIR := "res://resources/archetypes/slice01/"
 const AUTHORED_DIR := "res://resources/archetypes/authored/"
 const ROVER_IDS: PackedStringArray = [
 	"rover_frame",
-	"wheel_suspension",
-	"drive_wheel",
-	"suspension_small",
-	"wheel_med",
 	"cockpit",
 	"control_terminal",
 	"power_battery_small",
@@ -82,6 +78,25 @@ static func authored_ids() -> PackedStringArray:
 		ids.append(name.get_basename())
 	ids.sort()
 	return ids
+
+
+## Пара «подвеска + колесо», испечённая визардом. Пусто, если в AUTHORED_DIR
+## нет хотя бы одной из них. При нескольких берётся первая по алфавиту —
+## порядок детерминированный, а точный выбор задаётся id в RoverIntent.
+static func authored_wheel_pair() -> Dictionary:
+	var wheel_id := ""
+	var suspension_id := ""
+	for archetype_id: String in authored_ids():
+		var archetype: ElementArchetype = load_required(archetype_id)
+		if archetype == null:
+			continue
+		if wheel_id.is_empty() and archetype.is_wheel():
+			wheel_id = archetype_id
+		if suspension_id.is_empty() and archetype.is_suspension():
+			suspension_id = archetype_id
+	if wheel_id.is_empty() or suspension_id.is_empty():
+		return {}
+	return {"wheel": wheel_id, "suspension": suspension_id}
 
 
 static func load_all_required() -> Array[ElementArchetype]:
@@ -235,20 +250,26 @@ static func rover_frame() -> ElementArchetype:
 	return load_required("rover_frame")
 
 
-static func wheel_suspension() -> ElementArchetype:
-	return load_required("wheel_suspension")
-
-
-static func drive_wheel() -> ElementArchetype:
-	return load_required("drive_wheel")
-
-
-static func suspension_small() -> ElementArchetype:
-	return load_required("suspension_small")
-
-
-static func wheel_med() -> ElementArchetype:
-	return load_required("wheel_med")
+## Просвет под днищем ровера: ход подвески + радиус колеса той пары, которую
+## реально ставит композер. Пары нет — просвета не требуем, спавн просто сядет
+## на грунт.
+static func rover_wheel_clearance_m() -> float:
+	var pair := authored_wheel_pair()
+	if pair.is_empty():
+		return 0.0
+	var suspension := load_required(str(pair["suspension"]))
+	var wheel := load_required(str(pair["wheel"]))
+	if (
+		suspension == null
+		or wheel == null
+		or suspension.suspension_definition == null
+		or wheel.wheel_definition == null
+	):
+		return 0.0
+	return (
+		suspension.suspension_definition.suspension_travel_m
+		+ wheel.wheel_definition.radius_m
+	)
 
 
 static func cockpit() -> ElementArchetype:

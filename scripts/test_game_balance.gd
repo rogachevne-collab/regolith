@@ -62,7 +62,6 @@ func _run() -> PackedStringArray:
 		"piston_base",
 		"rotor_base",
 		"hinge_base",
-		"drive_wheel",
 		"stationary_drill",
 	]:
 		if not GameBalance.has_element(archetype_id):

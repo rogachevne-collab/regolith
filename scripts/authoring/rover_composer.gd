@@ -32,6 +32,13 @@ static func _compose_batched(
 ) -> Dictionary:
 	for archetype: ElementArchetype in Slice01Archetypes.load_rover_archetypes():
 		world.get_archetype_registry().register(archetype)
+	# Пара из интента может быть испечённой визардом — её в ROVER_IDS нет.
+	for archetype: ElementArchetype in [
+		intent.suspension_archetype(),
+		intent.wheel_archetype(),
+	]:
+		if archetype != null:
+			world.get_archetype_registry().register(archetype)
 	var helper := AssemblyBuildHelper.new(world, store_id)
 	helper.ensure_materials(800.0)
 	if not helper.spawn_anchor(Slice01Archetypes.rover_frame(), grid_frame):
@@ -121,8 +128,6 @@ static func spawn_on_terrain(
 		session.visuals.rebuild_assembly(assembly_id)
 	if session.piston_visuals != null:
 		session.piston_visuals.rebuild_assembly(assembly_id)
-	if session.wheel_visuals != null:
-		session.wheel_visuals.rebuild_assembly(assembly_id)
 	result["spawn_transform"] = assembly_transform
 	return result
 
@@ -167,6 +172,11 @@ static func _place_chassis(helper: AssemblyBuildHelper, intent: RoverIntent) -> 
 
 
 static func _place_wheels(helper: AssemblyBuildHelper, intent: RoverIntent) -> bool:
+	var suspension := intent.suspension_archetype()
+	var wheel := intent.wheel_archetype()
+	if suspension == null or wheel == null:
+		helper.last_error = "unknown_wheel_archetypes"
+		return false
 	var width := intent.width_cells()
 	var axles := intent.axle_z_cells()
 	var axle_index := 0
@@ -176,21 +186,33 @@ static func _place_wheels(helper: AssemblyBuildHelper, intent: RoverIntent) -> b
 			var x := -1 if side < 0 else width
 			var face := Vector3i.RIGHT if side < 0 else Vector3i.LEFT
 			var key := "%s_%d" % ["L" if side < 0 else "R", axle_index]
-			var ori := AssemblyBuildHelper.orientation_with_local_face(
-				Vector3i.RIGHT,
-				face
+			# Крепимся к БОРТОВОЙ клетке шасси наружу — ровно так же, как игрок
+			# наводится на её грань. Клетку самой стойки не выбираем: её считает
+			# тот же снап, что и в превью.
+			var chassis_cell := Vector3i(x, 0, z) + face
+			var plan := _plan_wheel_pair(
+				suspension,
+				wheel,
+				chassis_cell,
+				-face
 			)
+			if plan.is_empty():
+				helper.last_error = "no_wheel_pair_pose:%s+%s" % [
+					suspension.archetype_id,
+					wheel.archetype_id,
+				]
+				return false
 			if not helper.place(
-				Slice01Archetypes.wheel_suspension(),
-				Vector3i(x, 0, z),
-				ori,
+				suspension,
+				plan["suspension_origin"],
+				int(plan["suspension_orientation"]),
 				"suspension_%s" % key
 			):
 				return false
 			if not helper.place(
-				Slice01Archetypes.drive_wheel(),
-				Vector3i(x, -1, z),
-				0,
+				wheel,
+				plan["wheel_origin"],
+				int(plan["wheel_orientation"]),
 				"wheel_%s" % key
 			):
 				return false
@@ -201,6 +223,123 @@ static func _place_wheels(helper: AssemblyBuildHelper, intent: RoverIntent) -> b
 			}
 		axle_index += 1
 	return true
+
+
+## Куда и как повёрнутыми встают стойка и колесо. Ничего не зашито: берём
+## площадки самих деталей — «сюда крепится рама», «сюда встаёт колесо», «этой
+## гранью колесо садится на стойку» — и считаем позы из них. Стоковая пара
+## получается ровно там же, где стояла раньше, а испечённая визардом деталь с
+## боковым гнездом встаёт как ей положено, а не «на клетку ниже».
+##
+## `chassis_cell` — клетка шасси, к грани которой крепимся; `outward` — наружу
+## от шасси. Пусто, если для такой пары позы не существует.
+static func _plan_wheel_pair(
+	suspension: ElementArchetype,
+	wheel: ElementArchetype,
+	chassis_cell: Vector3i,
+	outward: Vector3i
+) -> Dictionary:
+	var frame_pad := _pad_with_tag(suspension, "")
+	var socket_pad := _pad_with_tag(suspension, "wheel_socket")
+	var plug_pad := _pad_with_tag(wheel, "wheel_plug")
+	if frame_pad == null or socket_pad == null or plug_pad == null:
+		return {}
+
+	# Стойку разворачиваем так, чтобы её крепление смотрело на шасси, а ход
+	# оставался вертикальным: одного условия мало, у него четыре решения.
+	var suspension_orientation := _orientation_for(
+		OrientationUtil.face_to_vector(frame_pad.local_face),
+		-outward,
+		_authored_up_axis(suspension),
+		Vector3i.UP
+	)
+	if suspension_orientation < 0:
+		return {}
+	# Клетку считает тот же снап, что и превью в игре: точка крепления
+	# садится по центру грани, а не «деталь углом к клетке». Для точечных
+	# площадок (визард) разница ровно в полклетки по высоте.
+	var suspension_origin := GridPoseUtil.snap_origin_for_target_cell(
+		suspension,
+		chassis_cell,
+		outward,
+		suspension_orientation
+	)
+	var socket_direction := OrientationUtil.rotate_direction(
+		OrientationUtil.face_to_vector(socket_pad.local_face),
+		suspension_orientation
+	)
+	var socket_cell := (
+		suspension_origin
+		+ OrientationUtil.rotate_cell(socket_pad.local_cell, suspension_orientation)
+	)
+
+	# Колесо садится на гнездо своей площадкой, а ось вращения смотрит вдоль
+	# ровера. Ось вперёд/назад равнозначна — за направление отвечает реверс.
+	var forward_local := Vector3i.FORWARD
+	if wheel.wheel_definition != null:
+		forward_local = OrientationUtil.face_to_vector(
+			wheel.wheel_definition.forward_axis_face
+		)
+	var wheel_orientation := -1
+	for drive_direction: Vector3i in [Vector3i.FORWARD, Vector3i.BACK]:
+		wheel_orientation = _orientation_for(
+			OrientationUtil.face_to_vector(plug_pad.local_face),
+			-socket_direction,
+			forward_local,
+			drive_direction
+		)
+		if wheel_orientation >= 0:
+			break
+	if wheel_orientation < 0:
+		return {}
+	return {
+		"suspension_origin": suspension_origin,
+		"suspension_orientation": suspension_orientation,
+		"wheel_origin": GridPoseUtil.snap_origin_for_target_cell(
+			wheel,
+			socket_cell,
+			socket_direction,
+			wheel_orientation
+		),
+		"wheel_orientation": wheel_orientation,
+	}
+
+
+## Ориентация, разворачивающая ОБА локальных направления в мировые, или -1.
+## Своя, а не AssemblyBuildHelper.orientation_with_local_faces: та молча
+## возвращает 0, когда решения нет, и деталь встаёт куда попало.
+static func _orientation_for(
+	local_a: Vector3i,
+	world_a: Vector3i,
+	local_b: Vector3i,
+	world_b: Vector3i
+) -> int:
+	for index: int in range(OrientationUtil.ORIENTATION_COUNT):
+		if OrientationUtil.rotate_direction(local_a, index) != world_a:
+			continue
+		if OrientationUtil.rotate_direction(local_b, index) == world_b:
+			return index
+	return -1
+
+
+## Ось «вверх» детали в её собственных координатах: деталь авторили в позе
+## default_orientation_index, значит вверх — то, что этот поворот делает верхом.
+static func _authored_up_axis(archetype: ElementArchetype) -> Vector3i:
+	var basis := OrientationUtil.orientation_basis(
+		archetype.default_orientation_index
+	)
+	var axis: Vector3 = basis.inverse() * Vector3.UP
+	return Vector3i(roundi(axis.x), roundi(axis.y), roundi(axis.z))
+
+
+static func _pad_with_tag(
+	archetype: ElementArchetype,
+	socket_tag: String
+) -> StructuralMountPad:
+	for pad: StructuralMountPad in archetype.structural_mount_pads:
+		if pad != null and pad.socket_tag == socket_tag:
+			return pad
+	return null
 
 
 static func _place_modules(helper: AssemblyBuildHelper, intent: RoverIntent) -> bool:

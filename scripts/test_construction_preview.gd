@@ -1642,9 +1642,6 @@ func _new_gateway_fixture() -> Dictionary:
 	var piston_visuals := PistonVisualProjection.new()
 	piston_visuals.name = "PistonVisualProjection"
 	session.add_child(piston_visuals)
-	var wheel_visuals := WheelVisualProjection.new()
-	wheel_visuals.name = "WheelVisualProjection"
-	session.add_child(wheel_visuals)
 	var impact := ImpactResolverService.new()
 	impact.name = "ImpactResolverService"
 	session.add_child(impact)

@@ -17,6 +17,15 @@ var height: String = "normal"
 var cockpit: String = "front"
 ## rear | side
 var power: String = "rear"
+## Какую пару «подвеска + колесо» ставить. Дефолт — детали, испечённые
+## визардом: сеточных колёс без точных точек крепления больше нет.
+## Геометрию композер выводит из самих архетипов, а не из этих id.
+var suspension_archetype_id: String = ""
+var wheel_archetype_id: String = ""
+
+
+func _init() -> void:
+	use_authored_wheels()
 
 
 static func defaults() -> RoverIntent:
@@ -50,6 +59,26 @@ static func from_phrase(text: String) -> RoverIntent:
 	return intent
 
 
+## Поставить пару, испечённую визардом. Пары нет — id остаются пустыми и
+## unsupported_reason() честно скажет «bad_wheel_archetype», вместо того чтобы
+## молча собрать ровер без колёс.
+func use_authored_wheels() -> bool:
+	var pair := Slice01Archetypes.authored_wheel_pair()
+	if pair.is_empty():
+		return false
+	suspension_archetype_id = str(pair["suspension"])
+	wheel_archetype_id = str(pair["wheel"])
+	return true
+
+
+func suspension_archetype() -> ElementArchetype:
+	return Slice01Archetypes.load_required(suspension_archetype_id)
+
+
+func wheel_archetype() -> ElementArchetype:
+	return Slice01Archetypes.load_required(wheel_archetype_id)
+
+
 func unsupported_reason() -> String:
 	if wheel_count not in SUPPORTED_WHEEL_COUNTS:
 		return "unsupported_wheel_count"
@@ -63,6 +92,12 @@ func unsupported_reason() -> String:
 		return "bad_cockpit"
 	if power not in ["rear", "side"]:
 		return "bad_power"
+	var suspension := suspension_archetype()
+	if suspension == null or not suspension.is_suspension():
+		return "bad_suspension_archetype"
+	var wheel := wheel_archetype()
+	if wheel == null or not wheel.is_wheel():
+		return "bad_wheel_archetype"
 	return ""
 
 
@@ -127,8 +162,10 @@ func width_cells() -> int:
 	return base
 
 
-static func _wheel_drive_draw_w() -> float:
-	var wheel := Slice01Archetypes.drive_wheel()
+## Считаем по ТОМУ колесу, которое поставим: у авторского аппетит свой, и
+## батарей под него нужно столько же своих.
+func _wheel_drive_draw_w() -> float:
+	var wheel := wheel_archetype()
 	if wheel != null and wheel.wheel_definition != null:
 		return maxf(wheel.wheel_definition.power_draw_w, 0.0)
 	return 300.0
@@ -183,6 +220,8 @@ func to_dict() -> Dictionary:
 		"height": height,
 		"cockpit": cockpit,
 		"power": power,
+		"suspension_archetype_id": suspension_archetype_id,
+		"wheel_archetype_id": wheel_archetype_id,
 	}
 
 
@@ -196,6 +235,12 @@ static func from_dict(data: Dictionary) -> RoverIntent:
 	intent.height = str(data.get("height", "normal"))
 	intent.cockpit = str(data.get("cockpit", "front"))
 	intent.power = str(data.get("power", "rear"))
+	intent.suspension_archetype_id = str(
+		data.get("suspension_archetype_id", intent.suspension_archetype_id)
+	)
+	intent.wheel_archetype_id = str(
+		data.get("wheel_archetype_id", intent.wheel_archetype_id)
+	)
 	return intent
 
 

@@ -28,8 +28,6 @@ static func spawn_at_transform(
 		session.visuals.rebuild_assembly(assembly_id)
 	if session.piston_visuals != null:
 		session.piston_visuals.rebuild_assembly(assembly_id)
-	if session.wheel_visuals != null:
-		session.wheel_visuals.rebuild_assembly(assembly_id)
 	return result
 
 
@@ -143,10 +141,9 @@ static func wake_flight_body(
 			body = session.projection.get_physics_body(assembly_id)
 	if body is RigidBody3D:
 		var rigid := body as RigidBody3D
-		rigid.freeze = false
-		rigid.sleeping = false
 		rigid.linear_velocity = Vector3.ZERO
 		rigid.angular_velocity = Vector3.ZERO
+		session.projection.wake_assembly_bodies(assembly_id)
 
 
 static func spawn_on_terrain(

@@ -17,6 +17,7 @@ func _run_tests() -> void:
 		_test_compose_six_long,
 		_test_compose_twelve_sausage,
 		_test_compose_short_wide,
+		_test_compose_authored_pair,
 		_test_unsupported_wheel_count,
 		_test_bad_com_fixture,
 	]
@@ -197,6 +198,43 @@ func _test_compose_short_wide() -> bool:
 	return true
 
 
+## Испечённая визардом пара собирается тем же композером, что и стоковая.
+## Её геометрия другая — гнездо колеса смотрит вбок, а не вниз, и футпринт
+## колеса смещён от начала детали, — поэтому зашитые клетки тут не работают.
+## Пары в authored нет (у другого разработчика) — тест молча пропускается.
+func _test_compose_authored_pair() -> bool:
+	var pair := Slice01Archetypes.authored_wheel_pair()
+	if pair.is_empty():
+		print("ROVER-COMPOSE: authored пары нет — тест пропущен")
+		return true
+	var world := _boot_world()
+	var intent := RoverIntent.defaults()
+	if not intent.use_authored_wheels():
+		world.free()
+		return _fail("authored pair found but intent refused it")
+	var result := RoverComposer.compose(world, intent)
+	if not bool(result.get("ok", false)):
+		var error := str(result.get("error", ""))
+		var failures: Variant = result.get("failures", [])
+		world.free()
+		return _fail("authored rover compose failed: %s %s" % [error, failures])
+	var assembly_id := int(result.get("assembly_id", 0))
+	var complete := 0
+	for wheel_pair: Dictionary in WheelSimulationService.discover_pairs(
+		world,
+		assembly_id
+	):
+		if WheelSimulationService.is_complete_pair(wheel_pair):
+			complete += 1
+	world.free()
+	if complete != intent.wheel_count:
+		return _fail(
+			"authored rover has %d working wheel pairs, expected %d"
+			% [complete, intent.wheel_count]
+		)
+	return true
+
+
 func _test_unsupported_wheel_count() -> bool:
 	var world := _boot_world()
 	var intent := RoverIntent.from_dict({"wheel_count": 5})
@@ -228,24 +266,33 @@ func _test_bad_com_fixture() -> bool:
 		if not helper.place(Slice01Archetypes.rover_frame(), cell):
 			world.free()
 			return _fail("bad com frame %s: %s" % [cell, helper.last_error])
+	var pair_intent := RoverIntent.defaults()
 	for z: int in [0, 3]:
 		for side: int in [-1, 1]:
 			var x := -1 if side < 0 else 3
 			var face := Vector3i.RIGHT if side < 0 else Vector3i.LEFT
-			var ori := AssemblyBuildHelper.orientation_with_local_face(
-				Vector3i.RIGHT,
-				face
+			# Позу пары считает тот же планировщик, что и композер: у точной
+			# детали гнездо смотрит вбок и зашитые клетки для неё не работают.
+			var plan := RoverComposer._plan_wheel_pair(
+				pair_intent.suspension_archetype(),
+				pair_intent.wheel_archetype(),
+				Vector3i(x, 0, z) + face,
+				-face
 			)
+			if plan.is_empty():
+				world.free()
+				return _fail("bad com wheel pair pose")
 			if not helper.place(
-				Slice01Archetypes.wheel_suspension(),
-				Vector3i(x, 0, z),
-				ori
+				pair_intent.suspension_archetype(),
+				plan["suspension_origin"],
+				int(plan["suspension_orientation"])
 			):
 				world.free()
 				return _fail("bad com suspension: %s" % helper.last_error)
 			if not helper.place(
-				Slice01Archetypes.drive_wheel(),
-				Vector3i(x, -1, z)
+				pair_intent.wheel_archetype(),
+				plan["wheel_origin"],
+				int(plan["wheel_orientation"])
 			):
 				world.free()
 				return _fail("bad com wheel: %s" % helper.last_error)

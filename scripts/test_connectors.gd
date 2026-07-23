@@ -254,7 +254,7 @@ func _test_wheel_anchor_uses_exact_point() -> bool:
 	element.orientation_index = 5
 	element.archetype_id = archetype.archetype_id
 	element.bind_archetype(archetype)
-	var anchor := WheelProjectionUtil.mount_pad_anchor_assembly_local(
+	var anchor := WheelBodyProjectionUtil.mount_pad_anchor_assembly_local(
 		element,
 		"wheel_socket"
 	)
