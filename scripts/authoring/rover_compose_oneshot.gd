@@ -33,6 +33,10 @@ func _run() -> void:
 	print("ROVER-COMPOSE-ONESHOT phrase=%s" % phrase)
 	print("ROVER-COMPOSE-ONESHOT intent=%s" % intent.to_dict())
 	if bool(result.get("ok", false)):
+		var assembly_id := int(result.get("assembly_id", 0))
+		RoverLoadReport.print_lines(
+			RoverLoadReport.analyze(world, assembly_id, intent)
+		)
 		print(
 			"ROVER-COMPOSE-ONESHOT: PASS assembly_id=%d wheels=%s"
 			% [

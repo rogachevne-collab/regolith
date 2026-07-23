@@ -20,6 +20,7 @@ func _run_tests() -> void:
 		_test_compose_authored_pair,
 		_test_unsupported_wheel_count,
 		_test_bad_com_fixture,
+		_test_load_margin_long_vs_short,
 	]
 	for test: Callable in tests:
 		if not bool(test.call()):
@@ -353,4 +354,55 @@ func _test_bad_com_fixture() -> bool:
 		and joined.find("tipping_risk") < 0
 	):
 		return _fail("expected com/tipping fail, got %s com=%s" % [failures, com])
+	return true
+
+
+func _compose_load_report(intent: RoverIntent) -> Dictionary:
+	var world := _boot_world()
+	var result := RoverComposer.compose(world, intent)
+	if not bool(result.get("ok", false)):
+		world.free()
+		return {"ok": false, "error": result.get("error", "")}
+	var report := RoverLoadReport.analyze(
+		world,
+		int(result["assembly_id"]),
+		intent
+	)
+	world.free()
+	return report
+
+
+func _test_load_margin_long_vs_short() -> bool:
+	var short_report := _compose_load_report(RoverIntent.defaults())
+	if not bool(short_report.get("ok", false)):
+		return _fail("short load report: %s" % short_report.get("error", ""))
+	var long_report := _compose_load_report(
+		RoverIntent.from_phrase(
+			"колбаса низкая на 6 колёсах, кокпит в центре, питание сбоку"
+		)
+	)
+	if not bool(long_report.get("ok", false)):
+		return _fail("long load report: %s" % long_report.get("error", ""))
+	var long_accel: Dictionary = long_report.get("accel_05g", {})
+	var long_brake: Dictionary = long_report.get("brake_05g", {})
+	if bool(long_accel.get("wheelie_risk", false)):
+		return _fail("long center rover wheelies at 0.5g accel oracle")
+	if bool(long_brake.get("nose_dive_risk", false)):
+		return _fail("long center rover nose-dives at 0.5g brake oracle")
+	var short_accel: Dictionary = short_report.get("accel_05g", {})
+	var short_brake: Dictionary = short_report.get("brake_05g", {})
+	var long_front_brake := float(long_brake.get("front_load_n", 0.0))
+	var short_front_brake := float(short_brake.get("front_load_n", 0.0))
+	if long_front_brake <= short_front_brake:
+		return _fail(
+			"long center should carry more front load under 0.5g brake (%.0f vs %.0f N)"
+			% [long_front_brake, short_front_brake]
+		)
+	var long_front_accel := float(long_accel.get("front_load_n", 0.0))
+	var short_front_accel := float(short_accel.get("front_load_n", 0.0))
+	if long_front_accel <= short_front_accel:
+		return _fail(
+			"long center should retain more front load under 0.5g accel (%.0f vs %.0f N)"
+			% [long_front_accel, short_front_accel]
+		)
 	return true

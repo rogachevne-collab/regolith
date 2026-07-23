@@ -66,6 +66,11 @@ battery_discharge_w)` из актуальных `drive_wheel.power_draw_w` и п
 Декор (всегда): бамперы/юбки `frame_basalt` + короткая мачта `frame`/`cargo_pipe`
 на свободной колонке — без новых archetype types.
 
+**Load oracle:** после compose смотри `ROVER-LOAD-*` из
+`res://scenes/compose_rover_oneshot.tscn` или overlay в
+`res://scenes/demo_rover_load.tscn` (`RoverLoadReport`: mass/CoM, static axle
+loads, 0.5g/1.0g wheelie/nose-dive flags).
+
 ## Поведение агента
 
 1. Распарси фразу → `RoverIntent` (не спрашивай юзера).

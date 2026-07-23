@@ -406,6 +406,12 @@ SuspensionInstanceState {  # ключ: element_id подвески
   суммарную несущую способность, а drive torque и electric demand растут
   линейно с числом powered wheels; скрытого деления на «стандартные 4 колеса»
   нет.
+- **composer load oracle** (`RoverLoadReport`): квазистатика по
+  `assembly_dry_mass` / `assembly_center_of_mass_local` и осям подвесок —
+  разложение веса по осям, `tip_ratio`, запас на клевок/нырок при
+  0.5g/1.0g лунного ускорения (`wheelie_risk` / `nose_dive_risk`). Не заменяет
+  Jolt; headless: `compose_rover_oneshot` печатает `ROVER-LOAD-*`, визуально:
+  `scenes/demo_rover_load.tscn`.
 
 ## Управление и кокпит (ControlSeat)
 
