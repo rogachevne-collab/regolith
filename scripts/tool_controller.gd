@@ -98,6 +98,7 @@ const CONSTRUCTION_ARCHETYPES: PackedStringArray = [
 	"thruster",
 	"gyro",
 	"landing_leg",
+	"o2_module",
 ]
 
 static var _construction_ids_cache: PackedStringArray = PackedStringArray()
@@ -180,6 +181,7 @@ const TOOLBAR_PAGES: Array = [
 	[
 		{"type": &"block", "archetype_id": "hinge_base"},
 		{"type": &"block", "archetype_id": "piston_base_large"},
+		{"type": &"block", "archetype_id": "o2_module"},
 	],
 	[
 		{"type": &"block", "archetype_id": "thruster"},
@@ -588,7 +590,7 @@ func _emit_command_for_action(
 			if hit.target_kind == InteractionHit.KIND_ELECTRIC_CABLE:
 				command_kind = &"disconnect_network"
 				parameters = {
-					"link_id": int(hit.metadata.get("electric_link_id", 0)),
+					"link_id": hit.electric_link_id,
 				}
 			else:
 				command_kind = &"damage_element"
@@ -1052,7 +1054,7 @@ func _hit_accepts_action(
 func _resolve_welder_mode(hit: InteractionHit) -> StringName:
 	if hit == null or hit.target_kind != InteractionHit.KIND_SIMULATION_ELEMENT:
 		return &"none"
-	if StringName(hit.metadata.get("status_reason", &"element_incomplete")) == &"ok":
+	if StringName(_aim_keys(hit).get("status_reason", &"element_incomplete")) == &"ok":
 		return &"none"
 	return &"weld"
 
@@ -1064,7 +1066,14 @@ func _build_action_hit() -> InteractionHit:
 
 
 func _can_place_block() -> bool:
-	return _preview != null and _preview.has_resolved_placement()
+	if _preview != null and _preview.has_resolved_placement():
+		return true
+	# Legacy flat yard (no SimulationSession): snap blocks onto static body hits
+	# without a construction preview plan.
+	if _gateway != null and _gateway.get_world() == null and _query != null:
+		var hit := _query.current_hit
+		return hit.valid and hit.target_kind == InteractionHit.KIND_BODY
+	return false
 
 
 func _resolved_placement_hit() -> InteractionHit:
@@ -1080,10 +1089,12 @@ func _live_target_matches_lock(
 	if active_tool == &"build" and _construction_mode == &"place":
 		return true
 	var live := _query.current_hit
+	if not live.valid or live.distance > float(profile["max_range"]):
+		return false
+	if _tracks_live_target_while_holding(_action):
+		return true
 	return (
-		live.valid
-		and live.distance <= float(profile["max_range"])
-		and live.target_kind == _locked_hit.target_kind
+		live.target_kind == _locked_hit.target_kind
 		and live.target_id == _locked_hit.target_id
 	)
 
@@ -1154,7 +1165,7 @@ func _handle_connect_click(hit: InteractionHit) -> void:
 func _rope_target_element_id(hit: InteractionHit) -> int:
 	if hit == null or hit.target_kind != InteractionHit.KIND_SIMULATION_ELEMENT:
 		return 0
-	return maxi(int(hit.metadata.get("element_id", 0)), 0)
+	return maxi(hit.element_id, 0)
 
 
 func _localize_rope_point(element_id: int, world_point: Vector3) -> Vector3:
@@ -1246,6 +1257,12 @@ func _simulation_world() -> SimulationWorld:
 	return session.world
 
 
+func _aim_keys(hit: InteractionHit) -> Dictionary:
+	if hit == null:
+		return {}
+	return hit.card_keys(_simulation_world())
+
+
 ## The block the pending rope starts on, 0 when it starts on terrain (or when
 ## no rope is being pulled). Presentation uses it to highlight that block.
 func connect_pending_element_id() -> int:
@@ -1266,8 +1283,8 @@ func selected_recipe_for_element(element_id: int, archetype_id: String) -> Strin
 func next_recipe_for_target(hit: InteractionHit) -> String:
 	if not _is_recipe_machine_hit(hit):
 		return ""
-	var archetype_id := str(hit.metadata.get("archetype_id", ""))
-	var element_id := int(hit.metadata.get("element_id", 0))
+	var archetype_id := str(_aim_keys(hit).get("archetype_id", ""))
+	var element_id := hit.element_id
 	var recipe_ids := RecipeCatalog.recipe_ids_for_machine(archetype_id)
 	if recipe_ids.is_empty():
 		return ""
@@ -1280,7 +1297,7 @@ func recipe_ids_for_target(hit: InteractionHit) -> PackedStringArray:
 	if not _is_recipe_machine_hit(hit):
 		return PackedStringArray()
 	return RecipeCatalog.recipe_ids_for_machine(
-		str(hit.metadata.get("archetype_id", ""))
+		str(_aim_keys(hit).get("archetype_id", ""))
 	)
 
 
@@ -1300,8 +1317,8 @@ func _ensure_recipe_cursor(element_id: int, archetype_id: String) -> void:
 func _cycle_target_recipe(hit: InteractionHit, delta: int) -> bool:
 	if not _is_recipe_machine_hit(hit) or delta == 0:
 		return false
-	var archetype_id := str(hit.metadata.get("archetype_id", ""))
-	var element_id := int(hit.metadata.get("element_id", 0))
+	var archetype_id := str(_aim_keys(hit).get("archetype_id", ""))
+	var element_id := hit.element_id
 	var recipe_ids := RecipeCatalog.recipe_ids_for_machine(archetype_id)
 	if recipe_ids.is_empty():
 		return false
@@ -1323,7 +1340,7 @@ func _is_recipe_machine_hit(hit: InteractionHit) -> bool:
 		or hit.distance > 4.0
 	):
 		return false
-	return str(hit.metadata.get("archetype_id", "")) in ["processor", "fabricator"]
+	return str(_aim_keys(hit).get("archetype_id", "")) in ["processor", "fabricator"]
 
 
 func _try_emit_context_interaction(hit: InteractionHit) -> bool:
@@ -1395,7 +1412,7 @@ func _try_collect_world_loot(hit: InteractionHit) -> bool:
 		or hit.distance > 4.0
 	):
 		return false
-	var pile_id := int(hit.metadata.get("loot_pile_id", 0))
+	var pile_id := hit.loot_pile_id
 	if pile_id <= 0:
 		return false
 	command_requested.emit({
@@ -1418,7 +1435,7 @@ func _try_enqueue_target_recipe(hit: InteractionHit) -> bool:
 	var recipe_id := next_recipe_for_target(hit)
 	if recipe_id.is_empty():
 		return false
-	var element_id := int(hit.metadata.get("element_id", 0))
+	var element_id := hit.element_id
 	command_requested.emit({
 		"kind": &"enqueue_recipe",
 		"source": get_parent(),
@@ -1434,7 +1451,7 @@ func _try_enqueue_target_recipe(hit: InteractionHit) -> bool:
 func _try_dequeue_target_recipe(hit: InteractionHit) -> bool:
 	if not _is_recipe_machine_hit(hit):
 		return false
-	var element_id := int(hit.metadata.get("element_id", 0))
+	var element_id := hit.element_id
 	command_requested.emit({
 		"kind": &"dequeue_recipe",
 		"source": get_parent(),
@@ -1454,37 +1471,35 @@ func _is_actuator_target_hit(hit: InteractionHit) -> bool:
 		or hit.distance > 4.5
 	):
 		return false
+	var keys := _aim_keys(hit)
 	return (
-		hit.metadata.has("piston_joint_id")
-		or hit.metadata.has("rotor_joint_id")
-		or hit.metadata.has("hinge_joint_id")
+		keys.has("piston_joint_id")
+		or keys.has("rotor_joint_id")
+		or keys.has("hinge_joint_id")
 	)
 
 
 func _actuator_hit_joint_id(hit: InteractionHit) -> int:
-	var joint_id := int(hit.metadata.get("piston_joint_id", 0))
-	if joint_id > 0:
-		return joint_id
-	joint_id = int(hit.metadata.get("rotor_joint_id", 0))
-	if joint_id > 0:
-		return joint_id
-	return int(hit.metadata.get("hinge_joint_id", 0))
+	var keys := _aim_keys(hit)
+	return HudActuatorTuneUtil.joint_id(keys)
 
 
 func _actuator_hit_forward_velocity(hit: InteractionHit) -> float:
-	if hit.metadata.has("rotor_joint_id"):
-		return float(hit.metadata.get("rotor_forward_velocity_rad_s", 0.5))
-	if hit.metadata.has("hinge_joint_id"):
-		return float(hit.metadata.get("hinge_forward_velocity_rad_s", 0.5))
-	return float(hit.metadata.get("piston_extend_velocity_mps", 0.25))
+	var keys := _aim_keys(hit)
+	if keys.has("rotor_joint_id"):
+		return float(keys.get("rotor_forward_velocity_rad_s", 0.5))
+	if keys.has("hinge_joint_id"):
+		return float(keys.get("hinge_forward_velocity_rad_s", 0.5))
+	return float(keys.get("piston_extend_velocity_mps", 0.25))
 
 
 func _actuator_hit_reverse_velocity(hit: InteractionHit) -> float:
-	if hit.metadata.has("rotor_joint_id"):
-		return float(hit.metadata.get("rotor_reverse_velocity_rad_s", 0.5))
-	if hit.metadata.has("hinge_joint_id"):
-		return float(hit.metadata.get("hinge_reverse_velocity_rad_s", 0.5))
-	return float(hit.metadata.get("piston_retract_velocity_mps", 0.25))
+	var keys := _aim_keys(hit)
+	if keys.has("rotor_joint_id"):
+		return float(keys.get("rotor_reverse_velocity_rad_s", 0.5))
+	if keys.has("hinge_joint_id"):
+		return float(keys.get("hinge_reverse_velocity_rad_s", 0.5))
+	return float(keys.get("piston_retract_velocity_mps", 0.25))
 
 
 func _try_actuator_extend(hit: InteractionHit) -> bool:
@@ -1525,14 +1540,15 @@ func _emit_actuator_target(
 	var joint_id := _actuator_hit_joint_id(hit)
 	if joint_id <= 0:
 		return false
+	var keys := _aim_keys(hit)
 	var joint_ids: Array[int] = [joint_id]
 	if (
 		actuator_chain_sync
-		and hit.metadata.has("piston_joint_id")
-		and not hit.metadata.has("rotor_joint_id")
-		and not hit.metadata.has("hinge_joint_id")
+		and keys.has("piston_joint_id")
+		and not keys.has("rotor_joint_id")
+		and not keys.has("hinge_joint_id")
 	):
-		var assembly_id := int(hit.metadata.get("assembly_id", 0))
+		var assembly_id := hit.assembly_id
 		var world := _simulation_world()
 		if world != null and assembly_id > 0:
 			joint_ids = PistonPlacementUtil.piston_joint_ids_in_assembly(
@@ -1562,13 +1578,14 @@ func toggle_actuator_motor(hit: InteractionHit) -> bool:
 	var joint_id := _actuator_hit_joint_id(hit)
 	if joint_id <= 0:
 		return false
+	var keys := _aim_keys(hit)
 	var enabled_now := true
-	if hit.metadata.has("piston_joint_id"):
-		enabled_now = bool(hit.metadata.get("piston_motor_enabled", true))
-	elif hit.metadata.has("rotor_joint_id"):
-		enabled_now = bool(hit.metadata.get("rotor_motor_enabled", true))
-	elif hit.metadata.has("hinge_joint_id"):
-		enabled_now = bool(hit.metadata.get("hinge_motor_enabled", true))
+	if keys.has("piston_joint_id"):
+		enabled_now = bool(keys.get("piston_motor_enabled", true))
+	elif keys.has("rotor_joint_id"):
+		enabled_now = bool(keys.get("rotor_motor_enabled", true))
+	elif keys.has("hinge_joint_id"):
+		enabled_now = bool(keys.get("hinge_motor_enabled", true))
 	return _emit_actuator_target(
 		hit,
 		SimulationMotorState.ControlMode.STOP,

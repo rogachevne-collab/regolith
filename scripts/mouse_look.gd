@@ -13,6 +13,10 @@
 @export var shake_max_forward := 0.016
 @export var shake_max_roll_deg := 0.25
 
+## Look yaw in the local gravity tangent frame (radians). Applied to the body
+## only inside `_physics_process` so physics interpolation stays valid; the
+## camera uses it immediately for FP look.
+var _yaw_rad := 0.0
 var _pitch := 0.0
 var _target: Node3D
 var _last_target_position := Vector3.ZERO
@@ -57,8 +61,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			_flight_look_delta.y += motion.y * sensitivity
 			_pitch = 0.0
 		elif _target != null:
-			var up := GravityField.resolve_up(_target, _target.global_position)
-			_target.rotate(up, deg_to_rad(-motion.x * sensitivity))
+			# Do NOT rotate the interpolated body here — that breaks Godot
+			# physics interpolation and locks the camera to the physics tick.
+			_yaw_rad += deg_to_rad(-motion.x * sensitivity)
 			_pitch = clampf(_pitch - motion.y * sensitivity, min_pitch, max_pitch)
 
 
@@ -71,91 +76,60 @@ func _process(_delta: float) -> void:
 		return
 	if _orbit_mode and not _is_in_vehicle():
 		_set_orbit_mode(false)
-	# Yaw is applied immediately in _unhandled_input; use one transform source
-	# so camera position and heading stay in sync (mixed interpolated/raw
-	# sources caused visible rotation jitter on uneven voxel ground).
-	# In a vehicle the target rides a RigidBody — follow the interpolated
-	# pose so render frames are not locked to the physics tick.
+	# FP: interpolated origin (smooth locomotion) + immediate look yaw/pitch.
+	# Writing body yaw in input used to invalidate interpolation; mixing
+	# interpolated origin with raw body basis caused rotation jitter on
+	# uneven voxel ground — look basis is owned by camera yaw/pitch instead.
 	if _orbit_mode:
 		global_transform = _orbit_camera_transform()
 		return
-	var target_transform := _target_follow_transform()
+	var follow := _follow_origin()
 	if (
 		_last_target_position != Vector3.ZERO
-		and target_transform.origin.distance_to(_last_target_position)
-		> TELEPORT_SNAP_DISTANCE
+		and follow.distance_to(_last_target_position) > TELEPORT_SNAP_DISTANCE
 	):
 		reset_physics_interpolation()
-	_last_target_position = target_transform.origin
-	var target_basis := target_transform.basis.orthonormalized()
-	var camera_xf := _camera_transform(
-		target_transform.origin,
-		target_basis
-	)
+	_last_target_position = follow
+	var camera_xf := _camera_transform(follow)
 	if _shake_hold > 0.001:
 		camera_xf = _apply_camera_shake(camera_xf, _shake_hold)
 	global_transform = camera_xf
 
 
 func view_angles() -> Vector2:
-	if _target == null:
-		return Vector2(_orbit_yaw if _orbit_mode else 0.0, _pitch)
-	var up := GravityField.resolve_up(_target, _target.global_position)
-	var forward := GravityField.project_on_tangent(
-		-_target.global_transform.basis.z,
-		up
-	)
-	var yaw := 0.0
-	if forward.length_squared() > 0.0001:
-		var tangent := GravityField.find_in_tree(_target)
-		var forward_ref := Vector3.FORWARD
-		if tangent != null and tangent.mode == GravityField.Mode.RADIAL:
-			forward_ref = GravityField.project_on_tangent(Vector3.FORWARD, up)
-			if forward_ref.length_squared() <= 0.0001:
-				forward_ref = GravityField.project_on_tangent(Vector3.RIGHT, up)
-		else:
-			forward_ref = Vector3.FORWARD
-		if forward_ref.length_squared() > 0.0001:
-			forward_ref = forward_ref.normalized()
-			forward = forward.normalized()
-			yaw = atan2(
-				forward_ref.cross(forward).dot(up),
-				forward_ref.dot(forward)
-			)
-	return Vector2(yaw, _pitch)
+	return Vector2(_yaw_rad, _pitch)
 
 
 func apply_view_angles(yaw_rad: float, pitch_deg: float) -> void:
-	if _target != null:
-		var up := GravityField.resolve_up(_target, _target.global_position)
-		var gravity_basis := GravityField.find_in_tree(_target)
-		var frame: Basis
-		if gravity_basis != null:
-			frame = gravity_basis.tangent_basis_at(_target.global_position)
-		else:
-			frame = Basis.looking_at(Vector3.FORWARD, Vector3.UP)
-		var yawed := Basis(up, yaw_rad) * frame
-		_target.global_transform.basis = yawed
+	_yaw_rad = yaw_rad
 	_pitch = clampf(pitch_deg, min_pitch, max_pitch)
+	sync_body_yaw()
 	if _target == null:
 		return
 	if _orbit_mode:
 		global_transform = _orbit_camera_transform()
 		reset_physics_interpolation()
 		return
-	var target_transform := _target_follow_transform()
-	_last_target_position = target_transform.origin
-	global_transform = _camera_transform(
-		target_transform.origin,
-		target_transform.basis.orthonormalized()
-	)
+	var follow := _follow_origin()
+	_last_target_position = follow
+	global_transform = _camera_transform(follow)
 	reset_physics_interpolation()
+
+
+## Push look yaw onto the body during the physics tick (gameplay / capsule).
+func sync_body_yaw() -> void:
+	if _target == null:
+		return
+	if _orbit_mode or _is_flight_controls_active():
+		return
+	_target.global_transform.basis = _yaw_basis_at(_target.global_position)
 
 
 func movement_basis() -> Basis:
 	if _target == null:
 		return Basis.IDENTITY
-	return _target_follow_transform().basis.orthonormalized()
+	# Gameplay reads physics-tick pose; yaw state is authoritative for facing.
+	return _yaw_basis_at(_target.global_position)
 
 
 func aim_transform() -> Transform3D:
@@ -164,11 +138,7 @@ func aim_transform() -> Transform3D:
 		return global_transform
 	if _target == null:
 		return global_transform
-	var target_transform := _target_follow_transform()
-	return _camera_transform(
-		target_transform.origin,
-		target_transform.basis.orthonormalized()
-	)
+	return _camera_transform(_follow_origin())
 
 
 func _apply_camera_shake(xf: Transform3D, intensity: float) -> Transform3D:
@@ -189,12 +159,16 @@ func _apply_camera_shake(xf: Transform3D, intensity: float) -> Transform3D:
 
 
 func consume_yaw_delta() -> float:
-	# Yaw is applied immediately in _unhandled_input; kept for callers.
+	# Yaw is owned by `_yaw_rad`; kept for callers.
 	return 0.0
 
 
 func snap_after_teleport() -> void:
 	_snap_to_target()
+
+
+func capture_yaw_from_body() -> void:
+	_capture_yaw_from_body()
 
 
 func set_look_sensitivity(value: float) -> void:
@@ -240,6 +214,8 @@ func _set_orbit_mode(enabled: bool) -> void:
 	_orbit_mode = enabled
 	if _orbit_mode:
 		_init_orbit_from_vehicle()
+	else:
+		_capture_yaw_from_body()
 	reset_physics_interpolation()
 
 
@@ -256,7 +232,7 @@ func _init_orbit_from_vehicle() -> void:
 	)
 	if forward.length_squared() < 0.0001:
 		forward = GravityField.project_on_tangent(
-			-_target_follow_transform().basis.z,
+			-_yaw_basis_at(vehicle.global_position).z,
 			up
 		)
 	if forward.length_squared() < 0.0001:
@@ -293,37 +269,56 @@ func _current_vehicle() -> Node3D:
 func _vehicle_follow_transform() -> Transform3D:
 	var vehicle := _current_vehicle()
 	if vehicle == null:
-		return _target_follow_transform()
+		return _target_physics_transform()
 	if vehicle.is_inside_tree():
 		return vehicle.get_global_transform_interpolated()
 	return vehicle.global_transform
 
 
-func _target_follow_transform() -> Transform3D:
+func _target_physics_transform() -> Transform3D:
 	if _target == null:
 		return Transform3D.IDENTITY
-	if _is_in_vehicle():
-		return _target.get_global_transform_interpolated()
 	return _target.global_transform
 
 
-func _camera_transform(
-	target_position: Vector3,
-	target_basis: Basis
-) -> Transform3D:
-	var look_basis := (
-		target_basis
-		* Basis(Vector3.RIGHT, deg_to_rad(_pitch))
-	)
-	# Tip past ~70°: body-up head offset buries the camera in terrain.
-	# Upright drive keeps body-up so suspension bounce matches look.
+func _follow_origin() -> Vector3:
+	if _target == null:
+		return Vector3.ZERO
+	if _target.is_inside_tree():
+		return _target.get_global_transform_interpolated().origin
+	return _target.global_position
+
+
+func _yaw_basis_at(origin: Vector3) -> Basis:
+	var up := GravityField.resolve_up(_target, origin)
+	var gravity_field := GravityField.find_in_tree(_target)
+	var frame: Basis
+	if gravity_field != null:
+		frame = gravity_field.tangent_basis_at(origin)
+	else:
+		frame = Basis.looking_at(Vector3.FORWARD, Vector3.UP)
+	return (Basis(up, _yaw_rad) * frame).orthonormalized()
+
+
+func _look_basis_at(origin: Vector3) -> Basis:
+	return (
+		_yaw_basis_at(origin) * Basis(Vector3.RIGHT, deg_to_rad(_pitch))
+	).orthonormalized()
+
+
+func _camera_transform(target_position: Vector3) -> Transform3D:
+	var look_basis := _look_basis_at(target_position)
 	var field_up := GravityField.resolve_up(self, target_position)
-	var head_offset := target_basis.y
-	if (
-		_is_in_vehicle()
-		and head_offset.normalized().dot(field_up) < 0.35
-	):
-		head_offset = field_up
+	# Foot: field up for head offset so look yaw is not mixed into the
+	# interpolated body basis (that mix was the old voxel-ground jitter).
+	# Seat: keep body-up when upright so suspension bounce matches look.
+	var head_offset := field_up
+	if _is_in_vehicle() and _target != null and _target.is_inside_tree():
+		var body_up := (
+			_target.get_global_transform_interpolated().basis.y.normalized()
+		)
+		if body_up.dot(field_up) >= 0.35:
+			head_offset = body_up
 	var camera_position := target_position + head_offset * head_height
 	return Transform3D(look_basis, camera_position)
 
@@ -384,17 +379,43 @@ func _spring_orbit_position(pivot: Vector3, desired: Vector3) -> Vector3:
 func _snap_to_target() -> void:
 	if _target == null:
 		return
+	_capture_yaw_from_body()
 	if _orbit_mode:
 		global_transform = _orbit_camera_transform()
 		reset_physics_interpolation()
 		return
-	var target_transform := _target_follow_transform()
-	_last_target_position = target_transform.origin
-	global_transform = _camera_transform(
-		target_transform.origin,
-		target_transform.basis.orthonormalized()
-	)
+	var follow := _follow_origin()
+	_last_target_position = follow
+	global_transform = _camera_transform(follow)
 	reset_physics_interpolation()
+
+
+func _capture_yaw_from_body() -> void:
+	if _target == null:
+		return
+	var up := GravityField.resolve_up(_target, _target.global_position)
+	var forward := GravityField.project_on_tangent(
+		-_target.global_transform.basis.z,
+		up
+	)
+	if forward.length_squared() <= 0.0001:
+		return
+	var tangent := GravityField.find_in_tree(_target)
+	var forward_ref := Vector3.FORWARD
+	if tangent != null and tangent.mode == GravityField.Mode.RADIAL:
+		forward_ref = GravityField.project_on_tangent(Vector3.FORWARD, up)
+		if forward_ref.length_squared() <= 0.0001:
+			forward_ref = GravityField.project_on_tangent(Vector3.RIGHT, up)
+	else:
+		forward_ref = Vector3.FORWARD
+	if forward_ref.length_squared() <= 0.0001:
+		return
+	forward_ref = forward_ref.normalized()
+	forward = forward.normalized()
+	_yaw_rad = atan2(
+		forward_ref.cross(forward).dot(up),
+		forward_ref.dot(forward)
+	)
 
 
 func _load_preferences() -> void:

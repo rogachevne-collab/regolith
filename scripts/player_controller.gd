@@ -116,8 +116,10 @@ func _ready() -> void:
 	if _head != null:
 		_mining_light = _head.get_node_or_null("MiningLight") as SpotLight3D
 	_world_parent = get_parent()
-	## Foot mode: interpolation OFF — yaw/basis mix on voxel ground.
-	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+	## Foot mode: keep interpolation ON so the top-level camera can follow
+	## get_global_transform_interpolated() at display rate (raw physics pose
+	## alone reads as stepped locomotion when FPS > physics tick).
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_ON
 	reset_physics_interpolation()
 	set_physics_process(false)
 
@@ -140,6 +142,8 @@ func enter_vehicle(vehicle: Node3D, seat_position: Vector3) -> void:
 	reparent(vehicle, false)
 	position = seat_position
 	rotation = Vector3.ZERO
+	if _head != null and _head.has_method("capture_yaw_from_body"):
+		_head.call("capture_yaw_from_body")
 	# Seated child of RigidBody must interpolate or the top-level camera
 	# judders at physics rate while the world renders at display rate.
 	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_ON
@@ -158,7 +162,9 @@ func exit_vehicle(world_position: Vector3) -> void:
 	_vehicle_flight_controls = false
 	rotation = Vector3.ZERO
 	velocity = Vector3.ZERO
-	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+	if _head != null and _head.has_method("capture_yaw_from_body"):
+		_head.call("capture_yaw_from_body")
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_ON
 	reset_physics_interpolation()
 	$CollisionShape3D.set_deferred("disabled", false)
 	$Drill.set_physics_process(true)
@@ -194,6 +200,12 @@ func _physics_process(delta: float) -> void:
 
 	if _spawn_locked:
 		return
+
+	# Look yaw is accumulated on the camera in input; apply it here so the
+	# body's physics-interpolation snapshots stay valid (rotate-in-input was
+	# the reason foot interpolation could not smooth locomotion).
+	if _head != null and _head.has_method("sync_body_yaw"):
+		_head.call("sync_body_yaw")
 
 	if (
 		_gameplay_input_enabled

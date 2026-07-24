@@ -328,7 +328,7 @@ func _run_test() -> void:
 		"element_b",
 		{"archetype_id": "frame", "status_reason": &"ok"}
 	)
-	_tools._physics_process(0.06)
+	_tools._physics_process(0.16)
 	await get_tree().process_frame
 	if _completed_commands < 2:
 		_fail("live drill hold expected ticks on swept targets")

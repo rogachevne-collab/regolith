@@ -30,6 +30,7 @@ const REASON_ENDPOINT_NOT_WIREABLE := &"endpoint_not_wireable"
 const REASON_DRIVEN_JOINT_CYCLE := &"driven_joint_cycle"
 const REASON_DRIVEN_JOINT_CHAIN_TOO_LONG := &"driven_joint_chain_too_long"
 const REASON_MOVING_TARGET_NOT_SUPPORTED := &"moving_target_not_supported"
+const REASON_NOT_AUTHORITATIVE := &"not_authoritative"
 
 var status: StringName = STATUS_FAILED
 var reason: StringName = REASON_INVALID_TARGET

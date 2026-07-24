@@ -12,6 +12,8 @@ signal command_completed(command_id: int, result: Dictionary)
 # reseat a first-on-ground block onto the LOWEST terrain point under its whole
 # footprint (plus a hairline embed) so no corner ever floats above the surface.
 const GROUND_SEAT_EMBED := 0.02
+const INTERACTION_RANGE_M := 4.5
+const INTERACTION_SOURCE_MARGIN_M := 1.5
 const _GROUND_SEAT_SAMPLES: Array[Vector2] = [
 	Vector2(0.0, 0.0),
 	Vector2(-0.5, -0.5),
@@ -88,6 +90,9 @@ var actor_uid := PlayerIdentity.local_uid()
 var _rover_seat_player: Node3D
 var _rover_seat_assembly_id := 0
 var _rover_seat_element_id := 0
+## Shared SeatControlState ref for the occupied seat (R9 — no per-tick dup).
+## Updated on enter / configure; cleared on exit. Do not free.
+var _rover_seat_policy: SeatControlState = null
 var _floating_debris_parent: Node3D
 
 
@@ -202,6 +207,8 @@ func _execute(command: Dictionary) -> Dictionary:
 			return _disconnect_network(command, target)
 		&"set_machine_enabled":
 			return _set_machine_enabled(command, target)
+		&"oxygen_refill":
+			return _oxygen_refill(command, target)
 		&"set_element_name":
 			return _set_element_name(command, target)
 		&"enqueue_recipe":
@@ -220,6 +227,8 @@ func _execute(command: Dictionary) -> Dictionary:
 			return _configure_suspension(command, target)
 		&"configure_action_slot":
 			return _configure_action_slot(command, target)
+		&"configure_seat_controls":
+			return _configure_seat_controls(command, target)
 		_:
 			return _result(&"invalid_target")
 
@@ -257,10 +266,7 @@ func _remove_voxel(
 		0.05,
 		4.0
 	)
-	var metadata: Dictionary = target.get("metadata", {})
-	var direction := Vector3(
-		metadata.get("aim_direction", Vector3.FORWARD)
-	).normalized()
+	var direction := InteractionHit.aim_direction_from(target).normalized()
 	var contact_point := Vector3(target["point"])
 	var bite_center := contact_point - direction * (
 		radius - IndustryArchetypeProfile.hand_drill_bite_depth_m()
@@ -999,6 +1005,19 @@ func get_world() -> SimulationWorld:
 	return _session.world
 
 
+func _target_card_keys(target: Dictionary) -> Dictionary:
+	var element_id := InteractionHit.element_id_from(target)
+	if element_id <= 0:
+		return {}
+	var world := get_world()
+	if world == null:
+		return {}
+	var card := world.get_interaction_card(element_id)
+	if card == null:
+		return {}
+	return card.keys
+
+
 ## Suit damage from world events that are not structural commands (meteorites).
 ## Routed through the gateway so presentation never writes the world directly.
 func damage_player_suit(
@@ -1010,6 +1029,58 @@ func damage_player_suit(
 	if world == null or player_id.is_empty():
 		return false
 	return world.apply_suit_damage(player_id, amount, source)
+
+
+## Authoritative hold-interact path. Identity and cadence are server-owned:
+## callers provide only the normal current-hit snapshot and source node.
+func _oxygen_refill(command_data: Dictionary, target: Dictionary) -> Dictionary:
+	if _session == null or actor_uid.is_empty():
+		return _result(&"not_ready")
+	if (
+		StringName(target.get("target_kind", &""))
+		!= InteractionHit.KIND_SIMULATION_ELEMENT
+	):
+		return _result(&"invalid_target")
+	var source := command_data.get("source") as Node3D
+	var point: Vector3 = target.get("point", Vector3(INF, INF, INF))
+	var hit_distance := float(target.get("distance", INF))
+	if (
+		source == null
+		or not is_instance_valid(source)
+		or not point.is_finite()
+		or not is_finite(hit_distance)
+		or hit_distance < 0.0
+		or hit_distance > INTERACTION_RANGE_M
+		or source.global_position.distance_to(point)
+		> INTERACTION_RANGE_M + INTERACTION_SOURCE_MARGIN_M
+	):
+		return _result(&"out_of_range")
+	var module_element_id := InteractionHit.element_id_from(target)
+	var module := _session.world.get_element(module_element_id)
+	if module == null or not IndustryStoreService.is_oxygen_module(module):
+		return _result(&"invalid_target")
+	# Bind the claimed id to the aimed world point as well as the snapshot kind;
+	# a peer cannot pair a nearby hit with a known remote module id.
+	var module_position := _session.world.element_world_transform(
+		module_element_id
+	).origin
+	var footprint_reach := GridMetric.CELL_SIZE_M
+	for cell: Vector3i in module.get_archetype().footprint_cells:
+		footprint_reach = maxf(
+			footprint_reach,
+			Vector3(cell).length() * GridMetric.CELL_SIZE_M
+			+ GridMetric.CELL_SIZE_M
+		)
+	if module_position.distance_to(point) > footprint_reach:
+		return _result(&"invalid_target")
+	var command := OxygenRefillCommand.new()
+	command.player_id = actor_uid
+	command.module_element_id = module_element_id
+	var result := _session.apply_oxygen_refill(command)
+	return _result(
+		StringName(result.get("reason", &"invalid_target")),
+		result
+	)
 
 
 func _place_block(
@@ -1033,27 +1104,31 @@ func _toggle_control_seat(
 	command: Dictionary,
 	target: Dictionary
 ) -> Dictionary:
-	var metadata: Dictionary = target.get("metadata", {})
+	var keys := _target_card_keys(target)
 	# control_terminal несёт роль ControlSeat (нужна для бара), но не садит —
 	# ToolController перехватывает interact для него раньше toggle_control_seat
 	# (CONTROL-ACTIONS-V0 «Хосты бара»). Второй слой защиты: если что-то всё же
 	# дошло сюда, явно отказать, а не пытаться посадить игрока в консоль.
-	if str(metadata.get("archetype_id", "")) == "control_terminal":
+	if str(keys.get("archetype_id", "")) == "control_terminal":
 		return _result(&"invalid_target")
 	if (
 		StringName(target["target_kind"])
 		!= InteractionHit.KIND_CONTROL_SEAT
 	):
 		if (
-			str(metadata.get("archetype_id", "")) == "cockpit"
-			and int(metadata.get("element_id", 0)) > 0
+			str(keys.get("archetype_id", "")) == "cockpit"
+			and InteractionHit.element_id_from(target) > 0
 		):
 			var cockpit_source: Node3D = command.get("source")
 			if cockpit_source == null:
 				return _result(&"not_ready")
 			if _is_rover_seated(cockpit_source):
 				return _exit_rover_seat(cockpit_source)
-			return _enter_rover_seat(cockpit_source, metadata)
+			return _enter_rover_seat(
+				cockpit_source,
+				InteractionHit.element_id_from(target),
+				InteractionHit.assembly_id_from(target)
+			)
 		return _result(&"invalid_target")
 	var seat_source: Node3D = command.get("source")
 	if seat_source == null:
@@ -1061,8 +1136,13 @@ func _toggle_control_seat(
 	if _is_rover_seated(seat_source):
 		return _exit_rover_seat(seat_source)
 	var vehicle: Object = target.get("collider")
-	if metadata.has("element_id"):
-		return _enter_rover_seat(seat_source, metadata)
+	var element_id := InteractionHit.element_id_from(target)
+	if element_id > 0:
+		return _enter_rover_seat(
+			seat_source,
+			element_id,
+			InteractionHit.assembly_id_from(target)
+		)
 	if (
 		vehicle == null
 		or not vehicle.has_method("handle_interact")
@@ -1091,92 +1171,78 @@ func tick_rover_locomotion_input() -> void:
 	if assembly_id <= 0:
 		return
 	var locomotion := _session.world.get_locomotion_controller(assembly_id)
-	# Открытое модальное окно (пульт управления, терминал) забирает ввод: из
-	# меню нельзя уезжать. Просто выйти нельзя — последняя команда газа осталась
-	# бы залипшей и техника продолжила бы ехать, поэтому команды обнуляем.
-	if (
+	# Occupied-seat policy cache — no lowest-seat fallback, no per-tick alloc.
+	var policy := _rover_seat_policy
+	if policy == null:
+		policy = SeatControlState.defaults_ref()
+	# Открытое модальное окно забирает pilot input; zero frame clears continuous
+	# channels while route gates stay on so latched dampeners still apply.
+	var modal_blocks: bool = (
 		_rover_seat_player != null
 		and _rover_seat_player.has_method("is_gameplay_input_enabled")
-		and not _rover_seat_player.call("is_gameplay_input_enabled")
+		and not bool(_rover_seat_player.call("is_gameplay_input_enabled"))
+	)
+	if not modal_blocks:
+		# Latched assembly-wide edges; effective gates decide which consumers apply.
+		if Input.is_action_just_pressed(&"toggle_dampeners"):
+			locomotion.set_dampeners(not locomotion.is_dampeners())
+			_wake_rover_body(assembly_id)
+		# PB toggle is assembly-wide safety — not gated by Control Wheels.
+		if Input.is_action_just_pressed(&"toggle_parking_brake"):
+			_toggle_rover_parking_brake(assembly_id, locomotion)
+	var raw := _collect_seat_raw_input(modal_blocks)
+	var frame := SeatInputRouter.route(
+		raw,
+		policy,
+		locomotion.is_parking_brake()
+	)
+	locomotion.apply_driver_frame(frame)
+	# Parking settle: latched PB holds brake=1 every tick — waking on that
+	# would defeat settle-freeze (ROVER-MODULES-V1). Wake on pilot motion or
+	# service brake / flight / attitude only.
+	if _seat_frame_should_wake(locomotion):
+		_wake_rover_body(assembly_id)
+
+
+func _seat_frame_should_wake(locomotion: AssemblyLocomotionController) -> bool:
+	if locomotion == null:
+		return false
+	if locomotion.has_active_flight_input():
+		return true
+	if (
+		absf(locomotion.drive_command) > 0.001
+		or absf(locomotion.steering_command) > 0.001
 	):
-		locomotion.set_drive_command(0.0)
-		locomotion.set_steering_command(0.0)
-		locomotion.set_translate_command(Vector3.ZERO)
-		locomotion.set_attitude_commands(0.0, 0.0, 0.0)
-		return
-	var is_flight := ThrusterSimulationService.is_flight_assembly(
-		_session.world,
-		assembly_id
+		return true
+	# Service brake (Space), not latched parking brake.
+	return (
+		locomotion.brake_command > 0.001
+		and not locomotion.is_parking_brake()
 	)
-	var is_loco := WheelSimulationService.is_locomotive_assembly(
-		_session.world,
-		assembly_id
+
+
+## Normalize InputMap once per tick. jump and move_up share Space in project.godot.
+func _collect_seat_raw_input(zero_frame: bool) -> Dictionary:
+	if zero_frame:
+		return {"zero_frame": true}
+	var space := maxf(
+		Input.get_action_strength(&"jump"),
+		Input.get_action_strength(&"move_up")
 	)
-	if is_flight and Input.is_action_just_pressed(&"toggle_dampeners"):
-		locomotion.set_dampeners(not locomotion.is_dampeners())
-		_wake_rover_body(assembly_id)
-	if is_loco and Input.is_action_just_pressed(&"toggle_parking_brake"):
-		_toggle_rover_parking_brake(assembly_id, locomotion)
-	if is_loco and locomotion.is_parking_brake() and not is_flight:
-		# Latched Space: same commands every tick, no wheel-tick special cases.
-		locomotion.set_drive_command(0.0)
-		locomotion.set_steering_command(0.0)
-		locomotion.set_brake_command(1.0)
-		locomotion.set_translate_command(Vector3.ZERO)
-		locomotion.set_attitude_commands(0.0, 0.0, 0.0)
-		# НЕ будим тут каждый тик: постоянный wake на стоящем под ручником ровере
-		# сбрасывал settle-счётчик _update_parking_freeze (сборка никогда не
-		# засыпала) и штормил физсервер записями freeze/sleeping на все ~26 тел
-		# 60 раз/с — это и была просадка «сижу в кабине». Разбудит переключение
-		# ручника (_toggle_rover_parking_brake), посадка или копка рядом.
-		return
-	if is_flight:
-		# SE 6DOF: flight consumes WASD/Space/C; wheels idle while thrusters present.
-		locomotion.set_drive_command(0.0)
-		locomotion.set_steering_command(0.0)
-		locomotion.set_brake_command(
-			1.0 if is_loco and locomotion.is_parking_brake() else 0.0
-		)
-		# Seat forward is body −Z (seated player keeps rotation ZERO and the
-		# camera looks down −Z), so move_forward commands −z translate.
-		var translate := Vector3(
-			Input.get_action_strength(&"move_right")
-			- Input.get_action_strength(&"move_left"),
-			Input.get_action_strength(&"move_up")
-			- Input.get_action_strength(&"move_down"),
-			Input.get_action_strength(&"move_back")
-			- Input.get_action_strength(&"move_forward")
-		)
-		locomotion.set_translate_command(translate)
-		var look := _consume_flight_look_delta()
-		var roll := (
-			Input.get_action_strength(&"roll_right")
-			- Input.get_action_strength(&"roll_left")
-		)
-		# −Z forward: pitch up = +X torque (mouse up, like on-foot freelook),
-		# yaw right = −Y, roll right (E) = −Z.
-		locomotion.set_attitude_commands(-look.y, -look.x, -roll)
-	elif is_loco:
-		var drive := (
-			Input.get_action_strength(&"move_forward")
-			- Input.get_action_strength(&"move_back")
-		)
-		var steer := Input.get_axis(&"move_right", &"move_left")
-		locomotion.set_drive_command(drive)
-		locomotion.set_steering_command(steer)
-		locomotion.set_brake_command(
-			1.0 if Input.is_action_pressed(&"jump") else 0.0
-		)
-		locomotion.set_translate_command(Vector3.ZERO)
-		locomotion.set_attitude_commands(0.0, 0.0, 0.0)
-	else:
-		locomotion.set_drive_command(0.0)
-		locomotion.set_steering_command(0.0)
-		locomotion.set_brake_command(0.0)
-		locomotion.set_translate_command(Vector3.ZERO)
-		locomotion.set_attitude_commands(0.0, 0.0, 0.0)
-	if locomotion.has_active_input():
-		_wake_rover_body(assembly_id)
+	var look := _consume_flight_look_delta()
+	return {
+		"zero_frame": false,
+		"move_forward": Input.get_action_strength(&"move_forward"),
+		"move_back": Input.get_action_strength(&"move_back"),
+		"move_left": Input.get_action_strength(&"move_left"),
+		"move_right": Input.get_action_strength(&"move_right"),
+		"space": space,
+		"move_down": Input.get_action_strength(&"move_down"),
+		"look_x": look.x,
+		"look_y": look.y,
+		"roll_left": Input.get_action_strength(&"roll_left"),
+		"roll_right": Input.get_action_strength(&"roll_right"),
+	}
 
 
 const FLIGHT_LOOK_SENSITIVITY := 0.035
@@ -1246,52 +1312,57 @@ func _is_rover_seated(player: Node3D) -> bool:
 
 func _enter_rover_seat(
 	player: Node3D,
-	metadata: Dictionary
+	element_id: int,
+	assembly_id: int
 ) -> Dictionary:
 	if _session == null or _session.projection == null:
 		return _result(&"not_ready")
-	var element_id := int(metadata.get("element_id", 0))
-	var assembly_id := int(metadata.get("assembly_id", 0))
 	if element_id <= 0 or assembly_id <= 0:
 		return _result(&"invalid_target")
+	# Pre-feature mobility gate preserved (static activation out of scope).
+	# Input routing itself stays classification-free once seated.
 	if not ThrusterSimulationService.is_mobile_assembly(
 		_session.world,
 		assembly_id
 	):
 		return _result(&"blocked", {"detail": &"not_mobile"})
+	var element := _session.world.get_element(element_id)
+	if element == null:
+		return _result(&"invalid_target")
+	var seat_archetype := element.get_archetype()
+	if (
+		seat_archetype == null
+		or not seat_archetype.roles.has("ControlSeat")
+		or not element.is_operational()
+	):
+		return _result(&"blocked", {"detail": &"seat_not_ready"})
 	var body := (
 		_session.projection.get_element_projection(element_id).get("body")
 		as PhysicsBody3D
 	)
 	if body == null:
 		return _result(&"not_ready")
-	var element := _session.world.get_element(element_id)
-	if element == null:
-		return _result(&"invalid_target")
 	var seat_offset: Vector3 = WheelPlacementUtil.seat_offset_local(element)
+	if not _session.world.register_player_seat_context(actor_uid, element_id):
+		return _result(&"blocked", {"detail": &"seat_context_rejected"})
 	_prepare_rover_for_drive(assembly_id)
 	body = (
 		_session.projection.get_element_projection(element_id).get("body")
 		as PhysicsBody3D
 	)
 	if body == null or not is_instance_valid(body):
+		_session.world.clear_player_seat_context(actor_uid)
 		return _result(&"not_ready")
 	# Survives chassis reproject: physics projection evacuates/restores the
 	# driver by this meta when StaticBody→RigidBody frees the old body.
 	player.set_meta("control_seat_element_id", element_id)
 	if player.has_method("enter_vehicle"):
 		player.call("enter_vehicle", body, seat_offset)
-	if player.has_method("set_vehicle_flight_controls"):
-		player.call(
-			"set_vehicle_flight_controls",
-			ThrusterSimulationService.is_flight_assembly(
-				_session.world,
-				assembly_id
-			)
-		)
 	_rover_seat_player = player
 	_rover_seat_assembly_id = assembly_id
 	_rover_seat_element_id = element_id
+	_rover_seat_policy = _session.world.get_seat_control_state_ref(element_id)
+	_sync_seat_mouse_attitude(player, element_id)
 	# Activate may replace StaticBody→RigidBody and free mesh children;
 	# rebuild visuals onto the live body (wheels need module meshes first).
 	if _session.visuals != null:
@@ -1430,22 +1501,37 @@ func _exit_rover_seat(player: Node3D) -> Dictionary:
 	if player.has_method("set_gameplay_input_enabled"):
 		player.call("set_gameplay_input_enabled", true)
 	var locomotion := _session.world.get_locomotion_controller(assembly_id)
-	locomotion.set_drive_command(0.0)
-	locomotion.set_steering_command(0.0)
-	locomotion.set_translate_command(Vector3.ZERO)
-	locomotion.set_attitude_commands(0.0, 0.0, 0.0)
+	locomotion.clear_driver_input()
 	if locomotion.is_parking_brake():
 		locomotion.set_brake_command(1.0)
-	else:
-		locomotion.set_brake_command(0.0)
 	if player.has_method("set_vehicle_flight_controls"):
 		player.call("set_vehicle_flight_controls", false)
 	# Keep activated so floating wheel/flight phys continues.
 	_session.projection.sync_body_motion_now(assembly_id)
+	_session.world.clear_player_seat_context(actor_uid)
 	_rover_seat_player = null
 	_rover_seat_assembly_id = 0
 	_rover_seat_element_id = 0
+	_rover_seat_policy = null
 	return _result(&"ok")
+
+
+## Mouse attitude follows Control Gyros seat policy, not thruster presence.
+func _sync_seat_mouse_attitude(player: Node3D, seat_element_id: int) -> void:
+	if player == null or not player.has_method("set_vehicle_flight_controls"):
+		return
+	if _session == null or seat_element_id <= 0:
+		player.call("set_vehicle_flight_controls", false)
+		return
+	var policy := (
+		_rover_seat_policy
+		if (
+			_rover_seat_policy != null
+			and _rover_seat_element_id == seat_element_id
+		)
+		else _session.world.get_seat_control_state_ref(seat_element_id)
+	)
+	player.call("set_vehicle_flight_controls", policy.control_gyros)
 
 
 func preview_construction(
@@ -1631,16 +1717,11 @@ func control_terminal_snapshot(
 	if _session == null or _session.world == null:
 		return ControlTerminalSnapshotBuilder.failure(&"not_ready")
 	var resolved_id := assembly_id
-	# host_hint — конкретный ControlSeat-элемент, если он уже известен (сидим
-	# именно в нём / целимся именно в него), а не «первый попавшийся
-	# ControlSeat в сборке» — на одной сборке их может быть несколько
-	# (CONTROL-ACTIONS-V0 «Разные сиденья на одной сборке имеют разные бары»).
-	# Резолвится ВСЕГДА, а не только когда assembly_id ещё не известен: вызывающая
-	# сторона (hud_control_terminal.gd) кэширует assembly_id после первого
-	# тика и дальше шлёт его же — если host_hint резолвить только под
-	# `resolved_id <= 0`, начиная со второго тика он навсегда остаётся 0, и
-	# билдер молча откатывается на «первый попавшийся» — не туда, где реально
-	# сидит/целится игрок.
+	# host_hint — сиденье / pin / прицел. Явный ControlSeat всегда побеждает.
+	# Non-seat hint на той же сборке (K с рамы) билдер резолвит в детерминированный
+	# ControlSeat той же сборки; без hint / вне сборки — host=0 (не silent
+	# lowest-seat). Резолвится ВСЕГДА: hud кэширует assembly_id после первого
+	# тика, и если hint гасить под `resolved_id <= 0`, со 2-го тика host=0.
 	var resolved := _resolve_control_terminal_target(assembly_id, hint_element_id)
 	if int(resolved["assembly_id"]) <= 0:
 		return ControlTerminalSnapshotBuilder.failure(&"no_target")
@@ -1671,7 +1752,9 @@ func control_terminal_bar_snapshot(
 
 
 ## Резолв цели пульта: сидя — своя сборка/сиденье; иначе — сборка наведённого
-## элемента. host_hint резолвится всегда (см. коммент выше про кэш assembly_id).
+## элемента (seat или non-seat). Occupied seat / pin остаётся host_hint;
+## non-seat hint передаётся билдеру как есть — он выберет детерминированный
+## ControlSeat той же сборки. host_hint резолвится всегда (кэш assembly_id).
 func _resolve_control_terminal_target(
 	assembly_id: int,
 	hint_element_id: int
@@ -1773,8 +1856,7 @@ func _damage_element(
 		!= InteractionHit.KIND_SIMULATION_ELEMENT
 	):
 		return _result(&"invalid_target")
-	var metadata: Dictionary = target.get("metadata", {})
-	var element_id := int(metadata.get("element_id", 0))
+	var element_id := InteractionHit.element_id_from(target)
 	var parameters: Dictionary = command.get("parameters", {})
 	var amount := float(parameters.get("damage", 0.0))
 	var refund_fraction := float(parameters.get("refund_fraction_on_destroy", 0.0))
@@ -1837,9 +1919,8 @@ func _construction_apply(
 		)
 
 	if target_kind == InteractionHit.KIND_SIMULATION_ELEMENT:
-		var metadata: Dictionary = target.get("metadata", {})
 		var element := _session.world.get_element(
-			int(metadata.get("element_id", 0))
+			InteractionHit.element_id_from(target)
 		)
 		if element == null:
 			return _result(&"invalid_target")
@@ -1906,9 +1987,8 @@ func _weld_element(
 		!= InteractionHit.KIND_SIMULATION_ELEMENT
 	):
 		return _result(&"invalid_target")
-	var metadata: Dictionary = target.get("metadata", {})
 	var element := _session.world.get_element(
-		int(metadata.get("element_id", 0))
+		InteractionHit.element_id_from(target)
 	)
 	if element == null:
 		return _result(&"invalid_target")
@@ -2280,7 +2360,7 @@ func _disconnect_network(
 	var link_id := int(
 		parameters.get(
 			"link_id",
-			target.get("metadata", {}).get("electric_link_id", 0)
+			InteractionHit.electric_link_id_from(target)
 		)
 	)
 	if link_id <= 0:
@@ -2319,7 +2399,7 @@ func _set_element_name(
 	rename.element_id = int(
 		parameters.get(
 			"element_id",
-			target.get("metadata", {}).get("element_id", 0)
+			InteractionHit.element_id_from(target)
 		)
 	)
 	rename.element_name = str(parameters.get("element_name", ""))
@@ -2345,10 +2425,12 @@ func _configure_action_slot(
 	if _session == null:
 		return _result(&"not_ready")
 	var parameters: Dictionary = command.get("parameters", {})
-	var metadata: Dictionary = target.get("metadata", {})
 	var configure := ConfigureActionSlotCommand.new()
 	configure.host_element_id = int(
-		parameters.get("host_element_id", metadata.get("element_id", 0))
+		parameters.get(
+			"host_element_id",
+			InteractionHit.element_id_from(target)
+		)
 	)
 	configure.page = int(parameters.get("page", 0))
 	configure.index = int(parameters.get("index", 0))
@@ -2371,6 +2453,61 @@ func _configure_action_slot(
 	)
 
 
+func _configure_seat_controls(
+	command: Dictionary,
+	target: Dictionary
+) -> Dictionary:
+	if _session == null:
+		return _result(&"not_ready")
+	var parameters: Dictionary = command.get("parameters", {})
+	var configure := ConfigureSeatControlsCommand.new()
+	configure.seat_element_id = int(
+		parameters.get(
+			"seat_element_id",
+			InteractionHit.element_id_from(target)
+		)
+	)
+	if parameters.has("control_wheels"):
+		configure.control_wheels = bool(parameters.get("control_wheels"))
+	if parameters.has("control_thrusters"):
+		configure.control_thrusters = bool(parameters.get("control_thrusters"))
+	if parameters.has("control_gyros"):
+		configure.control_gyros = bool(parameters.get("control_gyros"))
+	# Same occupant/coop gate as configure_action_slot.
+	if (
+		_rover_seat_element_id > 0
+		and _rover_seat_element_id == configure.seat_element_id
+		and command.get("source") != _rover_seat_player
+	):
+		return _result(&"blocked")
+	var result := _session.apply_configure_seat_controls(configure)
+	if StringName(result.get("reason", &"")) == &"ok":
+		# ensure_ created/updated the row — refresh occupied-seat cache.
+		if _rover_seat_element_id == configure.seat_element_id:
+			_rover_seat_policy = _session.world.get_seat_control_state_ref(
+				configure.seat_element_id
+			)
+		if (
+			_rover_seat_element_id == configure.seat_element_id
+			and _rover_seat_player != null
+		):
+			_sync_seat_mouse_attitude(
+				_rover_seat_player,
+				configure.seat_element_id
+			)
+			# Apply updated frame immediately so toggle OFF clears stale channels.
+			tick_rover_locomotion_input()
+	return _result(
+		StringName(result.get("reason", &"invalid_target")),
+		{
+			"seat_element_id": int(result.get("seat_element_id", configure.seat_element_id)),
+			"control_wheels": bool(result.get("control_wheels", true)),
+			"control_thrusters": bool(result.get("control_thrusters", true)),
+			"control_gyros": bool(result.get("control_gyros", true)),
+		}
+	)
+
+
 func _set_machine_enabled(
 	command: Dictionary,
 	target: Dictionary
@@ -2382,7 +2519,7 @@ func _set_machine_enabled(
 	machine.element_id = int(
 		parameters.get(
 			"element_id",
-			target.get("metadata", {}).get("element_id", 0)
+			InteractionHit.element_id_from(target)
 		)
 	)
 	machine.enabled = bool(parameters.get("enabled", true))
@@ -2404,7 +2541,7 @@ func _enqueue_recipe(
 	recipe.element_id = int(
 		parameters.get(
 			"element_id",
-			target.get("metadata", {}).get("element_id", 0)
+			InteractionHit.element_id_from(target)
 		)
 	)
 	recipe.recipe_id = str(parameters.get("recipe_id", ""))
@@ -2427,7 +2564,7 @@ func _dequeue_recipe(
 	dequeue.element_id = int(
 		parameters.get(
 			"element_id",
-			target.get("metadata", {}).get("element_id", 0)
+			InteractionHit.element_id_from(target)
 		)
 	)
 	dequeue.index = maxi(0, int(parameters.get("index", 0)))
@@ -2446,18 +2583,12 @@ func _set_actuator_target(
 	if _session == null:
 		return _result(&"not_ready")
 	var parameters: Dictionary = command.get("parameters", {})
-	var metadata: Dictionary = target.get("metadata", {})
+	var keys := _target_card_keys(target)
 	var actuator := SetActuatorTargetCommand.new()
 	actuator.joint_id = int(
 		parameters.get(
 			"joint_id",
-			metadata.get(
-				"piston_joint_id",
-				metadata.get(
-					"rotor_joint_id",
-					metadata.get("hinge_joint_id", 0)
-				)
-			)
+			HudActuatorTuneUtil.joint_id(keys)
 		)
 	)
 	actuator.mode = int(
@@ -2493,18 +2624,12 @@ func _configure_actuator(
 	if _session == null:
 		return _result(&"not_ready")
 	var parameters: Dictionary = command.get("parameters", {})
-	var metadata: Dictionary = target.get("metadata", {})
+	var keys := _target_card_keys(target)
 	var configure := ConfigureActuatorCommand.new()
 	configure.joint_id = int(
 		parameters.get(
 			"joint_id",
-			metadata.get(
-				"piston_joint_id",
-				metadata.get(
-					"rotor_joint_id",
-					metadata.get("hinge_joint_id", 0)
-				)
-			)
+			HudActuatorTuneUtil.joint_id(keys)
 		)
 	)
 	configure.extend_velocity_mps = float(
@@ -2535,12 +2660,12 @@ func _configure_wheel(
 	if _session == null:
 		return _result(&"not_ready")
 	var parameters: Dictionary = command.get("parameters", {})
-	var metadata: Dictionary = target.get("metadata", {})
+	var keys := _target_card_keys(target)
 	var configure := ConfigureWheelCommand.new()
 	configure.wheel_element_id = int(
 		parameters.get(
 			"wheel_element_id",
-			metadata.get("wheel_element_id", metadata.get("element_id", 0))
+			keys.get("wheel_element_id", InteractionHit.element_id_from(target))
 		)
 	)
 	if parameters.has("steerable"):
@@ -2577,14 +2702,14 @@ func _configure_suspension(
 	if _session == null:
 		return _result(&"not_ready")
 	var parameters: Dictionary = command.get("parameters", {})
-	var metadata: Dictionary = target.get("metadata", {})
+	var keys := _target_card_keys(target)
 	var configure := ConfigureSuspensionCommand.new()
 	configure.suspension_element_id = int(
 		parameters.get(
 			"suspension_element_id",
-			metadata.get(
+			keys.get(
 				"suspension_element_id",
-				metadata.get("element_id", 0)
+				InteractionHit.element_id_from(target)
 			)
 		)
 	)
@@ -2643,9 +2768,8 @@ func _dismantle_element(
 		!= InteractionHit.KIND_SIMULATION_ELEMENT
 	):
 		return _result(&"invalid_target")
-	var metadata: Dictionary = target.get("metadata", {})
 	var element := _session.world.get_element(
-		int(metadata.get("element_id", 0))
+		InteractionHit.element_id_from(target)
 	)
 	if element == null:
 		return _result(&"invalid_target")
