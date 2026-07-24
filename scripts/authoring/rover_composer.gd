@@ -48,7 +48,7 @@ static func _compose_batched(
 		if archetype != null:
 			world.get_archetype_registry().register(archetype)
 	var helper := AssemblyBuildHelper.new(world, store_id)
-	helper.ensure_materials(800.0)
+	helper.ensure_materials()
 	if not helper.spawn_anchor(Slice01Archetypes.frame(), grid_frame):
 		return {"ok": false, "error": helper.last_error}
 	if not _place_chassis(helper, intent):

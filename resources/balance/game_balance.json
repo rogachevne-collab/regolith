@@ -693,7 +693,8 @@
       "mechanism": 40.0,
       "conduit": 40.0,
       "girder": 40.0
-    }
+    },
+    "compose_material_budget": 20000.0
   },
   "parameters": {
     "piston.extend_velocity": {

@@ -31,7 +31,7 @@ static func _compose_batched(
 ) -> Dictionary:
 	_register_archetypes(world)
 	var helper := AssemblyBuildHelper.new(world, store_id)
-	helper.ensure_materials(2000.0)
+	helper.ensure_materials()
 	if not helper.spawn_anchor(Slice01Archetypes.foundation(), grid_frame):
 		return {"ok": false, "error": helper.last_error}
 	match intent.recipe:

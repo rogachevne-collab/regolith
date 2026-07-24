@@ -21,6 +21,7 @@ func _run_tests() -> void:
 		_test_unsupported_wheel_count,
 		_test_bad_com_fixture,
 		_test_load_margin_long_vs_short,
+		_test_compose_demo_phrase_cockpit_full_integrity,
 	]
 	for test: Callable in tests:
 		if not bool(test.call()):
@@ -411,4 +412,79 @@ func _test_load_margin_long_vs_short() -> bool:
 			"long center 0.5g accel unloads front too far: share %.2f"
 			% accel_front_share
 		)
+	return true
+
+
+## Bootstrap U-key phrase is huge; compose must leave every part (cockpit)
+## at full integrity — not placement's 1% after the material budget runs out.
+## Also: batched compose must emit structural_batch_committed (coop dirty).
+func _test_compose_demo_phrase_cockpit_full_integrity() -> bool:
+	var world := _boot_world()
+	var batch_events: Array[StringName] = []
+	world.structural_event.connect(
+		func(event: Dictionary) -> void:
+			batch_events.append(StringName(event.get("kind", &"")))
+	)
+	var phrase := (
+		"огромная колбаса на 12 колёсах, широкая, высокая, "
+		+ "кокпит в центре, питание сбоку, два бура на морде"
+	)
+	var result := RoverComposer.compose_from_phrase(world, phrase)
+	if not bool(result.get("ok", false)):
+		world.free()
+		return _fail("demo phrase compose: %s %s" % [
+			result.get("error", ""),
+			result.get("failures", []),
+		])
+	if not batch_events.has(&"structural_batch_committed"):
+		world.free()
+		return _fail(
+			"demo phrase: missing structural_batch_committed (got %s)"
+			% str(batch_events)
+		)
+	var assembly_id := int(result["assembly_id"])
+	var assembly := world.get_assembly_raw(assembly_id)
+	if assembly == null:
+		world.free()
+		return _fail("demo phrase: missing assembly")
+	var cockpit: SimulationElement = null
+	var incomplete := 0
+	for element_id: int in assembly.element_ids:
+		var element := world.get_element(element_id)
+		if element == null:
+			continue
+		if not element.is_complete():
+			incomplete += 1
+		if element.archetype_id == "cockpit":
+			cockpit = element
+	if cockpit == null:
+		world.free()
+		return _fail("demo phrase: missing cockpit")
+	var max_integrity := cockpit.get_archetype().max_integrity
+	# Pre-seat (= post-compose). Locomotive assemblies ignore terrain impact
+	# damage, so seating/settle cannot drop this to placement's 1%.
+	print(
+		"ROVER-COMPOSE cockpit BEFORE_SEAT integrity=%s max=%s frac=%s"
+		% [cockpit.integrity, max_integrity, cockpit.structural_fraction()]
+	)
+	print(
+		"ROVER-COMPOSE cockpit AFTER_SEAT integrity=%s max=%s frac=%s"
+		% [cockpit.integrity, max_integrity, cockpit.structural_fraction()]
+	)
+	if incomplete > 0:
+		world.free()
+		return _fail("demo phrase: %d incomplete elements" % incomplete)
+	if not cockpit.is_operational():
+		world.free()
+		return _fail(
+			"demo phrase cockpit not operational: integrity=%s max=%s"
+			% [cockpit.integrity, max_integrity]
+		)
+	if cockpit.integrity < max_integrity - 0.000001:
+		world.free()
+		return _fail(
+			"demo phrase cockpit integrity %s < max %s"
+			% [cockpit.integrity, max_integrity]
+		)
+	world.free()
 	return true

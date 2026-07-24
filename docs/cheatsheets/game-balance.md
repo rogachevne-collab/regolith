@@ -19,6 +19,7 @@
 | power output / battery / idle | `electric.archetypes` / `electric.defaults` |
 | weld / dismantle / grinder refund | `construction` |
 | стартовый / playtest cargo | `starter` |
+| материал на demo/debug сборку | `starter.compose_material_budget` |
 
 ## Не трогать в balance
 

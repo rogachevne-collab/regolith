@@ -4,6 +4,10 @@ extends RefCounted
 ## Thin Place/Weld/Connect helper for agent/compose paths.
 ## Tracks topology_revision; callers never invent revision by hand.
 
+## Scratch store for demo/debug assemblies. `ensure_materials` force-sets
+## amounts past any carry capacity, so this must never be the player's store.
+const AUTHORING_STORE_ID := "authoring_compose"
+
 var world: SimulationWorld
 var store_id: String = PlayerIdentity.local_store_id()
 var assembly_id: int = 0
@@ -20,9 +24,17 @@ func _init(
 	store_id = p_store_id
 
 
-func ensure_materials(amount: float = 500.0) -> void:
+## Authoring/compose store top-up. Budget lives in Game Balance
+## `starter.compose_material_budget` — huge demo rovers outgrow a few hundred
+## plates and otherwise leave parts at placement integrity (1%).
+func ensure_materials(amount: float = -1.0) -> void:
 	if world == null:
 		return
+	var budget := amount
+	if budget < 0.0:
+		budget = float(
+			GameBalance.starter().get("compose_material_budget", 20000.0)
+		)
 	world.ensure_resource_store(store_id)
 	for item_id: String in [
 		"plate_metal",
@@ -33,7 +45,7 @@ func ensure_materials(amount: float = 500.0) -> void:
 		"sintered_basalt",
 		"plate_alloy",
 	]:
-		world.set_resource_amount(store_id, item_id, amount)
+		world.set_resource_amount(store_id, item_id, budget)
 
 
 func spawn_anchor(
@@ -121,21 +133,55 @@ func _precise_pose_offset(command: PlaceElementCommand) -> Transform3D:
 
 
 func weld_all() -> void:
+	last_error = ""
 	if world == null or assembly_id <= 0:
 		return
 	var assembly := world.get_assembly_raw(assembly_id)
 	if assembly == null:
 		return
+	var unfinished := 0
+	var first_reason := ""
 	for element_id: int in assembly.element_ids:
 		var element := world.get_element(element_id)
-		if element == null:
+		if element == null or element.is_complete():
 			continue
 		var weld := WeldElementCommand.new()
 		weld.element_id = element_id
 		weld.expected_state_revision = element.state_revision
 		weld.max_material_amount = 100.0
 		weld.store_id = store_id
-		world.apply_structural_command_now(weld)
+		var result := world.apply_structural_command_now(weld)
+		# Compose budgets can still undershoot after a design grows; top up
+		# once and retry so authoring never ships a 1%-integrity cockpit.
+		if (
+			not result.is_ok()
+			and result.reason
+			== StructuralCommandResult.REASON_INSUFFICIENT_MATERIAL
+		):
+			ensure_materials()
+			element = world.get_element(element_id)
+			if element == null or element.is_complete():
+				continue
+			weld.expected_state_revision = element.state_revision
+			result = world.apply_structural_command_now(weld)
+		# An ok weld can still be partial (the command is capped per call), so
+		# completeness is the invariant here, not the command result.
+		element = world.get_element(element_id)
+		if element != null and element.is_complete():
+			continue
+		unfinished += 1
+		if first_reason.is_empty():
+			first_reason = (
+				str(result.reason) if not result.is_ok() else "partial_weld"
+			)
+	# A half-welded assembly stays playable at 1% integrity and used to fail
+	# in silence — say it out loud instead of shipping a rover that crumbles.
+	if unfinished > 0:
+		last_error = "weld_incomplete:%d:%s" % [unfinished, first_reason]
+		push_warning(
+			"AssemblyBuildHelper: %d elements left unwelded (%s)"
+			% [unfinished, first_reason]
+		)
 
 
 func connect_ports(

@@ -3,7 +3,7 @@ extends RefCounted
 
 static var STORE_ID: String:
 	get:
-		return PlayerIdentity.local_store_id()
+		return AssemblyBuildHelper.AUTHORING_STORE_ID
 const SKY_PROBE_Y := 120.0
 const GROUND_PROBE_MAX_DISTANCE := 200.0
 const FLAT_SEARCH_RADIUS_M := 24.0

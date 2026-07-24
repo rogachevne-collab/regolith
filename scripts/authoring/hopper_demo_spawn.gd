@@ -5,7 +5,7 @@ extends RefCounted
 
 static var STORE_ID: String:
 	get:
-		return PlayerIdentity.local_store_id()
+		return AssemblyBuildHelper.AUTHORING_STORE_ID
 
 
 static func spawn_at_transform(
@@ -41,7 +41,7 @@ static func _spawn_batched(
 	for archetype: ElementArchetype in Slice01Archetypes.load_flight_archetypes():
 		session.world.get_archetype_registry().register(archetype)
 	var helper := AssemblyBuildHelper.new(session.world, store_id)
-	helper.ensure_materials(500.0)
+	helper.ensure_materials()
 	var grid_frame := GridSpawnUtil.grid_frame_from_transform(assembly_transform)
 	if not helper.spawn_anchor(Slice01Archetypes.frame(), grid_frame):
 		return {"ok": false, "error": helper.last_error}
