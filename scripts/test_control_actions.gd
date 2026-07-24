@@ -30,6 +30,7 @@ func _run_tests() -> void:
 		_test_non_seat_hint_resolves_assembly_host,
 		_test_interaction_card_seat_flags_and_toggle_invert,
 		_test_seat_control_ref_is_stable,
+		_test_oxygen_module_terminal_snapshot,
 	]
 	for test: Callable in tests:
 		if not bool(test.call()):
@@ -533,6 +534,91 @@ func _test_snapshot_v9_loads_without_seat_control_states() -> bool:
 	restored.free()
 	if not ok:
 		return _fail("v9 load must expose defaults without creating a row")
+	return true
+
+
+func _test_oxygen_module_terminal_snapshot() -> bool:
+	## OxygenModule is an ordinary listable machine with enable/power/liters.
+	var world := _boot_world()
+	world.get_archetype_registry().register(Slice01Archetypes.o2_module())
+	var built := _build_terminal_host(world)
+	if built.has("error"):
+		world.free()
+		return _fail("host setup failed: %s" % built["error"])
+	var assembly_id := int(built["assembly_id"])
+	var host_id := int(built["host_id"])
+	var assembly := world.get_assembly_raw(assembly_id)
+	if assembly == null:
+		world.free()
+		return _fail("assembly missing after host build")
+	# Adjacent to control_terminal at (4,0,0) / foundation edge — not floating.
+	var placed := _place(
+		world,
+		assembly_id,
+		assembly.topology_revision,
+		Slice01Archetypes.o2_module(),
+		Vector3i(4, 0, 1)
+	)
+	if not placed.is_ok():
+		world.free()
+		return _fail("oxygen module place failed: %s" % placed.reason)
+	var module_id := int(placed.data["element_id"])
+	_weld(world, module_id)
+	IndustryStoreService.ensure_element_keyed_store(
+		world,
+		world.get_element(module_id)
+	)
+	var runtime := world.ensure_industry_element_runtime(module_id)
+	runtime.powered = true
+	runtime.power_reason = &"ok"
+	var snap := ControlTerminalSnapshotBuilder.build(world, assembly_id, host_id)
+	if not bool(snap.get("valid", false)):
+		world.free()
+		return _fail("terminal snapshot invalid with oxygen module")
+	var found: Dictionary = {}
+	for node_variant: Variant in snap.get("nodes", []):
+		var node: Dictionary = node_variant
+		if int(node.get("element_id", 0)) == module_id:
+			found = node
+			break
+	if found.is_empty():
+		world.free()
+		return _fail("oxygen module not listable on control terminal")
+	if str(found.get("category", "")) != "machine":
+		world.free()
+		return _fail("oxygen module category must be machine")
+	if str(found.get("kind", "")) != "oxygen_module":
+		world.free()
+		return _fail("oxygen module kind must be oxygen_module")
+	var detail: Dictionary = found.get("detail", {})
+	if not detail.has("machine_enabled") or not detail.has("powered"):
+		world.free()
+		return _fail("oxygen module detail missing enable/power")
+	if (
+		not detail.has("oxygen_current_l")
+		or not detail.has("oxygen_capacity_l")
+		or not detail.has("idle_w")
+		or not detail.has("active_w")
+		or not detail.has("demand_w")
+	):
+		world.free()
+		return _fail("oxygen module detail missing liters/demand")
+	var toggle := SetMachineEnabledCommand.new()
+	toggle.element_id = module_id
+	toggle.enabled = false
+	if StringName(world.apply_set_machine_enabled(toggle).get("reason", &"")) != &"ok":
+		world.free()
+		return _fail("set_machine_enabled failed for oxygen module")
+	snap = ControlTerminalSnapshotBuilder.build(world, assembly_id, host_id)
+	for node_variant2: Variant in snap.get("nodes", []):
+		var node2: Dictionary = node_variant2
+		if int(node2.get("element_id", 0)) != module_id:
+			continue
+		if bool(node2.get("detail", {}).get("machine_enabled", true)):
+			world.free()
+			return _fail("snapshot did not reflect machine_enabled=false")
+		break
+	world.free()
 	return true
 
 

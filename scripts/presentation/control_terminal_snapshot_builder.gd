@@ -255,13 +255,36 @@ static func _build_node(
 			node["kind"] = "control_seat"
 			node["category"] = "control"
 			node["detail"] = _control_seat_detail(world, element)
+		elif IndustryStoreService.is_oxygen_module(element):
+			node["kind"] = "oxygen_module"
+			node["category"] = "machine"
+			node["detail"] = _oxygen_module_detail(world, element)
+			var capacity_l := float(
+				node["detail"].get("oxygen_capacity_l", 0.0)
+			)
+			if capacity_l > 0.000001:
+				node["value"] = clampf(
+					float(node["detail"].get("oxygen_current_l", 0.0))
+					/ capacity_l,
+					0.0,
+					1.0
+				)
+				node["value_kind"] = "fraction"
 		if node["category"] == "power" and IndustryElectricProfile.is_battery(element):
 			var max_kwh := IndustryElectricProfile.battery_max_kwh(element)
 			if max_kwh > 0.000001:
 				var runtime := world.ensure_industry_element_runtime(element_id)
 				node["value"] = clampf(runtime.battery_kwh / max_kwh, 0.0, 1.0)
 				node["value_kind"] = "fraction"
-		node["status"] = element.industry_status_reason()
+		if IndustryStoreService.is_oxygen_module(element):
+			var card := world.get_interaction_card(element_id)
+			node["status"] = StringName(
+				card.keys.get("status_reason", element.industry_status_reason())
+				if card != null
+				else element.industry_status_reason()
+			)
+		else:
+			node["status"] = element.industry_status_reason()
 
 	if construction != &"ok":
 		node["status"] = construction
@@ -368,6 +391,33 @@ static func _control_seat_detail(
 	}
 
 
+static func _oxygen_module_detail(
+	world: SimulationWorld,
+	element: SimulationElement
+) -> Dictionary:
+	var definition := element.get_archetype().oxygen_module_definition
+	var runtime := world.ensure_industry_element_runtime(element.element_id)
+	var store := world.get_resource_store(
+		IndustryStoreService.element_store_id(element.element_id)
+	)
+	var liters_per_unit := ResourceCatalog.volume_per_unit_l("oxygen")
+	var current_l := 0.0
+	if store != null and liters_per_unit > 0.0:
+		current_l = store.amount("oxygen") * liters_per_unit
+	var capacity_l := definition.capacity_l if definition != null else 0.0
+	var idle_w := definition.idle_w if definition != null else 0.0
+	var active_w := definition.active_w if definition != null else 0.0
+	return {
+		"machine_enabled": runtime.machine_enabled,
+		"powered": runtime.powered,
+		"oxygen_current_l": current_l,
+		"oxygen_capacity_l": capacity_l,
+		"idle_w": idle_w,
+		"active_w": active_w,
+		"demand_w": runtime.demand_w(element),
+	}
+
+
 static func _category_for(element: SimulationElement) -> String:
 	var archetype := element.get_archetype()
 	if archetype == null:
@@ -375,7 +425,12 @@ static func _category_for(element: SimulationElement) -> String:
 	var roles := archetype.roles
 	if "ControlSeat" in roles:
 		return "control"
-	if "Processor" in roles or "Fabricator" in roles or "Tool" in roles:
+	if (
+		"Processor" in roles
+		or "Fabricator" in roles
+		or "Tool" in roles
+		or "OxygenModule" in roles
+	):
 		return "machine"
 	if "Source" in roles or "Tank" in roles:
 		return "power"

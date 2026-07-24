@@ -278,6 +278,9 @@ const COMMANDS := {
 		["seat.control_thrusters_toggle", "power", "Тяга", "тумб"],
 		["seat.control_gyros_toggle", "rotate_cw", "Гиро", "тумб"],
 	],
+	"oxygen_module": [
+		["machine.toggle", "power", "Питание", "тумб"],
+	],
 }
 
 ## Глаголы «удерж»: нажал — поехал, отпустил — стоп. Всё остальное — разовое.
@@ -1060,6 +1063,21 @@ func _run_action(spec: Dictionary, pressed: bool) -> void:
 					element_id,
 					"control_gyros"
 				),
+			})
+		"machine.toggle", "machine.enable", "machine.disable":
+			var enabled_now := bool(
+				_live_detail(element_id, 0).get("machine_enabled", true)
+			)
+			var next_enabled := enabled_now
+			if action == "machine.toggle":
+				next_enabled = not enabled_now
+			elif action == "machine.enable":
+				next_enabled = true
+			else:
+				next_enabled = false
+			_submit("set_machine_enabled", element_id, {
+				"element_id": element_id,
+				"enabled": next_enabled,
 			})
 		"actuator.stop":
 			_submit("set_actuator_target", element_id, {
@@ -2012,6 +2030,39 @@ func _fp_readings(node: Dictionary, kind: String, detail: Dictionary) -> Control
 			"м"
 		))
 		return v
+	if kind == "oxygen_module":
+		v.add_child(_pv_row(
+			"O₂",
+			"%.1f / %.1f" % [
+				float(detail.get("oxygen_current_l", 0.0)),
+				float(detail.get("oxygen_capacity_l", 0.0)),
+			],
+			"л"
+		))
+		v.add_child(_pv_row(
+			"Питание",
+			"есть" if bool(detail.get("powered", false)) else "нет",
+			""
+		))
+		v.add_child(_pv_row(
+			"Машина",
+			"вкл" if bool(detail.get("machine_enabled", true)) else "выкл",
+			""
+		))
+		v.add_child(_pv_row(
+			"Нагрузка",
+			"%.0f" % float(detail.get("demand_w", 0.0)),
+			"Вт"
+		))
+		v.add_child(_pv_row(
+			"Простой / актив",
+			"%.0f / %.0f" % [
+				float(detail.get("idle_w", 0.0)),
+				float(detail.get("active_w", 0.0)),
+			],
+			"Вт"
+		))
+		return v
 	if kind in ["piston", "rotor", "hinge"]:
 		var angular := kind != "piston"
 		v.add_child(_pv_row(
@@ -2047,7 +2098,12 @@ func _fp_readings(node: Dictionary, kind: String, detail: Dictionary) -> Control
 
 func _fp_setpoints(kind: String, detail: Dictionary) -> Control:
 	var ids: Array = SETPOINTS.get(kind, [])
-	if kind != "wheel" and kind != "control_seat" and ids.is_empty():
+	if (
+		kind != "wheel"
+		and kind != "control_seat"
+		and kind != "oxygen_module"
+		and ids.is_empty()
+	):
 		return null
 	var v := _vbox(9)
 	if kind == "wheel":
@@ -2064,6 +2120,14 @@ func _fp_setpoints(kind: String, detail: Dictionary) -> Control:
 			"Назад",
 			"Вперёд",
 			"wheel.invert_drive_toggle"
+		))
+	elif kind == "oxygen_module":
+		v.add_child(_sw_row(
+			"Питание модуля",
+			bool(detail.get("machine_enabled", true)),
+			"Вкл",
+			"Выкл",
+			"machine.toggle"
 		))
 	elif kind == "control_seat":
 		v.add_child(_sw_row(
