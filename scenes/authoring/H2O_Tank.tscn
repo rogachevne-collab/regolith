@@ -1,0 +1,28 @@
+[gd_scene format=3 uid="uid://bqs0wbynialgd"]
+
+[ext_resource type="Script" uid="uid://dgr075qc34e5" path="res://scripts/authoring/part_authoring_root.gd" id="1_fo4b7"]
+[ext_resource type="PackedScene" path="res://scenes/presentation/h20_tank_visual.tscn" id="2_visual"]
+[ext_resource type="Script" uid="uid://bwsx0ndumvttw" path="res://scripts/authoring/mount_pad_marker.gd" id="3_qdhgh"]
+
+[node name="PartAuthoring" type="Node3D" unique_id=1434891986]
+script = ExtResource("1_fo4b7")
+part_id = "H2O_Tank"
+display_name = "H2O Бак"
+part_kind = 5
+visual_scene = ExtResource("2_visual")
+size_cells = Vector3i(4, 2, 2)
+model_offset = Vector3(1.0001681518554688, 0.5, 0.5)
+last_bake_diagnostics = PackedStringArray("baked \'H2O_Tank\' -> OK res://resources/archetypes/authored/H2O_Tank.tres")
+last_baked_path = "res://resources/archetypes/authored/H2O_Tank.tres"
+
+[node name="Mount_1" type="Node3D" parent="." unique_id=1762717984]
+transform = Transform3D(6.123233995736766e-17, 0, -1, 0, 1, 0, 1, 0, 6.123233995736766e-17, 1.7594279010297178, 0.7524576950594648, 0.025066834801586668)
+script = ExtResource("3_qdhgh")
+socket_kind = 5
+snap_to_face = false
+
+[node name="Mount_2" type="Node3D" parent="." unique_id=122575220]
+transform = Transform3D(6.123233995736766e-17, 0, -1, 0, 1, 0, 1, 0, 6.123233995736766e-17, 0.2594669134724271, 0.7499476509276386, 0.011069111233247164)
+script = ExtResource("3_qdhgh")
+socket_kind = 5
+snap_to_face = false

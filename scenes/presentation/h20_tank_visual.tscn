@@ -1,0 +1,15 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="PackedScene" uid="uid://dxh5hfncqqd8t" path="res://resources/models/h20_tank.fbx" id="1_fbx"]
+[ext_resource type="Material" uid="uid://cscifipanel1tp" path="res://resources/materials/sci_fi_panel1_triplanar.tres" id="2_mat"]
+[ext_resource type="Script" path="res://scripts/presentation/apply_mesh_material.gd" id="3_script"]
+
+[node name="H20TankVisual" type="Node3D"]
+script = ExtResource("3_script")
+material = ExtResource("2_mat")
+mesh_node_name = "Box012"
+
+[node name="Model" parent="." instance=ExtResource("1_fbx")]
+
+[node name="Box012" parent="Model" index="0"]
+material_override = ExtResource("2_mat")

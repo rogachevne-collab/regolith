@@ -1,0 +1,51 @@
+[gd_resource type="Resource" script_class="ElementArchetype" format=3 uid="uid://bukjgnee1ropp"]
+
+[ext_resource type="Script" uid="uid://c2p36g85wqkru" path="res://scripts/simulation/resources/build_requirement.gd" id="1_ndf6e"]
+[ext_resource type="Script" uid="uid://b6d2jhfw581hb" path="res://scripts/simulation/resources/collider_definition.gd" id="2_rat1v"]
+[ext_resource type="Script" uid="uid://ckr7otbjrwxja" path="res://scripts/simulation/resources/connector_definition.gd" id="3_2dd14"]
+[ext_resource type="Script" uid="uid://bq8x2m4n7p1kv" path="res://scripts/simulation/resources/oxygen_module_definition.gd" id="4_frw4h"]
+[ext_resource type="Script" uid="uid://c4hgnuqnf2up8" path="res://scripts/simulation/resources/port_definition.gd" id="5_l5n72"]
+[ext_resource type="Script" uid="uid://bxidpb3tep3ih" path="res://scripts/simulation/resources/element_archetype.gd" id="6_ttwyn"]
+[ext_resource type="Script" uid="uid://bfuxth8e6lccw" path="res://scripts/simulation/resources/structural_mount_pad.gd" id="7_yycci"]
+
+[sub_resource type="Resource" id="Resource_ndf6e"]
+script = ExtResource("1_ndf6e")
+resource_id = "plate_metal"
+amount = 8.0
+
+[sub_resource type="Resource" id="Resource_rat1v"]
+script = ExtResource("2_rat1v")
+size = Vector3(2, 1, 1)
+offset_in_cell = Vector3(1, 0.5, 0.5)
+
+[sub_resource type="Resource" id="Resource_2dd14"]
+script = ExtResource("4_frw4h")
+
+[sub_resource type="Resource" id="Resource_frw4h"]
+script = ExtResource("5_l5n72")
+port_id = "cargo_io"
+kind = 7
+local_cell = Vector3i(3, 1, 0)
+compatibility_tags = PackedStringArray("cargo")
+
+[sub_resource type="Resource" id="Resource_l5n72"]
+script = ExtResource("5_l5n72")
+port_id = "cargo2_io"
+kind = 7
+local_cell = Vector3i(3, 1, 0)
+compatibility_tags = PackedStringArray("cargo")
+
+[resource]
+script = ExtResource("6_ttwyn")
+archetype_id = "H2O_Tank"
+display_name = "H2O Бак"
+roles = PackedStringArray("OxygenModule")
+mass_kg = 128.0
+footprint_cells = Array[Vector3i]([Vector3i(0, 0, 0), Vector3i(0, 0, 1), Vector3i(0, 1, 0), Vector3i(0, 1, 1), Vector3i(1, 0, 0), Vector3i(1, 0, 1), Vector3i(1, 1, 0), Vector3i(1, 1, 1), Vector3i(2, 0, 0), Vector3i(2, 0, 1), Vector3i(2, 1, 0), Vector3i(2, 1, 1), Vector3i(3, 0, 0), Vector3i(3, 0, 1), Vector3i(3, 1, 0), Vector3i(3, 1, 1)])
+colliders = Array[ExtResource("2_rat1v")]([SubResource("Resource_rat1v")])
+ports = Array[ExtResource("5_l5n72")]([SubResource("Resource_frw4h"), SubResource("Resource_l5n72")])
+structural_surface_policy = 1
+build_requirements = Array[ExtResource("1_ndf6e")]([SubResource("Resource_ndf6e")])
+oxygen_module_definition = SubResource("Resource_2dd14")
+visual_scene_path = "res://scenes/presentation/h20_tank_visual.tscn"
+visual_offset = Vector3(1.0001681518554688, 0.5, 0.5)

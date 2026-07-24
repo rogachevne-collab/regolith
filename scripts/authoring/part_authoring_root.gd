@@ -343,8 +343,17 @@ func generate_mounts() -> int:
 	for face_data: Dictionary in _candidate_faces():
 		var cell: Vector3i = face_data["cell"]
 		var face: OrientationUtil.Face = face_data["face"]
+		var socket_kind := _guess_socket_kind(face)
+		# Oxygen modules bolt on every face (FULL_SURFACE) when they have no
+		# structural markers. Auto-structural pads from PER_SIDE would silently
+		# demote them to MOUNT_PADS and break pipe/frame attach.
+		if (
+			part_kind == PartKind.OXYGEN_MODULE
+			and socket_kind == MountPadMarker.SocketKind.STRUCTURAL
+		):
+			continue
 		var marker := MountPadMarker.new()
-		marker.socket_kind = _guess_socket_kind(face)
+		marker.socket_kind = socket_kind
 		marker.name = "Mount_%s_%d_%d_%d" % [
 			_face_suffix(face), cell.x, cell.y, cell.z
 		]
@@ -400,8 +409,12 @@ func _guess_socket_kind(face: OrientationUtil.Face) -> MountPadMarker.SocketKind
 		PartKind.PLAIN, PartKind.BATTERY, PartKind.POWER_SOURCE:
 			pass
 		PartKind.OXYGEN_MODULE:
-			# One cargo face by default; author retags / deletes the rest.
-			if face == OrientationUtil.Face.POS_Z:
+			# Tank ends (±X). Structural faces stay empty so bake keeps
+			# FULL_SURFACE; author can retag / add more cargo markers.
+			if (
+				face == OrientationUtil.Face.POS_X
+				or face == OrientationUtil.Face.NEG_X
+			):
 				return MountPadMarker.SocketKind.CARGO_PORT
 	return MountPadMarker.SocketKind.STRUCTURAL
 

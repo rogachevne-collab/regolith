@@ -31,6 +31,7 @@ func _run_tests() -> void:
 		_test_oxygen_module_cargo_port_kind_tag_direction,
 		_test_oxygen_module_validation_failures,
 		_test_oxygen_module_save_and_reload,
+		_test_oxygen_module_generate_mounts_keeps_full_surface,
 	]
 	for test: Callable in tests:
 		if not bool(test.call()):
@@ -800,4 +801,40 @@ func _test_oxygen_module_save_and_reload() -> bool:
 	if cargo_in == null or cargo_in.kind != PortDefinition.Kind.CARGO:
 		return _fail("reloaded archetype lost cargo_in port")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	return true
+
+
+func _test_oxygen_module_generate_mounts_keeps_full_surface() -> bool:
+	var root := _make_root(PartAuthoringRoot.PartKind.OXYGEN_MODULE)
+	root.part_id = "test_o2_gen_side"
+	root.size_cells = Vector3i(4, 2, 2)
+	root.mount_generation = PartAuthoringRoot.MountGeneration.PER_SIDE
+	var generated := root.generate_mounts()
+	var markers := root.collect_pad_markers()
+	var cargo_count := 0
+	var structural_count := 0
+	for marker: MountPadMarker in markers:
+		if marker.socket_kind == MountPadMarker.SocketKind.CARGO_PORT:
+			cargo_count += 1
+		elif marker.socket_kind == MountPadMarker.SocketKind.STRUCTURAL:
+			structural_count += 1
+	var errors: Array[String] = []
+	var archetype := root._build_archetype(errors)
+	root.free()
+	if generated != 2:
+		return _fail(
+			"oxygen PER_SIDE should make 2 cargo markers (±X), got %d" % generated
+		)
+	if cargo_count != 2 or structural_count != 0:
+		return _fail(
+			"oxygen generate should be cargo-only (cargo=%d structural=%d)"
+			% [cargo_count, structural_count]
+		)
+	if not errors.is_empty():
+		return _fail("oxygen generate bake errors: %s" % [errors])
+	if (
+		archetype.structural_surface_policy
+		!= ElementArchetype.StructuralSurfacePolicy.FULL_SURFACE
+	):
+		return _fail("oxygen after PER_SIDE generate must stay FULL_SURFACE")
 	return true
