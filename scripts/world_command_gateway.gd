@@ -224,14 +224,27 @@ func _execute(command: Dictionary) -> Dictionary:
 			return _result(&"invalid_target")
 
 
+## Share of loose material the spinning bit throws clear of its cylinder each
+## bite. High on purpose: the drill mines rock only, so anything loose in the
+## throat is parted aside, never left to re-flood the cut. `plow_spoil` rings it
+## onto the rim and collects nothing — no spoil is credited as yield. First knob
+## to drop if the ejected ring visibly pumps back in and out.
+const HAND_DRILL_PLOW_SHARE := 1.0
+
+
 func _remove_voxel(
 	command: Dictionary,
 	target: Dictionary
 ) -> Dictionary:
 	var target_kind := StringName(target["target_kind"])
-	if target_kind == InteractionHit.KIND_GRANULAR:
-		return _remove_granular(command, target)
-	if target_kind != InteractionHit.KIND_VOXEL:
+	# Loose material neither blocks the bit nor is mined by it. Whether the aim
+	# landed on rock or on the dust standing in front of it, one path: part the
+	# loose aside (below) and cut the rock behind. `_remove_granular` is retired —
+	# kept for reference, no longer reached — because the drill does not scoop.
+	if (
+		target_kind != InteractionHit.KIND_VOXEL
+		and target_kind != InteractionHit.KIND_GRANULAR
+	):
 		return _result(&"invalid_target")
 	var parameters: Dictionary = command.get("parameters", {})
 	var radius := clampf(
@@ -253,6 +266,10 @@ func _remove_voxel(
 		radius - IndustryArchetypeProfile.hand_drill_bite_depth_m()
 	)
 	var sdf_scale := IndustryArchetypeProfile.hand_drill_sdf_scale()
+	# Clear the throat first: shove any loose out of the bit's cylinder so a dust
+	# cover cannot stall the cut. Collects nothing — the parted spoil stays in the
+	# world, ringed on the rim, and the carve below reaches the rock underneath.
+	_plow_hand_drill_loose(contact_point, radius)
 	var total_removed_m3 := 0.0
 	var now_msec := Time.get_ticks_msec()
 	var use_path_sweep := false
@@ -334,6 +351,22 @@ func _remove_voxel(
 	)
 
 
+## Shove loose material out of the bit's cylinder without collecting any. The
+## drill parts what it meets and mines rock only, so the parted spoil stays in
+## the world (ringed on the rim by `plow_spoil`) rather than counting as yield.
+## No-op when the scene has no volumetric granular world.
+func _plow_hand_drill_loose(world_point: Vector3, radius_m: float) -> void:
+	if radius_m <= 0.0:
+		return
+	var granular := _granular_world()
+	if granular == null or not granular.has_method(&"plow_spoil"):
+		return
+	granular.call(&"plow_spoil", world_point, radius_m, HAND_DRILL_PLOW_SHARE)
+
+
+## Retired: the drill no longer scoops loose material (see `_remove_voxel`, which
+## now parts spoil aside and cuts the rock behind it). Kept, not deleted, so the
+## dig-a-heap-of-spoil path is one wiring change away if a future tool wants it.
 ## Drill a heap of loose material. Digging spoil moves thickness on a
 ## `GranularPatch` instead of carving the SDF — the rock underneath is
 ## untouched — but it yields the same regolith, so clearing your own spoil is

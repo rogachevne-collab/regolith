@@ -298,6 +298,9 @@ func _physics_process(_delta: float) -> void:
 		and (
 			hit.target_kind == InteractionHit.KIND_VOXEL
 			or hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
+			# Loose in front of rock: the bit is parting it, so play the contact
+			# feedback instead of reading as "nothing there" while it plows.
+			or hit.target_kind == InteractionHit.KIND_GRANULAR
 		)
 	)
 	_set_contacting(_hold_lmb and has_hit)
