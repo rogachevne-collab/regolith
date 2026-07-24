@@ -26,6 +26,10 @@ const WIRE_DORMANT_COLOR := Color(0.46, 0.44, 0.4, 1.0)
 ## Rope that was never meant to conduct — tied to terrain or to a portless
 ## block. It is mechanical hardware, not a dead wire, so it reads as fibre.
 const ROPE_COLOR := Color(0.31, 0.27, 0.22, 1.0)
+## Diagnostic colour for a cable whose simulation is frozen (both ends on one
+## body, settled). Bright cyan on purpose: nothing else in the yard is this
+## colour, so a frozen cable cannot be mistaken for a lit one.
+const ROPE_FROZEN_COLOR := Color(0.16, 0.85, 0.95, 1.0)
 
 var _world: SimulationWorld
 var _physics_projection: SimulationPhysicsProjection
@@ -33,6 +37,10 @@ var _links_root: Node3D
 var _wire_material: StandardMaterial3D
 var _wire_dormant_material: StandardMaterial3D
 var _rope_material: StandardMaterial3D
+var _frozen_material: StandardMaterial3D
+## Tint frozen cables cyan. Diagnostic while the freeze thresholds are tuned;
+## turn off for a normal-looking yard.
+@export var debug_tint_frozen_cables := true
 var _cached_network_revision := -1
 var _event_bound := false
 ## link_id → last sampled tube path; skips remeshing static cables.
@@ -153,6 +161,18 @@ func _update_wire_body(
 ## but cannot right now (damaged endpoint), and a rope that was never wired to
 ## conduct at all — tied to terrain or to a block without electric ports.
 func _material_for(link: IndustryElectricLink) -> StandardMaterial3D:
+	# Diagnostic tint, and it wins over the other three on purpose: while the
+	# freeze thresholds are being tuned, "is this cable still being simulated"
+	# is the only question worth answering at a glance. Turn
+	# `debug_tint_frozen_cables` off and cables read normally again.
+	if (
+		debug_tint_frozen_cables
+		and _physics_projection != null
+		and _physics_projection.is_rope_frozen(link.link_id)
+	):
+		if _frozen_material == null:
+			_frozen_material = _create_frozen_material()
+		return _frozen_material
 	if IndustryElectricPortUtil.link_still_valid(_world, link):
 		return _wire_material
 	if _link_can_conduct(link):
@@ -374,6 +394,19 @@ func _create_rope_material() -> StandardMaterial3D:
 	mat.albedo_color = ROPE_COLOR
 	mat.metallic = 0.0
 	mat.roughness = 0.95
+	return mat
+
+
+func _create_frozen_material() -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = ROPE_FROZEN_COLOR
+	# Emissive so it reads in the shadow of the machine it is bolted to, which
+	# is exactly where these cables live.
+	mat.emission_enabled = true
+	mat.emission = ROPE_FROZEN_COLOR
+	mat.emission_energy_multiplier = 0.6
+	mat.metallic = 0.0
+	mat.roughness = 0.9
 	return mat
 
 
