@@ -7,6 +7,13 @@
     "hypoxia_damage_hp": 5.0,
     "hypoxia_tick_s": 1.0
   },
+  "hud": {
+    "low_oxygen_warn_fraction": 0.25,
+    "low_oxygen_crit_fraction": 0.12,
+    "low_oxygen_audio_cooldown_s": 3.0,
+    "oxygen_refill_hold_arm_s": 0.18,
+    "oxygen_refill_emit_interval_s": 0.05
+  },
   "items": {
     "raw_regolith": {
       "category": "ore",

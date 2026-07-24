@@ -330,6 +330,8 @@ func _process(_delta: float) -> void:
 		# Actuator/machine blocks still need live pose/tune while aimed.
 		if HudActuatorTuneUtil.is_actuator_meta(meta):
 			_refresh_actuator_info(hit, meta, StringName(meta.get("status_reason", &"ok")))
+		elif bool(meta.get("oxygen_module", false)):
+			_refresh_oxygen_module_info(meta)
 		elif str(meta.get("archetype_id", "")) in ["processor", "fabricator", "electrolyzer"]:
 			_refresh_machine_info(str(meta.get("archetype_id", "")), meta, hit)
 		elif str(meta.get("archetype_id", "")) == "cargo_store":
@@ -358,11 +360,14 @@ func _process(_delta: float) -> void:
 	if _refresh_actuator_info(hit, meta, status):
 		return
 	_actuator_tune_box.visible = false
+	if bool(meta.get("oxygen_module", false)):
+		_refresh_oxygen_module_info(meta)
+		return
 	_refresh_machine_info(archetype_id, meta, hit)
 
 
 func _panel_sig(hit: InteractionHit, meta: Dictionary) -> String:
-	return "%d|%d|%s|%s|%s|%s|%.3f|%s|%s" % [
+	return "%d|%d|%s|%s|%s|%s|%.3f|%s|%s|%.2f|%s" % [
 		int(meta.get("element_id", 0)),
 		int(meta.get("assembly_id", 0)),
 		str(meta.get("archetype_id", "")),
@@ -372,6 +377,8 @@ func _panel_sig(hit: InteractionHit, meta: Dictionary) -> String:
 		float(meta.get("integrity", 0.0)),
 		str(meta.get("machine_enabled", "")),
 		str(hit.target_kind),
+		float(meta.get("oxygen_current_l", 0.0)),
+		str(meta.get("powered", "")),
 	]
 
 
@@ -535,6 +542,57 @@ func _set_actuator_tune_value(field: String, value_text: String) -> void:
 	var label: Label = _actuator_tune_values.get(field)
 	if label != null:
 		label.text = value_text
+
+
+func _refresh_oxygen_module_info(meta: Dictionary) -> void:
+	if _machine_block == null:
+		return
+	_store_view.visible = false
+	_machine_drill_info.visible = false
+	_actuator_tune_box.visible = false
+	_set_machine_progress_visible(false)
+	_machine_block.visible = true
+	_machine_queue_box.visible = false
+	_machine_active_val.get_parent().visible = false
+	_machine_cargo_val.get_parent().visible = false
+	_machine_recipe_box.visible = false
+	_machine_hints.visible = true
+	_machine_hints.text = "Удерживать E — пополнить O₂"
+	var current_l := float(meta.get("oxygen_current_l", 0.0))
+	var capacity_l := float(meta.get("oxygen_capacity_l", 0.0))
+	_metric_key.text = "O₂"
+	_metric_val.text = "%.1f / %.1f Л" % [current_l, capacity_l]
+	var status := StringName(meta.get("status_reason", &"ok"))
+	_metric_val.add_theme_color_override(
+		"font_color",
+		HudTokens.color_for_status(status)
+	)
+	_status_val.text = _status_summary(meta, status)
+	_status_val.add_theme_color_override(
+		"font_color",
+		HudTokens.color_for_status(status)
+	)
+	_machine_power_val.get_parent().visible = true
+	var enabled := bool(meta.get("machine_enabled", true))
+	var powered := bool(meta.get("powered", false))
+	if not enabled:
+		_machine_power_val.text = "ВЫКЛЮЧЕН"
+		_machine_power_val.add_theme_color_override(
+			"font_color",
+			HudTokens.COL_DIM
+		)
+	elif powered:
+		_machine_power_val.text = "ПИТАНИЕ ЕСТЬ"
+		_machine_power_val.add_theme_color_override(
+			"font_color",
+			HudTokens.COL_OK
+		)
+	else:
+		_machine_power_val.text = "НЕТ ПИТАНИЯ"
+		_machine_power_val.add_theme_color_override(
+			"font_color",
+			HudTokens.COL_WARNING
+		)
 
 
 func _refresh_machine_info(

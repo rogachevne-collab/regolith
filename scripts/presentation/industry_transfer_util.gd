@@ -6,6 +6,9 @@ extends RefCounted
 static func is_transfer_target(element: SimulationElement) -> bool:
 	if element == null or not element.is_operational():
 		return false
+	# Specialized oxygen tank is hold-E refill only — never generic inventory.
+	if IndustryStoreService.is_oxygen_module(element):
+		return false
 	if IndustryArchetypeProfile.has_keyed_store(element.archetype_id):
 		return true
 	return (

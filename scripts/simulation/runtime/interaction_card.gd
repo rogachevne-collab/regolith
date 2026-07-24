@@ -27,6 +27,7 @@ func refresh(world: SimulationWorld, entry: InteractionStructure) -> bool:
 	_write_wheel_or_suspension(world, entry, element)
 	_write_control_seat(world, entry, element)
 	_write_recipe_machine_o1(world, element)
+	_write_oxygen_module_o1(world, element)
 	return true
 
 
@@ -292,6 +293,43 @@ func _write_recipe_machine_o1(
 		keys["cargo_network_regolith_fines"] = (
 			runtime.display_cargo_network_regolith_fines
 		)
+
+
+func _write_oxygen_module_o1(
+	world: SimulationWorld,
+	element: SimulationElement
+) -> void:
+	## O(1) store + runtime read. Aim/HUD must not walk cargo graph.
+	if not IndustryStoreService.is_oxygen_module(element):
+		return
+	var definition := element.get_archetype().oxygen_module_definition
+	if definition == null:
+		return
+	var runtime := world.ensure_industry_element_runtime(element.element_id)
+	var store := world.get_resource_store(
+		IndustryStoreService.element_store_id(element.element_id)
+	)
+	var liters_per_unit := ResourceCatalog.volume_per_unit_l("oxygen")
+	var current_l := 0.0
+	if store != null and liters_per_unit > 0.0:
+		current_l = store.amount("oxygen") * liters_per_unit
+	keys["oxygen_module"] = true
+	keys["oxygen_current_l"] = current_l
+	keys["oxygen_capacity_l"] = definition.capacity_l
+	keys["powered"] = runtime.powered
+	keys["machine_enabled"] = runtime.machine_enabled
+	if not runtime.display_ready:
+		# Keep status coherent for pre-tick aim (enabled / power / empty).
+		if not runtime.machine_enabled:
+			keys["status_reason"] = &"disabled"
+		elif IndustryElectricProfile.is_power_consumer(element) and not runtime.powered:
+			var power_reason := runtime.power_reason
+			keys["status_reason"] = (
+				power_reason if power_reason != &"" and power_reason != &"ok"
+				else &"no_power"
+			)
+		elif current_l <= 0.000001:
+			keys["status_reason"] = &"no_input"
 
 
 static func _joint_base_powered(world: SimulationWorld, base_element_id: int) -> bool:

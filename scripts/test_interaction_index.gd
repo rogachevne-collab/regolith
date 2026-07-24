@@ -26,6 +26,7 @@ func _run_tests() -> void:
 		_test_actuator_display_pose_push,
 		_test_industry_display_on_card,
 		_test_broken_seat_not_enterable,
+		_test_oxygen_module_card_keys,
 	]
 	for test: Callable in tests:
 		if not bool(test.call()):
@@ -402,6 +403,61 @@ func _test_broken_seat_not_enterable() -> bool:
 	if broken_card != null and bool(broken_card.keys.get("control_seat", false)):
 		world.free()
 		return _fail("broken seat card must omit control_seat key")
+	world.free()
+	return true
+
+
+func _test_oxygen_module_card_keys() -> bool:
+	## O(1) OxygenModule keys for aim/HUD — liters + enable/power/status.
+	var world := _world_with_stock()
+	world.get_archetype_registry().register(Slice01Archetypes.o2_module())
+	var spawn := _spawn(
+		world,
+		_single_blueprint(Slice01Archetypes.o2_module()),
+		GridTransform.identity()
+	)
+	if not spawn.is_ok():
+		world.free()
+		return _fail("oxygen module spawn failed")
+	var element_id := int(spawn.data["element_ids"][0])
+	var element := world.get_element(element_id)
+	if element == null:
+		world.free()
+		return _fail("oxygen module missing after spawn")
+	IndustryStoreService.ensure_element_keyed_store(world, element)
+	var runtime := world.ensure_industry_element_runtime(element_id)
+	runtime.machine_enabled = true
+	runtime.powered = true
+	runtime.power_reason = &"ok"
+	var card := world.get_interaction_card(element_id)
+	if card == null or not bool(card.keys.get("oxygen_module", false)):
+		world.free()
+		return _fail("card missing oxygen_module flag")
+	var capacity_l := float(card.keys.get("oxygen_capacity_l", 0.0))
+	var current_l := float(card.keys.get("oxygen_current_l", -1.0))
+	if capacity_l <= 0.0:
+		world.free()
+		return _fail("card missing oxygen_capacity_l")
+	if current_l < 0.0 or current_l > capacity_l + 0.001:
+		world.free()
+		return _fail("card oxygen_current_l out of range")
+	if not bool(card.keys.get("machine_enabled", false)):
+		world.free()
+		return _fail("card missing machine_enabled")
+	if not bool(card.keys.get("powered", false)):
+		world.free()
+		return _fail("card missing powered")
+	if not card.keys.has("status_reason"):
+		world.free()
+		return _fail("card missing status_reason")
+	runtime.machine_enabled = false
+	card = world.get_interaction_card(element_id)
+	if StringName(card.keys.get("status_reason", &"")) != &"disabled":
+		world.free()
+		return _fail("disabled oxygen module should report disabled status")
+	if IndustryTransferUtil.is_transfer_target(element):
+		world.free()
+		return _fail("oxygen module must not be a generic transfer target")
 	world.free()
 	return true
 

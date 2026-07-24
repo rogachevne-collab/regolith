@@ -364,6 +364,14 @@ func _physics_process(delta: float) -> void:
 		)
 		if requested_action == &"tool_primary" and active_tool == &"build":
 			_construction_mode = &"place"
+		# Oxygen hold-E: arm before first emit so a short tap is a refill no-op.
+		if (
+			requested_action == &"interact"
+			and not in_vehicle
+			and _is_oxygen_refill_hit(_query.current_hit)
+		):
+			_locked_hit = _query.current_hit
+			_cooldown = GameBalance.hud_float("oxygen_refill_hold_arm_s", 0.18)
 		_transition(ActionState.PRESSED)
 
 	var profile: Dictionary = ACTIONS[active_action]
@@ -398,16 +406,33 @@ func _physics_process(delta: float) -> void:
 		profile["interval"] = SCOOP_INTERVAL_S
 		profile["max_range"] = SCOOP_REACH_M
 		profile["continuous"] = true
+	elif active_action == &"interact" and _is_oxygen_hold_active():
+		profile = profile.duplicate()
+		profile["command"] = &"oxygen_refill"
+		profile["continuous"] = true
+		profile["interval"] = GameBalance.hud_float(
+			"oxygen_refill_emit_interval_s",
+			0.05
+		)
 	var hit := _action_hit(active_action, profile)
 	if (
 		_locked_hit != null
-		and _issued_for_press
+		and (
+			_issued_for_press
+			or _is_oxygen_hold_active()
+		)
 		and not _live_target_matches_lock(profile, active_action)
 	):
 		_transition(ActionState.CANCELLED)
 		progress = 0.0
+		_locked_hit = null
 		return
 	if not _hit_accepts_action(hit, profile, active_action):
+		if _is_oxygen_hold_active():
+			_transition(ActionState.CANCELLED)
+			progress = 0.0
+			_locked_hit = null
+			return
 		if _tracks_live_target_while_holding(active_action):
 			_transition(ActionState.HOLDING)
 			progress = 0.0
@@ -527,6 +552,16 @@ func _emit_command_for_action(
 		"construction_mode": _construction_mode,
 	}
 	if action == &"interact":
+		# Hold-E OxygenModule refill — tap is a no-op (armed by cooldown).
+		# Do not open generic inventory / seat paths for this specialized store.
+		if _is_oxygen_refill_hit(hit):
+			command_requested.emit({
+				"kind": &"oxygen_refill",
+				"source": get_parent(),
+				"target": hit.snapshot(),
+				"parameters": {},
+			})
+			return
 		if _try_emit_context_interaction(hit):
 			return
 		# Cargo/machines use the terminal, not toggle_control_seat.
@@ -980,6 +1015,10 @@ func _basis_orientation_index(basis: Basis) -> int:
 
 
 func _action_hit(action: StringName, _profile: Dictionary) -> InteractionHit:
+	# Oxygen hold keeps the locked module identity but aims with the live hit
+	# so gateway range/point checks stay authoritative.
+	if action == &"interact" and _is_oxygen_hold_active():
+		return _query.current_hit
 	if _tracks_live_target_while_holding(action):
 		return _query.current_hit
 	if _locked_hit != null:
@@ -1004,6 +1043,25 @@ func _tracks_live_target_while_holding(action: StringName) -> bool:
 	)
 
 
+func _is_oxygen_hold_active() -> bool:
+	return (
+		active_action == &"interact"
+		and _locked_hit != null
+		and _is_oxygen_refill_hit(_locked_hit)
+	)
+
+
+func _is_oxygen_refill_hit(hit: InteractionHit) -> bool:
+	if (
+		hit == null
+		or not hit.valid
+		or hit.target_kind != InteractionHit.KIND_SIMULATION_ELEMENT
+		or hit.distance > float(ACTIONS[&"interact"]["max_range"])
+	):
+		return false
+	return bool(_aim_keys(hit).get("oxygen_module", false))
+
+
 func _hit_accepts_action(
 	hit: InteractionHit,
 	profile: Dictionary,
@@ -1011,6 +1069,11 @@ func _hit_accepts_action(
 ) -> bool:
 	if not hit.valid or hit.distance > float(profile["max_range"]):
 		return false
+	if action == &"interact" and _is_oxygen_hold_active():
+		return (
+			_is_oxygen_refill_hit(hit)
+			and hit.element_id == _locked_hit.element_id
+		)
 	if action == &"tool_primary" and active_tool == &"build":
 		return _can_place_block()
 	if action == &"tool_primary" and active_tool == &"weld":
@@ -1091,6 +1154,11 @@ func _live_target_matches_lock(
 	var live := _query.current_hit
 	if not live.valid or live.distance > float(profile["max_range"]):
 		return false
+	if _action == &"interact" and _is_oxygen_hold_active():
+		return (
+			_is_oxygen_refill_hit(live)
+			and live.element_id == _locked_hit.element_id
+		)
 	if _tracks_live_target_while_holding(_action):
 		return true
 	return (

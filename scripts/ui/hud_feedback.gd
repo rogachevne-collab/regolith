@@ -9,6 +9,7 @@ var _tools: ToolController
 var _gateway: WorldCommandGateway
 var _preview: ConstructionPreview
 var _player: Node
+var _suit: Node
 
 var _prompt: Label
 var _result: Label
@@ -21,6 +22,7 @@ func setup(ctx: Dictionary) -> void:
 	_gateway = ctx.get("gateway")
 	_preview = ctx.get("preview")
 	_player = ctx.get("player")
+	_suit = ctx.get("suit")
 	if _gateway != null:
 		_gateway.command_completed.connect(_on_command_completed)
 	if _tools != null:
@@ -78,6 +80,9 @@ func _process(delta: float) -> void:
 func _prompt_for(hit: InteractionHit) -> String:
 	if _player.call("is_in_vehicle"):
 		return "E — выйти · P — стояночный"
+	var oxygen_prompt := _oxygen_refill_prompt(hit)
+	if not oxygen_prompt.is_empty():
+		return oxygen_prompt
 	if hit.valid and hit.distance <= 4.0:
 		if hit.target_kind == InteractionHit.KIND_WORLD_LOOT:
 			return "E — собрать %s" % HudTokens.resource_label(
@@ -204,12 +209,44 @@ func _is_terminal_target(hit: InteractionHit) -> bool:
 	return not IndustryTransferUtil.terminal_store_id_for_hit(hit, _gateway).is_empty()
 
 
+func _oxygen_refill_prompt(hit: InteractionHit) -> String:
+	if (
+		hit == null
+		or not hit.valid
+		or hit.target_kind != InteractionHit.KIND_SIMULATION_ELEMENT
+		or hit.distance > 4.5
+	):
+		return ""
+	var keys := _aim_keys(hit)
+	if not bool(keys.get("oxygen_module", false)):
+		return ""
+	if not bool(keys.get("machine_enabled", true)):
+		return "Модуль O₂ выключен"
+	var status := StringName(keys.get("status_reason", &"ok"))
+	if status == &"disabled":
+		return "Модуль O₂ выключен"
+	if status in [&"no_power", &"outside_power_radius", &"electric_disconnected"]:
+		return "Нет питания — O₂"
+	if (
+		float(keys.get("oxygen_current_l", 0.0)) <= 0.000001
+		or status == &"no_input"
+	):
+		return "Модуль O₂ пуст"
+	if _suit != null and _suit.has_method("oxygen_fraction"):
+		if float(_suit.call("oxygen_fraction")) >= 0.999:
+			return "Скафандр полон"
+	return "Удерживать E — пополнить O₂"
+
+
 func _on_command_completed(
 	_command_id: int,
 	action_result: Dictionary
 ) -> void:
 	var reason := StringName(action_result.get("reason", &"not_ready"))
 	var data: Dictionary = action_result.get("data", {})
+	var command_kind := StringName(action_result.get("command_kind", &""))
+	if command_kind == &"oxygen_refill" and reason in [&"ok", &"queued"]:
+		return
 	if reason == &"ok":
 		if _suppress_success_feedback():
 			return
@@ -244,6 +281,8 @@ func _wheel_placement_prompt(detail: StringName) -> String:
 
 func _suppress_success_feedback() -> bool:
 	var action := _tools.active_action
+	if action == &"interact":
+		return true
 	if action == &"tool_primary" and (
 		_tools.active_tool == &"drill"
 		or _tools.active_tool == &"grinder"
@@ -259,6 +298,12 @@ func _reason_text(reason: StringName, data: Dictionary = {}) -> String:
 			return "Нет цели"
 		&"out_of_range":
 			return "Слишком далеко"
+		&"disabled":
+			return "Модуль O₂ выключен"
+		&"no_power":
+			return "Нет питания — O₂"
+		&"no_capacity":
+			return "Скафандр полон"
 		&"invalid_target":
 			if (
 				StringName(data.get("detail", &""))
@@ -326,6 +371,13 @@ func _reason_text(reason: StringName, data: Dictionary = {}) -> String:
 				return "Карман компонентов полон"
 			return "Склад полон"
 		&"no_input":
+			if (
+				_tools != null
+				and _query != null
+				and _tools.active_action == &"interact"
+				and bool(_aim_keys(_query.current_hit).get("oxygen_module", false))
+			):
+				return "Модуль O₂ пуст"
 			return "Нечего переносить"
 		&"queue_full":
 			return "Очередь полна"

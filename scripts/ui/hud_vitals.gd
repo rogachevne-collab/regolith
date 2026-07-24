@@ -11,6 +11,9 @@ extends Control
 ## stays subordinate to the world; an outline on the text keeps it legible over
 ## bright regolith without the weight of a box, and a single hairline rule binds
 ## the three rows into one instrument instead of three floating readouts.
+##
+## Low-O₂ warning (OXYGEN-SURVIVAL-V0): restrained vignette + rate-limited cue.
+## Thresholds/cooldown live in game_balance.json `hud.*` — no magic numbers.
 
 const BAR_LEN := 92.0
 const BAR_H := 6.0
@@ -18,22 +21,42 @@ const BAR_H := 6.0
 # as values step 100 → 99 → 9.
 const VALUE_COL := 34.0
 
-# Fraction thresholds for the state palette (drops trigger warning then critical).
-const WARN_FRACTION := 0.5
-const CRIT_FRACTION := 0.25
+# Bar palette fallbacks when balance is unavailable (tests / early boot).
+const WARN_FRACTION_FALLBACK := 0.5
+const CRIT_FRACTION_FALLBACK := 0.25
 
 # Glow rises on critical so a failing channel reads urgent, not merely red.
 const GLOW_NOMINAL := 0.14
 const GLOW_CRITICAL := 0.34
 
+const VIGNETTE_WARN_ALPHA := 0.10
+const VIGNETTE_CRIT_ALPHA := 0.22
+
 var _suit: Node
 # channel key -> {"mat": ShaderMaterial, "value": Label}
 var _bars: Dictionary = {}
+var _vignette: ColorRect
+var _warn_audio: AudioStreamPlayer
+var _warn_stream: AudioStreamWAV
+var _last_audio_msec := -1000000
+var _was_low_oxygen := false
 
 
 func setup(ctx: Dictionary) -> void:
-	_suit = ctx.get("suit")
-	if _suit != null and _suit.has_signal("changed"):
+	var next_suit: Node = ctx.get("suit")
+	if (
+		_suit != null
+		and is_instance_valid(_suit)
+		and _suit.has_signal("changed")
+		and _suit.changed.is_connected(_refresh)
+	):
+		_suit.changed.disconnect(_refresh)
+	_suit = next_suit
+	if (
+		_suit != null
+		and _suit.has_signal("changed")
+		and not _suit.changed.is_connected(_refresh)
+	):
 		_suit.changed.connect(_refresh)
 	_refresh()
 
@@ -46,6 +69,18 @@ func _ready() -> void:
 
 
 func _build() -> void:
+	_vignette = ColorRect.new()
+	_vignette.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_vignette.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_vignette.color = Color(HudTokens.COL_CRITICAL, 0.0)
+	_vignette.visible = false
+	add_child(_vignette)
+
+	_warn_audio = AudioStreamPlayer.new()
+	_warn_audio.bus = &"Master"
+	_warn_audio.volume_db = -8.0
+	add_child(_warn_audio)
+
 	var cluster := HBoxContainer.new()
 	cluster.add_theme_constant_override("separation", 9)
 	cluster.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -137,8 +172,10 @@ func _refresh() -> void:
 	if _suit == null or _bars.is_empty():
 		return
 	_update_bar("health", _suit.health_fraction())
-	_update_bar("oxygen", _suit.oxygen_fraction())
+	var oxygen_fraction := float(_suit.oxygen_fraction())
+	_update_bar("oxygen", oxygen_fraction)
 	_update_bar("hydrogen", _suit.hydrogen_fraction())
+	_update_low_oxygen_warning(oxygen_fraction)
 
 
 func _update_bar(key: String, fraction: float) -> void:
@@ -151,7 +188,7 @@ func _update_bar(key: String, fraction: float) -> void:
 	mat.set_shader_parameter("fill_color", col)
 	mat.set_shader_parameter(
 		"glow_strength",
-		GLOW_CRITICAL if fraction <= CRIT_FRACTION else GLOW_NOMINAL
+		GLOW_CRITICAL if fraction <= _bar_crit_fraction() else GLOW_NOMINAL
 	)
 	var value: Label = refs["value"]
 	value.text = "%d%%" % int(round(fraction * 100.0))
@@ -159,13 +196,84 @@ func _update_bar(key: String, fraction: float) -> void:
 	# earns a lit numeral.
 	value.add_theme_color_override(
 		"font_color",
-		HudTokens.COL_DIM if fraction > WARN_FRACTION else col
+		HudTokens.COL_DIM if fraction > _bar_warn_fraction() else col
 	)
 
 
 func _color_for_fraction(fraction: float) -> Color:
-	if fraction <= CRIT_FRACTION:
+	if fraction <= _bar_crit_fraction():
 		return HudTokens.COL_CRITICAL
-	if fraction <= WARN_FRACTION:
+	if fraction <= _bar_warn_fraction():
 		return HudTokens.COL_WARNING
 	return HudTokens.COL_OK
+
+
+func _bar_warn_fraction() -> float:
+	return WARN_FRACTION_FALLBACK
+
+
+func _bar_crit_fraction() -> float:
+	return CRIT_FRACTION_FALLBACK
+
+
+func _update_low_oxygen_warning(oxygen_fraction: float) -> void:
+	if _vignette == null:
+		return
+	var warn := GameBalance.hud_float("low_oxygen_warn_fraction", 0.25)
+	var crit := GameBalance.hud_float("low_oxygen_crit_fraction", 0.12)
+	var is_low := oxygen_fraction <= warn
+	if not is_low:
+		_vignette.visible = false
+		_vignette.color = Color(HudTokens.COL_CRITICAL, 0.0)
+		_was_low_oxygen = false
+		return
+	var t := 0.0
+	if warn > crit:
+		t = clampf((warn - oxygen_fraction) / (warn - crit), 0.0, 1.0)
+	else:
+		t = 1.0 if oxygen_fraction <= crit else 0.0
+	var alpha := lerpf(VIGNETTE_WARN_ALPHA, VIGNETTE_CRIT_ALPHA, t)
+	_vignette.color = Color(HudTokens.COL_CRITICAL, alpha)
+	_vignette.visible = alpha > 0.001
+	var cooldown_s := GameBalance.hud_float("low_oxygen_audio_cooldown_s", 3.0)
+	var now_msec := Time.get_ticks_msec()
+	var cooldown_msec := int(cooldown_s * 1000.0)
+	var edge := not _was_low_oxygen
+	_was_low_oxygen = true
+	if edge or now_msec - _last_audio_msec >= cooldown_msec:
+		_play_low_oxygen_cue()
+		_last_audio_msec = now_msec
+
+
+func _play_low_oxygen_cue() -> void:
+	if _warn_audio == null:
+		return
+	if _warn_stream == null:
+		_warn_stream = _generate_low_oxygen_cue()
+		_warn_audio.stream = _warn_stream
+	if _warn_audio.playing:
+		_warn_audio.stop()
+	_warn_audio.play()
+
+
+func _generate_low_oxygen_cue() -> AudioStreamWAV:
+	## Short soft dual-tone beep; generated once, no disk asset.
+	var stream := AudioStreamWAV.new()
+	stream.format = AudioStreamWAV.FORMAT_16_BITS
+	stream.mix_rate = 22050
+	stream.stereo = false
+	var sample_count := int(stream.mix_rate * 0.12)
+	var data := PackedByteArray()
+	data.resize(sample_count * 2)
+	for i: int in range(sample_count):
+		var t := float(i) / float(stream.mix_rate)
+		var env := 1.0 - (float(i) / float(sample_count))
+		env *= env
+		var sample := (
+			sin(TAU * 880.0 * t) * 0.22
+			+ sin(TAU * 660.0 * t) * 0.14
+		) * env
+		var q := int(clampf(sample, -1.0, 1.0) * 32767.0)
+		data.encode_s16(i * 2, q)
+	stream.data = data
+	return stream

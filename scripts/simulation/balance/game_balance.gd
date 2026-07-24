@@ -163,6 +163,22 @@ static func construction_float(key: String, fallback: float) -> float:
 	return float(construction().get(key, fallback))
 
 
+static func suit_life_support() -> Dictionary:
+	return _section("suit_life_support")
+
+
+static func suit_life_support_float(key: String, fallback: float) -> float:
+	return float(suit_life_support().get(key, fallback))
+
+
+static func hud() -> Dictionary:
+	return _section("hud")
+
+
+static func hud_float(key: String, fallback: float) -> float:
+	return float(hud().get(key, fallback))
+
+
 static func electric_defaults() -> Dictionary:
 	var defaults: Variant = electric().get("defaults", {})
 	return defaults if defaults is Dictionary else {}
