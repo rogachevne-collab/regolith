@@ -200,6 +200,7 @@ static func connect_rope(world,
 				CableAnchorUtil.rest_length_m(span_m, command.slack),
 				command.routed_m
 			),
+			"kind": command.link_kind,
 		}
 	)
 	world._industry_network.bump_revision()

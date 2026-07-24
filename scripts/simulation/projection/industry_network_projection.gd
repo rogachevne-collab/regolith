@@ -157,11 +157,14 @@ func _update_wire_body(
 		_tube_path_cache[link.link_id] = path
 
 
-## Three readings: a cable carrying current, a cable that should carry current
-## but cannot right now (damaged endpoint), and a rope that was never wired to
-## conduct at all — tied to terrain or to a block without electric ports.
+## Four readings: a cable carrying current, a cable that should carry current
+## but cannot right now (damaged endpoint), a rope that was never wired to
+## conduct at all — tied to terrain or to a block without electric ports —
+## and a MECHANICAL rope/chain (ROPE-CHAIN-V0), which reads as fibre always,
+## never as a dead wire, even when both ends happen to sit on powered blocks:
+## it structurally cannot conduct, so it is never "dormant".
 func _material_for(link: IndustryElectricLink) -> StandardMaterial3D:
-	# Diagnostic tint, and it wins over the other three on purpose: while the
+	# Diagnostic tint, and it wins over the other four on purpose: while the
 	# freeze thresholds are being tuned, "is this cable still being simulated"
 	# is the only question worth answering at a glance. Turn
 	# `debug_tint_frozen_cables` off and cables read normally again.
@@ -173,6 +176,8 @@ func _material_for(link: IndustryElectricLink) -> StandardMaterial3D:
 		if _frozen_material == null:
 			_frozen_material = _create_frozen_material()
 		return _frozen_material
+	if link.is_mechanical():
+		return _rope_material
 	if IndustryElectricPortUtil.link_still_valid(_world, link):
 		return _wire_material
 	if _link_can_conduct(link):

@@ -58,12 +58,6 @@ const XpbdCableRopeSolverScript := preload(
 ## When on, placed cables use the Ropes! XPBD core with gate-4 pin reactions
 ## inside [XpbdCableRopeSolver] — [method _tick_cable_tension] is skipped.
 @export var use_xpbd_cable_rope := true
-## TEMP / experimental (Rope-lift step 0): let a rope with one end on a movable
-## RigidBody and the other end anchored LIFT that body via mass coupling — the
-## proof-of-feel before the real Rope/Chain entity exists. Off restores pure
-## electric-cable behaviour (pinned ends). Draw a taut rope from an anchored
-## high point (base, wall, stake) down to a loose block/rover to see it pull up.
-@export var debug_cable_lift := false
 
 const ASSEMBLY_BOUNCE := 0.32
 const ASSEMBLY_FRICTION := 0.42
@@ -2540,13 +2534,15 @@ func _tick_one_xpbd_rope(
 	var collides := collide_world and space_state != null and collision_budget >= particles
 	if collides:
 		collision_budget -= particles
-	# Step-0 lift proof: mass-couple the movable end when the other end is
-	# anchored, so a taut rope pulls the load up to the fixed point. Only when
-	# debug_cable_lift is on and the ends are on different bodies; a same-body
-	# utility cable (shared_body) still freezes, an electric cable still pins.
+	# ROPE-CHAIN-V0: mass-couple the movable end when the other end is
+	# anchored, so a taut MECHANICAL rope/chain pulls the load up to the fixed
+	# point (lift) or drags it along (tow) instead of only pinning. Only when
+	# the link is MECHANICAL and the ends are on different bodies; a same-body
+	# utility cable (shared_body) still freezes, an ELECTRIC cable still pins —
+	# it conducts and tugs back, it does not move the bodies it is tied to.
 	var couple_a := 0.0
 	var couple_b := 0.0
-	if debug_cable_lift and shared_body == null:
+	if link.is_mechanical() and shared_body == null:
 		var a_movable := body_a != null and not body_a.freeze
 		var b_movable := body_b != null and not body_b.freeze
 		if a_movable and not b_movable:

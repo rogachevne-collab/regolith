@@ -6,7 +6,17 @@ const _SCRIPT := preload(
 )
 const _CODEC := preload("res://scripts/simulation/snapshot_codec.gd")
 
+## ELECTRIC (default, current behaviour): may conduct, pins its endpoints —
+## never mass-couples. MECHANICAL (ROPE-CHAIN-V0): a physical rope/chain, never
+## added to the electric graph, mass-couples a live endpoint body so a taut
+## rope actually lifts/tows instead of only pinning. See docs/specs/ROPE-CHAIN-V0.md.
+enum Kind {
+	ELECTRIC,
+	MECHANICAL,
+}
+
 var link_id: int = 0
+var kind: int = Kind.ELECTRIC
 ## Endpoint element, or 0 for a rope end nailed to the world (terrain, boulder).
 var element_a: int = 0
 ## Legacy port endpoint. Empty on a free-attached rope — the end then hangs at
@@ -72,12 +82,19 @@ static func new_link(
 	link.attach_b = rope.get("attach_b", Vector3.ZERO)
 	link.rest_length_m = maxf(float(rope.get("rest_length_m", 0.0)), 0.0)
 	link.break_force_n = maxf(float(rope.get("break_force_n", 0.0)), 0.0)
+	link.kind = int(rope.get("kind", Kind.ELECTRIC))
 	return link
 
 
 ## Free-attached rope: no ports, endpoints clicked anywhere, tension physics.
 func is_rope() -> bool:
 	return rest_length_m > 0.0
+
+
+## A physical rope/chain: never conducts, mass-couples a live endpoint body.
+## See docs/specs/ROPE-CHAIN-V0.md.
+func is_mechanical() -> bool:
+	return kind == Kind.MECHANICAL
 
 
 ## An end nailed to the world instead of to a block.
@@ -182,6 +199,7 @@ func to_dict(for_snapshot := false) -> Dictionary:
 			_CODEC.packed_vector3_array_to_array(baked_path_local)
 			if for_snapshot else baked_path_local.duplicate()
 		),
+		"kind": kind,
 	}
 
 
@@ -208,4 +226,6 @@ static func from_dict(data: Dictionary) -> IndustryElectricLink:
 	link.baked_path_local = _CODEC.packed_vector3_array_from_variant(
 		data.get("baked_path_local", PackedVector3Array())
 	)
+	# Absent in old saves (pre ROPE-CHAIN-V0) => ELECTRIC, current behaviour.
+	link.kind = int(data.get("kind", Kind.ELECTRIC))
 	return link

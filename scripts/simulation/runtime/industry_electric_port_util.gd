@@ -526,11 +526,17 @@ static func _endpoint_exists(world: SimulationWorld, element_id: int) -> bool:
 ## elements that have an electric port at all — a rope tied to a drill powers
 ## the drill. Ends nailed to the world conduct nothing (the rope is purely
 ## mechanical there), and neither does a rope to a portless block.
+## A MECHANICAL link (ROPE-CHAIN-V0) never conducts — it is a physical
+## rope/chain, not a wire, even when both ends happen to sit on powered
+## blocks — so it is excluded here before any port check, which is also what
+## keeps it out of IndustryElectricGraph (built from active_links()).
 static func link_still_valid(
 	world: SimulationWorld,
 	link: IndustryElectricLink
 ) -> bool:
 	if link == null:
+		return false
+	if link.is_mechanical():
 		return false
 	var element_a := world.get_element(link.element_a)
 	var element_b := world.get_element(link.element_b)

@@ -53,6 +53,12 @@ func _run() -> void:
 		return
 	if not await _test_rope_wakes_a_parked_body():
 		return
+	if not await _test_mechanical_rope_lifts_anchored_body():
+		return
+	if not await _test_electric_rope_does_not_lift():
+		return
+	if not await _test_mechanical_rope_tows_between_two_bodies():
+		return
 	if not _test_rope_rest_length_respects_routed_path():
 		return
 	if not await _test_rope_carries_the_actuator_rating():
@@ -1379,6 +1385,191 @@ func _test_rope_wakes_a_parked_body() -> bool:
 		_free_fixture(fixture)
 		return _fail("taking up more rope must thaw the parked body again")
 	_free_fixture(fixture)
+	return true
+
+
+## ROPE-CHAIN-V0. A MECHANICAL link mass-couples the movable end when the other
+## end is anchored, so a taut rope actually LIFTS the load against gravity --
+## the step-0 proof (scenes/demo_cable_lift.tscn), now proven through the real
+## link/kind rather than the debug_cable_lift flag or a standalone probe.
+func _test_mechanical_rope_lifts_anchored_body() -> bool:
+	var fixture: Dictionary = _new_fixture()
+	var world: SimulationWorld = fixture["world"]
+	var projection: SimulationPhysicsProjection = fixture["projection"]
+	var spawned: StructuralCommandResult = _spawn(
+		world,
+		_single_blueprint(Slice01Archetypes.frame()),
+		GridTransform.identity()
+	)
+	if not spawned.is_ok():
+		_free_fixture(fixture)
+		return _fail("mechanical lift fixture spawn failed: %s" % spawned.reason)
+	var assembly_id: int = int(spawned.data["assembly_id"])
+	var element_id: int = int(spawned.data["element_ids"][0])
+	var rover := projection.get_physics_body(assembly_id) as RigidBody3D
+	if rover == null:
+		_free_fixture(fixture)
+		return _fail("a loose frame must project as a RigidBody3D")
+	rover.mass = 300.0
+	var rover_origin := world.element_world_transform(element_id).origin
+	var anchor_point := rover_origin + Vector3(0.0, 10.0, 0.0)
+	await get_tree().physics_frame
+	var roped := world.connect_rope(element_id, rover_origin, 0, anchor_point, 0.5)
+	if not roped.is_ok():
+		_free_fixture(fixture)
+		return _fail("rope to the anchor failed: %s" % str(roped.reason))
+	var link_id := int(roped.data["link_id"])
+	var link: IndustryElectricLink = world.get_industry_network().get_link(link_id)
+	link.kind = IndustryElectricLink.Kind.MECHANICAL
+	# A tow winch that cannot part: this proves the lift, not a break threshold.
+	link.break_force_n = 1.0e9
+	# Winch it in gradually, same as a player holding the reel key -- an instant
+	# multi-metre overstretch with an unlimited force cap (no piston backing on
+	# a bare frame) is a numerical gut-punch, not a lift.
+	link.rest_length_m = anchor_point.distance_to(rover_origin)
+	for _tick: int in range(300):
+		link.rest_length_m = maxf(link.rest_length_m - 3.0 / 60.0, 3.0)
+		# projection is live in the tree: its own _physics_process ticks the
+		# rope solver every frame already -- an extra manual tick here would
+		# double-step it and pump in energy every frame.
+		await get_tree().physics_frame
+	var risen := rover.global_position.y - rover_origin.y
+	_free_fixture(fixture)
+	if risen < 4.0:
+		return _fail(
+			"mechanical rope must lift the anchored load, rose %.2f m of ~7 m wanted"
+			% risen
+		)
+	return true
+
+
+## The control: the same anchor + 300 kg load, but an ELECTRIC link (default
+## kind, current behaviour) -- it must only pin and tug back, never lift. If
+## this ever also lifts, the kind gate in _tick_one_xpbd_rope silently broke
+## and every electric cable in the game would start hauling on its endpoints.
+func _test_electric_rope_does_not_lift() -> bool:
+	var fixture: Dictionary = _new_fixture()
+	var world: SimulationWorld = fixture["world"]
+	var projection: SimulationPhysicsProjection = fixture["projection"]
+	var spawned: StructuralCommandResult = _spawn(
+		world,
+		_single_blueprint(Slice01Archetypes.frame()),
+		GridTransform.identity()
+	)
+	if not spawned.is_ok():
+		_free_fixture(fixture)
+		return _fail("electric no-lift fixture spawn failed: %s" % spawned.reason)
+	var assembly_id: int = int(spawned.data["assembly_id"])
+	var element_id: int = int(spawned.data["element_ids"][0])
+	var rover := projection.get_physics_body(assembly_id) as RigidBody3D
+	if rover == null:
+		_free_fixture(fixture)
+		return _fail("a loose frame must project as a RigidBody3D")
+	rover.mass = 300.0
+	var rover_origin := world.element_world_transform(element_id).origin
+	var anchor_point := rover_origin + Vector3(0.0, 10.0, 0.0)
+	await get_tree().physics_frame
+	var roped := world.connect_rope(element_id, rover_origin, 0, anchor_point, 0.5)
+	if not roped.is_ok():
+		_free_fixture(fixture)
+		return _fail("rope to the anchor failed: %s" % str(roped.reason))
+	var link_id := int(roped.data["link_id"])
+	var link: IndustryElectricLink = world.get_industry_network().get_link(link_id)
+	# kind left at its default (ELECTRIC) on purpose.
+	link.break_force_n = 1.0e9
+	link.rest_length_m = anchor_point.distance_to(rover_origin)
+	for _tick: int in range(300):
+		link.rest_length_m = maxf(link.rest_length_m - 3.0 / 60.0, 3.0)
+		# projection is live in the tree: its own _physics_process ticks the
+		# rope solver every frame already -- an extra manual tick here would
+		# double-step it and pump in energy every frame.
+		await get_tree().physics_frame
+	var risen := rover.global_position.y - rover_origin.y
+	_free_fixture(fixture)
+	if risen > 2.0:
+		return _fail(
+			"electric rope must not lift its endpoint (pins, does not couple), rose %.2f m"
+			% risen
+		)
+	return true
+
+
+## Two loose bodies, no anchor at all: neither end qualifies for mass coupling
+## (couple_a/b only fire when exactly one side is immovable), so towing here
+## goes through the same pin + reaction-impulse path an ELECTRIC rope already
+## uses -- this guards the kind gate did not accidentally also gate that
+## shared path. Proof of tow: drive ONE rover with a sustained force (like a
+## motor pulling away) and confirm the OTHER, otherwise motionless, gets
+## dragged along a meaningful distance -- a taut rope started AT its rest
+## length, never overstretched, so this is a clean force-transmission check
+## rather than a winch-reel stress test.
+func _test_mechanical_rope_tows_between_two_bodies() -> bool:
+	var fixture: Dictionary = _new_fixture()
+	var world: SimulationWorld = fixture["world"]
+	var projection: SimulationPhysicsProjection = fixture["projection"]
+	var spawn_a: StructuralCommandResult = _spawn(
+		world,
+		_single_blueprint(Slice01Archetypes.frame()),
+		GridTransform.identity()
+	)
+	var far_frame := GridTransform.identity()
+	far_frame.translation = Vector3i(20, 0, 0)
+	var spawn_b: StructuralCommandResult = _spawn(
+		world,
+		_single_blueprint(Slice01Archetypes.frame()),
+		far_frame
+	)
+	if not spawn_a.is_ok() or not spawn_b.is_ok():
+		_free_fixture(fixture)
+		return _fail("mechanical tow fixture spawn failed")
+	var assembly_a: int = int(spawn_a.data["assembly_id"])
+	var assembly_b: int = int(spawn_b.data["assembly_id"])
+	var element_a: int = int(spawn_a.data["element_ids"][0])
+	var element_b: int = int(spawn_b.data["element_ids"][0])
+	var rover_a := projection.get_physics_body(assembly_a) as RigidBody3D
+	var rover_b := projection.get_physics_body(assembly_b) as RigidBody3D
+	if rover_a == null or rover_b == null:
+		_free_fixture(fixture)
+		return _fail("both loose frames must project as RigidBody3D")
+	# Isolate the tow from freefall: only the rope should move these along X.
+	rover_a.gravity_scale = 0.0
+	rover_b.gravity_scale = 0.0
+	rover_a.mass = 300.0
+	rover_b.mass = 300.0
+	var origin_a := world.element_world_transform(element_a).origin
+	var origin_b := world.element_world_transform(element_b).origin
+	await get_tree().physics_frame
+	var roped := world.connect_rope(element_a, origin_a, element_b, origin_b, 0.0)
+	if not roped.is_ok():
+		_free_fixture(fixture)
+		return _fail("rope between the two rovers failed: %s" % str(roped.reason))
+	var link_id := int(roped.data["link_id"])
+	var link: IndustryElectricLink = world.get_industry_network().get_link(link_id)
+	link.kind = IndustryElectricLink.Kind.MECHANICAL
+	link.break_force_n = 1.0e9
+	# Zero slack: the rope starts exactly taut at the span the elements spawned
+	# at, so there is no overstretch to resolve -- the whole test is about
+	# force transmission, not the solver recovering from a bad initial state.
+	link.rest_length_m = origin_a.distance_to(origin_b)
+	# One shove, then hands off -- momentum through the taut tether is what
+	# tows, not a sustained applied force fighting the constraint every
+	# substep (that combination produced hundred-metre blowups while this
+	# test was being developed).
+	rover_a.linear_velocity = Vector3(-2.0, 0.0, 0.0)
+	for _tick: int in range(90):
+		# projection is live in the tree: its own _physics_process already ticks
+		# the rope solver every frame -- no manual tick here.
+		await get_tree().physics_frame
+	var towed := rover_b.global_position.x - origin_b.x
+	_free_fixture(fixture)
+	# Bounded both ways: it must move meaningfully toward rover_a (proving the
+	# rope transmits force), but nowhere near the hundreds of metres a broken
+	# solver interaction produced above.
+	if towed > -0.1 or towed < -4.0:
+		return _fail(
+			"mechanical rope must tow the far body along, it moved %.2f m"
+			% towed
+		)
 	return true
 
 

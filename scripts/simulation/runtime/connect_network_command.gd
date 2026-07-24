@@ -35,10 +35,18 @@ var routed_m: float = 0.0
 ## ask for it itself, because gravity lives on a scene node and a command does
 ## not have one.
 var stake_up: Vector3 = Vector3.UP
+## ELECTRIC (default) or MECHANICAL (ROPE-CHAIN-V0). Only meaningful on the
+## rope form (is_rope()) — the port-to-port form is always ELECTRIC, there is
+## no reachable path to build a portless MECHANICAL wire.
+var link_kind: int = IndustryElectricLink.Kind.ELECTRIC
 
 
 func is_rope() -> bool:
 	return port_a_id.is_empty() or port_b_id.is_empty()
+
+
+func is_mechanical() -> bool:
+	return link_kind == IndustryElectricLink.Kind.MECHANICAL
 
 
 func kind() -> StringName:
@@ -62,4 +70,5 @@ func execution_copy() -> StructuralCommand:
 	copy.slack = slack
 	copy.routed_m = routed_m
 	copy.stake_up = stake_up
+	copy.link_kind = link_kind
 	return copy
