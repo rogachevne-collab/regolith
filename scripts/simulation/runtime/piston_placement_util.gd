@@ -113,12 +113,10 @@ static func find_piston_joint_for_element(
 ) -> SimulationJoint:
 	if world == null or element_id <= 0:
 		return null
-	for joint: SimulationJoint in world.list_joints():
-		if joint.kind != SimulationJoint.Kind.PISTON:
-			continue
-		if joint.element_a_id == element_id or joint.element_b_id == element_id:
-			return joint
-	return null
+	var joint := world.driven_joint_for_element(element_id)
+	if joint == null or joint.kind != SimulationJoint.Kind.PISTON:
+		return null
+	return joint
 
 
 static func enrich_interaction_metadata(

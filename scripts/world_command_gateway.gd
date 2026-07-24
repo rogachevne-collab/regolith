@@ -1091,7 +1091,11 @@ func tick_rover_locomotion_input() -> void:
 		locomotion.set_brake_command(1.0)
 		locomotion.set_translate_command(Vector3.ZERO)
 		locomotion.set_attitude_commands(0.0, 0.0, 0.0)
-		_wake_rover_body(assembly_id)
+		# НЕ будим тут каждый тик: постоянный wake на стоящем под ручником ровере
+		# сбрасывал settle-счётчик _update_parking_freeze (сборка никогда не
+		# засыпала) и штормил физсервер записями freeze/sleeping на все ~26 тел
+		# 60 раз/с — это и была просадка «сижу в кабине». Разбудит переключение
+		# ручника (_toggle_rover_parking_brake), посадка или копка рядом.
 		return
 	if is_flight:
 		# SE 6DOF: flight consumes WASD/Space/C; wheels idle while thrusters present.
@@ -1586,6 +1590,42 @@ func control_terminal_snapshot(
 	# `resolved_id <= 0`, начиная со второго тика он навсегда остаётся 0, и
 	# билдер молча откатывается на «первый попавшийся» — не туда, где реально
 	# сидит/целится игрок.
+	var resolved := _resolve_control_terminal_target(assembly_id, hint_element_id)
+	if int(resolved["assembly_id"]) <= 0:
+		return ControlTerminalSnapshotBuilder.failure(&"no_target")
+	return ControlTerminalSnapshotBuilder.build(
+		_session.world,
+		int(resolved["assembly_id"]),
+		int(resolved["host_hint"])
+	)
+
+
+## Дешёвый снапшот пульта для ЗАКРЫТОГО окна: только хост + привязки бара, без
+## обхода всей сборки/тревог/энергоблока. Полный control_terminal_snapshot нужен
+## лишь открытому окну; закрытый пульт кормит компактную ленту этим.
+func control_terminal_bar_snapshot(
+	assembly_id: int = 0,
+	hint_element_id: int = 0
+) -> Dictionary:
+	if _session == null or _session.world == null:
+		return ControlTerminalSnapshotBuilder.failure(&"not_ready")
+	var resolved := _resolve_control_terminal_target(assembly_id, hint_element_id)
+	if int(resolved["assembly_id"]) <= 0:
+		return ControlTerminalSnapshotBuilder.failure(&"no_target")
+	return ControlTerminalSnapshotBuilder.build_bar_only(
+		_session.world,
+		int(resolved["assembly_id"]),
+		int(resolved["host_hint"])
+	)
+
+
+## Резолв цели пульта: сидя — своя сборка/сиденье; иначе — сборка наведённого
+## элемента. host_hint резолвится всегда (см. коммент выше про кэш assembly_id).
+func _resolve_control_terminal_target(
+	assembly_id: int,
+	hint_element_id: int
+) -> Dictionary:
+	var resolved_id := assembly_id
 	var host_hint := _rover_seat_element_id
 	if resolved_id <= 0:
 		if host_hint > 0:
@@ -1596,9 +1636,7 @@ func control_terminal_snapshot(
 				resolved_id = element.assembly_id
 	if host_hint <= 0:
 		host_hint = hint_element_id
-	if resolved_id <= 0:
-		return ControlTerminalSnapshotBuilder.failure(&"no_target")
-	return ControlTerminalSnapshotBuilder.build(_session.world, resolved_id, host_hint)
+	return {"assembly_id": resolved_id, "host_hint": host_hint}
 
 
 func player_inventory() -> PlayerInventoryRegistry:

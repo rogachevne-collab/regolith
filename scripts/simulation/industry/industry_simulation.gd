@@ -166,6 +166,8 @@ func _tick_once(world: SimulationWorld, tick_interval: float) -> void:
 	)
 	_transfer_service.auto_transfer_tick(world, _cargo_graph)
 	_transfer_service.machine_cargo_tick(world, _cargo_graph)
+	# Post-transfer: refresh display_* supply/missing for aim/HUD (Phase 2b).
+	_recipe_runner.sync_all_display_fields(world, _cargo_graph)
 	_sync_machine_power_draw(world)
 
 

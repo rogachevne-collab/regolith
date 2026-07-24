@@ -72,7 +72,7 @@ static func place_element(world,
 				allocate_joint
 			)
 		):
-			world._joints[joint.joint_id] = joint
+			world._register_joint(joint)
 			joint_ids.append(joint.joint_id)
 		element.terrain_contact = true
 		world._assemblies[assembly.assembly_id] = assembly
@@ -88,7 +88,7 @@ static func place_element(world,
 				element_id,
 				str(connection["new_port_id"])
 			)
-			world._joints[joint_id] = joint
+			world._register_joint(joint)
 			joint_ids.append(joint_id)
 
 	world._elements[element_id] = element
@@ -806,7 +806,7 @@ static func place_driven_element(world,
 			head_element_id,
 			command.archetype.piston_definition
 		)
-	world._joints[driven_joint_id] = driven_joint
+	world._register_joint(driven_joint)
 	joint_ids.append(driven_joint_id)
 
 	if new_assembly:
@@ -819,7 +819,7 @@ static func place_driven_element(world,
 				allocate_joint
 			)
 		):
-			world._joints[joint.joint_id] = joint
+			world._register_joint(joint)
 			joint_ids.append(joint.joint_id)
 		base_element.terrain_contact = true
 		world._assemblies[assembly.assembly_id] = assembly
@@ -827,26 +827,26 @@ static func place_driven_element(world,
 		for connection_variant: Variant in validation.data["base_connections"]:
 			var connection: Dictionary = connection_variant
 			var joint_id: int = world._allocator.allocate_joint_id()
-			world._joints[joint_id] = SimulationJoint.rigid(
+			world._register_joint(SimulationJoint.rigid(
 				joint_id,
 				assembly.assembly_id,
 				int(connection["existing_element_id"]),
 				str(connection["existing_port_id"]),
 				base_element_id,
 				str(connection["new_port_id"])
-			)
+			))
 			joint_ids.append(joint_id)
 		for connection_variant: Variant in validation.data["head_connections"]:
 			var connection: Dictionary = connection_variant
 			var joint_id: int = world._allocator.allocate_joint_id()
-			world._joints[joint_id] = SimulationJoint.rigid(
+			world._register_joint(SimulationJoint.rigid(
 				joint_id,
 				assembly.assembly_id,
 				int(connection["existing_element_id"]),
 				str(connection["existing_port_id"]),
 				head_element_id,
 				str(connection["new_port_id"])
-			)
+			))
 			joint_ids.append(joint_id)
 
 	world._elements[base_element_id] = base_element
@@ -1500,10 +1500,10 @@ static func reconcile_terrain_anchors_for_assemblies(world,
 		)
 		var changed := false
 		for removed_id: int in result["removed_joint_ids"]:
-			if world._joints.erase(removed_id):
+			if world._unregister_joint(int(removed_id)):
 				changed = true
 		for added_joint: SimulationJoint in result["added_joints"]:
-			world._joints[added_joint.joint_id] = added_joint
+			world._register_joint(added_joint)
 			changed = true
 		if changed:
 			assembly.bump_revision()
@@ -1531,12 +1531,12 @@ static func record_placement_terrain_contact(world,
 	if port_id.is_empty():
 		return
 	var joint_id: int = world._allocator.allocate_joint_id()
-	world._joints[joint_id] = SimulationJoint.anchor(
+	world._register_joint(SimulationJoint.anchor(
 		joint_id,
 		assembly.assembly_id,
 		element.element_id,
 		port_id
-	)
+	))
 	joint_ids.append(joint_id)
 
 static func probe_touching_ids(world, 

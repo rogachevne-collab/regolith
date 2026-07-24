@@ -15,6 +15,14 @@ var dynamic_power_w: float = 0.0
 var power_reason: StringName = &"ok"
 var powered: bool = false
 var machine_state: IndustryMachineState = null
+## Interaction Read-Model Phase 2b: written on industry tick, read by card/aim.
+## Transient — not persisted in to_dict / snapshots.
+var display_ready: bool = false
+var display_status_reason: StringName = &"ok"
+var display_missing_input_resource_id: String = ""
+var display_cargo_network_connected: bool = false
+var display_cargo_network_ore_mare_regolith: float = 0.0
+var display_cargo_network_regolith_fines: float = 0.0
 
 
 static func create_default() -> IndustryElementRuntime:
@@ -27,7 +35,17 @@ static func create_default() -> IndustryElementRuntime:
 	runtime.power_reason = &"ok"
 	runtime.powered = false
 	runtime.machine_state = IndustryMachineState.create_default()
+	runtime.clear_display_fields()
 	return runtime
+
+
+func clear_display_fields() -> void:
+	display_ready = false
+	display_status_reason = &"ok"
+	display_missing_input_resource_id = ""
+	display_cargo_network_connected = false
+	display_cargo_network_ore_mare_regolith = 0.0
+	display_cargo_network_regolith_fines = 0.0
 
 
 func ensure_machine_state() -> IndustryMachineState:

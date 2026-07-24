@@ -10,6 +10,11 @@ static func resolve_display_reason(
 ) -> StringName:
 	if element == null:
 		return &"invalid_target"
+	if world != null:
+		var cached := world.get_industry_element_runtime(element.element_id)
+		# Phase 2b: prefer tick-written display_* (no cargo walk on this path).
+		if cached != null and cached.display_ready:
+			return cached.display_status_reason
 	var structural := element.status_reason()
 	if structural != &"ok":
 		return structural

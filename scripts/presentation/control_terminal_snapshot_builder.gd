@@ -72,6 +72,38 @@ static func build(
 	}
 
 
+## Дешёвый снапшот ТОЛЬКО для компактной ленты: хост + привязки бара, без обхода
+## всех узлов сборки, тревог и энергоблока. Полный build() нужен лишь открытому
+## окну пульта; закрытый пульт (едем, окно закрыто) кормит ленту этим и не платит
+## ~16 мс/refresh за то, чего никто не видит. Привязки меняются только при
+## редактировании (в открытом окне) или смене сиденья — лента сама gated по
+## сигнатуре и перестроится, когда данные реально изменятся.
+static func build_bar_only(
+	world: SimulationWorld,
+	assembly_id: int,
+	host_hint_element_id: int = 0
+) -> Dictionary:
+	if world == null:
+		return failure(&"not_ready")
+	if assembly_id <= 0:
+		return failure(&"invalid_assembly")
+	var assembly := world.get_assembly_raw(assembly_id)
+	if assembly == null:
+		return failure(&"invalid_assembly")
+	var host_element_id := _resolve_control_seat_host(
+		world,
+		assembly,
+		host_hint_element_id
+	)
+	return {
+		"valid": true,
+		"assembly_id": assembly_id,
+		"bar_only": true,
+		"control_seat_element_id": host_element_id,
+		"action_bar": _action_bar_dict(world, host_element_id),
+	}
+
+
 static func failure(reason: StringName = &"invalid_assembly") -> Dictionary:
 	return {
 		"valid": false,
@@ -336,17 +368,20 @@ static func _alarm_sort(a: Dictionary, b: Dictionary) -> bool:
 	return int(a["element_id"]) < int(b["element_id"])
 
 
-## Приводной joint по элементу-базе. Один элемент — не больше одного привода.
+## Приводной joint по элементу-базе (один ряд пульта на actuator).
+## Index резолвит оба endpoint'а; в список пульта кладём только base (element_a).
 static func _driven_joint_by_element(
 	world: SimulationWorld,
 	assembly_id: int
 ) -> Dictionary:
 	var map: Dictionary = {}
-	for joint: SimulationJoint in world.list_joints():
-		if joint == null or joint.assembly_id != assembly_id:
+	var assembly := world.get_assembly_raw(assembly_id)
+	if assembly == null:
+		return map
+	for element_id_variant: Variant in assembly.element_ids:
+		var element_id := int(element_id_variant)
+		var joint := world.driven_joint_for_element(element_id)
+		if joint == null or joint.element_a_id != element_id:
 			continue
-		if not joint.kind in SimulationJoint.DRIVEN_KINDS:
-			continue
-		if joint.element_a_id > 0 and not map.has(joint.element_a_id):
-			map[joint.element_a_id] = joint.joint_id
+		map[element_id] = joint.joint_id
 	return map

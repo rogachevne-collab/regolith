@@ -54,7 +54,7 @@ static func remove_element_from_topology(world,
 		removed_occupied_cells.append(cell)
 
 	for joint_id: int in removed_joint_ids:
-		world._joints.erase(joint_id)
+		world._unregister_joint(joint_id)
 	world._elements.erase(element.element_id)
 	world.clear_wheel_element_state(element.element_id)
 	for resource_id: Variant in refunds.keys():
@@ -126,7 +126,7 @@ static func remove_element_from_topology(world,
 			(world.get_element(element_id) as SimulationElement).assembly_id = new_id
 		for candidate: SimulationJoint in remaining_joints:
 			if ConstructionOccupancyUtil.joint_belongs_to_component(candidate, component):
-				candidate.assembly_id = new_id
+				world._reassign_joint_assembly(candidate, new_id)
 		mappings.append({
 			"assembly_id": new_id,
 			"element_ids": component.duplicate(),
@@ -198,7 +198,7 @@ static func break_rigid_joint(world,
 		survivor_index = SurvivorPolicy.pick_survivor_index(scores)
 
 	# Apply only after all validation and component planning succeeds.
-	world._joints.erase(command.joint_id)
+	world._unregister_joint(command.joint_id)
 	if components.size() <= 1:
 		var reconcile_ids: Array[int] = [assembly.assembly_id]
 		world._reconcile_terrain_anchors_for_assemblies(reconcile_ids)
@@ -239,7 +239,7 @@ static func break_rigid_joint(world,
 			(world._elements[element_id] as SimulationElement).assembly_id = new_id
 		for candidate: SimulationJoint in remaining_joints:
 			if ConstructionOccupancyUtil.joint_belongs_to_component(candidate, component):
-				candidate.assembly_id = new_id
+				world._reassign_joint_assembly(candidate, new_id)
 		mappings.append({
 			"assembly_id": new_id,
 			"element_ids": component.duplicate(),
@@ -410,7 +410,7 @@ static func merge_assemblies(world,
 			if joint.kind == SimulationJoint.Kind.ANCHOR:
 				removed_anchors.append(joint.joint_id)
 	for joint_id: int in removed_anchors:
-		world._joints.erase(joint_id)
+		world._unregister_joint(joint_id)
 	for element_id: int in loser.element_ids:
 		var element: SimulationElement = world.get_element(element_id)
 		var pose: Dictionary = planned_poses[element_id]
@@ -419,16 +419,16 @@ static func merge_assemblies(world,
 		element.assembly_id = survivor.assembly_id
 		survivor.element_ids.append(element_id)
 	for joint: SimulationJoint in world._joints_for_assembly(loser.assembly_id):
-		joint.assembly_id = survivor.assembly_id
+		world._reassign_joint_assembly(joint, survivor.assembly_id)
 	var bridge_id: int = world._allocator.allocate_joint_id()
-	world._joints[bridge_id] = SimulationJoint.rigid(
+	world._register_joint(SimulationJoint.rigid(
 		bridge_id,
 		survivor.assembly_id,
 		command.element_a_id,
 		command.port_a_id,
 		command.element_b_id,
 		command.port_b_id
-	)
+	))
 	survivor.element_ids.sort()
 	loser.element_ids.clear()
 	loser.tombstoned = true

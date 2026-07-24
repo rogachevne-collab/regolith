@@ -157,6 +157,17 @@ func _tick_machine(
 	element: SimulationElement,
 	dt: float
 ) -> void:
+	_tick_machine_body(world, cargo_graph, transfer_service, element, dt)
+	sync_display_fields(world, cargo_graph, element)
+
+
+func _tick_machine_body(
+	world: SimulationWorld,
+	cargo_graph: CargoGraph,
+	transfer_service: CargoTransferService,
+	element: SimulationElement,
+	dt: float
+) -> void:
 	IndustryStoreService.sync_element_storage(world, element)
 	var runtime := world.ensure_industry_element_runtime(element.element_id)
 	var machine := runtime.ensure_machine_state()
@@ -236,6 +247,179 @@ func _tick_machine(
 		machine
 	)
 	element.industry_functional_reason = &"ok"
+
+
+## Phase 2b: refresh all recipe-machine display_* after cargo transfers.
+func sync_all_display_fields(
+	world: SimulationWorld,
+	cargo_graph: CargoGraph
+) -> void:
+	if world == null or cargo_graph == null:
+		return
+	for element: SimulationElement in world.list_elements():
+		if not _is_recipe_machine(element):
+			continue
+		sync_display_fields(world, cargo_graph, element)
+
+
+## Write Interaction Read-Model display_* for one recipe machine (tick path only).
+func sync_display_fields(
+	world: SimulationWorld,
+	cargo_graph: CargoGraph,
+	element: SimulationElement
+) -> void:
+	if world == null or element == null or not _is_recipe_machine(element):
+		return
+	var graph := (
+		cargo_graph if cargo_graph != null else world.ensure_cargo_graph_current()
+	)
+	var runtime := world.ensure_industry_element_runtime(element.element_id)
+	var machine := runtime.ensure_machine_state()
+	runtime.display_status_reason = _compute_display_status_reason(
+		world,
+		graph,
+		element,
+		runtime
+	)
+	runtime.display_cargo_network_connected = graph.has_connected_cargo_store(
+		world,
+		element.element_id
+	)
+	runtime.display_cargo_network_ore_mare_regolith = _supply_amount_on_graph(
+		world,
+		graph,
+		element.element_id,
+		"ore_mare_regolith"
+	)
+	runtime.display_cargo_network_regolith_fines = _supply_amount_on_graph(
+		world,
+		graph,
+		element.element_id,
+		"regolith_fines"
+	)
+	if machine.active_recipe_id.is_empty():
+		runtime.display_missing_input_resource_id = _missing_input_on_graph(
+			world,
+			graph,
+			element,
+			_pending_recipe_id(element, machine)
+		)
+	else:
+		runtime.display_missing_input_resource_id = ""
+	runtime.display_ready = true
+
+
+func _compute_display_status_reason(
+	world: SimulationWorld,
+	cargo_graph: CargoGraph,
+	element: SimulationElement,
+	runtime: IndustryElementRuntime
+) -> StringName:
+	var structural := element.status_reason()
+	if structural != &"ok":
+		return structural
+	if not element.is_operational():
+		return structural
+	if not runtime.machine_enabled:
+		return &"disabled"
+	var functional := element.industry_status_reason()
+	if functional != &"ok":
+		return _disambiguate_functional_on_graph(
+			world,
+			cargo_graph,
+			element,
+			runtime,
+			functional
+		)
+	if IndustryElectricProfile.is_power_consumer(element):
+		var reason := runtime.power_reason
+		if reason == &"":
+			return &"ok"
+		if runtime.powered and reason == &"ok":
+			return &"ok"
+		return reason
+	return &"ok"
+
+
+func _disambiguate_functional_on_graph(
+	world: SimulationWorld,
+	cargo_graph: CargoGraph,
+	element: SimulationElement,
+	runtime: IndustryElementRuntime,
+	reason: StringName
+) -> StringName:
+	if reason != &"port_disconnected":
+		return reason
+	if (
+		IndustryElectricProfile.is_power_consumer(element)
+		and not runtime.powered
+		and runtime.power_reason == &"port_disconnected"
+	):
+		return &"electric_disconnected"
+	if cargo_graph.nearest_cargo_store_element_id(world, element.element_id) <= 0:
+		return &"cargo_disconnected"
+	return reason
+
+
+func _supply_amount_on_graph(
+	world: SimulationWorld,
+	cargo_graph: CargoGraph,
+	from_element_id: int,
+	resource_id: String
+) -> float:
+	if from_element_id <= 0 or resource_id.is_empty():
+		return 0.0
+	var total := 0.0
+	for element: SimulationElement in world.list_elements():
+		if (
+			not element.is_operational()
+			or not IndustryArchetypeProfile.has_keyed_store(
+				element.archetype_id
+			)
+		):
+			continue
+		if cargo_graph.shortest_hop_distance(from_element_id, element.element_id) < 0:
+			continue
+		var store := IndustryStoreService.ensure_element_keyed_store(
+			world,
+			element
+		)
+		if store != null:
+			total += store.amount(resource_id)
+	return total
+
+
+func _missing_input_on_graph(
+	world: SimulationWorld,
+	cargo_graph: CargoGraph,
+	element: SimulationElement,
+	recipe_id: String
+) -> String:
+	if recipe_id.is_empty():
+		return ""
+	if not cargo_graph.has_connected_cargo_store(world, element.element_id):
+		return ""
+	var inputs := RecipeCatalog.inputs(recipe_id)
+	for resource_id: Variant in inputs.keys():
+		var needed := float(inputs[resource_id])
+		if needed <= EPSILON:
+			continue
+		var resource := str(resource_id)
+		if element.industry_buffer.amount(resource) + EPSILON >= needed:
+			continue
+		if (
+			_supply_amount_on_graph(
+				world,
+				cargo_graph,
+				element.element_id,
+				resource
+			)
+			+ EPSILON
+			>= needed
+		):
+			continue
+		return resource
+	return ""
 
 
 func _try_start_job(

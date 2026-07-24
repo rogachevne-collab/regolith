@@ -436,6 +436,27 @@ func _refresh() -> void:
 	# уедет вместе со своим захватом мыши.
 	if get_viewport().gui_is_dragging() or _slider_drag_active:
 		return
+	# Закрытое окно кормит только компактную ленту — берём дешёвый bar-only
+	# снапшот (хост + привязки), а не полный обход сборки/тревог/энергоблока на
+	# ~16 мс. Полный снапшот строим лишь когда окно открыто и его видно.
+	if not _open:
+		var bar_snap: Dictionary = _gateway.call(
+			"control_terminal_bar_snapshot",
+			_target_assembly,
+			_aimed_element_id()
+		)
+		if not bool(bar_snap.get("valid", false)):
+			_set_target_assembly(0)
+			_apply_bar_snapshot(0, [])
+			return
+		if _target_assembly <= 0:
+			_set_target_assembly(int(bar_snap.get("assembly_id", 0)))
+		var closed_bar: Dictionary = bar_snap.get("action_bar", {})
+		_apply_bar_snapshot(
+			int(bar_snap.get("control_seat_element_id", 0)),
+			closed_bar.get("pages", [])
+		)
+		return
 	var snap: Dictionary = _gateway.call(
 		"control_terminal_snapshot",
 		_target_assembly,

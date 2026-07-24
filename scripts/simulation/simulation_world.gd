@@ -76,6 +76,12 @@ var _occupancy_index_cache: Dictionary = {}
 ## Without this, element_group_motion / preview validate recompile large
 ## rover graphs hundreds of times per second.
 var _body_group_compile_cache: Dictionary = {}
+## Interaction Read-Model: element → structure / driven joint (aim/HUD/terminal).
+var _interaction_index := InteractionIndex.new()
+## Secondary index: assembly_id → {joint_id: true}. Maintained by
+## _register_joint / _unregister_joint so assembly rebuilds stay O(joints in
+## assembly), not O(all joints in the yard).
+var _joint_ids_by_assembly: Dictionary = {}
 
 func set_terrain_contact_probe(probe: Callable) -> void:
 	_terrain_contact_probe = probe
@@ -114,6 +120,60 @@ func list_joints() -> Array[SimulationJoint]:
 	for joint_id: int in _sorted_keys(_joints):
 		result.append(_joints[joint_id])
 	return result
+
+
+## Hot-path / index rebuild: no sort+alloc of sorted keys.
+func iter_joints_unsorted() -> Array:
+	return _joints.values()
+
+
+## Joints belonging to one assembly (O(joints in assembly)).
+func iter_joints_for_assembly(assembly_id: int) -> Array:
+	var result: Array = []
+	if assembly_id <= 0:
+		return result
+	var bucket: Variant = _joint_ids_by_assembly.get(assembly_id)
+	if bucket == null or not bucket is Dictionary:
+		return result
+	for joint_id_variant: Variant in (bucket as Dictionary).keys():
+		var joint := get_joint(int(joint_id_variant))
+		if joint != null:
+			result.append(joint)
+	return result
+
+
+func get_interaction_structure(element_id: int) -> InteractionStructure:
+	return _interaction_index.get_structure(self, element_id)
+
+
+func get_interaction_card(element_id: int) -> InteractionCard:
+	return _interaction_index.get_card(self, element_id)
+
+
+func patch_actuator_display_pose(
+	joint_id: int,
+	force_immediate: bool = false
+) -> bool:
+	return _interaction_index.patch_actuator_display_pose(
+		self,
+		joint_id,
+		force_immediate
+	)
+
+
+func driven_joint_for_element(element_id: int) -> SimulationJoint:
+	var joint_id := _interaction_index.driven_joint_id_for(self, element_id)
+	if joint_id <= 0:
+		return null
+	return get_joint(joint_id)
+
+
+func interaction_roles_for_element(element_id: int) -> PackedStringArray:
+	return _interaction_index.interaction_roles_for(self, element_id)
+
+
+func clear_interaction_index() -> void:
+	_interaction_index.clear()
 
 func list_redirect_from_ids() -> Array[int]:
 	return _sorted_keys(_redirects)
@@ -1021,6 +1081,8 @@ func restore_snapshot(snapshot: Dictionary, emit_event := true) -> bool:
 	_body_group_compile_cache.clear()
 	_archetype_validation_cache.clear()
 	_occupancy_index_cache.clear()
+	clear_interaction_index()
+	_rebuild_joint_assembly_index()
 	restored.free()
 	if emit_event:
 		emit_world_restored()
@@ -1127,7 +1189,7 @@ func _spawn_blueprint(
 		_elements[element.element_id] = element
 		IndustryStoreService.sync_element_storage(self, element)
 	for joint: SimulationJoint in new_joints:
-		_joints[joint.joint_id] = joint
+		_register_joint(joint)
 	_assemblies[assembly_id] = assembly
 	assembly.bump_revision()
 	_notify_topology_changed(assembly_id)
@@ -1312,7 +1374,66 @@ func _register_element(element: SimulationElement) -> void:
 	_elements[element.element_id] = element
 
 func _register_joint(joint: SimulationJoint) -> void:
+	if joint == null or joint.joint_id <= 0:
+		return
+	var previous: SimulationJoint = _joints.get(joint.joint_id) as SimulationJoint
+	if previous != null:
+		_unindex_joint_assembly(previous)
 	_joints[joint.joint_id] = joint
+	_index_joint_assembly(joint)
+
+
+func _unregister_joint(joint_id: int) -> bool:
+	var joint: SimulationJoint = _joints.get(joint_id) as SimulationJoint
+	if joint == null:
+		return false
+	_unindex_joint_assembly(joint)
+	_joints.erase(joint_id)
+	return true
+
+
+func _reassign_joint_assembly(
+	joint: SimulationJoint,
+	new_assembly_id: int
+) -> void:
+	if joint == null:
+		return
+	if joint.assembly_id == new_assembly_id:
+		return
+	_unindex_joint_assembly(joint)
+	joint.assembly_id = new_assembly_id
+	_index_joint_assembly(joint)
+
+
+func _index_joint_assembly(joint: SimulationJoint) -> void:
+	if joint == null or joint.assembly_id <= 0:
+		return
+	var bucket: Variant = _joint_ids_by_assembly.get(joint.assembly_id)
+	if bucket == null or not bucket is Dictionary:
+		bucket = {}
+		_joint_ids_by_assembly[joint.assembly_id] = bucket
+	(bucket as Dictionary)[joint.joint_id] = true
+
+
+func _unindex_joint_assembly(joint: SimulationJoint) -> void:
+	if joint == null or joint.assembly_id <= 0:
+		return
+	var bucket: Variant = _joint_ids_by_assembly.get(joint.assembly_id)
+	if bucket == null or not bucket is Dictionary:
+		return
+	var dict := bucket as Dictionary
+	dict.erase(joint.joint_id)
+	if dict.is_empty():
+		_joint_ids_by_assembly.erase(joint.assembly_id)
+
+
+func _rebuild_joint_assembly_index() -> void:
+	_joint_ids_by_assembly.clear()
+	for joint_variant: Variant in _joints.values():
+		var joint := joint_variant as SimulationJoint
+		if joint != null:
+			_index_joint_assembly(joint)
+
 
 func _register_redirect(from_id: int, to_id: int) -> void:
 	_redirects[from_id] = to_id
@@ -1328,15 +1449,18 @@ func _register_suit_state(player_id: String, suit: SimulationSuitState) -> void:
 
 func _joints_for_assembly(assembly_id: int) -> Array[SimulationJoint]:
 	var result: Array[SimulationJoint] = []
-	for joint: SimulationJoint in list_joints():
-		if joint.assembly_id == assembly_id:
+	for joint_variant: Variant in iter_joints_for_assembly(assembly_id):
+		var joint := joint_variant as SimulationJoint
+		if joint != null:
 			result.append(joint)
 	return result
 
 func _joint_ids_for_assembly(assembly_id: int) -> Array[int]:
 	var ids: Array[int] = []
-	for joint: SimulationJoint in _joints_for_assembly(assembly_id):
-		ids.append(joint.joint_id)
+	var bucket: Variant = _joint_ids_by_assembly.get(assembly_id)
+	if bucket is Dictionary:
+		for joint_id_variant: Variant in (bucket as Dictionary).keys():
+			ids.append(int(joint_id_variant))
 	ids.sort()
 	return ids
 
@@ -1402,12 +1526,14 @@ func _notify_topology_changed(affected_assembly_id: int = 0) -> void:
 	if affected_assembly_id > 0:
 		_body_group_compile_cache.erase(affected_assembly_id)
 		_occupancy_index_cache.erase(affected_assembly_id)
+		_interaction_index.invalidate_assembly(affected_assembly_id)
 		ConstructionPreviewKernelAccess.clear_assembly_attach_cache(
 			affected_assembly_id
 		)
 	else:
 		_body_group_compile_cache.clear()
 		_occupancy_index_cache.clear()
+		_interaction_index.clear()
 		ConstructionPreviewKernelAccess.clear_assembly_attach_cache()
 	# Placement-probe face lookups grow with aim/place; archetype descriptors
 	# are immutable and stay warm across topology edits.

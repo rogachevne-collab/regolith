@@ -45,6 +45,7 @@ static func apply_set_actuator_target(
 	if motor.status == SimulationMotorState.Status.STUCK:
 		motor.status = SimulationMotorState.Status.IDLE
 	_update_joint_status(world, joint)
+	_push_display_pose(world, joint, true)
 	return {
 		"status": &"ok",
 		"reason": &"ok",
@@ -133,6 +134,7 @@ static func apply_configure_actuator(
 	]:
 		motor.status = SimulationMotorState.Status.IDLE
 	_update_joint_status(world, joint)
+	_push_display_pose(world, joint, true)
 	return {
 		"status": &"ok",
 		"reason": &"ok",
@@ -188,6 +190,7 @@ static func _apply_configure_rotor(
 	]:
 		motor.status = SimulationMotorState.Status.IDLE
 	_update_joint_status(world, joint)
+	_push_display_pose(world, joint, true)
 	return {
 		"status": &"ok",
 		"reason": &"ok",
@@ -265,6 +268,7 @@ static func _apply_configure_hinge(
 	]:
 		motor.status = SimulationMotorState.Status.IDLE
 	_update_joint_status(world, joint)
+	_push_display_pose(world, joint, true)
 	return {
 		"status": &"ok",
 		"reason": &"ok",
@@ -314,9 +318,23 @@ static func tick_joint(
 	joint: SimulationJoint,
 	delta_s: float
 ) -> void:
-	if joint == null or joint.motor == null or delta_s <= 0.0:
+	if joint == null or joint.motor == null:
 		return
-	_update_joint_status(world, joint, delta_s)
+	# delta_s <= 0: pose sync path — still push DisplayPose (Hz); status tick needs dt.
+	if delta_s > 0.0:
+		_update_joint_status(world, joint, delta_s)
+	_push_display_pose(world, joint, false)
+
+
+## Phase 2c: push observed pose/status into InteractionIndex (dual-endpoint).
+static func _push_display_pose(
+	world: SimulationWorld,
+	joint: SimulationJoint,
+	force_immediate: bool
+) -> void:
+	if world == null or joint == null:
+		return
+	world.patch_actuator_display_pose(joint.joint_id, force_immediate)
 
 
 static func sync_power_demand(world: SimulationWorld) -> void:

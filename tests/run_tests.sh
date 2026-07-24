@@ -12,6 +12,7 @@ KERNEL=(
 	test_simulation_kernel
 	test_simulation_runtime
 	test_simulation_actuator
+	test_interaction_index
 	test_simulation_wheel
 	test_control_actions
 	test_simulation_thruster
