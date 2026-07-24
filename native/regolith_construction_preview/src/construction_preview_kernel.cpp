@@ -8,6 +8,7 @@
 #include <godot_cpp/variant/utility_functions.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <functional>
@@ -282,6 +283,44 @@ ConstructionPreviewKernel::SideSpec ConstructionPreviewKernel::parse_side(const 
 	return spec;
 }
 
+ConstructionPreviewKernel::SideSpec ConstructionPreviewKernel::side_from_packed(
+		const Vector3i &origin,
+		int orientation_index,
+		int footprint_size,
+		const PackedInt32Array &faces,
+		int face_start,
+		int face_count,
+		const PackedStringArray &port_ids,
+		const PackedStringArray &socket_tags) {
+	constexpr int kFaceStride = 5;
+	SideSpec spec;
+	spec.origin_cell = origin;
+	spec.orientation_index = orientation_index;
+	spec.footprint_size = footprint_size;
+	if (face_start < 0 || face_count < 0) {
+		return spec;
+	}
+	spec.faces.reserve(static_cast<size_t>(face_count));
+	for (int i = 0; i < face_count; ++i) {
+		const int base = (face_start + i) * kFaceStride;
+		if (base + 4 >= faces.size()) {
+			break;
+		}
+		FaceDesc desc;
+		desc.local_cell = Vector3i(faces[base], faces[base + 1], faces[base + 2]);
+		desc.local_face = faces[base + 3];
+		const int port_index = faces[base + 4];
+		if (port_index >= 0 && port_index < port_ids.size()) {
+			desc.port_id = port_ids[port_index];
+		}
+		if (port_index >= 0 && port_index < socket_tags.size()) {
+			desc.socket_tag = socket_tags[port_index];
+		}
+		spec.faces.push_back(desc);
+	}
+	return spec;
+}
+
 uint64_t ConstructionPreviewKernel::world_face_key(const Vector3i &cell, const Vector3i &direction) {
 	// Distinct from occupancy pack: include direction in high bits via XOR mix.
 	const uint64_t cell_bits = pack_cell(cell.x, cell.y, cell.z);
@@ -304,7 +343,11 @@ void ConstructionPreviewKernel::build_world_face_lookup(
 	}
 }
 
-Dictionary ConstructionPreviewKernel::find_canonical_pair_scan(const SideSpec &left, const SideSpec &right) const {
+bool ConstructionPreviewKernel::find_canonical_ports(
+		const SideSpec &left,
+		const SideSpec &right,
+		String &out_left_port,
+		String &out_right_port) const {
 	std::unordered_map<uint64_t, WorldFace> right_lookup;
 	build_world_face_lookup(right, right_lookup);
 
@@ -329,7 +372,7 @@ Dictionary ConstructionPreviewKernel::find_canonical_pair_scan(const SideSpec &l
 		matches.push_back({ left_desc.port_id, it->second.port_id });
 	}
 	if (matches.empty()) {
-		return Dictionary();
+		return false;
 	}
 	std::sort(matches.begin(), matches.end(), [](const Match &a, const Match &b) {
 		if (a.left_port != b.left_port) {
@@ -337,9 +380,20 @@ Dictionary ConstructionPreviewKernel::find_canonical_pair_scan(const SideSpec &l
 		}
 		return a.right_port < b.right_port;
 	});
+	out_left_port = matches[0].left_port;
+	out_right_port = matches[0].right_port;
+	return true;
+}
+
+Dictionary ConstructionPreviewKernel::find_canonical_pair_scan(const SideSpec &left, const SideSpec &right) const {
+	String left_port;
+	String right_port;
+	if (!find_canonical_ports(left, right, left_port, right_port)) {
+		return Dictionary();
+	}
 	Dictionary out;
-	out["left_port_id"] = matches[0].left_port;
-	out["right_port_id"] = matches[0].right_port;
+	out["left_port_id"] = left_port;
+	out["right_port_id"] = right_port;
 	return out;
 }
 
@@ -497,16 +551,211 @@ Dictionary ConstructionPreviewKernel::find_attach_connections(
 	return out;
 }
 
+void ConstructionPreviewKernel::_note_kernel_us(const char *op, int64_t us) const {
+	_last_kernel_us = us;
+	_last_kernel_op = String(op);
+}
+
+int64_t ConstructionPreviewKernel::get_last_kernel_us() const {
+	return _last_kernel_us;
+}
+
+String ConstructionPreviewKernel::get_last_kernel_op() const {
+	return _last_kernel_op;
+}
+
+Dictionary ConstructionPreviewKernel::validate_attach_preview(
+		const PackedInt32Array &occupancy,
+		const PackedInt32Array &elements,
+		const PackedInt32Array &faces,
+		const PackedStringArray &port_ids,
+		const PackedStringArray &socket_tags,
+		const Vector3i &preview_origin,
+		int preview_orientation,
+		int preview_footprint_size,
+		const PackedInt32Array &preview_footprint,
+		const PackedInt32Array &preview_faces,
+		const PackedStringArray &preview_port_ids,
+		const PackedStringArray &preview_socket_tags,
+		const PackedInt32Array &element_to_group,
+		const PackedInt32Array &driven_bridges) const {
+	const auto t0 = std::chrono::steady_clock::now();
+	constexpr int kElementStride = 8;
+	constexpr int kFaceStride = 5;
+	Dictionary out;
+	out["ok"] = false;
+	out["reason"] = StringName("invalid_target");
+	out["bridge_checked"] = false;
+	out["existing_element_ids"] = PackedInt32Array();
+	out["existing_port_ids"] = PackedStringArray();
+	out["new_port_ids"] = PackedStringArray();
+
+	auto finish = [&](Dictionary result) -> Dictionary {
+		const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+				std::chrono::steady_clock::now() - t0)
+								.count();
+		_note_kernel_us("validate_attach_preview", us);
+		return result;
+	};
+
+	std::unordered_map<uint64_t, int32_t> occ;
+	if (!unpack_occupancy(occupancy, occ)) {
+		return finish(out);
+	}
+	if (preview_footprint.size() % 3 != 0 || elements.size() % kElementStride != 0 ||
+			faces.size() % kFaceStride != 0 || preview_faces.size() % kFaceStride != 0) {
+		return finish(out);
+	}
+
+	std::vector<Vector3i> preview_cells;
+	preview_cells.reserve(static_cast<size_t>(preview_footprint.size() / 3));
+	for (int i = 0; i + 2 < preview_footprint.size(); i += 3) {
+		const Vector3i local(preview_footprint[i], preview_footprint[i + 1], preview_footprint[i + 2]);
+		const Vector3i world = preview_origin + rotate_cell(local, preview_orientation);
+		if (occ.find(pack_cell(world.x, world.y, world.z)) != occ.end()) {
+			out["reason"] = StringName("overlap");
+			return finish(out);
+		}
+		preview_cells.push_back(world);
+	}
+
+	static const Vector3i neighbour_offsets[] = {
+		Vector3i(1, 0, 0),
+		Vector3i(-1, 0, 0),
+		Vector3i(0, 1, 0),
+		Vector3i(0, -1, 0),
+		Vector3i(0, 0, 1),
+		Vector3i(0, 0, -1),
+	};
+	std::unordered_set<int32_t> neighbour_ids;
+	for (const Vector3i &cell : preview_cells) {
+		for (const Vector3i &offset : neighbour_offsets) {
+			const Vector3i n = cell + offset;
+			const auto it = occ.find(pack_cell(n.x, n.y, n.z));
+			if (it != occ.end()) {
+				neighbour_ids.insert(it->second);
+			}
+		}
+	}
+
+	std::unordered_map<int32_t, int> element_row;
+	element_row.reserve(static_cast<size_t>(elements.size() / kElementStride));
+	for (int i = 0; i + kElementStride - 1 < elements.size(); i += kElementStride) {
+		element_row[elements[i]] = i;
+	}
+
+	const int preview_face_count = preview_faces.size() / kFaceStride;
+	const SideSpec preview_spec = side_from_packed(
+			preview_origin,
+			preview_orientation,
+			preview_footprint_size > 0 ? preview_footprint_size : int(preview_cells.size()),
+			preview_faces,
+			0,
+			preview_face_count,
+			preview_port_ids,
+			preview_socket_tags);
+
+	std::vector<int32_t> sorted_neighbours(neighbour_ids.begin(), neighbour_ids.end());
+	std::sort(sorted_neighbours.begin(), sorted_neighbours.end());
+
+	PackedInt32Array existing_ids;
+	PackedStringArray existing_ports;
+	PackedStringArray new_ports;
+	for (int32_t element_id : sorted_neighbours) {
+		const auto row_it = element_row.find(element_id);
+		if (row_it == element_row.end()) {
+			continue;
+		}
+		const int base = row_it->second;
+		const SideSpec existing_spec = side_from_packed(
+				Vector3i(elements[base + 1], elements[base + 2], elements[base + 3]),
+				elements[base + 4],
+				elements[base + 5],
+				faces,
+				elements[base + 6],
+				elements[base + 7],
+				port_ids,
+				socket_tags);
+		String left_port;
+		String right_port;
+		String existing_port;
+		String new_port;
+		if (existing_spec.footprint_size > preview_spec.footprint_size) {
+			if (!find_canonical_ports(preview_spec, existing_spec, left_port, right_port)) {
+				continue;
+			}
+			existing_port = right_port;
+			new_port = left_port;
+		} else {
+			if (!find_canonical_ports(existing_spec, preview_spec, left_port, right_port)) {
+				continue;
+			}
+			existing_port = left_port;
+			new_port = right_port;
+		}
+		existing_ids.push_back(element_id);
+		existing_ports.push_back(existing_port);
+		new_ports.push_back(new_port);
+	}
+
+	if (existing_ids.is_empty()) {
+		out["reason"] = StringName("incompatible_connection");
+		return finish(out);
+	}
+
+	const bool can_check_bridge = element_to_group.size() >= 2 && element_to_group.size() % 2 == 0;
+	if (can_check_bridge) {
+		out["bridge_checked"] = true;
+		std::unordered_map<int32_t, int32_t> group_of;
+		group_of.reserve(static_cast<size_t>(element_to_group.size() / 2));
+		for (int i = 0; i + 1 < element_to_group.size(); i += 2) {
+			group_of[element_to_group[i]] = element_to_group[i + 1];
+		}
+		std::unordered_set<int32_t> touched;
+		for (int i = 0; i < existing_ids.size(); ++i) {
+			const auto git = group_of.find(existing_ids[i]);
+			if (git != group_of.end() && git->second > 0) {
+				touched.insert(git->second);
+			}
+		}
+		if (touched.size() > 1 && driven_bridges.size() >= 2 && driven_bridges.size() % 2 == 0) {
+			for (int i = 0; i + 1 < driven_bridges.size(); i += 2) {
+				const int32_t left = driven_bridges[i];
+				const int32_t right = driven_bridges[i + 1];
+				if (touched.count(left) && touched.count(right)) {
+					out["reason"] = StringName("driven_joint_cycle");
+					return finish(out);
+				}
+			}
+		}
+	}
+
+	out["ok"] = true;
+	out["reason"] = StringName("ok");
+	out["existing_element_ids"] = existing_ids;
+	out["existing_port_ids"] = existing_ports;
+	out["new_port_ids"] = new_ports;
+	return finish(out);
+}
+
 Array ConstructionPreviewKernel::scan_magnetic_faces(
 		const Dictionary &snapshot,
 		const Dictionary &ray,
 		const Dictionary &limits) const {
+	const auto t0 = std::chrono::steady_clock::now();
 	Array faces_out;
+	auto finish = [&](Array result) -> Array {
+		const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+				std::chrono::steady_clock::now() - t0)
+								.count();
+		_note_kernel_us("scan_magnetic_faces", us);
+		return result;
+	};
 	const Array assemblies = snapshot.get("assemblies", Array());
 	const Vector3 ray_origin = ray.get("origin", Vector3());
 	Vector3 ray_direction = ray.get("direction", Vector3(0, 0, -1));
 	if (ray_direction.length_squared() < 1e-12) {
-		return faces_out;
+		return finish(faces_out);
 	}
 	ray_direction = ray_direction.normalized();
 	const Vector2 viewport_center = ray.get("viewport_center", Vector2());
@@ -664,7 +913,7 @@ Array ConstructionPreviewKernel::scan_magnetic_faces(
 			previous_cell = cell;
 		}
 	}
-	return faces_out;
+	return finish(faces_out);
 }
 
 Dictionary ConstructionPreviewKernel::compile_body_groups(
@@ -986,6 +1235,26 @@ void ConstructionPreviewKernel::_bind_methods() {
 					"neighbour_sides"),
 			&ConstructionPreviewKernel::find_attach_connections);
 	ClassDB::bind_method(
+			D_METHOD(
+					"validate_attach_preview",
+					"occupancy",
+					"elements",
+					"faces",
+					"port_ids",
+					"socket_tags",
+					"preview_origin",
+					"preview_orientation",
+					"preview_footprint_size",
+					"preview_footprint",
+					"preview_faces",
+					"preview_port_ids",
+					"preview_socket_tags",
+					"element_to_group",
+					"driven_bridges"),
+			&ConstructionPreviewKernel::validate_attach_preview);
+	ClassDB::bind_method(
 			D_METHOD("compile_body_groups", "element_ids", "element_flags", "joints"),
 			&ConstructionPreviewKernel::compile_body_groups);
+	ClassDB::bind_method(D_METHOD("get_last_kernel_us"), &ConstructionPreviewKernel::get_last_kernel_us);
+	ClassDB::bind_method(D_METHOD("get_last_kernel_op"), &ConstructionPreviewKernel::get_last_kernel_op);
 }

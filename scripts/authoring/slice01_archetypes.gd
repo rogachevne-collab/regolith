@@ -22,6 +22,9 @@ const REQUIRED_IDS: PackedStringArray = [
 	"large_frame",
 	"frame_beam",
 	"frame_basalt",
+	"frame_slope_45",
+	"frame_antenna",
+	"frame_lamp",
 	"power_source",
 	"power_distributor",
 	"power_battery",
@@ -29,6 +32,7 @@ const REQUIRED_IDS: PackedStringArray = [
 	"dozer_blade",
 	"cargo_store",
 	"cargo_pipe",
+	"cable_stake",
 	"processor",
 	"fabricator",
 	"electrolyzer",
@@ -126,6 +130,18 @@ static func frame_beam() -> ElementArchetype:
 
 static func frame_basalt() -> ElementArchetype:
 	return load_required("frame_basalt")
+
+
+static func frame_slope_45() -> ElementArchetype:
+	return load_required("frame_slope_45")
+
+
+static func frame_antenna() -> ElementArchetype:
+	return load_required("frame_antenna")
+
+
+static func frame_lamp() -> ElementArchetype:
+	return load_required("frame_lamp")
 
 
 static func cargo_pipe() -> ElementArchetype:

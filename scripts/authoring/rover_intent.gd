@@ -17,6 +17,8 @@ var height: String = "normal"
 var cockpit: String = "front"
 ## rear | side
 var power: String = "rear"
+## Twin prow drills (0 or 2). Uses stationary_drill facing −Z.
+var nose_drills: int = 0
 ## Какую пару «подвеска + колесо» ставить. Дефолт — детали, испечённые
 ## визардом: сеточных колёс без точных точек крепления больше нет.
 ## Геометрию композер выводит из самих архетипов, а не из этих id.
@@ -38,24 +40,29 @@ static func from_phrase(text: String) -> RoverIntent:
 	if raw.is_empty():
 		return intent
 	intent.wheel_count = _parse_wheel_count(raw)
+	var huge := _has_any(raw, ["огромн", "huge", "гигант", "giant"])
 	if _has_any(raw, ["колбас", "sausage"]):
 		intent.length = "long"
-	elif _has_any(raw, ["длинн", "long"]):
+	elif _has_any(raw, ["длинн", "long"]) or huge:
 		intent.length = "long"
 	elif _has_any(raw, ["коротк", "short"]):
 		intent.length = "short"
-	if _has_any(raw, ["широк", "wide"]):
+	if _has_any(raw, ["широк", "wide"]) or huge:
 		intent.width = "wide"
 	elif _has_any(raw, ["узк", "narrow"]):
 		intent.width = "narrow"
-	if _has_any(raw, ["высок", "tall"]):
+	if _has_any(raw, ["высок", "tall"]) or huge:
 		intent.height = "tall"
 	elif _has_any(raw, ["низк", "low"]):
 		intent.height = "low"
+	if huge and intent.wheel_count == 4 and not _has_explicit_wheel_count(raw):
+		intent.wheel_count = 12
 	if _has_any(raw, ["центр", "center", "середи"]):
 		intent.cockpit = "center"
 	if _has_any(raw, ["сбоку", "side", "боков"]):
 		intent.power = "side"
+	if _has_any(raw, ["бур", "drill"]):
+		intent.nose_drills = 2
 	return intent
 
 
@@ -121,6 +128,10 @@ func length_cells() -> int:
 		base = maxi(base, axles * 2)
 	elif wheel_count >= 10:
 		base = maxi(base, axles + 2)
+	# Keep tire meshes from interpenetrating (radius → diameter + clearance).
+	var min_gap := min_axle_gap_cells()
+	if axles >= 2:
+		base = maxi(base, 1 + (axles - 1) * min_gap)
 	# Room for distributor bay + battery rows behind cockpit.
 	var battery_rows := ceili(float(battery_count()) / float(_batteries_per_row()))
 	base = maxi(base, 4 + battery_rows * 2)
@@ -129,6 +140,16 @@ func length_cells() -> int:
 		# row one pack shares distributor X and needs a gap cell between bays.
 		base = maxi(base, 8 + battery_rows * 2)
 	return base
+
+
+## Axle-to-axle cell gap so wheel spheres (2·radius) do not overlap.
+func min_axle_gap_cells() -> int:
+	var radius_m := 0.4
+	var wheel := wheel_archetype()
+	if wheel != null and wheel.wheel_definition != null:
+		radius_m = maxf(wheel.wheel_definition.radius_m, 0.1)
+	var diameter_cells := ceili((radius_m * 2.0) / GridMetric.CELL_SIZE_M)
+	return maxi(diameter_cells + 1, 2)
 
 
 ## Batteries so full drive demand fits battery discharge budget (all-or-nothing).
@@ -222,6 +243,7 @@ func to_dict() -> Dictionary:
 		"height": height,
 		"cockpit": cockpit,
 		"power": power,
+		"nose_drills": nose_drills,
 		"suspension_archetype_id": suspension_archetype_id,
 		"wheel_archetype_id": wheel_archetype_id,
 	}
@@ -237,6 +259,7 @@ static func from_dict(data: Dictionary) -> RoverIntent:
 	intent.height = str(data.get("height", "normal"))
 	intent.cockpit = str(data.get("cockpit", "front"))
 	intent.power = str(data.get("power", "rear"))
+	intent.nose_drills = int(data.get("nose_drills", 0))
 	intent.suspension_archetype_id = str(
 		data.get("suspension_archetype_id", intent.suspension_archetype_id)
 	)
@@ -247,6 +270,15 @@ static func from_dict(data: Dictionary) -> RoverIntent:
 
 
 static func _parse_wheel_count(raw: String) -> int:
+	var explicit := _explicit_wheel_count(raw)
+	return explicit if explicit > 0 else 4
+
+
+static func _has_explicit_wheel_count(raw: String) -> bool:
+	return _explicit_wheel_count(raw) > 0
+
+
+static func _explicit_wheel_count(raw: String) -> int:
 	var regex := RegEx.new()
 	regex.compile("(\\d+)\\s*(?:кол|wheel)")
 	var matched := regex.search(raw)
@@ -260,7 +292,7 @@ static func _parse_wheel_count(raw: String) -> int:
 		return 12
 	if _has_any(raw, ["шестикол", "6-wheel", "six wheel"]):
 		return 6
-	return 4
+	return 0
 
 
 static func _has_any(raw: String, keys: Array) -> bool:

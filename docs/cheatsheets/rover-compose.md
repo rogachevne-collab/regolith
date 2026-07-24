@@ -63,20 +63,32 @@ battery_discharge_w)` из актуальных `drive_wheel.power_draw_w` и п
 
 «Колбаса» в фразе → `length=long` + равномерные оси по длине шасси.
 
-Декор (всегда): бамперы/юбки `frame_basalt` + короткая мачта `frame`/`cargo_pipe`
-на свободной колонке — без новых archetype types.
+«Огромный / huge / гигант» → `long` + `wide` + `tall`; без явного N колёс → **12**.
 
-**Load oracle:** после compose смотри `ROVER-LOAD-*` из
+«Бур / drill» → два `stationary_drill` на морде (tip −Z). Длина шасси
+растёт под `2·wheel.radius` + зазор, чтобы колёса не клипились.
+
+Декор (всегда): силуэт на `frame_slope_45` — каскад носа, скошенные борта/кормы,
+угловые «клыки»; `frame_antenna` на палубе; `frame_lamp` фары на морде;
+basalt только точечно.
+
+**Load oracle (ТТХ):** после compose смотри `ROVER-LOAD-*` из
 `res://scenes/compose_rover_oneshot.tscn` или overlay в
 `res://scenes/demo_rover_load.tscn` (`RoverLoadReport`: mass/CoM, static axle
 loads, 0.5g/1.0g wheelie/nose-dive flags).
+
+**Визуал (обязателен при смене декора/силуэта):** та же демосцена, ракурсы
+**1–5** / **[ ]** (side / ¾ / front / rear / top). Оценивать силуэт и композицию,
+не только цифры. Зелёный тест / чистый load report ≠ «выглядит ок».
 
 ## Поведение агента
 
 1. Распарси фразу → `RoverIntent` (не спрашивай юзера).
 2. `RoverComposer.compose` → `validate` внутри.
 3. При fail — один retry с ослаблением (tall→normal / wide→normal), иначе честный error.
-4. Верификация: `./tests/run_one.sh test_rover_compose`.
+4. Верификация ТТХ: `./tests/run_one.sh test_rover_compose` + `ROVER-LOAD-*`.
+5. Верификация визуала: `demo_rover_load.tscn` по ракурсам 1–5 (или скрины /
+   человек). Не заявлять «красиво» только по ТТХ.
 
 Не использовать legacy `PlacedBlocks` / PoC `assembly.gd`.  
 Не писать ручной `PlaceElementCommand` для ровера, если есть composer.

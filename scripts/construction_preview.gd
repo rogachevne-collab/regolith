@@ -58,6 +58,7 @@ const _LARGE_AIM_DIRECTION_STEP := 0.1
 const _RESOLVE_HEARTBEAT_MSEC := 150
 var _last_resolve_msec := 0
 var _heartbeat_invalidated_mobile := false
+var _lamp_invalid_warn_msec := 0
 
 
 func _ready() -> void:
@@ -77,8 +78,9 @@ func _ready() -> void:
 	call_deferred("_warm_current_selection")
 
 
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
 	if _tools == null or _query == null:
+		ConstructionPerf.set_active(false)
 		return
 	var player := get_parent()
 	if (
@@ -91,17 +93,25 @@ func _physics_process(_delta: float) -> void:
 			and player.call("is_in_vehicle")
 		)
 	):
+		ConstructionPerf.set_active(false)
 		_clear_resolution()
 		_hide_preview()
 		return
 	if _tools.active_tool != &"build":
+		ConstructionPerf.set_active(false)
 		_clear_resolution()
 		_hide_preview()
 		return
+	ConstructionPerf.set_active(true)
 	if Input.is_action_just_pressed(&"construction_cycle_snap"):
 		_advance_manual_cycle()
+	var t_update := ConstructionPerf.begin()
 	_update_resolution()
+	ConstructionPerf.end(&"update_us", t_update)
+	var t_sync := ConstructionPerf.begin()
 	_sync_preview_visuals()
+	ConstructionPerf.end(&"sync_us", t_sync)
+	ConstructionPerf.tick(delta)
 
 
 func resolved_hit() -> InteractionHit:
@@ -178,14 +188,17 @@ func _update_resolution() -> void:
 	var same_context := context_key == _cached_resolve_context_key
 	if not _manual_lock and same_context:
 		if now_msec - _last_resolve_msec < _RESOLVE_HEARTBEAT_MSEC:
+			ConstructionPerf.count(&"cache_hits")
 			return
 		if _refresh_heartbeat_attach_permission():
 			_last_resolve_msec = now_msec
+			ConstructionPerf.count(&"heartbeats")
 			return
 	_cached_resolve_context_key = context_key
 	_last_resolve_msec = now_msec
 	_heartbeat_invalidated_mobile = false
 
+	var t_resolve := ConstructionPerf.begin()
 	var resolved := _gateway.resolve_construction_placement({
 		"direct_hit": direct_hit,
 		"ray_origin": aim["origin"],
@@ -199,11 +212,27 @@ func _update_resolution() -> void:
 			_manual_candidate_index if _manual_lock else -1
 		),
 	})
+	ConstructionPerf.end(&"resolve_us", t_resolve)
+	ConstructionPerf.count(&"resolves")
 	resolved_target = resolved.get("selected_target", {})
 	resolved_plan = resolved.get("selected_plan", {})
 	resolved_candidates = resolved.get("candidates", [])
 	resolved_candidate_index = int(resolved.get("selected_index", -1))
 	resolved_candidate_count = resolved_candidates.size()
+	if (
+		_tools.selected_archetype_id == "frame_lamp"
+		and not bool(resolved_plan.get("valid", false))
+		and now_msec - _lamp_invalid_warn_msec >= 1000
+	):
+		_lamp_invalid_warn_msec = now_msec
+		push_warning(
+			"frame_lamp preview invalid reason=%s candidates=%d hit=%s"
+			% [
+				str(resolved_plan.get("reason", &"")),
+				resolved_candidate_count,
+				str(direct_hit.get("target_kind", &"")),
+			]
+		)
 	if (
 		StringName(direct_hit.get("target_kind", &""))
 		== InteractionHit.KIND_SIMULATION_ELEMENT
@@ -632,6 +661,11 @@ func _scene_visual_preview_node(
 		GridPoseUtil.element_metric_transform(origin_cell, orientation_index)
 		* Transform3D(Basis.IDENTITY, archetype.visual_offset)
 	)
+	# Meta + strip before enter_tree so _ready cannot paint solid materials
+	# or spawn SpotLights into the hologram.
+	instance.set_meta("construction_preview", true)
+	_strip_preview_gameplay_scripts(instance)
+	_mute_preview_lights(instance)
 	_apply_preview_material_recursive(instance, preview_material)
 	return instance
 
@@ -643,6 +677,28 @@ func _apply_preview_material_recursive(node: Node, material: Material) -> void:
 		mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	for child: Node in node.get_children():
 		_apply_preview_material_recursive(child, material)
+
+
+func _strip_preview_gameplay_scripts(node: Node) -> void:
+	var script_res := node.get_script() as Script
+	if script_res != null:
+		var path := str(script_res.resource_path)
+		if (
+			path.ends_with("apply_lamp_materials.gd")
+			or path.ends_with("apply_mesh_material.gd")
+		):
+			node.set_script(null)
+	for child: Node in node.get_children():
+		_strip_preview_gameplay_scripts(child)
+
+
+func _mute_preview_lights(node: Node) -> void:
+	if node is Light3D:
+		var light := node as Light3D
+		light.visible = false
+		light.light_energy = 0.0
+	for child: Node in node.get_children():
+		_mute_preview_lights(child)
 
 
 func _connected_rim_preview_material(base: Material) -> Material:
@@ -790,6 +846,7 @@ func _on_selection_changed(
 	_cached_resolve_context_key = ""
 	if archetype_changed:
 		ConstructionPreviewKernelAccess.clear_archetype_cache()
+		GridPoseUtil.clear_snap_origin_cache()
 		_ground_pivot_key = ""
 		_held_ground_pivot = Vector3(INF, INF, INF)
 		_attach_pivot_key = ""

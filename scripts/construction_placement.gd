@@ -13,6 +13,30 @@ static func plan(
 	held_ground_pivot: Vector3 = Vector3(INF, INF, INF),
 	held_attach_pivot: Vector3 = Vector3(INF, INF, INF)
 ) -> Dictionary:
+	var t0 := ConstructionPerf.begin()
+	var result := _plan_inner(
+		world,
+		target,
+		archetype,
+		orientation_index,
+		store_id,
+		held_ground_pivot,
+		held_attach_pivot
+	)
+	ConstructionPerf.end(&"plan_us", t0)
+	ConstructionPerf.count(&"plans")
+	return result
+
+
+static func _plan_inner(
+	world: SimulationWorld,
+	target: Dictionary,
+	archetype: ElementArchetype,
+	orientation_index: int,
+	store_id: String,
+	held_ground_pivot: Vector3 = Vector3(INF, INF, INF),
+	held_attach_pivot: Vector3 = Vector3(INF, INF, INF)
+) -> Dictionary:
 	if (
 		world == null
 		or archetype == null
@@ -118,7 +142,9 @@ static func plan(
 		command.initial_motion = AssemblyMotionState.new()
 		command.initial_motion.transform = assembly_world_transform
 
+	var t_validate := ConstructionPerf.begin()
 	var validation := world.preview_place_element(command)
+	ConstructionPerf.end(&"plan_validate_us", t_validate)
 	if (
 		not validation.is_ok()
 		and validation.reason == StructuralCommandResult.REASON_INCOMPATIBLE_CONNECTION
@@ -128,6 +154,7 @@ static func plan(
 		# one frame pad) often arrives rotated so none of them touch the
 		# target. Instead of a mute red ghost, turn the part so a mount face
 		# looks at the target — nearest rotation to the player's wins.
+		var t_autoface := ConstructionPerf.begin()
 		var original_orientation := command.orientation_index
 		var original_origin := command.origin_cell
 		for alt_orientation: int in _auto_facing_orientations(
@@ -169,6 +196,7 @@ static func plan(
 		if not validation.is_ok():
 			command.orientation_index = original_orientation
 			command.origin_cell = original_origin
+		ConstructionPerf.end(&"plan_autoface_us", t_autoface)
 	if (
 		validation.is_ok()
 		and target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
@@ -515,8 +543,7 @@ static func _auto_facing_prefilter_fits(
 	store_id: String,
 	held_attach_pivot: Vector3
 ) -> bool:
-	var kernel := ConstructionPreviewKernelAccess.get_kernel()
-	if kernel == null or world == null or archetype == null:
+	if world == null or archetype == null:
 		return true
 	var assembly := world.get_assembly_raw(assembly_id)
 	if assembly == null:
@@ -534,18 +561,13 @@ static func _auto_facing_prefilter_fits(
 		store_id,
 		held_attach_pivot
 	)
-	return bool(
-		kernel.call(
-			"prefilter_attach_fits",
-			ConstructionPreviewKernelAccess.pack_occupancy(occupancy),
-			ConstructionPreviewKernelAccess.cached_footprint_local(
-				archetype,
-				orientation_index
-			),
-			origin,
-			orientation_index
-		)
-	)
+	# Same hot path as snap prefilter: revision-cached occupancy dict, no pack.
+	for local_cell: Vector3i in archetype.footprint_cells:
+		if occupancy.has(
+			origin + OrientationUtil.rotate_cell(local_cell, orientation_index)
+		):
+			return false
+	return true
 
 
 static func _auto_facing_orientations(

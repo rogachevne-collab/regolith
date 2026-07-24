@@ -15,6 +15,10 @@ extends RefCounted
 const MAX_CANDIDATES := 8
 ## Cap on authoritative plan validations per resolve (the expensive part).
 const TOP_K_VALIDATE := 12
+## Cap on footprint-overlap prefilter probes before giving up on first-valid.
+## Ranked magnet faces can be dozens; without a budget a 125-cell archetype
+## walks rotate+has across the whole list every aim tick.
+const TOP_K_PREFILTER := 32
 const DIRECT_ELEMENT_SCORE := 1000.0
 const VOXEL_FALLBACK_SCORE := 3.0
 const HYSTERESIS_SCORE_BONUS := 0.12
@@ -31,6 +35,8 @@ var _sticky_candidate_key: String = ""
 ## assembly_id -> {revision, aabb}: local-space grid bounds for quick ray
 ## rejection. Revision-keyed like the kernel occupancy index it derives from.
 var _bounds_cache: Dictionary = {}
+## (archetype_id|orientation) -> Array[Vector3i] rotated local footprint.
+var _rotated_footprint_cache: Dictionary = {}
 
 ## Magnet probe offsets around each ray cell (Manhattan distance <= 2): which
 ## occupied cells near the aim line may contribute an exposed face.
@@ -229,6 +235,15 @@ static func _empty_stats() -> Dictionary:
 		"assemblies_scanned": 0,
 		"faces_scanned": 0,
 		"plans_validated": 0,
+		"prefilter_tries": 0,
+		"snapshot_us": 0,
+		"scan_us": 0,
+		"scan_kernel_us": 0,
+		"prefilter_us": 0,
+		"plan_us": 0,
+		"snap_us": 0,
+		"seat_us": 0,
+		"collision_us": 0,
 	}
 
 
@@ -336,8 +351,13 @@ func _collect_face_candidates(
 	# face (hysteresis must be able to keep it selected).
 	var validated: Array[Dictionary] = []
 	var attempts := 0
+	var prefilter_tries := 0
 	var have_first_valid := false
 	var use_prefilter := not held_attach_pivot.is_finite()
+	var rotated_footprint: Array[Vector3i] = _rotated_footprint(
+		archetype,
+		orientation_index
+	)
 	for entry: Dictionary in ranked:
 		if attempts >= TOP_K_VALIDATE:
 			break
@@ -350,13 +370,31 @@ func _collect_face_candidates(
 		# Footprint-overlap prefilter: a dictionary sweep instead of a full
 		# authoritative plan (~µs vs ~ms for a 125-cell archetype). The plan
 		# below still validates whatever passes.
-		if use_prefilter and not _prefilter_attach_fits(
-			world,
-			archetype,
-			orientation_index,
-			entry["target"]
-		):
-			continue
+		if use_prefilter and not is_sticky:
+			if prefilter_tries >= TOP_K_PREFILTER:
+				# Budget spent without a valid face — stop hunting; sticky
+				# (handled above) is the only remaining reason to continue.
+				break
+			prefilter_tries += 1
+			last_stats["prefilter_tries"] = prefilter_tries
+			if not _prefilter_attach_fits(
+				world,
+				archetype,
+				orientation_index,
+				entry["target"],
+				rotated_footprint
+			):
+				continue
+		elif use_prefilter and is_sticky:
+			last_stats["prefilter_tries"] = int(last_stats.get("prefilter_tries", 0)) + 1
+			if not _prefilter_attach_fits(
+				world,
+				archetype,
+				orientation_index,
+				entry["target"],
+				rotated_footprint
+			):
+				continue
 		attempts += 1
 		last_stats["plans_validated"] = int(last_stats["plans_validated"]) + 1
 		var target: Dictionary = entry["target"]
@@ -392,41 +430,71 @@ func _prefilter_attach_fits(
 	world: SimulationWorld,
 	archetype: ElementArchetype,
 	orientation_index: int,
-	target: Dictionary
+	target: Dictionary,
+	rotated_footprint: Array[Vector3i] = []
+) -> bool:
+	var t0 := ConstructionPerf.begin()
+	var fits := _prefilter_attach_fits_inner(
+		world,
+		archetype,
+		orientation_index,
+		target,
+		rotated_footprint
+	)
+	var us := ConstructionPerf.end(&"prefilter_us", t0)
+	last_stats["prefilter_us"] = int(last_stats.get("prefilter_us", 0)) + us
+	return fits
+
+
+func _prefilter_attach_fits_inner(
+	world: SimulationWorld,
+	archetype: ElementArchetype,
+	orientation_index: int,
+	target: Dictionary,
+	rotated_footprint: Array[Vector3i] = []
 ) -> bool:
 	var metadata: Dictionary = target.get("metadata", {})
 	if not metadata.has("snap_cell"):
 		return true
 	var assembly := world.get_assembly_raw(int(metadata.get("assembly_id", 0)))
-	if assembly == null:
+	if assembly == null or archetype == null:
 		return true
-	var occupancy: Dictionary = ConstructionOccupancyUtil.assembly_occupancy_index(
-		world,
-		assembly
-	)
 	var origin: Vector3i = GridPoseUtil.snap_origin_for_target_cell(
 		archetype,
 		metadata.get("snap_cell", Vector3i.ZERO),
 		metadata.get("snap_dir", Vector3i.UP),
 		orientation_index
 	)
-	var kernel := ConstructionPreviewKernelAccess.get_kernel()
-	if kernel != null and archetype != null:
-		return bool(
-			kernel.call(
-				"prefilter_attach_fits",
-				ConstructionPreviewKernelAccess.pack_occupancy(occupancy),
-				ConstructionPreviewKernelAccess.pack_cells(archetype.footprint_cells),
-				origin,
-				orientation_index
-			)
-		)
-	for cell: Vector3i in archetype.footprint_cells:
-		if occupancy.has(
-			origin + OrientationUtil.rotate_cell(cell, orientation_index)
-		):
+	# Occupancy Dictionary is revision-cached and already hot — prefer a
+	# handful of .has() lookups over re-packing the whole rover into C++ on
+	# every ranked face (that pack was the 1s/s prefilter spike).
+	var occupancy: Dictionary = ConstructionOccupancyUtil.assembly_occupancy_index(
+		world,
+		assembly
+	)
+	var cells: Array[Vector3i] = rotated_footprint
+	if cells.is_empty():
+		cells = _rotated_footprint(archetype, orientation_index)
+	for cell: Vector3i in cells:
+		if occupancy.has(origin + cell):
 			return false
 	return true
+
+
+func _rotated_footprint(
+	archetype: ElementArchetype,
+	orientation_index: int
+) -> Array[Vector3i]:
+	if archetype == null:
+		return []
+	var cache_key := "%s|%d" % [archetype.archetype_id, orientation_index]
+	if _rotated_footprint_cache.has(cache_key):
+		return _rotated_footprint_cache[cache_key]
+	var cells: Array[Vector3i] = []
+	for local_cell: Vector3i in archetype.footprint_cells:
+		cells.append(OrientationUtil.rotate_cell(local_cell, orientation_index))
+	_rotated_footprint_cache[cache_key] = cells
+	return cells
 
 
 func _scan_faces_native(
@@ -458,13 +526,32 @@ func _scan_faces_native(
 		"ray_step": _RAY_STEP_M,
 		"max_screen_penalty_radius": MAX_SCREEN_PENALTY_RADIUS,
 	}
-	var snapshot := ConstructionPreviewSnapshot.build(world)
+	var t_snapshot := ConstructionPerf.begin()
+	var snapshot := ConstructionPreviewSnapshot.build(
+		world,
+		ray_origin,
+		ray_direction.normalized(),
+		MAX_RAY_DISTANCE,
+		MAX_RAY_LATERAL
+	)
+	var snapshot_us := ConstructionPerf.end(&"snapshot_us", t_snapshot)
+	last_stats["snapshot_us"] = int(last_stats.get("snapshot_us", 0)) + snapshot_us
+	var t_scan := ConstructionPerf.begin()
 	var native_faces: Array = kernel.call(
 		"scan_magnetic_faces",
 		snapshot,
 		ray,
 		limits
 	)
+	var scan_us := ConstructionPerf.end(&"scan_us", t_scan)
+	last_stats["scan_us"] = int(last_stats.get("scan_us", 0)) + scan_us
+	ConstructionPerf.count(&"native_scans")
+	if kernel.has_method("get_last_kernel_us"):
+		var kernel_us := int(kernel.call("get_last_kernel_us"))
+		last_stats["scan_kernel_us"] = (
+			int(last_stats.get("scan_kernel_us", 0)) + kernel_us
+		)
+		ConstructionPerf.note_kernel_us(&"scan_magnetic_faces", kernel_us)
 	if native_faces.is_empty():
 		return []
 	var ranked: Array[Dictionary] = []
