@@ -22,7 +22,10 @@ var _body: MeshInstance3D
 var _nick_label: Label3D
 var _head: Node3D
 var _headlamp: SpotLight3D
-## Ring of {t:int, p:Vector3, q:Quaternion, qh:Quaternion, l:bool, v:Vector3}.
+var _tool_holder: Node3D
+var _tool_id := StringName()
+## Ring of {t:int, p:Vector3, q:Quaternion, qh:Quaternion, l:bool, v:Vector3,
+## tool:StringName}.
 var _samples: Array[Dictionary] = []
 
 
@@ -53,6 +56,7 @@ func push_pose(pose: Dictionary) -> void:
 		"qh": pose.get("qh", pose.get("q", Quaternion.IDENTITY)),
 		"l": bool(pose.get("l", false)),
 		"v": pose.get("v", Vector3.ZERO),
+		"tool": StringName(pose.get("tool", &"")),
 	})
 	while _samples.size() > BUFFER_LIMIT:
 		_samples.pop_front()
@@ -64,6 +68,8 @@ func _process(_delta: float) -> void:
 	var render_t := Time.get_ticks_msec() - INTERP_DELAY_MS
 	var newest: Dictionary = _samples[_samples.size() - 1]
 	var oldest: Dictionary = _samples[0]
+	# Discrete state: no point interpolating a tool swap, just show the latest.
+	_set_tool(StringName(newest.get("tool", &"")))
 
 	if render_t <= int(oldest["t"]):
 		_apply(oldest["p"], oldest["q"], oldest["qh"], bool(oldest["l"]))
@@ -160,3 +166,57 @@ func _build_visuals() -> void:
 	_headlamp.visible = false
 	# SpotLight3D points down its local -Z, same as the player Camera it mirrors.
 	_head.add_child(_headlamp)
+
+	# Child of Head, so the held tool tracks the synced look direction for free,
+	# exactly like the headlamp. Offset puts it at the avatar's right hand.
+	_tool_holder = Node3D.new()
+	_tool_holder.name = "ToolHolder"
+	_tool_holder.position = Vector3(0.28, -0.35, -0.3)
+	_head.add_child(_tool_holder)
+
+
+## Swap the visible held tool. Placeholder meshes in the same code-built style
+## as the capsule body; unknown tool ids show empty hands.
+func _set_tool(tool_id: StringName) -> void:
+	if _tool_holder == null or tool_id == _tool_id:
+		return
+	_tool_id = tool_id
+	for child: Node in _tool_holder.get_children():
+		child.queue_free()
+	if tool_id == &"drill":
+		_tool_holder.add_child(_build_drill())
+
+
+func _build_drill() -> Node3D:
+	var drill := Node3D.new()
+	drill.name = "Drill"
+
+	var housing := MeshInstance3D.new()
+	housing.name = "Housing"
+	var housing_mesh := BoxMesh.new()
+	housing_mesh.size = Vector3(0.12, 0.16, 0.34)
+	housing.mesh = housing_mesh
+	var housing_material := StandardMaterial3D.new()
+	housing_material.albedo_color = Color(0.24, 0.26, 0.3, 1.0)
+	housing.material_override = housing_material
+	drill.add_child(housing)
+
+	var bit := MeshInstance3D.new()
+	bit.name = "Bit"
+	var bit_mesh := CylinderMesh.new()
+	bit_mesh.top_radius = 0.012
+	bit_mesh.bottom_radius = 0.035
+	bit_mesh.height = 0.45
+	bit.mesh = bit_mesh
+	# Cylinder axis is +Y; -90° about X sends +Y to -Z, so the tapered tip
+	# points where the head looks (local -Z, same convention as the headlamp).
+	bit.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
+	bit.position = Vector3(0.0, 0.0, -0.36)
+	var bit_material := StandardMaterial3D.new()
+	bit_material.albedo_color = Color(0.68, 0.62, 0.5, 1.0)
+	bit_material.metallic = 0.7
+	bit_material.roughness = 0.4
+	bit.material_override = bit_material
+	drill.add_child(bit)
+
+	return drill

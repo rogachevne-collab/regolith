@@ -90,13 +90,13 @@ func _test_sanitizer_strips_objects() -> bool:
 
 func _test_block_list() -> bool:
 	for blocked: StringName in [
-		&"voxel_remove", &"dig_terrain_debris", &"scoop_spoil",
-		&"dump_scoop", &"debug_spawn_spoil", &"place_block",
+		&"dig_terrain_debris", &"debug_spawn_spoil", &"place_block",
 		&"toggle_control_seat",
 	]:
 		if not CoopCommandCodec.is_kind_blocked(blocked):
 			return _fail("%s should be blocked" % blocked)
 	for allowed: StringName in [
+		&"voxel_remove", &"scoop_spoil", &"dump_scoop",
 		&"construction_apply", &"weld_element", &"transfer_resource",
 		&"collect_world_loot", &"enqueue_recipe", &"oxygen_refill",
 		&"set_actuator_target", &"connect_network",

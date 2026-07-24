@@ -20,10 +20,10 @@ const PROTOCOL_VERSION := 1
 ## collider the wire can't carry, or they mutate terrain/granular state that is
 ## not replicated yet (stage 4). Refused client-side with `not_in_coop_yet`.
 const BLOCKED_KINDS := {
-	&"voxel_remove": true,          # carves host terrain — diverges until stage 4
+	# voxel_remove / scoop_spoil / dump_scoop are allowed since spike stage B:
+	# host executes, then re-broadcasts the confirmed op for every client to
+	# replay (CoopSession DIG_OP_KINDS / WorldCommandGateway.replay_remote_dig).
 	&"dig_terrain_debris": true,    # needs live target.collider
-	&"scoop_spoil": true,           # host-local granular field
-	&"dump_scoop": true,
 	&"debug_spawn_spoil": true,
 	&"place_block": true,           # legacy PlacedBlocks, live source node
 	&"toggle_control_seat": true,   # needs collider + reparent (stage 7)

@@ -6,6 +6,10 @@ const _TerrainFloatingDebrisService := preload(
 )
 
 signal command_completed(command_id: int, result: Dictionary)
+## Same moment as command_completed, but carries the executed command itself —
+## coop needs the original kind/target/parameters to re-broadcast dig operations
+## (COOP spike stage B), which command_completed's result does not include.
+signal command_executed(command: Dictionary, result: Dictionary)
 
 # A flat, gravity-upright block bottom cannot follow bumpy/sloped terrain, so the
 # aim hit (near, highest footprint edge) leaves the rest of the base floating. We
@@ -216,6 +220,7 @@ func _flush() -> void:
 			command_id,
 			result
 		)
+		command_executed.emit(command, result)
 
 
 func _execute(command: Dictionary) -> Dictionary:
@@ -293,6 +298,40 @@ func _execute(command: Dictionary) -> Dictionary:
 ## onto the rim and collects nothing — no spoil is credited as yield. First knob
 ## to drop if the ejected ring visibly pumps back in and out.
 const HAND_DRILL_PLOW_SHARE := 1.0
+
+
+## True while this gateway is re-applying a dig confirmed by the coop host.
+## Gates the side effects that must stay host-only (floating-chunk separation
+## becomes elements and arrives via snapshot instead).
+var _replaying_remote_dig := false
+
+
+## Coop client entry point: carve/scoop/dump the local replica field exactly as
+## the host did, crediting nothing. Bypasses _execute on purpose — a replica
+## refuses mutating commands (invariant C1), but this is not a player command,
+## it is the host's already-validated verdict arriving over the reliable op
+## channel. For scoop/dump the coop layer stamps the host-confirmed volumes
+## into parameters, so the replay moves exactly what the host moved.
+func replay_remote_dig(command: Dictionary) -> void:
+	var target: Variant = command.get("target")
+	if not (target is Dictionary) or not bool((target as Dictionary).get("valid", false)):
+		return
+	var replay := command.duplicate(true)
+	match StringName(command.get("kind", &"")):
+		&"voxel_remove":
+			var parameters: Dictionary = replay.get("parameters", {})
+			# The host already routed the yield to the digger's store (and the
+			# store arrives via snapshot); replaying it here would double-mine
+			# every bite.
+			parameters["discard_yield"] = true
+			replay["parameters"] = parameters
+			_replaying_remote_dig = true
+			_remove_voxel(replay, replay["target"])
+			_replaying_remote_dig = false
+		&"scoop_spoil":
+			_scoop_spoil(replay, replay["target"])
+		&"dump_scoop":
+			_dump_scoop(replay, replay["target"])
 
 
 func _remove_voxel(
@@ -378,7 +417,8 @@ func _remove_voxel(
 		_hand_drill_last_bite_center = bite_center
 		_hand_drill_last_bite_msec = now_msec
 		_notify_terrain_modified(total_removed_m3, bite_center, radius, direction)
-		_maybe_separate_floating_chunks(bite_center, total_removed_m3, radius)
+		if not _replaying_remote_dig:
+			_maybe_separate_floating_chunks(bite_center, total_removed_m3, radius)
 	else:
 		_hand_drill_last_bite_center = null
 	var removed_m3 := total_removed_m3

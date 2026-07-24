@@ -21,6 +21,19 @@ const CH_STREAM := 2      # poses + suit sync (unreliable_ordered)
 
 const POSE_INTERVAL := 0.05        # 20 Hz
 const SUIT_INTERVAL := 1.0
+## Moving-assembly motion stream (spike stage C): rate and the squared
+## linear/angular velocity thresholds below which an assembly counts as parked
+## and is not streamed (clients keep it from the last snapshot).
+const ASSEMBLY_INTERVAL := 1.0 / 15.0
+const ASSEMBLY_SPEED_SQ := 0.0025  # (0.05 m/s)^2
+const ASSEMBLY_SPIN_SQ := 0.0025   # (0.05 rad/s)^2
+## Client-side smoothing of the assembly stream, same scheme as RemotePlayer:
+## render ~120 ms in the past, blend between buffered frames. A stream that
+## goes quiet (assembly parked) is dropped after STALE_MS — the sim-truth pose
+## from the last packet stays where it is.
+const ASSEMBLY_INTERP_DELAY_MS := 120
+const ASSEMBLY_BUFFER_LIMIT := 8
+const ASSEMBLY_STALE_MS := 1500
 const SNAPSHOT_DEBOUNCE := 0.3
 const SNAPSHOT_FLOOR_MS := 1000
 const NICK_PATH := "user://player_nick.txt"
@@ -42,6 +55,16 @@ const NO_BROADCAST_KINDS := {
 	&"debug_spawn_spoil": true,
 }
 
+## Dig kinds replicated as confirmed operations on the reliable channel instead
+## of snapshots (spike stage B): the host re-broadcasts the sanitized command
+## and every client replays the carve on its own field. Stays disjoint from
+## snapshots on purpose — see NO_BROADCAST_KINDS above.
+const DIG_OP_KINDS := {
+	&"voxel_remove": true,
+	&"scoop_spoil": true,
+	&"dump_scoop": true,
+}
+
 enum Mode { OFFLINE, HOST, CLIENT }
 
 @export var gateway_path: NodePath = ^"../WorldCommandGateway"
@@ -53,6 +76,7 @@ var _mode := Mode.OFFLINE
 var _gateway: WorldCommandGateway
 var _session: SimulationSession
 var _player: Node3D
+var _tools: ToolController
 var _meteorites: Node
 ## Untyped so dynamic method calls (is_world_ready, and the two spawn/persist
 ## coroutines) dispatch and `await` correctly against bootstrap.gd.
@@ -68,6 +92,13 @@ var _avatars_root: Node3D
 
 var _pose_accum := 0.0
 var _suit_accum := 0.0
+var _assembly_accum := 0.0
+## Client: assembly_id -> {"root_id": int, "samples": [{t: int, motions:
+## {group_id: AssemblyMotionState}}]}. Fed by _cli_assembly_motion, consumed
+## by _process — bodies are re-written every frame, which also reseats a
+## mid-drive snapshot restore (fresh replica bodies get the streamed pose on
+## the very next frame instead of waiting for the next packet).
+var _assembly_streams: Dictionary = {}
 var _snapshot_dirty := false
 var _snapshot_debounce := 0.0
 var _last_broadcast_ms := 0
@@ -80,6 +111,8 @@ func _ready() -> void:
 	_gateway = get_node_or_null(gateway_path) as WorldCommandGateway
 	_session = get_node_or_null(session_path) as SimulationSession
 	_player = get_node_or_null(player_path) as Node3D
+	if _player != null:
+		_tools = _player.get_node_or_null("ToolController") as ToolController
 	_meteorites = get_node_or_null(meteorites_path)
 	_bootstrap = get_parent()
 
@@ -119,6 +152,10 @@ func _physics_process(delta: float) -> void:
 		if _suit_accum >= SUIT_INTERVAL:
 			_suit_accum = 0.0
 			_broadcast_suits()
+		_assembly_accum += delta
+		if _assembly_accum >= ASSEMBLY_INTERVAL:
+			_assembly_accum = 0.0
+			_broadcast_assembly_motion()
 
 
 # ---------------------------------------------------------------- setup helpers
@@ -507,6 +544,41 @@ func _on_host_command_completed(command_id: int, result: Dictionary) -> void:
 	_mark_snapshot_dirty()
 
 
+## Host-only (connected in _connect_host_hooks). Fires for every executed
+## command — the host's own digs and guests' digs alike — so every peer's holes
+## reach every other peer through the same ordered stream.
+func _on_host_command_executed(command: Dictionary, result: Dictionary) -> void:
+	if _mode != Mode.HOST:
+		return
+	var kind := StringName(command.get("kind", &""))
+	if not DIG_OP_KINDS.has(kind):
+		return
+	if StringName(result.get("status", &"")) != &"ok":
+		return
+	if _registry.peer_ids().is_empty():
+		return
+	var op := CoopCommandCodec.sanitize_command(command)
+	# Scoop/dump amounts depend on the field state at the bite, which drifts
+	# between peers. Stamp the volume the host actually confirmed, so every
+	# replica moves exactly that much instead of re-deciding locally.
+	var data: Dictionary = result.get("data", {})
+	var parameters: Dictionary = op.get("parameters", {})
+	match kind:
+		&"scoop_spoil":
+			parameters["max_volume_m3"] = float(data.get("scooped_volume_m3", 0.0))
+		&"dump_scoop":
+			parameters["volume_m3"] = float(data.get("dumped_volume_m3", 0.0))
+	op["parameters"] = parameters
+	rpc("_cli_dig_op", op)
+
+
+@rpc("authority", "call_remote", "reliable", CH_MAIN)
+func _cli_dig_op(op: Dictionary) -> void:
+	if _mode != Mode.CLIENT or _gateway == null:
+		return
+	_gateway.replay_remote_dig(op)
+
+
 func _on_host_structural_event(event: Dictionary) -> void:
 	if StringName(event.get("kind", &"")) == &"world_restored":
 		return
@@ -567,6 +639,161 @@ func _cli_suits(suits: Dictionary) -> void:
 		world.sync_suit_state(String(uid), suits[uid])
 
 
+# ------------------------------------------------------- assembly motion stream
+
+## Host: stream root + child body-group motions of every assembly that is
+## actually moving (unreliable_ordered, like poses — a lost frame is replaced
+## 66 ms later). Parked/sleeping assemblies cost nothing; clients keep them
+## where the last snapshot put them. The host's Jolt read-back refreshes
+## assembly.motion / body_group_motions every physics tick, so the world state
+## read here is current.
+func _broadcast_assembly_motion() -> void:
+	if _registry.peer_ids().is_empty():
+		return
+	var world := _world()
+	if world == null:
+		return
+	var batch: Dictionary = {}
+	for assembly: SimulationAssembly in world.list_assemblies():
+		if assembly.tombstoned or assembly.motion == null:
+			continue
+		var root_id := world.root_body_group_id(assembly.assembly_id)
+		if root_id <= 0:
+			continue
+		var moving := _motion_is_live(assembly.motion)
+		var motions: Dictionary = {root_id: assembly.motion.to_dict()}
+		for group_id_variant: Variant in assembly.body_group_motions:
+			var group_motion: AssemblyMotionState = (
+				assembly.body_group_motions[group_id_variant]
+			)
+			if group_motion == null:
+				continue
+			motions[int(group_id_variant)] = group_motion.to_dict()
+			moving = moving or _motion_is_live(group_motion)
+		if moving:
+			batch[assembly.assembly_id] = motions
+	if not batch.is_empty():
+		rpc("_cli_assembly_motion", batch)
+
+
+func _motion_is_live(motion: AssemblyMotionState) -> bool:
+	if motion.frozen or motion.sleeping:
+		return false
+	return (
+		motion.linear_velocity.length_squared() > ASSEMBLY_SPEED_SQ
+		or motion.angular_velocity.length_squared() > ASSEMBLY_SPIN_SQ
+	)
+
+
+@rpc("authority", "call_remote", "unreliable_ordered", CH_STREAM)
+func _cli_assembly_motion(batch: Dictionary) -> void:
+	if _mode != Mode.CLIENT:
+		return
+	var world := _world()
+	if world == null:
+		return
+	for assembly_id_variant: Variant in batch:
+		var assembly_id := int(assembly_id_variant)
+		if world.get_assembly_raw(assembly_id) == null:
+			# The assembly reached us mid-stream before the snapshot that
+			# creates it; the next snapshot seats it, later frames apply.
+			continue
+		var packed: Dictionary = batch[assembly_id_variant]
+		var motions: Dictionary = {}
+		for group_id_variant: Variant in packed:
+			var motion := AssemblyMotionState.from_dict(packed[group_id_variant])
+			if motion.is_valid():
+				motions[int(group_id_variant)] = motion
+		if motions.is_empty():
+			continue
+		# Sim-side truth updates at packet rate; the smoothed body/visual pose
+		# is written per-frame in _process from the sample buffer.
+		world.sync_assembly_body_group_motions(assembly_id, motions)
+		var stream: Dictionary = _assembly_streams.get_or_add(
+			assembly_id,
+			{"root_id": 0, "samples": []}
+		)
+		# Re-resolved every packet: a snapshot with a split/merge recompiles
+		# body groups and the cached root id would silently go stale.
+		# compile_body_groups caches by topology revision, so this is cheap.
+		stream["root_id"] = world.root_body_group_id(assembly_id)
+		var samples: Array = stream["samples"]
+		samples.append({"t": Time.get_ticks_msec(), "motions": motions})
+		while samples.size() > ASSEMBLY_BUFFER_LIMIT:
+			samples.pop_front()
+
+
+func _process(_delta: float) -> void:
+	if _mode != Mode.CLIENT or _assembly_streams.is_empty():
+		return
+	if _session == null or _session.projection == null:
+		return
+	var now := Time.get_ticks_msec()
+	var render_t := now - ASSEMBLY_INTERP_DELAY_MS
+	for assembly_id_variant: Variant in _assembly_streams.keys():
+		var stream: Dictionary = _assembly_streams[assembly_id_variant]
+		var samples: Array = stream["samples"]
+		var newest: Dictionary = samples[samples.size() - 1]
+		if now - int(newest["t"]) > ASSEMBLY_STALE_MS:
+			# Parked: the stream stopped on purpose; sim truth already holds
+			# the final pose, so just stop touching the bodies.
+			_assembly_streams.erase(assembly_id_variant)
+			continue
+		var previous: Dictionary = newest
+		var factor := 1.0
+		for index in range(samples.size() - 1):
+			var a: Dictionary = samples[index]
+			var b: Dictionary = samples[index + 1]
+			if render_t < int(a["t"]) or render_t > int(b["t"]):
+				continue
+			previous = a
+			newest = b
+			var span := maxf(float(int(b["t"]) - int(a["t"])), 1.0)
+			factor = clampf(float(render_t - int(a["t"])) / span, 0.0, 1.0)
+			break
+		_apply_assembly_blend(
+			int(assembly_id_variant),
+			int(stream["root_id"]),
+			previous["motions"],
+			newest["motions"],
+			factor
+		)
+
+
+## Write the blended group poses onto the frozen kinematic replica bodies.
+## Visual rigs are children of those bodies, so one write moves everything.
+## Bodies are looked up fresh every frame: a snapshot restore mid-drive
+## replaces them, and the stale-instance guard makes that a one-frame gap.
+func _apply_assembly_blend(
+	assembly_id: int,
+	root_id: int,
+	from_motions: Dictionary,
+	to_motions: Dictionary,
+	factor: float
+) -> void:
+	var projection := _session.projection
+	for group_id_variant: Variant in to_motions:
+		var group_id := int(group_id_variant)
+		var to_motion: AssemblyMotionState = to_motions[group_id_variant]
+		var from_motion: AssemblyMotionState = from_motions.get(
+			group_id_variant,
+			to_motion
+		)
+		var body: PhysicsBody3D = (
+			projection.get_physics_body(assembly_id)
+			if group_id == root_id
+			else projection.get_group_physics_body(assembly_id, group_id)
+		)
+		if body == null or not is_instance_valid(body):
+			continue
+		var from_q := Quaternion(from_motion.transform.basis)
+		var to_q := Quaternion(to_motion.transform.basis)
+		body.global_transform = Transform3D(
+			Basis(from_q.slerp(to_q, factor)),
+			from_motion.transform.origin.lerp(to_motion.transform.origin, factor)
+		)
+
+
 # -------------------------------------------------------------------- pose relay
 
 func _send_local_pose() -> void:
@@ -620,6 +847,7 @@ func _local_pose() -> Dictionary:
 		"qh": Quaternion(head_basis),
 		"l": lamp != null and lamp.visible,
 		"v": velocity,
+		"tool": _tools.active_tool if _tools != null else StringName(),
 	}
 
 
@@ -674,6 +902,7 @@ func _connect_host_hooks() -> void:
 	if _host_hooks_connected:
 		return
 	_gateway.command_completed.connect(_on_host_command_completed)
+	_gateway.command_executed.connect(_on_host_command_executed)
 	_world().structural_event.connect(_on_host_structural_event)
 	_host_hooks_connected = true
 
@@ -683,6 +912,8 @@ func _disconnect_host_hooks() -> void:
 		return
 	if _gateway.command_completed.is_connected(_on_host_command_completed):
 		_gateway.command_completed.disconnect(_on_host_command_completed)
+	if _gateway.command_executed.is_connected(_on_host_command_executed):
+		_gateway.command_executed.disconnect(_on_host_command_executed)
 	var world := _world()
 	if world != null and world.structural_event.is_connected(_on_host_structural_event):
 		world.structural_event.disconnect(_on_host_structural_event)
