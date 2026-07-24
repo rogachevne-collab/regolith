@@ -91,7 +91,6 @@ func _test_sanitizer_strips_objects() -> bool:
 func _test_block_list() -> bool:
 	for blocked: StringName in [
 		&"dig_terrain_debris", &"debug_spawn_spoil", &"place_block",
-		&"toggle_control_seat",
 	]:
 		if not CoopCommandCodec.is_kind_blocked(blocked):
 			return _fail("%s should be blocked" % blocked)
@@ -100,6 +99,7 @@ func _test_block_list() -> bool:
 		&"construction_apply", &"weld_element", &"transfer_resource",
 		&"collect_world_loot", &"enqueue_recipe", &"oxygen_refill",
 		&"set_actuator_target", &"connect_network",
+		&"toggle_control_seat",
 	]:
 		if CoopCommandCodec.is_kind_blocked(allowed):
 			return _fail("%s should be allowed" % allowed)

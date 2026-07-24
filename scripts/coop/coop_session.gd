@@ -17,10 +17,16 @@ const MAX_PEERS := 8
 const CHANNELS := 4
 const CH_MAIN := 0        # handshake, commands, results, peer up/down (reliable)
 const CH_BULK := 1        # join payload + snapshot broadcasts (reliable)
-const CH_STREAM := 2      # poses + suit sync (unreliable_ordered)
+const CH_STREAM := 2      # poses + suit sync + assembly motion (unreliable_ordered)
+const CH_INPUT := 3       # guest seat control stream (unreliable_ordered; own seq)
 
 const POSE_INTERVAL := 0.05        # 20 Hz
 const SUIT_INTERVAL := 1.0
+## Guest steering relay (spike stage C): 20 Hz on CH_INPUT (own seq vs poses).
+## NOT a gateway command — ok-completion would dirty-mark the world and storm
+## snapshot re-broadcasts plus reliable result echoes every frame.
+const CONTROL_INPUT_INTERVAL := 0.05
+const CONTROL_INPUT_STALE_MS := 300
 ## Moving-assembly motion stream (spike stage C): rate and the squared
 ## linear/angular velocity thresholds below which an assembly counts as parked
 ## and is not streamed (clients keep it from the last snapshot).
@@ -43,6 +49,9 @@ const NICK_PATH := "user://player_nick.txt"
 ## read the same user://player_uid.txt and coop would mistake them for the same
 ## player. Different machines each bind their own, so real peers are unaffected.
 const INSTANCE_LOCK_PORT := 47800
+## Autojoin (`--coop-autojoin`): host may come up later; retry until admitted.
+const AUTOJOIN_INTERVAL_SEC := 1.0
+const AUTOJOIN_MAX_ATTEMPTS := 30
 
 ## Host command kinds that must NOT trigger a snapshot broadcast (terrain /
 ## granular churn — host drilling would storm client rebuilds). Everything else
@@ -93,6 +102,14 @@ var _avatars_root: Node3D
 var _pose_accum := 0.0
 var _suit_accum := 0.0
 var _assembly_accum := 0.0
+var _control_input_accum := 0.0
+## just_pressed edges accumulate every physics tick and flush with the next
+## 50 ms control packet (sampling only at send rate would drop taps).
+var _seat_edge_dampeners := false
+var _seat_edge_parking_brake := false
+## Host: remote uid -> last _srv_control_input receive time (msec). Watchdog
+## zeros stuck throttle if a seated guest goes quiet (alt-tab / lag).
+var _remote_driver_last_input_ms: Dictionary = {}
 ## Client: assembly_id -> {"root_id": int, "samples": [{t: int, motions:
 ## {group_id: AssemblyMotionState}}]}. Fed by _cli_assembly_motion, consumed
 ## by _process — bodies are re-written every frame, which also reseats a
@@ -105,6 +122,8 @@ var _last_broadcast_ms := 0
 var _host_hooks_connected := false
 ## Held for the process lifetime by the primary instance (see INSTANCE_LOCK_PORT).
 var _instance_lock: PacketPeerUDP
+## Set when the client is admitted (`_cli_join_payload`); stops autojoin retries.
+var _autojoin_admitted := false
 
 
 func _ready() -> void:
@@ -131,6 +150,7 @@ func _ready() -> void:
 	multiplayer.connected_to_server.connect(_on_connected_to_server)
 	multiplayer.connection_failed.connect(_on_connection_failed)
 	multiplayer.server_disconnected.connect(_on_server_disconnected)
+	_kickoff_cmdline_autostart()
 
 
 func _exit_tree() -> void:
@@ -146,7 +166,10 @@ func _physics_process(delta: float) -> void:
 	if _pose_accum >= POSE_INTERVAL:
 		_pose_accum = 0.0
 		_send_local_pose()
+	if _mode == Mode.CLIENT:
+		_tick_client_control_input(delta)
 	if _mode == Mode.HOST:
+		_tick_remote_driver_watchdog()
 		_tick_snapshot_broadcast(delta)
 		_suit_accum += delta
 		if _suit_accum >= SUIT_INTERVAL:
@@ -226,6 +249,75 @@ func _register_console_commands() -> void:
 
 func _world() -> SimulationWorld:
 	return _session.world if _session != null else null
+
+
+# --------------------------------------------------------- cmdline autostart
+
+## `--coop-autohost` / `--coop-autojoin[=ip[:port]]` after `--`. Waits for
+## world ready (host refuses joiners with host_not_ready until then), then
+## reuses the same paths as console `host` / `join`. Autojoin retries.
+func _kickoff_cmdline_autostart() -> void:
+	var want_autohost := false
+	var want_autojoin := false
+	var join_ip := "127.0.0.1"
+	var join_port := PORT_DEFAULT
+	for arg: String in OS.get_cmdline_user_args():
+		if arg == "--coop-autohost":
+			want_autohost = true
+		elif arg == "--coop-autojoin":
+			want_autojoin = true
+		elif arg.begins_with("--coop-autojoin="):
+			want_autojoin = true
+			var spec := arg.substr("--coop-autojoin=".length()).strip_edges()
+			if not spec.is_empty():
+				var sep := spec.rfind(":")
+				if sep > 0 and spec.substr(sep + 1).is_valid_int():
+					join_ip = spec.substr(0, sep)
+					join_port = int(spec.substr(sep + 1))
+				else:
+					join_ip = spec
+	if want_autohost:
+		print("CoopSession: autohost armed (port %d)" % PORT_DEFAULT)
+		_autohost_when_ready()
+	if want_autojoin:
+		print("CoopSession: autojoin armed → %s:%d" % [join_ip, join_port])
+		_autojoin_when_ready(join_ip, join_port)
+
+
+func _await_world_ready() -> void:
+	while _bootstrap == null or not _bootstrap.is_world_ready():
+		await get_tree().process_frame
+
+
+func _autohost_when_ready() -> void:
+	await _await_world_ready()
+	print("CoopSession: autohost — world ready, hosting")
+	_cmd_host()
+
+
+func _autojoin_when_ready(ip: String, port: int) -> void:
+	await _await_world_ready()
+	print("CoopSession: autojoin — world ready, connecting to %s:%d" % [ip, port])
+	var attempt := 0
+	while attempt < AUTOJOIN_MAX_ATTEMPTS:
+		if _autojoin_admitted:
+			print("CoopSession: autojoin succeeded")
+			return
+		if _mode == Mode.OFFLINE:
+			attempt += 1
+			print(
+				"CoopSession: autojoin attempt %d/%d → %s:%d"
+				% [attempt, AUTOJOIN_MAX_ATTEMPTS, ip, port]
+			)
+			_cmd_join(ip, port)
+		await get_tree().create_timer(AUTOJOIN_INTERVAL_SEC).timeout
+	if _autojoin_admitted:
+		print("CoopSession: autojoin succeeded")
+		return
+	print(
+		"CoopSession: autojoin gave up after %d attempts → %s:%d"
+		% [AUTOJOIN_MAX_ATTEMPTS, ip, port]
+	)
 
 
 # --------------------------------------------------------------- console commands
@@ -315,6 +407,7 @@ func _on_peer_disconnected(peer_id: int) -> void:
 	if _mode != Mode.HOST:
 		return
 	var uid := _registry.uid_of(peer_id)
+	_clear_remote_driver(uid)
 	_registry.unregister(peer_id)
 	_despawn_avatar(uid)
 	rpc("_cli_peer_left", uid)
@@ -418,6 +511,7 @@ func _cli_join_payload(payload: Dictionary) -> void:
 		multiplayer.multiplayer_peer = null
 		_mode = Mode.OFFLINE
 		return
+	_autojoin_admitted = true
 	await _apply_join(payload)
 
 
@@ -529,6 +623,20 @@ func _srv_submit(local_id: int, command: Dictionary) -> void:
 
 @rpc("authority", "call_remote", "reliable", CH_MAIN)
 func _cli_result(local_id: int, result: Dictionary) -> void:
+	if (
+		_gateway != null
+		and StringName(result.get("command_kind", &"")) == &"toggle_control_seat"
+		and StringName(result.get("status", &"")) == &"ok"
+	):
+		var data: Dictionary = result.get("data", {})
+		if bool(data.get("seated", false)):
+			_gateway.apply_local_seat_attach(
+				_player,
+				int(data.get("element_id", 0)),
+				int(data.get("assembly_id", 0))
+			)
+		else:
+			_gateway.release_local_seat_attach()
 	_gateway.complete_remote(local_id, result)
 
 
@@ -841,6 +949,9 @@ func _local_pose() -> Dictionary:
 	var velocity := Vector3.ZERO
 	if "velocity" in _player:
 		velocity = _player.get("velocity")
+	var seat_id := 0
+	if _gateway != null:
+		seat_id = _gateway.get_local_seat_element_id()
 	return {
 		"p": _player.global_position,
 		"q": Quaternion(body_basis),
@@ -848,7 +959,150 @@ func _local_pose() -> Dictionary:
 		"l": lamp != null and lamp.visible,
 		"v": velocity,
 		"tool": _tools.active_tool if _tools != null else StringName(),
+		"ta": _tools != null and _tools.is_drill_excavating(),
+		"seat": seat_id,
 	}
+
+
+# ---------------------------------------------------------- seat control stream
+
+## Client: SimulationSession skips rover input on replicas, so sample here while
+## seated and relay raw+edges to the host at 20 Hz on CH_INPUT (own sequence —
+## sharing CH_STREAM with large pose packets can drop ordered control frames).
+func _tick_client_control_input(delta: float) -> void:
+	if _gateway == null or _gateway.get_local_seat_element_id() <= 0:
+		_control_input_accum = 0.0
+		_seat_edge_dampeners = false
+		_seat_edge_parking_brake = false
+		return
+	# Cheap while-seated fallback: seat element or body gone → detach locally
+	# (covers a lost force-release RPC after the host destroyed the cockpit).
+	if not _client_seat_replica_ok(_gateway.get_local_seat_element_id()):
+		_gateway.release_local_seat_attach()
+		_control_input_accum = 0.0
+		_seat_edge_dampeners = false
+		_seat_edge_parking_brake = false
+		return
+	_gateway.ensure_local_seat_binding()
+	var modal_blocks := (
+		_player != null
+		and _player.has_method("is_gameplay_input_enabled")
+		and not bool(_player.call("is_gameplay_input_enabled"))
+	)
+	if not modal_blocks:
+		if Input.is_action_just_pressed(&"toggle_dampeners"):
+			_seat_edge_dampeners = true
+		if Input.is_action_just_pressed(&"toggle_parking_brake"):
+			_seat_edge_parking_brake = true
+	_control_input_accum += delta
+	if _control_input_accum < CONTROL_INPUT_INTERVAL:
+		return
+	_control_input_accum = 0.0
+	var raw := _gateway.collect_seat_raw_input(modal_blocks)
+	var edges := {
+		"toggle_dampeners": _seat_edge_dampeners,
+		"toggle_parking_brake": _seat_edge_parking_brake,
+	}
+	_seat_edge_dampeners = false
+	_seat_edge_parking_brake = false
+	rpc_id(1, "_srv_control_input", raw, edges)
+
+
+func _client_seat_replica_ok(element_id: int) -> bool:
+	if element_id <= 0 or _session == null or _session.world == null:
+		return false
+	var element := _session.world.get_element(element_id)
+	if element == null or not element.is_operational():
+		return false
+	if _session.projection == null:
+		return false
+	var body := (
+		_session.projection.get_element_projection(element_id).get("body")
+		as PhysicsBody3D
+	)
+	return body != null and is_instance_valid(body)
+
+
+@rpc("any_peer", "call_remote", "unreliable_ordered", CH_INPUT)
+func _srv_control_input(raw: Dictionary, edges: Dictionary) -> void:
+	if _mode != Mode.HOST or _gateway == null:
+		return
+	var peer := multiplayer.get_remote_sender_id()
+	var uid := _registry.uid_of(peer)
+	if uid.is_empty():
+		return
+	_remote_driver_last_input_ms[uid] = Time.get_ticks_msec()
+	_gateway.apply_remote_driver_input(uid, raw, edges)
+
+
+## Host → seated guest: seat destroyed / non-operational. Reliable on CH_MAIN.
+func _notify_remote_seat_force_release(
+	player_id: String,
+	_seat_element_id: int,
+	_assembly_id: int
+) -> void:
+	if _mode != Mode.HOST or player_id.is_empty():
+		return
+	var peer := _registry.peer_of(player_id)
+	if peer <= 0:
+		return
+	_remote_driver_last_input_ms.erase(player_id)
+	rpc_id(peer, "_cli_force_seat_release")
+
+
+@rpc("authority", "call_remote", "reliable", CH_MAIN)
+func _cli_force_seat_release() -> void:
+	if _mode != Mode.CLIENT or _gateway == null:
+		return
+	_gateway.release_local_seat_attach()
+	_control_input_accum = 0.0
+	_seat_edge_dampeners = false
+	_seat_edge_parking_brake = false
+
+
+func _tick_remote_driver_watchdog() -> void:
+	if _gateway == null or _remote_driver_last_input_ms.is_empty():
+		return
+	var now := Time.get_ticks_msec()
+	var stale: Array[String] = []
+	for uid: String in _remote_driver_last_input_ms.keys():
+		if now - int(_remote_driver_last_input_ms[uid]) > CONTROL_INPUT_STALE_MS:
+			stale.append(uid)
+	for uid: String in stale:
+		_gateway.clear_remote_driver_input(uid)
+		_remote_driver_last_input_ms.erase(uid)
+
+
+func _clear_remote_driver(uid: String) -> void:
+	if uid.is_empty() or _gateway == null:
+		return
+	_gateway.clear_remote_driver_input(uid)
+	if _session != null and _session.world != null:
+		_session.world.clear_player_seat_context(uid)
+	_remote_driver_last_input_ms.erase(uid)
+
+
+## Resolve a ControlSeat element to its world transform on this peer's replica
+## (body * seat_offset_local). Used by RemotePlayer when pose.seat > 0.
+func resolve_seat_world_transform(element_id: int) -> Variant:
+	if (
+		element_id <= 0
+		or _session == null
+		or _session.world == null
+		or _session.projection == null
+	):
+		return null
+	var element := _session.world.get_element(element_id)
+	if element == null:
+		return null
+	var body := (
+		_session.projection.get_element_projection(element_id).get("body")
+		as Node3D
+	)
+	if body == null or not is_instance_valid(body):
+		return null
+	var offset: Vector3 = WheelPlacementUtil.seat_offset_local(element)
+	return Transform3D(body.global_transform.basis, body.global_transform * offset)
 
 
 # ------------------------------------------------------------------ avatars/teardown
@@ -858,6 +1112,7 @@ func _spawn_avatar(uid: String, nick: String) -> RemotePlayer:
 		return _avatars[uid]
 	var avatar := RemotePlayerScene.instantiate() as RemotePlayer
 	avatar.setup(uid, nick)
+	avatar.set_seat_transform_resolver(resolve_seat_world_transform)
 	_avatars_root.add_child(avatar)
 	_avatars[uid] = avatar
 	return avatar
@@ -903,6 +1158,7 @@ func _connect_host_hooks() -> void:
 		return
 	_gateway.command_completed.connect(_on_host_command_completed)
 	_gateway.command_executed.connect(_on_host_command_executed)
+	_gateway.set_seat_force_release_notify(_notify_remote_seat_force_release)
 	_world().structural_event.connect(_on_host_structural_event)
 	_host_hooks_connected = true
 
@@ -914,6 +1170,7 @@ func _disconnect_host_hooks() -> void:
 		_gateway.command_completed.disconnect(_on_host_command_completed)
 	if _gateway.command_executed.is_connected(_on_host_command_executed):
 		_gateway.command_executed.disconnect(_on_host_command_executed)
+	_gateway.set_seat_force_release_notify(Callable())
 	var world := _world()
 	if world != null and world.structural_event.is_connected(_on_host_structural_event):
 		world.structural_event.disconnect(_on_host_structural_event)

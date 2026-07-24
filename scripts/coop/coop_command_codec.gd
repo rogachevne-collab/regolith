@@ -26,7 +26,8 @@ const BLOCKED_KINDS := {
 	&"dig_terrain_debris": true,    # needs live target.collider
 	&"debug_spawn_spoil": true,
 	&"place_block": true,           # legacy PlacedBlocks, live source node
-	&"toggle_control_seat": true,   # needs collider + reparent (stage 7)
+	# toggle_control_seat allowed since spike stage C: host claims occupancy;
+	# client attaches locally on ok (element_id survives sanitize).
 }
 
 

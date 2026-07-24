@@ -24,8 +24,14 @@ var _head: Node3D
 var _headlamp: SpotLight3D
 var _tool_holder: Node3D
 var _tool_id := StringName()
+var _drill_bit: MeshInstance3D
+var _tool_active := false
+const DRILL_SPIN_RAD_S := 14.0
+## Callable(element_id) -> Transform3D|null from CoopSession: seats the avatar
+## on the local replica of a ControlSeat so pose lag does not trail the stream.
+var _seat_transform_resolver: Callable
 ## Ring of {t:int, p:Vector3, q:Quaternion, qh:Quaternion, l:bool, v:Vector3,
-## tool:StringName}.
+## tool:StringName, seat:int}.
 var _samples: Array[Dictionary] = []
 
 
@@ -46,8 +52,12 @@ func set_nick(nick: String) -> void:
 		_nick_label.text = nick
 
 
-## Pose dict from the network: {p, q, qh, l, v}. Stamped with local receive time
-## for the interpolation clock.
+func set_seat_transform_resolver(resolver: Callable) -> void:
+	_seat_transform_resolver = resolver
+
+
+## Pose dict from the network: {p, q, qh, l, v, seat}. Stamped with local
+## receive time for the interpolation clock.
 func push_pose(pose: Dictionary) -> void:
 	_samples.append({
 		"t": Time.get_ticks_msec(),
@@ -57,12 +67,14 @@ func push_pose(pose: Dictionary) -> void:
 		"l": bool(pose.get("l", false)),
 		"v": pose.get("v", Vector3.ZERO),
 		"tool": StringName(pose.get("tool", &"")),
+		"ta": bool(pose.get("ta", false)),
+		"seat": int(pose.get("seat", 0)),
 	})
 	while _samples.size() > BUFFER_LIMIT:
 		_samples.pop_front()
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if _samples.is_empty():
 		return
 	var render_t := Time.get_ticks_msec() - INTERP_DELAY_MS
@@ -70,6 +82,16 @@ func _process(_delta: float) -> void:
 	var oldest: Dictionary = _samples[0]
 	# Discrete state: no point interpolating a tool swap, just show the latest.
 	_set_tool(StringName(newest.get("tool", &"")))
+	_tool_active = bool(newest.get("ta", false))
+	if _tool_active and _drill_bit != null and is_instance_valid(_drill_bit):
+		# Spin around the bit's own long axis (its local Y is the cylinder axis).
+		_drill_bit.rotate_object_local(Vector3.UP, DRILL_SPIN_RAD_S * delta)
+
+	# Seated: snap to the local replica seat each frame (no p interpolation —
+	# assembly stream already carries the vehicle; lagging p trails by metres).
+	var seat_id := int(newest.get("seat", 0))
+	if seat_id > 0 and _try_apply_seated(seat_id, newest):
+		return
 
 	if render_t <= int(oldest["t"]):
 		_apply(oldest["p"], oldest["q"], oldest["qh"], bool(oldest["l"]))
@@ -100,6 +122,22 @@ func _process(_delta: float) -> void:
 			bool(b["l"])
 		)
 		return
+
+
+func _try_apply_seated(seat_id: int, sample: Dictionary) -> bool:
+	if not _seat_transform_resolver.is_valid():
+		return false
+	var xf: Variant = _seat_transform_resolver.call(seat_id)
+	if xf == null or not (xf is Transform3D):
+		return false
+	var seat_xf := xf as Transform3D
+	_apply(
+		seat_xf.origin,
+		Quaternion(seat_xf.basis),
+		sample.get("qh", Quaternion(seat_xf.basis)),
+		bool(sample.get("l", false))
+	)
+	return true
 
 
 func _apply_extrapolated(sample: Dictionary, render_t: int) -> void:
@@ -218,5 +256,6 @@ func _build_drill() -> Node3D:
 	bit_material.roughness = 0.4
 	bit.material_override = bit_material
 	drill.add_child(bit)
+	_drill_bit = bit
 
 	return drill

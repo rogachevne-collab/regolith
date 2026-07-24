@@ -35,6 +35,16 @@ func uid_of(peer_id: int) -> String:
 	return String(_by_peer.get(peer_id, {}).get("uid", ""))
 
 
+## Reverse lookup for host → peer RPCs. 0 when the uid is not connected.
+func peer_of(uid: String) -> int:
+	if uid.is_empty():
+		return 0
+	for peer_id: int in _by_peer:
+		if String(_by_peer[peer_id].get("uid", "")) == uid:
+			return peer_id
+	return 0
+
+
 func nick_of(peer_id: int) -> String:
 	return String(_by_peer.get(peer_id, {}).get("nick", ""))
 

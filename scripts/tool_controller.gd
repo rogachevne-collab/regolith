@@ -1680,20 +1680,44 @@ func toggle_actuator_motor(hit: InteractionHit) -> bool:
 
 func _target_for_action(action: StringName) -> InteractionHit:
 	var player := get_parent()
-	if (
-		action == &"interact"
-		and player.has_method("is_in_vehicle")
-		and player.call("is_in_vehicle")
-	):
-		var vehicle: Node3D = player.call("current_vehicle")
-		if vehicle != null:
+	var seated := (
+		player != null
+		and (
+			(
+				player.has_method("is_in_vehicle")
+				and bool(player.call("is_in_vehicle"))
+			)
+			or (
+				player.has_meta("control_seat_element_id")
+				and int(player.get_meta("control_seat_element_id")) > 0
+			)
+		)
+	)
+	if action == &"interact" and seated:
+		var vehicle: Node3D = null
+		if player.has_method("current_vehicle"):
+			vehicle = player.call("current_vehicle") as Node3D
+		if vehicle == null or not is_instance_valid(vehicle):
+			vehicle = player.get_parent() as Node3D
+		if vehicle != null and is_instance_valid(vehicle):
+			var seat_element_id := int(
+				player.get_meta("control_seat_element_id", 0)
+			)
+			var assembly_id := 0
+			if vehicle.has_meta("assembly_id"):
+				assembly_id = int(vehicle.get_meta("assembly_id"))
 			return InteractionHit.create(
 				vehicle.global_position,
 				Vector3.UP,
 				0.0,
 				InteractionHit.KIND_CONTROL_SEAT,
 				vehicle,
-				StringName(str(vehicle.get_instance_id()))
+				StringName(str(vehicle.get_instance_id())),
+				{
+					"element_id": seat_element_id,
+					"assembly_id": assembly_id,
+					"control_seat": true,
+				}
 			)
 	return _query.current_hit
 

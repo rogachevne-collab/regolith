@@ -119,6 +119,7 @@ func _ready() -> void:
 	if piston_head != null:
 		_archetype_cache["piston_head"] = piston_head
 	call_deferred("_bind_terrain_contact_probe")
+	call_deferred("_bind_seat_evict_hook")
 
 
 func _bind_terrain_contact_probe() -> void:
@@ -127,6 +128,55 @@ func _bind_terrain_contact_probe() -> void:
 	_session.world.set_terrain_contact_probe(
 		_probe_assembly_terrain_contact
 	)
+
+
+func _bind_seat_evict_hook() -> void:
+	if _session == null or _session.world == null or _seat_evict_hook_connected:
+		return
+	_session.world.seat_occupant_evicted.connect(_on_seat_occupant_evicted)
+	_seat_evict_hook_connected = true
+
+
+## Broken / removed ControlSeat: clear locomotion and detach the driver.
+## Occupancy row is already gone (world emitted after erase).
+func _on_seat_occupant_evicted(
+	player_id: String,
+	seat_element_id: int,
+	assembly_id: int
+) -> void:
+	force_eject_seat_occupant(player_id, seat_element_id, assembly_id)
+
+
+func force_eject_seat_occupant(
+	player_id: String,
+	seat_element_id: int = 0,
+	assembly_id: int = 0
+) -> void:
+	if player_id.is_empty() or _session == null or _session.world == null:
+		return
+	if assembly_id <= 0 and seat_element_id > 0:
+		var seat := _session.world.get_element(seat_element_id)
+		if seat != null:
+			assembly_id = seat.assembly_id
+	if assembly_id > 0:
+		var locomotion := _session.world.get_locomotion_controller(assembly_id)
+		locomotion.clear_driver_input()
+		if locomotion.is_parking_brake():
+			locomotion.set_brake_command(1.0)
+	_session.world.clear_player_seat_context(player_id)
+	var local_uid := PlayerIdentity.local_uid()
+	if player_id == local_uid:
+		if _rover_seat_element_id > 0 or _rover_seat_assembly_id > 0:
+			release_local_seat_attach()
+		elif (
+			_rover_seat_player != null
+			and _rover_seat_player.has_method("is_in_vehicle")
+			and bool(_rover_seat_player.call("is_in_vehicle"))
+		):
+			release_local_seat_attach()
+		return
+	if _seat_force_release_notify.is_valid():
+		_seat_force_release_notify.call(player_id, seat_element_id, assembly_id)
 
 
 func _probe_assembly_terrain_contact(
@@ -147,10 +197,17 @@ func _probe_assembly_terrain_contact(
 ## Installed by CoopSession on a client (COOP-HOST-V0). When valid, submit()
 ## routes commands to the host instead of executing locally (invariant C1).
 var _network_submit: Callable = Callable()
+## Host: CoopSession notifies a remote peer to release_local_seat_attach.
+var _seat_force_release_notify: Callable = Callable()
+var _seat_evict_hook_connected := false
 
 
 func set_network_submit(hook: Callable) -> void:
 	_network_submit = hook
+
+
+func set_seat_force_release_notify(hook: Callable) -> void:
+	_seat_force_release_notify = hook
 
 
 func submit(command: Dictionary) -> int:
@@ -1229,6 +1286,7 @@ func _toggle_control_seat(
 	# дошло сюда, явно отказать, а не пытаться посадить игрока в консоль.
 	if str(keys.get("archetype_id", "")) == "control_terminal":
 		return _result(&"invalid_target")
+	var is_local_actor := actor_uid == PlayerIdentity.local_uid()
 	if (
 		StringName(target["target_kind"])
 		!= InteractionHit.KIND_CONTROL_SEAT
@@ -1238,29 +1296,53 @@ func _toggle_control_seat(
 			and InteractionHit.element_id_from(target) > 0
 		):
 			var cockpit_source: Node3D = command.get("source")
-			if cockpit_source == null:
+			if cockpit_source == null and is_local_actor:
 				return _result(&"not_ready")
-			if _is_rover_seated(cockpit_source):
-				return _exit_rover_seat(cockpit_source)
+			if _actor_wants_seat_exit(cockpit_source, is_local_actor):
+				return _exit_rover_seat(cockpit_source, is_local_actor)
 			return _enter_rover_seat(
 				cockpit_source,
 				InteractionHit.element_id_from(target),
-				InteractionHit.assembly_id_from(target)
+				InteractionHit.assembly_id_from(target),
+				is_local_actor
 			)
 		return _result(&"invalid_target")
 	var seat_source: Node3D = command.get("source")
-	if seat_source == null:
+	if seat_source == null and is_local_actor:
 		return _result(&"not_ready")
-	if _is_rover_seated(seat_source):
-		return _exit_rover_seat(seat_source)
+	if _actor_wants_seat_exit(seat_source, is_local_actor):
+		return _exit_rover_seat(seat_source, is_local_actor)
 	var vehicle: Object = target.get("collider")
 	var element_id := InteractionHit.element_id_from(target)
+	# Remote in-seat E uses KIND_CONTROL_SEAT with the seat element_id (meta).
+	# After occupancy was pruned for a broken seat, still prefer exit over enter.
+	if (
+		not is_local_actor
+		and element_id > 0
+		and StringName(target.get("target_kind", &""))
+		== InteractionHit.KIND_CONTROL_SEAT
+		and bool(target.get("control_seat", false))
+	):
+		var remote_seat := (
+			_session.world.get_element(element_id)
+			if _session != null and _session.world != null
+			else null
+		)
+		if (
+			remote_seat == null
+			or not remote_seat.is_operational()
+		):
+			return _exit_remote_rover_seat()
 	if element_id > 0:
 		return _enter_rover_seat(
 			seat_source,
 			element_id,
-			InteractionHit.assembly_id_from(target)
+			InteractionHit.assembly_id_from(target),
+			is_local_actor
 		)
+	# Legacy collider path / remote synthetic exit with no element id.
+	if not is_local_actor:
+		return _exit_remote_rover_seat()
 	if (
 		vehicle == null
 		or not vehicle.has_method("handle_interact")
@@ -1268,7 +1350,7 @@ func _toggle_control_seat(
 		return _result(&"not_ready")
 	if not vehicle.call("handle_interact", seat_source):
 		return _result(&"blocked")
-	return _result(&"ok")
+	return _result(&"ok", {"seated": true})
 
 
 func is_rover_seated(player: Node = null) -> bool:
@@ -1280,6 +1362,32 @@ func is_rover_seated(player: Node = null) -> bool:
 		and player.has_method("is_in_vehicle")
 		and player.call("is_in_vehicle")
 	)
+
+
+func get_local_seat_element_id() -> int:
+	return _rover_seat_element_id
+
+
+## Enter-vs-exit for a remote actor must use occupancy, not the avatar node:
+## RemotePlayer has no is_in_vehicle, so a node check would always enter.
+## Local also treats gateway seat id / live attach as seated so a pruned
+## occupancy cannot turn E into a failed re-enter (broken-seat trap).
+func _actor_wants_seat_exit(player: Node3D, is_local_actor: bool) -> bool:
+	if is_local_actor:
+		if _is_rover_seated(player) or _rover_seat_element_id > 0:
+			return true
+		return (
+			player != null
+			and player.has_method("is_in_vehicle")
+			and bool(player.call("is_in_vehicle"))
+		)
+	if _session == null or _session.world == null:
+		return false
+	if _session.world.get_player_seat_element_id(actor_uid) > 0:
+		return true
+	# Synthetic in-seat interact carries element_id from meta; occupancy may
+	# already have been pruned after the seat broke — still treat as exit.
+	return false
 
 
 func tick_rover_locomotion_input() -> void:
@@ -1308,7 +1416,7 @@ func tick_rover_locomotion_input() -> void:
 		# PB toggle is assembly-wide safety — not gated by Control Wheels.
 		if Input.is_action_just_pressed(&"toggle_parking_brake"):
 			_toggle_rover_parking_brake(assembly_id, locomotion)
-	var raw := _collect_seat_raw_input(modal_blocks)
+	var raw := collect_seat_raw_input(modal_blocks)
 	var frame := SeatInputRouter.route(
 		raw,
 		policy,
@@ -1340,7 +1448,8 @@ func _seat_frame_should_wake(locomotion: AssemblyLocomotionController) -> bool:
 
 
 ## Normalize InputMap once per tick. jump and move_up share Space in project.godot.
-func _collect_seat_raw_input(zero_frame: bool) -> Dictionary:
+## Public so CoopSession can sample the same raw dict for remote drivers.
+func collect_seat_raw_input(zero_frame: bool) -> Dictionary:
 	if zero_frame:
 		return {"zero_frame": true}
 	var space := maxf(
@@ -1348,12 +1457,16 @@ func _collect_seat_raw_input(zero_frame: bool) -> Dictionary:
 		Input.get_action_strength(&"move_up")
 	)
 	var look := _consume_flight_look_delta()
+	# drive/steer: single-axis bake (get_axis) so coop RPC cannot drop one of
+	# the paired move_* keys and leave steering at zero while drive still works.
 	return {
 		"zero_frame": false,
 		"move_forward": Input.get_action_strength(&"move_forward"),
 		"move_back": Input.get_action_strength(&"move_back"),
 		"move_left": Input.get_action_strength(&"move_left"),
 		"move_right": Input.get_action_strength(&"move_right"),
+		"drive": Input.get_axis(&"move_back", &"move_forward"),
+		"steer": Input.get_axis(&"move_right", &"move_left"),
 		"space": space,
 		"move_down": Input.get_action_strength(&"move_down"),
 		"look_x": look.x,
@@ -1361,6 +1474,181 @@ func _collect_seat_raw_input(zero_frame: bool) -> Dictionary:
 		"roll_left": Input.get_action_strength(&"roll_left"),
 		"roll_right": Input.get_action_strength(&"roll_right"),
 	}
+
+
+## Host applies a guest driver's 20 Hz stream packet (not a gateway command —
+## command completion would storm snapshot re-broadcasts).
+func apply_remote_driver_input(
+	remote_uid: String,
+	raw: Dictionary,
+	edges: Dictionary
+) -> void:
+	if _session == null or _session.world == null or remote_uid.is_empty():
+		return
+	var seat_element_id := _session.world.get_player_seat_element_id(remote_uid)
+	if seat_element_id <= 0:
+		return
+	var seat := _session.world.get_element(seat_element_id)
+	if seat == null:
+		return
+	var assembly_id := seat.assembly_id
+	if assembly_id <= 0:
+		return
+	var locomotion := _session.world.get_locomotion_controller(assembly_id)
+	var policy := _session.world.get_seat_control_state_ref(seat_element_id)
+	if policy == null:
+		policy = SeatControlState.defaults_ref()
+	if bool(edges.get("toggle_dampeners", false)):
+		locomotion.set_dampeners(not locomotion.is_dampeners())
+		_wake_rover_body(assembly_id)
+	if bool(edges.get("toggle_parking_brake", false)):
+		_toggle_rover_parking_brake(assembly_id, locomotion)
+	var frame := SeatInputRouter.route(
+		raw,
+		policy,
+		locomotion.is_parking_brake()
+	)
+	locomotion.apply_driver_frame(frame)
+	if _seat_frame_should_wake(locomotion):
+		_wake_rover_body(assembly_id)
+
+
+## Zero a disconnected / timed-out remote driver's continuous channels.
+func clear_remote_driver_input(remote_uid: String) -> void:
+	if _session == null or _session.world == null or remote_uid.is_empty():
+		return
+	var seat_element_id := _session.world.get_player_seat_element_id(remote_uid)
+	if seat_element_id <= 0:
+		return
+	var seat := _session.world.get_element(seat_element_id)
+	if seat == null or seat.assembly_id <= 0:
+		return
+	var locomotion := _session.world.get_locomotion_controller(seat.assembly_id)
+	locomotion.clear_driver_input()
+	if locomotion.is_parking_brake():
+		locomotion.set_brake_command(1.0)
+
+
+## Client-only: parent the local Player to the replica seat body after a host
+## ok for toggle_control_seat. Bypasses _execute (replica is not authoritative).
+func apply_local_seat_attach(
+	player: Node3D,
+	element_id: int,
+	assembly_id: int
+) -> void:
+	if _session == null or _session.projection == null:
+		return
+	if element_id <= 0 or assembly_id <= 0 or player == null:
+		return
+	var element := _session.world.get_element(element_id)
+	if element == null:
+		return
+	var body := (
+		_session.projection.get_element_projection(element_id).get("body")
+		as PhysicsBody3D
+	)
+	if body == null or not is_instance_valid(body):
+		return
+	var seat_offset: Vector3 = WheelPlacementUtil.seat_offset_local(element)
+	# Snapshot mid-drive recreates replica bodies; restore_evacuated_drivers
+	# finds the seated Player by this meta.
+	player.set_meta("control_seat_element_id", element_id)
+	player.set_meta("coop_replica_seat", true)
+	if player.has_method("enter_vehicle"):
+		player.call("enter_vehicle", body, seat_offset)
+	# Replica bodies are written in CoopSession._process; physics interpolation
+	# (on by enter_vehicle for host RigidBodies) smears the camera here.
+	player.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+	player.reset_physics_interpolation()
+	_rover_seat_player = player
+	_rover_seat_assembly_id = assembly_id
+	_rover_seat_element_id = element_id
+	_rover_seat_policy = _session.world.get_seat_control_state_ref(element_id)
+	_sync_seat_mouse_attitude(player, element_id)
+
+
+## Client: re-bind to the seat body if a snapshot recreate orphaned the Player
+## while gateway seat id is still claimed. Cheap — only while seated.
+func ensure_local_seat_binding() -> bool:
+	if _rover_seat_element_id <= 0 or _rover_seat_player == null:
+		return false
+	if _session == null or _session.projection == null or _session.world == null:
+		return false
+	var player := _rover_seat_player
+	var element := _session.world.get_element(_rover_seat_element_id)
+	if element == null or not element.is_operational():
+		return false
+	var body := (
+		_session.projection.get_element_projection(_rover_seat_element_id)
+		.get("body") as PhysicsBody3D
+	)
+	if body == null or not is_instance_valid(body):
+		return false
+	var vehicle_ok: bool = (
+		player.has_method("is_in_vehicle")
+		and bool(player.call("is_in_vehicle"))
+		and player.has_method("current_vehicle")
+		and player.call("current_vehicle") == body
+	)
+	if vehicle_ok:
+		return true
+	var seat_offset: Vector3 = WheelPlacementUtil.seat_offset_local(element)
+	player.set_meta("control_seat_element_id", _rover_seat_element_id)
+	player.set_meta("coop_replica_seat", true)
+	if player.has_method("enter_vehicle"):
+		player.call("enter_vehicle", body, seat_offset)
+	player.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+	player.reset_physics_interpolation()
+	_sync_seat_mouse_attitude(player, _rover_seat_element_id)
+	return (
+		player.has_method("is_in_vehicle")
+		and bool(player.call("is_in_vehicle"))
+	)
+
+
+## Client-only counterpart of apply_local_seat_attach.
+func release_local_seat_attach() -> void:
+	var player := _rover_seat_player
+	var assembly_id := _rover_seat_assembly_id
+	var element_id := _rover_seat_element_id
+	if player == null or assembly_id <= 0:
+		_rover_seat_player = null
+		_rover_seat_assembly_id = 0
+		_rover_seat_element_id = 0
+		_rover_seat_policy = null
+		return
+	var exit_position := player.global_position
+	if _session != null and _session.projection != null and element_id > 0:
+		var body := (
+			_session.projection.get_element_projection(element_id).get("body")
+			as PhysicsBody3D
+		)
+		if body != null:
+			var element := _session.world.get_element(element_id)
+			if element != null:
+				var seat_offset: Vector3 = (
+					WheelPlacementUtil.seat_offset_local(element)
+				)
+				var seat_world: Vector3 = body.global_transform * seat_offset
+				exit_position = (
+					seat_world
+					+ body.global_transform.basis.x * 1.2
+					+ GravityField.resolve_up(body, seat_world) * 0.15
+				)
+	if player.has_method("exit_vehicle"):
+		player.call("exit_vehicle", exit_position)
+	if player.has_meta("control_seat_element_id"):
+		player.remove_meta("control_seat_element_id")
+	if player.has_meta("coop_replica_seat"):
+		player.remove_meta("coop_replica_seat")
+	if player.has_method("set_gameplay_input_enabled"):
+		player.call("set_gameplay_input_enabled", true)
+	if player.has_method("set_vehicle_flight_controls"):
+		player.call("set_vehicle_flight_controls", false)
+	_rover_seat_player = null
+	_rover_seat_assembly_id = 0
+	_rover_seat_element_id = 0
+	_rover_seat_policy = null
 
 
 const FLIGHT_LOOK_SENSITIVITY := 0.035
@@ -1431,7 +1719,8 @@ func _is_rover_seated(player: Node3D) -> bool:
 func _enter_rover_seat(
 	player: Node3D,
 	element_id: int,
-	assembly_id: int
+	assembly_id: int,
+	is_local_actor: bool = true
 ) -> Dictionary:
 	if _session == null or _session.projection == null:
 		return _result(&"not_ready")
@@ -1454,6 +1743,26 @@ func _enter_rover_seat(
 		or not element.is_operational()
 	):
 		return _result(&"blocked", {"detail": &"seat_not_ready"})
+	# One driver per seat, checked here rather than in the world: the occupancy
+	# map is shared with the oxygen service, where several players legitimately
+	# reference the same seat's assembly.
+	if (
+		_session.world.is_seat_occupied(element_id)
+		and _session.world.get_player_seat_element_id(actor_uid) != element_id
+	):
+		return _result(&"blocked", {"detail": &"occupied"})
+	# Remote guest: claim occupancy + arm locomotion only. Do not touch the
+	# host's single-seat machine (_rover_seat_*) or reparent the RemotePlayer
+	# avatar — the client attaches its own Player to its replica on ok.
+	if not is_local_actor:
+		if not _session.world.register_player_seat_context(actor_uid, element_id):
+			return _result(&"blocked", {"detail": &"seat_context_rejected"})
+		_prepare_rover_for_drive(assembly_id)
+		return _result(&"ok", {
+			"seated": true,
+			"assembly_id": assembly_id,
+			"element_id": element_id,
+		})
 	var body := (
 		_session.projection.get_element_projection(element_id).get("body")
 		as PhysicsBody3D
@@ -1501,6 +1810,7 @@ func _enter_rover_seat(
 	):
 		player.call("enter_vehicle", body, seat_offset)
 	return _result(&"ok", {
+		"seated": true,
 		"assembly_id": assembly_id,
 		"element_id": element_id,
 	})
@@ -1592,18 +1902,42 @@ func _wake_rover_body(assembly_id: int) -> void:
 		_session.projection.wake_assembly_bodies(assembly_id)
 
 
-func _exit_rover_seat(player: Node3D) -> Dictionary:
-	if _session == null or _rover_seat_assembly_id <= 0:
+func _exit_rover_seat(
+	player: Node3D,
+	is_local_actor: bool = true
+) -> Dictionary:
+	if _session == null or _session.world == null:
+		return _result(&"not_ready")
+	# Remote guest: release occupancy + zero locomotion. Avatar detach is
+	# client's job via release_local_seat_attach on the ok result.
+	if not is_local_actor:
+		return _exit_remote_rover_seat()
+	# Allow exit when seat machine is claimed OR the player is still parented
+	# (broken seat may have wiped assembly id while the avatar is stuck).
+	if (
+		_rover_seat_assembly_id <= 0
+		and _rover_seat_element_id <= 0
+		and (
+			player == null
+			or not player.has_method("is_in_vehicle")
+			or not bool(player.call("is_in_vehicle"))
+		)
+	):
 		return _result(&"not_ready")
 	var assembly_id := _rover_seat_assembly_id
-	var body := (
-		_session.projection.get_element_projection(
-			_rover_seat_element_id
-		).get("body") as PhysicsBody3D
+	var element_id := _rover_seat_element_id
+	var body: PhysicsBody3D = null
+	if element_id > 0 and _session.projection != null:
+		body = (
+			_session.projection.get_element_projection(
+				element_id
+			).get("body") as PhysicsBody3D
+		)
+	var exit_position := (
+		player.global_position if player != null else Vector3.ZERO
 	)
-	var exit_position := player.global_position
-	if body != null:
-		var element := _session.world.get_element(_rover_seat_element_id)
+	if body != null and is_instance_valid(body):
+		var element := _session.world.get_element(element_id)
 		if element != null:
 			var seat_offset: Vector3 = WheelPlacementUtil.seat_offset_local(element)
 			var seat_world: Vector3 = body.global_transform * seat_offset
@@ -1612,26 +1946,64 @@ func _exit_rover_seat(player: Node3D) -> Dictionary:
 				+ body.global_transform.basis.x * 1.2
 				+ GravityField.resolve_up(body, seat_world) * 0.15
 			)
-	if player.has_method("exit_vehicle"):
+		else:
+			exit_position = (
+				body.global_position
+				+ body.global_transform.basis.x * 1.2
+				+ GravityField.resolve_up(body, body.global_position) * 0.15
+			)
+	if player != null and player.has_method("exit_vehicle"):
 		player.call("exit_vehicle", exit_position)
-	if player.has_meta("control_seat_element_id"):
+	if player != null and player.has_meta("control_seat_element_id"):
 		player.remove_meta("control_seat_element_id")
-	if player.has_method("set_gameplay_input_enabled"):
+	if player != null and player.has_meta("coop_replica_seat"):
+		player.remove_meta("coop_replica_seat")
+	if player != null and player.has_method("set_gameplay_input_enabled"):
 		player.call("set_gameplay_input_enabled", true)
-	var locomotion := _session.world.get_locomotion_controller(assembly_id)
-	locomotion.clear_driver_input()
-	if locomotion.is_parking_brake():
-		locomotion.set_brake_command(1.0)
-	if player.has_method("set_vehicle_flight_controls"):
+	if assembly_id > 0:
+		var locomotion := _session.world.get_locomotion_controller(assembly_id)
+		locomotion.clear_driver_input()
+		if locomotion.is_parking_brake():
+			locomotion.set_brake_command(1.0)
+		# Keep activated so floating wheel/flight phys continues.
+		_session.projection.sync_body_motion_now(assembly_id)
+	if player != null and player.has_method("set_vehicle_flight_controls"):
 		player.call("set_vehicle_flight_controls", false)
-	# Keep activated so floating wheel/flight phys continues.
-	_session.projection.sync_body_motion_now(assembly_id)
 	_session.world.clear_player_seat_context(actor_uid)
 	_rover_seat_player = null
 	_rover_seat_assembly_id = 0
 	_rover_seat_element_id = 0
 	_rover_seat_policy = null
-	return _result(&"ok")
+	return _result(&"ok", {
+		"seated": false,
+		"assembly_id": assembly_id,
+		"element_id": element_id,
+	})
+
+
+func _exit_remote_rover_seat() -> Dictionary:
+	var seat_element_id := _session.world.get_player_seat_element_id(actor_uid)
+	# Idempotent: occupancy may already be gone after prune/destroy; client still
+	# needs seated:false to release_local_seat_attach.
+	if seat_element_id <= 0:
+		return _result(&"ok", {
+			"seated": false,
+			"assembly_id": 0,
+			"element_id": 0,
+		})
+	var seat := _session.world.get_element(seat_element_id)
+	var assembly_id := seat.assembly_id if seat != null else 0
+	if assembly_id > 0:
+		var locomotion := _session.world.get_locomotion_controller(assembly_id)
+		locomotion.clear_driver_input()
+		if locomotion.is_parking_brake():
+			locomotion.set_brake_command(1.0)
+	_session.world.clear_player_seat_context(actor_uid)
+	return _result(&"ok", {
+		"seated": false,
+		"assembly_id": assembly_id,
+		"element_id": seat_element_id,
+	})
 
 
 ## Mouse attitude follows Control Gyros seat policy, not thruster presence.

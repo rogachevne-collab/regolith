@@ -73,10 +73,12 @@ func is_gameplay_input_enabled() -> bool:
 
 
 func is_in_vehicle() -> bool:
-	return _current_vehicle != null
+	return _current_vehicle != null and is_instance_valid(_current_vehicle)
 
 
 func current_vehicle() -> Node3D:
+	if _current_vehicle != null and not is_instance_valid(_current_vehicle):
+		_current_vehicle = null
 	return _current_vehicle
 
 

@@ -42,10 +42,8 @@ func _ready() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed(&"toggle_vehicle_camera"):
-		_toggle_orbit_mode()
-		get_viewport().set_input_as_handled()
-		return
+	# toggle_vehicle_camera is polled in _process — HUD/_unhandled ordering while
+	# seated can swallow V before it reaches this camera node.
 	if event is InputEventMouseMotion and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
 		var motion: Vector2 = event.relative
 		if _orbit_mode and _is_in_vehicle():
@@ -74,6 +72,10 @@ func set_camera_shake_hold(intensity: float) -> void:
 func _process(_delta: float) -> void:
 	if _target == null:
 		return
+	# Poll: when seated under a replica body, HUD/_unhandled_input ordering can
+	# swallow V the same way bootstrap polls spawn_debug_rover.
+	if Input.is_action_just_pressed(&"toggle_vehicle_camera"):
+		_toggle_orbit_mode()
 	if _orbit_mode and not _is_in_vehicle():
 		_set_orbit_mode(false)
 	# FP: interpolated origin (smooth locomotion) + immediate look yaw/pitch.
@@ -253,17 +255,32 @@ func _init_orbit_from_vehicle() -> void:
 
 
 func _is_in_vehicle() -> bool:
-	return (
-		_target != null
-		and _target.has_method("is_in_vehicle")
+	if _target == null:
+		return false
+	if (
+		_target.has_method("is_in_vehicle")
 		and bool(_target.call("is_in_vehicle"))
+	):
+		return true
+	# Coop replica seat: body may have been recreated mid-drive while the
+	# gateway seat id (meta) is still claimed — treat as seated for camera.
+	return (
+		_target.has_meta("control_seat_element_id")
+		and int(_target.get_meta("control_seat_element_id")) > 0
 	)
 
 
 func _current_vehicle() -> Node3D:
 	if _target == null or not _target.has_method("current_vehicle"):
 		return null
-	return _target.call("current_vehicle") as Node3D
+	var vehicle := _target.call("current_vehicle") as Node3D
+	if vehicle != null and is_instance_valid(vehicle):
+		return vehicle
+	# Fallback: parent is the seat body after enter_vehicle reparent.
+	var parent := _target.get_parent() as Node3D
+	if parent is PhysicsBody3D and is_instance_valid(parent):
+		return parent
+	return null
 
 
 func _vehicle_follow_transform() -> Transform3D:
