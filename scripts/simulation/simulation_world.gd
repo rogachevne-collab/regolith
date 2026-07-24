@@ -98,6 +98,17 @@ func list_elements() -> Array[SimulationElement]:
 		result.append(_elements[element_id])
 	return result
 
+
+## Hot-path iteration without sorting — derived sync/cargo rebuild.
+func list_elements_unsorted() -> Array[SimulationElement]:
+	var result: Array[SimulationElement] = []
+	result.resize(_elements.size())
+	var i := 0
+	for element_variant: Variant in _elements.values():
+		result[i] = element_variant
+		i += 1
+	return result
+
 func list_joints() -> Array[SimulationJoint]:
 	var result: Array[SimulationJoint] = []
 	for joint_id: int in _sorted_keys(_joints):
@@ -201,7 +212,7 @@ func get_cargo_graph() -> CargoGraph:
 
 func ensure_cargo_graph_current() -> CargoGraph:
 	if _cargo_graph_needs_rebuild():
-		_cargo_graph.rebuild(self)
+		_cargo_graph.sync(self)
 	return _cargo_graph
 
 func get_cargo_adjacency_graph() -> Array[Dictionary]:
@@ -262,7 +273,8 @@ func connect_rope(
 	element_b_id: int,
 	attach_b: Vector3,
 	slack: float = CableAnchorUtil.DEFAULT_SLACK,
-	routed_m: float = 0.0
+	routed_m: float = 0.0,
+	stake_up: Vector3 = Vector3.UP
 ) -> StructuralCommandResult:
 	var command := ConnectNetworkCommand.new()
 	command.element_a_id = element_a_id
@@ -273,6 +285,10 @@ func connect_rope(
 	command.attach_b = attach_b
 	command.slack = slack
 	command.routed_m = routed_m
+	# An end with element id 0 lands on bare ground and gets a stake driven for
+	# it (CableStakeUtil). The stake is not bought from anyone: it is placed by
+	# the act of routing a cable, not by the build tool.
+	command.stake_up = stake_up
 	return apply_structural_command_now(command)
 
 func disconnect_network(
@@ -589,8 +605,12 @@ func sync_actuator_observation(
 func tick_actuators(delta_s: float) -> void:
 	if delta_s <= 0.0:
 		return
-	for joint: SimulationJoint in list_joints():
-		if not joint.is_driven():
+	# Iterate the dict in place. list_joints() sorts+allocates every rigid joint
+	# — a yard of parked wheel rovers has hundreds of RIGID joints and zero
+	# driven ones, and that copy was the dominant "piston" tick cost.
+	for joint_variant: Variant in _joints.values():
+		var joint := joint_variant as SimulationJoint
+		if joint == null or not joint.is_driven():
 			continue
 		ActuatorSimulationService.tick_joint(self, joint, delta_s)
 
@@ -1105,11 +1125,12 @@ func _spawn_blueprint(
 	)
 	for element: SimulationElement in spawned:
 		_elements[element.element_id] = element
+		IndustryStoreService.sync_element_storage(self, element)
 	for joint: SimulationJoint in new_joints:
 		_joints[joint.joint_id] = joint
 	_assemblies[assembly_id] = assembly
 	assembly.bump_revision()
-	_notify_topology_changed()
+	_notify_topology_changed(assembly_id)
 	var joint_ids := _joint_ids_for_assembly(assembly_id)
 	_emit_structural_event({
 		"kind": &"assembly_spawned",
@@ -1254,6 +1275,7 @@ func _emit_element_state_changed(
 	# ticks do not change it; the final tick that brings the element online does.
 	# Inside a batch (bulk weld_all) coalesce to one rebuild at batch close.
 	if operational_changed:
+		IndustryStoreService.sync_element_storage(self, element)
 		if _structural_batch_depth > 0:
 			_deferred_derived_recompute = true
 		else:
@@ -1370,26 +1392,39 @@ func _reconcile_terrain_anchors_for_assemblies(
 ) -> void:
 	return ConstructionCommandServiceScript.reconcile_terrain_anchors_for_assemblies(self, assembly_ids)
 
-func _notify_topology_changed() -> void:
+## Topology bump after a structural mutate. Pass the affected assembly when the
+## edit is local (place/dismantle one assembly) so parked rovers keep their
+## body-group / occupancy / preview packs. Pass 0 for split/merge/multi-touch.
+func _notify_topology_changed(affected_assembly_id: int = 0) -> void:
 	topology_generation += 1
 	# Cheap per-op cache invalidation must stay eager: mid-batch validation
 	# (occupancy, body groups) reads these and must see the current topology.
-	_body_group_compile_cache.clear()
-	_occupancy_index_cache.clear()
-	# Origin-keyed surface lookups must not grow unbounded across places.
-	GridSurfaceUtil.clear_descriptor_cache()
+	if affected_assembly_id > 0:
+		_body_group_compile_cache.erase(affected_assembly_id)
+		_occupancy_index_cache.erase(affected_assembly_id)
+		ConstructionPreviewKernelAccess.clear_assembly_attach_cache(
+			affected_assembly_id
+		)
+	else:
+		_body_group_compile_cache.clear()
+		_occupancy_index_cache.clear()
+		ConstructionPreviewKernelAccess.clear_assembly_attach_cache()
+	# Placement-probe face lookups grow with aim/place; archetype descriptors
+	# are immutable and stay warm across topology edits.
+	GridSurfaceUtil.clear_world_face_lookup_cache()
 	_mark_derived_dirty()
 
 
-## Full-world derived recompute. Every step is a from-scratch rebuild, so
-## running it once after a batch of topology edits yields the same result as
-## running it after each edit — only far cheaper.
+## Derived recompute after topology edits. Per-element store sync is the
+## caller's job (place/spawn sync the new elements). We only ensure the player
+## inventory registry exists — sync_all used to do that as a side effect.
+## Cargo graph sync skips the edge scan when dirty assemblies have no cargo ports.
 func _recompute_derived_now() -> void:
 	_deferred_derived_recompute = false
 	_industry_network.prune_dangling_links(self)
 	_purge_industry_runtime_for_missing_elements()
-	IndustryStoreService.sync_all_elements(self)
-	_cargo_graph.rebuild(self)
+	IndustryStoreService.ensure_player_inventory(self)
+	_cargo_graph.sync(self)
 
 
 ## Run the heavy derived recompute now, or defer it to batch close. Consumers

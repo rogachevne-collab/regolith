@@ -131,6 +131,10 @@ func _ready() -> void:
 func _physics_process(delta: float) -> void:
 	if not enabled or _body == null:
 		return
+	# Parked settle-freeze: body pose is static and forces on a frozen body
+	# are discarded — skip sample/force work entirely.
+	if _body.freeze:
+		return
 	_sample_debt += delta * sample_hz
 	if _sample_debt >= 1.0:
 		_sample_debt = fmod(_sample_debt, 1.0)

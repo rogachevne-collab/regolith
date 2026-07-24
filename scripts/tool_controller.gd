@@ -74,6 +74,9 @@ const CONSTRUCTION_ARCHETYPES: PackedStringArray = [
 	"large_frame",
 	"frame_beam",
 	"frame_basalt",
+	"frame_slope_45",
+	"frame_antenna",
+	"frame_lamp",
 	"power_source",
 	"power_distributor",
 	"power_battery",
@@ -158,11 +161,13 @@ const TOOLBAR_PAGES: Array = [
 		{"type": &"block", "archetype_id": "power_distributor"},
 		{"type": &"block", "archetype_id": "power_battery"},
 		{"type": &"block", "archetype_id": "frame_basalt"},
-		{"type": &"block", "archetype_id": "large_frame"},
+		{"type": &"block", "archetype_id": "frame_slope_45"},
+		{"type": &"block", "archetype_id": "frame_antenna"},
+		{"type": &"block", "archetype_id": "frame_lamp"},
 		{"type": &"block", "archetype_id": "dozer_blade"},
-		{"type": &"scoop"},
 	],
 	[
+		{"type": &"scoop"},
 		{"type": &"block", "archetype_id": "frame"},
 		{"type": &"block", "archetype_id": SUSPENSION_SLOT},
 		{"type": &"block", "archetype_id": WHEEL_SLOT},
@@ -171,6 +176,8 @@ const TOOLBAR_PAGES: Array = [
 		{"type": &"block", "archetype_id": "power_distributor_small"},
 		{"type": &"block", "archetype_id": "rotor_base"},
 		{"type": &"block", "archetype_id": "rotor_base_large"},
+	],
+	[
 		{"type": &"block", "archetype_id": "hinge_base"},
 		{"type": &"block", "archetype_id": "piston_base_large"},
 	],
@@ -223,10 +230,12 @@ var _toolbar_slot_by_page: Array[int] = []
 ## const layout. Lazily built so the remap API is usable without a full scene
 ## (e.g. in headless logic tests).
 var _toolbar_layout: Array = []
-## Rope being pulled: the first click's end. `_rope_anchor_local` lives in the
-## frame of `_rope_anchor_element_id` (block-local), or in world space when the
-## end is nailed to terrain — so the rope stays tied to a machine that moves
-## while the player walks the other end away.
+## Rope being pulled: the end the next span starts from — the first click, or
+## the far end of the span just built, because the connect tool chains.
+## `_rope_anchor_local` lives in the frame of `_rope_anchor_element_id`
+## (block-local), or in world space when the end is nailed to terrain — so the
+## rope stays tied to a machine that moves while the player walks the other end
+## away.
 var _rope_pending := false
 var _rope_anchor_element_id := 0
 var _rope_anchor_local := Vector3.ZERO
@@ -1121,9 +1130,23 @@ func _handle_connect_click(hit: InteractionHit) -> void:
 			"attach_b": world_point,
 			"slack": _rope_slack,
 			"routed_m": _rope_routed_hint_m,
+			# An end on bare terrain gets a stake driven for it, standing along
+			# local up. One up for the whole span is honest at cable scale: the
+			# two ends would have to be kilometres apart on the moon's curve
+			# before it mattered.
+			"stake_up": GravityField.resolve_up(self, world_point),
 		},
 	})
-	_reset_connect_route()
+	# Chain: the end just placed becomes the start of the next span, so a cable
+	# run is a run of clicks instead of a rope built two clicks at a time from
+	# scratch. Every span is its own link and its own rope — A-B, then B-C —
+	# never one long rope with bends in it. They share nothing but a point:
+	# tension in one span says nothing about the next, and cutting one leaves
+	# the others hanging exactly where they were.
+	_rope_pending = true
+	_rope_anchor_element_id = element_id
+	_rope_anchor_local = _localize_rope_point(element_id, world_point)
+	_rope_routed_hint_m = 0.0
 
 
 ## Blocks carry their rope end; terrain, boulders and everything else nail it
@@ -1199,8 +1222,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	get_viewport().set_input_as_handled()
 
 
-## ПКМ — отмена только текущей протяжки: ropes already built stay where they
-## are, and the tool stays in connect mode ready for the next one.
+## ПКМ — конец протяжки: the chain stops here. Spans already built stay where
+## they are, and the tool stays in connect mode ready to start a new run.
 func _cancel_rope_routing() -> void:
 	_reset_connect_route()
 

@@ -993,6 +993,33 @@
         }
       ]
     },
+    "frame_slope_45": {
+      "mass_kg": 40.0,
+      "build_requirements": [
+        {
+          "resource_id": "plate_metal",
+          "amount": 3.0
+        }
+      ]
+    },
+    "frame_antenna": {
+      "mass_kg": 15.0,
+      "build_requirements": [
+        {
+          "resource_id": "plate_metal",
+          "amount": 2.0
+        }
+      ]
+    },
+    "frame_lamp": {
+      "mass_kg": 12.0,
+      "build_requirements": [
+        {
+          "resource_id": "plate_metal",
+          "amount": 2.0
+        }
+      ]
+    },
     "gyro": {
       "mass_kg": 20.0,
       "build_requirements": [

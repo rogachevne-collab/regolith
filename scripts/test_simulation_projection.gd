@@ -1427,7 +1427,11 @@ func _test_rope_rest_length_respects_routed_path() -> bool:
 	# Slack case: the wheel asked for more rope than the routed hint — the hint
 	# must not cinch it down.
 	var slack_anchor := origin + Vector3(0.0, 0.0, 4.0)
-	var slack_span := origin.distance_to(slack_anchor)
+	# The ground end ties onto a stake, part way up it, so the span the wheel
+	# prices is to the tie point and not to the clicked patch of dirt.
+	var slack_span := origin.distance_to(
+		CableStakeUtil.tie_point(slack_anchor, Vector3.UP)
+	)
 	var slack := world.connect_rope(
 		element_id,
 		origin,

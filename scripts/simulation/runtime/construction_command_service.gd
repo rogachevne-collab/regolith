@@ -100,8 +100,9 @@ static func place_element(world,
 	# live at placement; the fact is stored on the block and re-verified on split.
 	if not new_assembly:
 		ConstructionCommandService.record_placement_terrain_contact(world, assembly, element, joint_ids)
+	IndustryStoreService.sync_element_storage(world, element)
 	assembly.bump_revision()
-	world._notify_topology_changed()
+	world._notify_topology_changed(assembly.assembly_id)
 	joint_ids.sort()
 	var event_kind := &"assembly_spawned" if new_assembly else &"assembly_changed"
 	world._emit_structural_event({
@@ -240,28 +241,50 @@ static func validate_place_element(world,
 			return StructuralCommandResult.failed(
 				StructuralCommandResult.REASON_ANCHOR_NOT_ALLOWED
 			)
-		var occupancy: Dictionary = ConstructionOccupancyUtil.assembly_occupancy_index(world, assembly)
-		var preview_cells := preview.occupied_cells()
-		var geom: Dictionary = ConstructionPreviewKernelAccess.find_attach_connections(
+		var native_attach: Dictionary = ConstructionPreviewKernelAccess.validate_attach_preview(
 			world,
 			assembly,
 			archetype,
 			command.origin_cell,
 			command.orientation_index
 		)
-		if not geom.is_empty():
-			if bool(geom.get("overlap", false)):
-				return StructuralCommandResult.failed(
-					StructuralCommandResult.REASON_OVERLAP
-				)
-			for connection_variant: Variant in geom.get("connections", []):
-				var connection: Dictionary = connection_variant
+		var bridge_done := false
+		if not native_attach.is_empty():
+			var native_reason := StringName(native_attach.get("reason", &"invalid_target"))
+			if not bool(native_attach.get("ok", false)):
+				return StructuralCommandResult.failed(native_reason)
+			var existing_ids: PackedInt32Array = native_attach.get(
+				"existing_element_ids",
+				PackedInt32Array()
+			)
+			var existing_ports: PackedStringArray = native_attach.get(
+				"existing_port_ids",
+				PackedStringArray()
+			)
+			var new_ports: PackedStringArray = native_attach.get(
+				"new_port_ids",
+				PackedStringArray()
+			)
+			for index: int in range(existing_ids.size()):
 				connections.append({
-					"existing_element_id": int(connection.get("existing_element_id", 0)),
-					"existing_port_id": str(connection.get("existing_port_id", "")),
-					"new_port_id": str(connection.get("new_port_id", "")),
+					"existing_element_id": int(existing_ids[index]),
+					"existing_port_id": (
+						str(existing_ports[index])
+						if index < existing_ports.size()
+						else ""
+					),
+					"new_port_id": (
+						str(new_ports[index]) if index < new_ports.size() else ""
+					),
 				})
+			# Native applies bridge cycle check only when body-group tables were packed.
+			bridge_done = bool(native_attach.get("bridge_checked", false))
 		else:
+			var occupancy: Dictionary = ConstructionOccupancyUtil.assembly_occupancy_index(
+				world,
+				assembly
+			)
+			var preview_cells := preview.occupied_cells()
 			if ConstructionOccupancyUtil.preview_overlaps_occupancy(
 				preview_cells,
 				occupancy
@@ -292,13 +315,17 @@ static func validate_place_element(world,
 			return StructuralCommandResult.failed(
 				StructuralCommandResult.REASON_INCOMPATIBLE_CONNECTION
 			)
-		var bridge_error: StructuralCommandResult = ConstructionCommandService.validate_new_rigid_connections(world, 
-			assembly.assembly_id,
-			preview,
-			connections
-		)
-		if bridge_error != null:
-			return bridge_error
+		if not bridge_done:
+			var bridge_error: StructuralCommandResult = (
+				ConstructionCommandService.validate_new_rigid_connections(
+					world,
+					assembly.assembly_id,
+					preview,
+					connections
+				)
+			)
+			if bridge_error != null:
+				return bridge_error
 		var moving_error: StructuralCommandResult = ConstructionCommandService.validate_driven_head_construction_target(world, 
 			connections
 		)
@@ -829,8 +856,10 @@ static func place_driven_element(world,
 	assembly.element_ids.sort()
 	if not new_assembly:
 		ConstructionCommandService.record_placement_terrain_contact(world, assembly, base_element, joint_ids)
+	IndustryStoreService.sync_element_storage(world, base_element)
+	IndustryStoreService.sync_element_storage(world, head_element)
 	assembly.bump_revision()
-	world._notify_topology_changed()
+	world._notify_topology_changed(assembly.assembly_id)
 	joint_ids.sort()
 	var event_kind := &"assembly_spawned" if new_assembly else &"assembly_changed"
 	var joint_id_key := "piston_joint_id"
@@ -1478,7 +1507,7 @@ static func reconcile_terrain_anchors_for_assemblies(world,
 			changed = true
 		if changed:
 			assembly.bump_revision()
-			world._notify_topology_changed()
+			world._notify_topology_changed(assembly.assembly_id)
 
 static func record_placement_terrain_contact(world, 
 	assembly: SimulationAssembly,

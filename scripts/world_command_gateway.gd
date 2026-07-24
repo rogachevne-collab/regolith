@@ -1471,6 +1471,7 @@ func resolve_construction_placement(params: Dictionary) -> Dictionary:
 	# quantized context key, and deep-copying the resolve payload every physics
 	# frame cost more than it saved.
 	var archetype := _get_archetype(archetype_id)
+	var t_snap := ConstructionPerf.begin()
 	var result := _snap_resolver.resolve({
 		"world": _session.world,
 		"archetype": archetype,
@@ -1484,9 +1485,18 @@ func resolve_construction_placement(params: Dictionary) -> Dictionary:
 		"held_ground_pivot": held_ground_pivot,
 		"held_attach_pivot": held_attach_pivot,
 	})
-	result["selected_plan"] = _guard_placement_collision(
-		_seat_ground_plan(result.get("selected_plan", {}))
-	)
+	var snap_us := ConstructionPerf.end(&"snap_us", t_snap)
+	var t_seat := ConstructionPerf.begin()
+	var seated := _seat_ground_plan(result.get("selected_plan", {}))
+	var seat_us := ConstructionPerf.end(&"seat_us", t_seat)
+	var t_collision := ConstructionPerf.begin()
+	result["selected_plan"] = _guard_placement_collision(seated)
+	var collision_us := ConstructionPerf.end(&"collision_us", t_collision)
+	var stats: Dictionary = result.get("stats", {})
+	stats["snap_us"] = snap_us
+	stats["seat_us"] = seat_us
+	stats["collision_us"] = collision_us
+	result["stats"] = stats
 	return result
 
 
@@ -1500,7 +1510,9 @@ func snap_context_revision() -> int:
 
 
 func snap_resolve_stats() -> Dictionary:
-	return _snap_resolver.last_stats.duplicate(true)
+	var stats := _snap_resolver.last_stats.duplicate(true)
+	stats.merge(ConstructionPerf.last_stats_timings())
+	return stats
 
 
 func reset_construction_snap() -> void:
@@ -2011,11 +2023,13 @@ func _guard_placement_collision(plan: Dictionary) -> Dictionary:
 
 
 func _get_archetype(archetype_id: String) -> ElementArchetype:
-	if not _archetype_cache.has(archetype_id):
-		_archetype_cache[archetype_id] = Slice01Archetypes.load_required(
-			archetype_id
-		)
-	return _archetype_cache[archetype_id] as ElementArchetype
+	if _archetype_cache.has(archetype_id):
+		return _archetype_cache[archetype_id] as ElementArchetype
+	var loaded := Slice01Archetypes.load_required(archetype_id)
+	# Never cache a miss — a hot-added archetype would stay permanently null.
+	if loaded != null:
+		_archetype_cache[archetype_id] = loaded
+	return loaded
 
 
 func apply_transfer_resource(command: TransferResourceCommand) -> Dictionary:
@@ -2090,15 +2104,19 @@ func apply_connect_network(
 	return _result(_connect_failure_reason(result.reason), result.data)
 
 
-## Rope form: both ends are free attach points in world space, either of which
-## may be a bare world anchor (element id 0). Nothing else is required.
+## Rope form: both ends are free attach points in world space. An end with
+## element id 0 landed on bare terrain and gets a stake driven for it — see
+## [CableStakeUtil]. [param stake_up] is local up at the click: gravity lives
+## on a scene node, and the command that runs on the world cannot go looking
+## for one.
 func apply_connect_rope(
 	element_a_id: int,
 	attach_a: Vector3,
 	element_b_id: int,
 	attach_b: Vector3,
 	slack: float = CableAnchorUtil.DEFAULT_SLACK,
-	routed_m: float = 0.0
+	routed_m: float = 0.0,
+	stake_up: Vector3 = Vector3.UP
 ) -> Dictionary:
 	if _session == null:
 		return _result(&"not_ready")
@@ -2111,6 +2129,7 @@ func apply_connect_rope(
 	command.attach_b = attach_b
 	command.slack = slack
 	command.routed_m = maxf(routed_m, 0.0) if is_finite(routed_m) else 0.0
+	command.stake_up = stake_up
 	var result := _session.world.apply_structural_command_now(command)
 	if result == null:
 		return _result(&"not_ready")
@@ -2131,7 +2150,8 @@ func _connect_network(
 			int(parameters.get("element_b_id", 0)),
 			parameters.get("attach_b", Vector3.ZERO),
 			float(parameters.get("slack", CableAnchorUtil.DEFAULT_SLACK)),
-			float(parameters.get("routed_m", 0.0))
+			float(parameters.get("routed_m", 0.0)),
+			parameters.get("stake_up", Vector3.UP)
 		)
 	return apply_connect_network(
 		int(parameters.get("element_a_id", 0)),

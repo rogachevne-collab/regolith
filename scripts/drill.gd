@@ -467,11 +467,17 @@ func _setup_work_audio() -> void:
 	_work_audio.bus = &"Master"
 	_work_audio.volume_db = work_volume_db
 	_work_audio.process_mode = Node.PROCESS_MODE_ALWAYS
-	var stream := _load_wav_pcm("res://resources/audio/drill_idle.wav")
+	# Prefer raw RIFF decode (imported .sample can play silence in editor).
+	# Exported builds only ship the remapped sample — fall back to ResourceLoader.
+	var stream: AudioStream = _load_wav_pcm("res://resources/audio/drill_idle.wav")
 	if stream == null:
 		stream = _load_wav_pcm("res://resources/drill_loop.wav")
 	if stream == null:
-		push_error("Drill: failed to decode idle WAV from disk")
+		stream = load("res://resources/audio/drill_idle.wav") as AudioStream
+	if stream == null:
+		stream = load("res://resources/drill_loop.wav") as AudioStream
+	if stream == null:
+		push_error("Drill: failed to load idle audio")
 		_work_audio.queue_free()
 		_work_audio = null
 		return

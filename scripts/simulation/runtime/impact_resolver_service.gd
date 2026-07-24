@@ -82,6 +82,9 @@ func _physics_process(_delta: float) -> void:
 		if not body.is_inside_tree():
 			stale.append(body_id)
 			continue
+		# Parked settle-freeze: pose is static, impacts cannot start.
+		if body.freeze:
+			continue
 		_pre_step_velocity[int(body_id)] = body.linear_velocity
 	for body_id: Variant in stale:
 		_tracked_bodies.erase(body_id)

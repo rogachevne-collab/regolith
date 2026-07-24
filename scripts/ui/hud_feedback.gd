@@ -167,6 +167,18 @@ func _prompt_for(hit: InteractionHit) -> String:
 			var wheel_prompt := _wheel_placement_prompt(detail)
 			if not wheel_prompt.is_empty():
 				return wheel_prompt
+			var plan_data_variant: Variant = _preview.resolved_plan.get(
+				"data",
+				{}
+			)
+			var plan_data: Dictionary = (
+				plan_data_variant if plan_data_variant is Dictionary else {}
+			)
+			var plan_reason := StringName(
+				_preview.resolved_plan.get("reason", &"")
+			)
+			if plan_reason != &"" and plan_reason != &"ok":
+				return _reason_text(plan_reason, plan_data)
 		if _preview != null and _preview.has_resolved_placement():
 			var block_name := _gateway.archetype_display_name(
 				_tools.selected_archetype_id

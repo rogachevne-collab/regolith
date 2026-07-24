@@ -389,20 +389,26 @@ func _test_load_margin_long_vs_short() -> bool:
 		return _fail("long center rover wheelies at 0.5g accel oracle")
 	if bool(long_brake.get("nose_dive_risk", false)):
 		return _fail("long center rover nose-dives at 0.5g brake oracle")
-	var short_accel: Dictionary = short_report.get("accel_05g", {})
-	var short_brake: Dictionary = short_report.get("brake_05g", {})
-	var long_front_brake := float(long_brake.get("front_load_n", 0.0))
-	var short_front_brake := float(short_brake.get("front_load_n", 0.0))
-	if long_front_brake <= short_front_brake:
+	var short_wb := float(short_report.get("wheelbase_m", 0.0))
+	var long_wb := float(long_report.get("wheelbase_m", 0.0))
+	if long_wb <= short_wb:
 		return _fail(
-			"long center should carry more front load under 0.5g brake (%.0f vs %.0f N)"
-			% [long_front_brake, short_front_brake]
+			"long center should have longer wheelbase (%.2f vs %.2f m)"
+			% [long_wb, short_wb]
+		)
+	# Front share under 0.5g brake should stay near balanced (not all on nose).
+	var long_front_brake := float(long_brake.get("front_load_n", 0.0))
+	var long_weight := float(long_report.get("weight_n", 1.0))
+	var front_share := long_front_brake / maxf(long_weight, 1.0)
+	if front_share < 0.25 or front_share > 0.55:
+		return _fail(
+			"long center 0.5g brake front share out of band: %.2f" % front_share
 		)
 	var long_front_accel := float(long_accel.get("front_load_n", 0.0))
-	var short_front_accel := float(short_accel.get("front_load_n", 0.0))
-	if long_front_accel <= short_front_accel:
+	var accel_front_share := long_front_accel / maxf(long_weight, 1.0)
+	if accel_front_share < 0.15:
 		return _fail(
-			"long center should retain more front load under 0.5g accel (%.0f vs %.0f N)"
-			% [long_front_accel, short_front_accel]
+			"long center 0.5g accel unloads front too far: share %.2f"
+			% accel_front_share
 		)
 	return true

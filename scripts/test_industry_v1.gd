@@ -975,10 +975,20 @@ func _run_rope_free_attach_scenario() -> bool:
 	var link := world.get_industry_network().get_link(
 		int(roped.data["link_id"])
 	)
-	if link == null or not link.is_rope() or not link.has_world_endpoint():
+	if link == null or not link.is_rope():
 		world.free()
-		return _fail("rope must be stored as a rope with a world endpoint")
-	var span := block_point.distance_to(ground_point)
+		return _fail("rope must be stored as a rope")
+	# The ground end is a stake now, not a world point. It has to be: a link
+	# whose endpoint is not a real element with an electric port never enters
+	# the network graph, so the old world-pinned end conducted nothing.
+	var ground_element := world.get_element(link.element_b)
+	if ground_element == null or ground_element.archetype_id != "cable_stake":
+		world.free()
+		return _fail("rope's ground end must be tied to a stake")
+	# Span to the tie point on the stake, not to the clicked patch of dirt.
+	var span := block_point.distance_to(
+		CableStakeUtil.tie_point(ground_point, Vector3.UP)
+	)
 	var expected_rest := CableAnchorUtil.rest_length_m(span, slack)
 	if absf(link.rest_length_m - expected_rest) > 0.001:
 		world.free()
@@ -1018,27 +1028,39 @@ func _run_rope_free_attach_scenario() -> bool:
 	if not moved_block_end.is_equal_approx(block_point + shift):
 		world.free()
 		return _fail("rope end on a block must ride the block")
-	if not world_end.is_equal_approx(ground_point):
+	# Nailed down means it does not ride the block that moved — the end sits on
+	# its stake, which is where the ground click put it.
+	if not world_end.is_equal_approx(
+		CableStakeUtil.tie_point(ground_point, Vector3.UP)
+	):
 		world.free()
-		return _fail("rope end in the ground must stay nailed to the world")
-	# Nothing to hold on to: a rope between two world points is refused.
-	var floating := world.connect_rope(
+		return _fail("rope end in the ground must stay on its stake")
+	# Ground to ground used to be refused — there was nothing to hold on to,
+	# because a world anchor was a bare point. Now each end drives a stake, so
+	# this is a cable run along the ground and it is exactly what the connect
+	# tool is for: A to a stake, that stake to the next one, all the way out.
+	var ground_span := world.connect_rope(
 		0,
 		ground_point,
 		0,
 		ground_point + Vector3(2.0, 0.0, 0.0),
 		slack
 	)
-	if floating.is_ok():
+	if not ground_span.is_ok():
 		world.free()
-		return _fail("a rope between two world anchors must be refused")
+		return _fail(
+			"a rope between two ground points must stand on stakes: %s"
+			% str(ground_span.reason)
+		)
 	# Ropes have no ports and no pair key — snapshot validation used to reject
 	# exactly that shape, so the round trip is part of the contract.
 	var snapshot := world.capture_snapshot()
 	var restored: SimulationWorld = SimulationSnapshot.create_from_snapshot(
 		snapshot
 	)
-	if restored == null or restored.list_electric_links().size() != 2:
+	# Three now: the port wire, the block-to-ground rope, and the ground-to-
+	# ground span that used to be refused for having nothing to hold on to.
+	if restored == null or restored.list_electric_links().size() != 3:
 		if restored != null:
 			restored.free()
 		world.free()

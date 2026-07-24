@@ -285,8 +285,16 @@ static func ground_anchor_structural_id(element: SimulationElement) -> String:
 	return best_id
 
 
+## Full wipe (tests / archetype reload). Prefer clear_world_face_lookup_cache on
+## topology edits — archetype face tables are immutable.
 static func clear_descriptor_cache() -> void:
 	_descriptor_cache.clear()
+	_world_face_lookup_cache.clear()
+
+
+## Placement-probe lookups keyed by origin grow with aim/place; archetype
+## descriptor tables do not and must not be flushed on every topology bump.
+static func clear_world_face_lookup_cache() -> void:
 	_world_face_lookup_cache.clear()
 
 
