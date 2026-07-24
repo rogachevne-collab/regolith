@@ -9,11 +9,12 @@ extends Node3D
 ## you. No separate .tres editing, no sub-resources, no orientation math.
 
 enum PartKind {
-	PLAIN,        ## a structural block / frame; bolts on its faces
-	WHEEL,        ## a driven wheel (one attach point = the hub)
-	SUSPENSION,   ## a wheel mount (bolts to frame + one wheel socket)
-	BATTERY,      ## stores power; needs at least one electric marker
-	POWER_SOURCE, ## generates power; needs at least one electric marker
+	PLAIN,          ## a structural block / frame; bolts on its faces
+	WHEEL,          ## a driven wheel (one attach point = the hub)
+	SUSPENSION,     ## a wheel mount (bolts to frame + one wheel socket)
+	BATTERY,        ## stores power; needs at least one electric marker
+	POWER_SOURCE,   ## generates power; needs at least one electric marker
+	OXYGEN_MODULE,  ## O₂ dispenser; needs at least one cargo marker
 }
 
 enum MountGeneration {
@@ -112,6 +113,13 @@ const AUTHORED_DIR := "res://resources/archetypes/authored/"
 # --- Power source fields (shown only when part_kind == POWER_SOURCE) ---
 @export var source_output_w: float = 2000.0
 
+# --- Oxygen module fields (shown only when part_kind == OXYGEN_MODULE) ---
+@export var o2_capacity_l: float = 200.0
+@export var o2_initial_l: float = 200.0
+@export var o2_dispense_lps: float = 0.5
+@export var o2_idle_w: float = 10.0
+@export var o2_active_w: float = 50.0
+
 ## Стоимость постройки. Пусто = авто по типу детали (блок — plate_metal,
 ## колесо/подвеска — mechanism, количество от размера).
 @export var build_requirements: Array[BuildRequirement] = []
@@ -182,6 +190,7 @@ func _validate_property(property: Dictionary) -> void:
 	var is_susp := prop_name.begins_with("suspension_")
 	var is_battery := prop_name.begins_with("battery_")
 	var is_source := prop_name.begins_with("source_")
+	var is_o2 := prop_name.begins_with("o2_")
 	if is_wheel and part_kind != PartKind.WHEEL:
 		property.usage &= ~PROPERTY_USAGE_EDITOR
 	if is_susp and part_kind != PartKind.SUSPENSION:
@@ -189,6 +198,8 @@ func _validate_property(property: Dictionary) -> void:
 	if is_battery and part_kind != PartKind.BATTERY:
 		property.usage &= ~PROPERTY_USAGE_EDITOR
 	if is_source and part_kind != PartKind.POWER_SOURCE:
+		property.usage &= ~PROPERTY_USAGE_EDITOR
+	if is_o2 and part_kind != PartKind.OXYGEN_MODULE:
 		property.usage &= ~PROPERTY_USAGE_EDITOR
 
 
@@ -217,13 +228,13 @@ func collect_pad_markers() -> Array[MountPadMarker]:
 	return markers
 
 
-## Structural mount markers only — electric ports are collected separately
-## (see collect_electric_markers) since they bake into archetype.ports, not
-## structural_mount_pads.
+## Structural mount markers only — electric/cargo ports are collected
+## separately (see collect_electric_markers / collect_cargo_markers) since
+## they bake into archetype.ports, not structural_mount_pads.
 func collect_structural_markers() -> Array[MountPadMarker]:
 	var markers: Array[MountPadMarker] = []
 	for marker: MountPadMarker in collect_pad_markers():
-		if not marker.is_electric():
+		if not marker.is_port_marker():
 			markers.append(marker)
 	return markers
 
@@ -257,6 +268,15 @@ func collect_electric_markers() -> Array[MountPadMarker]:
 	var markers: Array[MountPadMarker] = []
 	for marker: MountPadMarker in collect_pad_markers():
 		if marker.is_electric():
+			markers.append(marker)
+	return markers
+
+
+## Cargo connectivity ports — required for OxygenModule, optional elsewhere.
+func collect_cargo_markers() -> Array[MountPadMarker]:
+	var markers: Array[MountPadMarker] = []
+	for marker: MountPadMarker in collect_pad_markers():
+		if marker.is_cargo():
 			markers.append(marker)
 	return markers
 
@@ -377,8 +397,12 @@ func _guess_socket_kind(face: OrientationUtil.Face) -> MountPadMarker.SocketKind
 			# который потом придётся удалять.
 			if face == OrientationUtil.Face.NEG_Y and travel_marker() == null:
 				return MountPadMarker.SocketKind.WHEEL_SOCKET
-		PartKind.PLAIN:
+		PartKind.PLAIN, PartKind.BATTERY, PartKind.POWER_SOURCE:
 			pass
+		PartKind.OXYGEN_MODULE:
+			# One cargo face by default; author retags / deletes the rest.
+			if face == OrientationUtil.Face.POS_Z:
+				return MountPadMarker.SocketKind.CARGO_PORT
 	return MountPadMarker.SocketKind.STRUCTURAL
 
 
@@ -467,6 +491,10 @@ func bake() -> Dictionary:
 		for message: String in archetype.power_source_definition.validate(archetype):
 			errors.append("источник энергии: %s" % message)
 			last_bake_diagnostics.append(errors[-1])
+	if archetype.oxygen_module_definition != null:
+		for message: String in archetype.oxygen_module_definition.validate(archetype):
+			errors.append("кислородный модуль: %s" % message)
+			last_bake_diagnostics.append(errors[-1])
 
 	if not part_id.is_empty():
 		var path := "%s%s.tres" % [save_dir, part_id]
@@ -536,16 +564,18 @@ func _build_archetype(errors: Array[String]) -> ElementArchetype:
 	if not ports.is_empty():
 		archetype.ports = ports
 
+	# Manual markers always win: a plain block with click-placed points must
+	# become MOUNT_PADS even when mount_generation is still FULL_SURFACE
+	# (the wizard default). Otherwise authored exact points are silently
+	# discarded and the part bolts on every face.
 	var whole_surface := (
 		(
 			part_kind == PartKind.PLAIN
 			or part_kind == PartKind.BATTERY
 			or part_kind == PartKind.POWER_SOURCE
+			or part_kind == PartKind.OXYGEN_MODULE
 		)
-		and (
-			mount_generation == MountGeneration.FULL_SURFACE
-			or pads.is_empty()
-		)
+		and pads.is_empty()
 	)
 	if whole_surface:
 		# A plain block bolting on every side — no markers needed at all.
@@ -557,6 +587,16 @@ func _build_archetype(errors: Array[String]) -> ElementArchetype:
 			ElementArchetype.StructuralSurfacePolicy.MOUNT_PADS
 		)
 		archetype.structural_mount_pads = pads
+		if (
+			part_kind == PartKind.PLAIN
+			or part_kind == PartKind.BATTERY
+			or part_kind == PartKind.POWER_SOURCE
+			or part_kind == PartKind.OXYGEN_MODULE
+		):
+			last_bake_diagnostics.append(
+				"только %d точк(и) крепления — к другим граням не прикрутится"
+				% pads.size()
+			)
 
 	match part_kind:
 		PartKind.WHEEL:
@@ -569,6 +609,8 @@ func _build_archetype(errors: Array[String]) -> ElementArchetype:
 			archetype.battery_definition = _build_battery_definition()
 		PartKind.POWER_SOURCE:
 			archetype.power_source_definition = _build_power_source_definition()
+		PartKind.OXYGEN_MODULE:
+			archetype.oxygen_module_definition = _build_oxygen_module_definition()
 		PartKind.PLAIN:
 			pass
 	return archetype
@@ -650,7 +692,7 @@ func _build_pads(
 				errors.append(
 					"Подвеска: нужен хотя бы один маркер «крепится к раме»"
 				)
-		PartKind.PLAIN:
+		PartKind.PLAIN, PartKind.BATTERY, PartKind.POWER_SOURCE, PartKind.OXYGEN_MODULE:
 			for marker: MountPadMarker in markers:
 				var pad := marker.to_pad()
 				if pad == null:
@@ -660,27 +702,61 @@ func _build_pads(
 	return pads
 
 
-## Optional electrical ports — most parts have none. Each marker's port_role
-## picks the "_in"/"_out"/"_io" suffix IndustryElectricPortUtil reads the
-## direction from; a second marker of the same role gets a numbered id
-## (power2_in) so the suffix — and therefore the direction — stays intact.
+## Optional electrical / cargo ports — most parts have none. Each marker's
+## port_role picks the "_in"/"_out"/"_io" suffix (electric direction util /
+## stable cargo ids); a second marker of the same role gets a numbered id
+## (power2_in / cargo2_io) so the suffix — and therefore the direction —
+## stays intact.
 func _build_ports(errors: Array[String]) -> Array[PortDefinition]:
 	var ports: Array[PortDefinition] = []
+	_append_ports_from_markers(
+		ports,
+		errors,
+		collect_electric_markers(),
+		"power",
+		"электроточка"
+	)
+	_append_ports_from_markers(
+		ports,
+		errors,
+		collect_cargo_markers(),
+		"cargo",
+		"cargo-точка"
+	)
+	return ports
+
+
+func _append_ports_from_markers(
+	ports: Array[PortDefinition],
+	errors: Array[String],
+	markers: Array[MountPadMarker],
+	id_prefix: String,
+	label: String
+) -> void:
 	var role_counts: Dictionary = {}
-	for marker: MountPadMarker in collect_electric_markers():
+	for marker: MountPadMarker in markers:
 		var suffix := marker.port_role_suffix()
 		var count: int = role_counts.get(suffix, 0) + 1
 		role_counts[suffix] = count
-		var port_id := "power_%s" % suffix if count == 1 else "power%d_%s" % [count, suffix]
+		var port_id := (
+			"%s_%s" % [id_prefix, suffix]
+			if count == 1
+			else "%s%d_%s" % [id_prefix, count, suffix]
+		)
 		var port := marker.to_port(port_id)
 		if port == null:
-			errors.append(
-				"электроточка «%s» не удалось привязать к грани — придвинь к модели"
-				% marker.name
-			)
+			if marker.is_cargo() and marker.port_role == MountPadMarker.PortRole.OUT:
+				errors.append(
+					"%s «%s»: cargo поддерживает только вход / вход-выход"
+					% [label, marker.name]
+				)
+			else:
+				errors.append(
+					"%s «%s» не удалось привязать к грани — придвинь к модели"
+					% [label, marker.name]
+				)
 			continue
 		ports.append(port)
-	return ports
 
 
 func _build_wheel_definition(
@@ -802,6 +878,16 @@ func _build_power_source_definition() -> PowerSourceDefinition:
 	return definition
 
 
+func _build_oxygen_module_definition() -> OxygenModuleDefinition:
+	var definition := OxygenModuleDefinition.new()
+	definition.capacity_l = o2_capacity_l
+	definition.initial_l = o2_initial_l
+	definition.dispense_lps = o2_dispense_lps
+	definition.idle_w = o2_idle_w
+	definition.active_w = o2_active_w
+	return definition
+
+
 ## Any axis face perpendicular to `plug_face` — this is the drive/forward axis.
 ## Guarantees the "forward must be perpendicular to plug" rule automatically.
 func _perpendicular_face(plug_face: OrientationUtil.Face) -> OrientationUtil.Face:
@@ -833,6 +919,9 @@ func _default_build_requirements(cell_count: int) -> Array[BuildRequirement]:
 		PartKind.POWER_SOURCE:
 			requirement.resource_id = "plate_metal"
 			requirement.amount = maxf(8.0, roundf(float(cell_count) * 0.3))
+		PartKind.OXYGEN_MODULE:
+			requirement.resource_id = "plate_metal"
+			requirement.amount = maxf(4.0, roundf(float(cell_count) * 0.5))
 		_:
 			requirement.resource_id = "plate_metal"
 			requirement.amount = maxf(1.0, roundf(float(cell_count) * 0.5))
@@ -849,6 +938,8 @@ func _roles_for_kind() -> PackedStringArray:
 			return PackedStringArray(["Tank"])
 		PartKind.POWER_SOURCE:
 			return PackedStringArray(["Source"])
+		PartKind.OXYGEN_MODULE:
+			return PackedStringArray(["OxygenModule"])
 		_:
 			return PackedStringArray(["Frame"])
 

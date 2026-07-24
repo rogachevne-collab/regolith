@@ -16,13 +16,15 @@ enum SocketKind {
 	WHEEL_PLUG,    ## this is a wheel's plug
 	CUSTOM,        ## use custom_tag verbatim
 	ELECTRIC_PORT, ## optional electrical connection point (not every part needs one)
+	CARGO_PORT,    ## cargo connectivity (IN / BIDIRECTIONAL); not a gas port
 }
 
-## Only meaningful when socket_kind == ELECTRIC_PORT.
+## Meaningful for ELECTRIC_PORT and CARGO_PORT. Cargo authoring allows only
+## IN / BIDIRECTIONAL (OUT is rejected at bake).
 enum PortRole {
-	BIDIRECTIONAL, ## can send or receive power
-	IN,            ## draws power only
-	OUT,           ## supplies power only
+	BIDIRECTIONAL, ## can send or receive
+	IN,            ## inbound only
+	OUT,           ## outbound only (electric); not valid for cargo
 }
 
 @export var socket_kind: SocketKind = SocketKind.STRUCTURAL:
@@ -38,11 +40,12 @@ enum PortRole {
 		custom_tag = value
 		update_configuration_warnings()
 
-## Only used when socket_kind == ELECTRIC_PORT.
+## Only used when socket_kind is ELECTRIC_PORT or CARGO_PORT.
 @export var port_role: PortRole = PortRole.BIDIRECTIONAL:
 	set(value):
 		port_role = value
 		_queue_preview_update()
+		update_configuration_warnings()
 
 ## ON  — grid block behaviour: the point snaps to the centre of the nearest
 ##       cell face while you drag it.
@@ -87,12 +90,25 @@ func _validate_property(property: Dictionary) -> void:
 	var prop_name := str(property.name)
 	if prop_name == "custom_tag" and socket_kind != SocketKind.CUSTOM:
 		property.usage &= ~PROPERTY_USAGE_EDITOR
-	if prop_name == "port_role" and socket_kind != SocketKind.ELECTRIC_PORT:
+	if (
+		prop_name == "port_role"
+		and socket_kind != SocketKind.ELECTRIC_PORT
+		and socket_kind != SocketKind.CARGO_PORT
+	):
 		property.usage &= ~PROPERTY_USAGE_EDITOR
 
 
 func is_electric() -> bool:
 	return socket_kind == SocketKind.ELECTRIC_PORT
+
+
+func is_cargo() -> bool:
+	return socket_kind == SocketKind.CARGO_PORT
+
+
+## Electric / cargo markers bake into archetype.ports, not structural pads.
+func is_port_marker() -> bool:
+	return is_electric() or is_cargo()
 
 
 ## Socket tag written to the baked StructuralMountPad.
@@ -108,6 +124,8 @@ func socket_tag() -> String:
 			return custom_tag
 		SocketKind.ELECTRIC_PORT:
 			return "electric"
+		SocketKind.CARGO_PORT:
+			return "cargo"
 	return ""
 
 
@@ -250,9 +268,9 @@ func resolved_face() -> OrientationUtil.Face:
 
 
 ## Build the StructuralMountPad this marker represents, or null if unresolved
-## or if this marker is an electrical port (see to_port() for those).
+## or if this marker is a port (see to_port() for electric / cargo).
 func to_pad() -> StructuralMountPad:
-	if is_electric():
+	if is_port_marker():
 		return null
 	if not resolve():
 		return null
@@ -268,28 +286,35 @@ func to_pad() -> StructuralMountPad:
 
 
 ## Build the PortDefinition this marker represents, or null if unresolved or
-## if this marker isn't an electrical port. `port_id` is assigned by the
-## authoring root so multiple electric markers on one part stay unique;
-## direction ("_in"/"_out"/"_io" suffix) is read from it at runtime by
-## IndustryElectricPortUtil.electric_direction().
+## if this marker isn't an electric/cargo port. `port_id` is assigned by the
+## authoring root so multiple markers on one part stay unique; direction
+## ("_in"/"_out"/"_io" suffix) is encoded in the id (electric runtime reads it
+## via IndustryElectricPortUtil.electric_direction()).
 func to_port(port_id: String) -> PortDefinition:
-	if not is_electric():
+	if not is_port_marker():
+		return null
+	if is_cargo() and port_role == PortRole.OUT:
 		return null
 	if not resolve():
 		return null
 	var port := PortDefinition.new()
 	port.port_id = port_id
-	port.kind = PortDefinition.Kind.ELECTRIC
 	port.local_cell = _resolved_cell
 	port.local_face = _resolved_face
-	# Every electric port needs the "electric" tag to conduct at all
-	# (IndustryElectricPortUtil._electric_tags_compatible) — not an authoring
-	# choice, just what makes the port a port.
-	port.compatibility_tags = PackedStringArray(["electric"])
+	if is_cargo():
+		port.kind = PortDefinition.Kind.CARGO
+		port.compatibility_tags = PackedStringArray(["cargo"])
+	else:
+		port.kind = PortDefinition.Kind.ELECTRIC
+		# Every electric port needs the "electric" tag to conduct at all
+		# (IndustryElectricPortUtil._electric_tags_compatible) — not an authoring
+		# choice, just what makes the port a port.
+		port.compatibility_tags = PackedStringArray(["electric"])
 	return port
 
 
-## Suffix that encodes port_role for IndustryElectricPortUtil.electric_direction().
+## Suffix that encodes port_role for IndustryElectricPortUtil.electric_direction()
+## and for stable cargo port ids (cargo_in / cargo_io).
 func port_role_suffix() -> String:
 	match port_role:
 		PortRole.IN:
@@ -310,6 +335,8 @@ func get_diagnostics() -> PackedStringArray:
 		messages.append("could not resolve a face (drag onto the part)")
 	if socket_kind == SocketKind.CUSTOM and custom_tag.strip_edges().is_empty():
 		messages.append("CUSTOM kind needs a non-empty custom_tag")
+	if is_cargo() and port_role == PortRole.OUT:
+		messages.append("cargo port supports only IN or BIDIRECTIONAL (not OUT)")
 	return messages
 
 
@@ -336,6 +363,8 @@ func _tag_color() -> Color:
 			return Color(0.75, 0.40, 0.90, 0.85)
 		SocketKind.ELECTRIC_PORT:
 			return Color(0.95, 0.90, 0.15, 0.9)
+		SocketKind.CARGO_PORT:
+			return Color(0.18, 0.82, 0.88, 0.9)
 	return Color.WHITE
 
 
@@ -473,6 +502,14 @@ func _kind_label() -> String:
 					return "⚡ выход"
 				_:
 					return "⚡ вход/выход"
+		SocketKind.CARGO_PORT:
+			match port_role:
+				PortRole.IN:
+					return "📦 вход"
+				PortRole.OUT:
+					return "📦 выход?"
+				_:
+					return "📦 вход/выход"
 	return ""
 
 

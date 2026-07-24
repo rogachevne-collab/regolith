@@ -21,11 +21,16 @@ func _run_tests() -> void:
 		_test_forward_axis_auto_perpendicular,
 		_test_bake_saves_and_reloads,
 		_test_big_cube_full_surface,
+		_test_plain_exact_marker_mount_pads,
 		_test_generate_mounts_per_side,
 		_test_generate_mounts_per_cell,
 		_test_battery_bakes_valid,
 		_test_power_source_bakes_valid,
 		_test_battery_needs_electric_port,
+		_test_oxygen_module_bakes_valid,
+		_test_oxygen_module_cargo_port_kind_tag_direction,
+		_test_oxygen_module_validation_failures,
+		_test_oxygen_module_save_and_reload,
 	]
 	for test: Callable in tests:
 		if not bool(test.call()):
@@ -68,6 +73,19 @@ func _add_electric_marker(
 ) -> void:
 	var marker := MountPadMarker.new()
 	marker.socket_kind = MountPadMarker.SocketKind.ELECTRIC_PORT
+	marker.port_role = role
+	root.add_child(marker)
+	marker.position = _face_center(cell, face)
+
+
+func _add_cargo_marker(
+	root: PartAuthoringRoot,
+	role: MountPadMarker.PortRole,
+	cell: Vector3i,
+	face: OrientationUtil.Face
+) -> void:
+	var marker := MountPadMarker.new()
+	marker.socket_kind = MountPadMarker.SocketKind.CARGO_PORT
 	marker.port_role = role
 	root.add_child(marker)
 	marker.position = _face_center(cell, face)
@@ -375,6 +393,54 @@ func _test_big_cube_full_surface() -> bool:
 	return true
 
 
+## Click-placed structural point on a plain block (lamp / bracket): even with
+## default FULL_SURFACE generation, bake must keep MOUNT_PADS + exact_point.
+func _test_plain_exact_marker_mount_pads() -> bool:
+	var root := _make_root(PartAuthoringRoot.PartKind.PLAIN)
+	root.part_id = "test_lamp_mount"
+	root.size_cells = Vector3i(1, 1, 2)
+	root.mount_generation = PartAuthoringRoot.MountGeneration.FULL_SURFACE
+	var marker := MountPadMarker.new()
+	marker.socket_kind = MountPadMarker.SocketKind.STRUCTURAL
+	marker.snap_to_face = false
+	root.add_child(marker)
+	# Off-center on the -Z face of cell (0,0,0) — must survive bake.
+	var attach_point := Vector3(0.18, 0.31, 0.0)
+	marker.position = attach_point
+	var errors: Array[String] = []
+	var archetype := root._build_archetype(errors)
+	root.free()
+	if not errors.is_empty():
+		return _fail("plain exact-marker build errors: %s" % [errors])
+	if archetype == null:
+		return _fail("plain exact-marker build returned null")
+	if (
+		archetype.structural_surface_policy
+		!= ElementArchetype.StructuralSurfacePolicy.MOUNT_PADS
+	):
+		return _fail(
+			"plain with markers must be MOUNT_PADS, got %s"
+			% archetype.structural_surface_policy
+		)
+	if archetype.structural_mount_pads.size() != 1:
+		return _fail(
+			"expected 1 structural pad, got %d"
+			% archetype.structural_mount_pads.size()
+		)
+	var pad: StructuralMountPad = archetype.structural_mount_pads[0]
+	if not pad.exact_point:
+		return _fail("click-placed marker must bake exact_point")
+	if not pad.local_position.is_equal_approx(attach_point):
+		return _fail(
+			"exact pad position lost: %s" % pad.local_position
+		)
+	if pad.local_face != OrientationUtil.Face.NEG_Z:
+		return _fail(
+			"exact pad should resolve to NEG_Z, got %s" % pad.local_face
+		)
+	return true
+
+
 func _test_generate_mounts_per_side() -> bool:
 	var root := _make_root(PartAuthoringRoot.PartKind.SUSPENSION)
 	root.part_id = "test_gen_side"
@@ -532,4 +598,206 @@ func _test_battery_needs_electric_port() -> bool:
 	root.free()
 	if battery_errors.is_empty():
 		return _fail("battery with no electric marker should fail validation")
+	return true
+
+
+func _test_oxygen_module_bakes_valid() -> bool:
+	var root := _make_root(PartAuthoringRoot.PartKind.OXYGEN_MODULE)
+	root.part_id = "test_o2_module"
+	root.size_cells = Vector3i(2, 2, 2)
+	root.o2_capacity_l = 120.0
+	root.o2_initial_l = 80.0
+	root.o2_dispense_lps = 1.25
+	root.o2_idle_w = 12.0
+	root.o2_active_w = 45.0
+	_add_cargo_marker(
+		root,
+		MountPadMarker.PortRole.BIDIRECTIONAL,
+		Vector3i(1, 1, 1),
+		OrientationUtil.Face.POS_Z
+	)
+	var errors: Array[String] = []
+	var archetype := root._build_archetype(errors)
+	if not errors.is_empty():
+		root.free()
+		return _fail("oxygen module build errors: %s" % [errors])
+	if archetype == null or archetype.oxygen_module_definition == null:
+		root.free()
+		return _fail("oxygen module build returned null definition")
+	var validation := BlueprintValidator.validate_archetype(archetype)
+	var o2_errors := archetype.oxygen_module_definition.validate(archetype)
+	var definition := archetype.oxygen_module_definition
+	root.free()
+	if not validation.ok:
+		return _fail("oxygen module archetype invalid: %s" % [validation.errors])
+	if not o2_errors.is_empty():
+		return _fail("oxygen module definition invalid: %s" % [o2_errors])
+	if not archetype.roles.has("OxygenModule"):
+		return _fail(
+			"oxygen module should have role 'OxygenModule', got %s"
+			% [archetype.roles]
+		)
+	if not is_equal_approx(definition.capacity_l, 120.0):
+		return _fail("oxygen capacity_l not carried through")
+	if not is_equal_approx(definition.initial_l, 80.0):
+		return _fail("oxygen initial_l not carried through")
+	if not is_equal_approx(definition.dispense_lps, 1.25):
+		return _fail("oxygen dispense_lps not carried through")
+	if not is_equal_approx(definition.idle_w, 12.0):
+		return _fail("oxygen idle_w not carried through")
+	if not is_equal_approx(definition.active_w, 45.0):
+		return _fail("oxygen active_w not carried through")
+	# Structurally mountable like plain/battery: no structural markers → full surface.
+	if (
+		archetype.structural_surface_policy
+		!= ElementArchetype.StructuralSurfacePolicy.FULL_SURFACE
+	):
+		return _fail("oxygen module without structural markers should be FULL_SURFACE")
+	return true
+
+
+func _test_oxygen_module_cargo_port_kind_tag_direction() -> bool:
+	var root := _make_root(PartAuthoringRoot.PartKind.OXYGEN_MODULE)
+	root.part_id = "test_o2_ports"
+	root.size_cells = Vector3i(1, 1, 1)
+	_add_cargo_marker(
+		root,
+		MountPadMarker.PortRole.IN,
+		Vector3i.ZERO,
+		OrientationUtil.Face.NEG_X
+	)
+	_add_cargo_marker(
+		root,
+		MountPadMarker.PortRole.BIDIRECTIONAL,
+		Vector3i.ZERO,
+		OrientationUtil.Face.POS_X
+	)
+	var errors: Array[String] = []
+	var archetype := root._build_archetype(errors)
+	var cargo_in := _find_port(archetype, "cargo_in")
+	var cargo_io := _find_port(archetype, "cargo_io")
+	root.free()
+	if not errors.is_empty():
+		return _fail("oxygen cargo port build errors: %s" % [errors])
+	if cargo_in == null or cargo_in.kind != PortDefinition.Kind.CARGO:
+		return _fail("expected cargo_in with Kind.CARGO")
+	if not cargo_in.compatibility_tags.has("cargo"):
+		return _fail("cargo_in missing 'cargo' compatibility tag")
+	if not cargo_in.port_id.ends_with("_in"):
+		return _fail("cargo IN direction should encode as _in suffix")
+	if cargo_io == null or cargo_io.kind != PortDefinition.Kind.CARGO:
+		return _fail("expected cargo_io with Kind.CARGO")
+	if not cargo_io.compatibility_tags.has("cargo"):
+		return _fail("cargo_io missing 'cargo' compatibility tag")
+	if not cargo_io.port_id.ends_with("_io"):
+		return _fail("cargo BIDIRECTIONAL should encode as _io suffix")
+	for port: PortDefinition in archetype.ports:
+		if port.kind == PortDefinition.Kind.GAS:
+			return _fail("oxygen authoring must not emit GAS ports")
+	return true
+
+
+func _test_oxygen_module_validation_failures() -> bool:
+	var no_port := _make_root(PartAuthoringRoot.PartKind.OXYGEN_MODULE)
+	no_port.part_id = "test_o2_no_port"
+	no_port.size_cells = Vector3i(1, 1, 1)
+	var errors: Array[String] = []
+	var archetype := no_port._build_archetype(errors)
+	var missing_port_errors := (
+		archetype.oxygen_module_definition.validate(archetype)
+		if archetype != null and archetype.oxygen_module_definition != null
+		else ["no oxygen_module_definition built"]
+	)
+	no_port.free()
+	if missing_port_errors.is_empty():
+		return _fail("oxygen module with no cargo marker should fail validation")
+
+	var bad_numbers := _make_root(PartAuthoringRoot.PartKind.OXYGEN_MODULE)
+	bad_numbers.part_id = "test_o2_bad_numbers"
+	bad_numbers.size_cells = Vector3i(1, 1, 1)
+	bad_numbers.o2_capacity_l = 50.0
+	bad_numbers.o2_initial_l = 80.0
+	bad_numbers.o2_dispense_lps = 0.0
+	bad_numbers.o2_idle_w = -1.0
+	bad_numbers.o2_active_w = -2.0
+	_add_cargo_marker(
+		bad_numbers,
+		MountPadMarker.PortRole.BIDIRECTIONAL,
+		Vector3i.ZERO,
+		OrientationUtil.Face.POS_Z
+	)
+	errors = []
+	archetype = bad_numbers._build_archetype(errors)
+	var number_errors := archetype.oxygen_module_definition.validate(archetype)
+	bad_numbers.free()
+	if number_errors.is_empty():
+		return _fail("invalid oxygen numbers should fail definition validate")
+	var joined := " ".join(number_errors)
+	if joined.find("initial_l") < 0:
+		return _fail("expected initial_l range error, got: %s" % [number_errors])
+	if joined.find("dispense_lps") < 0:
+		return _fail("expected dispense_lps error, got: %s" % [number_errors])
+	if joined.find("idle_w") < 0:
+		return _fail("expected idle_w error, got: %s" % [number_errors])
+	if joined.find("active_w") < 0:
+		return _fail("expected active_w error, got: %s" % [number_errors])
+
+	var out_role := _make_root(PartAuthoringRoot.PartKind.OXYGEN_MODULE)
+	out_role.part_id = "test_o2_cargo_out"
+	out_role.size_cells = Vector3i(1, 1, 1)
+	_add_cargo_marker(
+		out_role,
+		MountPadMarker.PortRole.OUT,
+		Vector3i.ZERO,
+		OrientationUtil.Face.POS_Z
+	)
+	errors = []
+	out_role._build_archetype(errors)
+	out_role.free()
+	if errors.is_empty():
+		return _fail("cargo OUT role should fail bake")
+	return true
+
+
+func _test_oxygen_module_save_and_reload() -> bool:
+	var root := _make_root(PartAuthoringRoot.PartKind.OXYGEN_MODULE)
+	root.part_id = "tmp_saved_o2_module"
+	root.size_cells = Vector3i(2, 2, 2)
+	root.o2_capacity_l = 90.0
+	root.o2_initial_l = 45.0
+	root.o2_dispense_lps = 0.75
+	root.o2_idle_w = 8.0
+	root.o2_active_w = 33.0
+	root.save_dir = "user://"
+	_add_cargo_marker(
+		root,
+		MountPadMarker.PortRole.IN,
+		Vector3i(0, 1, 0),
+		OrientationUtil.Face.NEG_Z
+	)
+	var result := root.bake()
+	root.free()
+	if not bool(result.get("ok", false)):
+		return _fail("oxygen module bake failed: %s" % [result.get("errors", [])])
+	var path := str(result.get("path", ""))
+	var reloaded := load(path) as ElementArchetype
+	if reloaded == null:
+		return _fail("saved oxygen module did not reload")
+	if reloaded.oxygen_module_definition == null:
+		return _fail("saved oxygen module lost oxygen_module_definition")
+	var definition := reloaded.oxygen_module_definition
+	if not is_equal_approx(definition.capacity_l, 90.0):
+		return _fail("reloaded capacity_l mismatch")
+	if not is_equal_approx(definition.initial_l, 45.0):
+		return _fail("reloaded initial_l mismatch")
+	if not is_equal_approx(definition.dispense_lps, 0.75):
+		return _fail("reloaded dispense_lps mismatch")
+	if not is_equal_approx(definition.idle_w, 8.0):
+		return _fail("reloaded idle_w mismatch")
+	if not is_equal_approx(definition.active_w, 33.0):
+		return _fail("reloaded active_w mismatch")
+	var cargo_in := _find_port(reloaded, "cargo_in")
+	if cargo_in == null or cargo_in.kind != PortDefinition.Kind.CARGO:
+		return _fail("reloaded archetype lost cargo_in port")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 	return true

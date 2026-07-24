@@ -682,7 +682,10 @@ static func _wire_power(helper: AssemblyBuildHelper) -> bool:
 		if int(helper.element_ids.get(key_str, 0)) <= 0:
 			continue
 		for dist_key: String in distributors:
-			if not helper.connect_ports(key_str, "power_out", dist_key, "power_in"):
+			# A cable, not a stiff port wire: it drapes physically on the first
+			# ticks then bakes static, so a pre-composed rover looks wired the
+			# same way a hand-run cable does. Conducts identically.
+			if not helper.connect_cable(key_str, "power_out", dist_key, "power_in"):
 				return false
 	return true
 

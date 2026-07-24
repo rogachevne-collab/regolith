@@ -157,6 +157,38 @@ func connect_ports(
 	return true
 
 
+## Same as connect_ports, but the link is a rope (free ends) rather than a stiff
+## port wire: it lays out physically the first time it is simulated, then bakes
+## static (see SimulationPhysicsProjection cable freezing). Conducts exactly the
+## same — the electric graph is adjacency over element ids, blind to whether the
+## endpoints are ports or free attach points; both blocks carry electric ports,
+## so the rope is a live cable that also hangs like one. The ends tie at the
+## power ports so the cable visibly runs port to port.
+func connect_cable(
+	from_key: String,
+	from_port: String,
+	to_key: String,
+	to_port: String
+) -> bool:
+	last_error = ""
+	var from_id := int(element_ids.get(from_key, 0))
+	var to_id := int(element_ids.get(to_key, 0))
+	if from_id <= 0 or to_id <= 0:
+		last_error = "missing_port_elements"
+		return false
+	var from_at := IndustryElectricPortUtil.port_anchor_world_position(
+		world, world.get_element(from_id), from_port
+	)
+	var to_at := IndustryElectricPortUtil.port_anchor_world_position(
+		world, world.get_element(to_id), to_port
+	)
+	var result := world.connect_rope(from_id, from_at, to_id, to_at)
+	if not result.is_ok():
+		last_error = "cable:%s" % result.reason
+		return false
+	return true
+
+
 static func orientation_with_local_face(
 	local_face: Vector3i,
 	world_direction: Vector3i

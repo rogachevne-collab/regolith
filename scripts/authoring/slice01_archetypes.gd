@@ -36,6 +36,7 @@ const REQUIRED_IDS: PackedStringArray = [
 	"processor",
 	"fabricator",
 	"electrolyzer",
+	"o2_module",
 ]
 
 
@@ -174,6 +175,10 @@ static func fabricator() -> ElementArchetype:
 
 static func electrolyzer() -> ElementArchetype:
 	return load_required("electrolyzer")
+
+
+static func o2_module() -> ElementArchetype:
+	return load_required("o2_module")
 
 
 static func piston_base() -> ElementArchetype:

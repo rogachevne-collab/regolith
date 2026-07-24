@@ -42,6 +42,12 @@ var _tire_width_spin: SpinBox
 var _socket_option: OptionButton
 var _port_role_option: OptionButton
 var _kind_option: OptionButton
+var _oxygen_box: VBoxContainer
+var _o2_capacity_spin: SpinBox
+var _o2_initial_spin: SpinBox
+var _o2_dispense_spin: SpinBox
+var _o2_idle_spin: SpinBox
+var _o2_active_spin: SpinBox
 var _part_id_edit: LineEdit
 var _display_name_edit: LineEdit
 var _diagnostics_label: RichTextLabel
@@ -104,7 +110,7 @@ func place_connector_at(
 ) -> void:
 	var marker := MountPadMarker.new()
 	marker.socket_kind = _selected_socket_kind()
-	if marker.is_electric():
+	if marker.is_port_marker():
 		marker.port_role = _selected_port_role()
 	# The clicked point IS the mount: whatever bit of the model the author
 	# picked (the tip of a stub axle, a bracket ear) is what will touch the
@@ -184,26 +190,27 @@ func _build_ui() -> void:
 	_socket_option.add_item("Ось колеса (на ступице)")
 	_socket_option.add_item("Гнездо колеса (на подвеске)")
 	_socket_option.add_item("⚡ Электроточка (опционально)")
+	_socket_option.add_item("📦 Cargo-точка (O₂ / склад)")
 	_socket_option.item_selected.connect(_on_socket_kind_selected)
 	_steps_box.add_child(_socket_option)
 	_port_role_option = OptionButton.new()
-	_port_role_option.add_item("Вход и выход")
-	_port_role_option.add_item("Только вход (потребитель)")
-	_port_role_option.add_item("Только выход (источник)")
+	_rebuild_port_role_options(false)
 	_port_role_option.visible = false
 	_steps_box.add_child(_port_role_option)
 	var place_hint := Label.new()
 	place_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	place_hint.text = (
-		"Кликать — в ОСНОВНОМ 3D-окне редактора по самой модели"
-		+ " (не в превью выше). Точка встанет ровно в место клика."
+		"Без точек — крепится всеми гранями. С точками — только ими"
+		+ " (как у подвески): клик в ОСНОВНОМ 3D-окне по модели, точка"
+		+ " встанет ровно туда и при стройке потянется к центру пада цели."
 	)
 	_steps_box.add_child(place_hint)
 	_place_button = Button.new()
 	_place_button.toggle_mode = true
 	_place_button.tooltip_text = (
 		"Включи, перейди в 3D-окно и кликай по модели: точка встанет там,\n"
-		+ "куда попал — хоть на ступицу, хоть на кронштейн.\n"
+		+ "куда попал — хоть на кронштейн фары, хоть на ухо подвески.\n"
+		+ "Для блока/рамы одна точка = крепится только с этой стороны.\n"
 		+ "Выключи режим, чтобы снова крутить камеру кликом."
 	)
 	_place_button.toggled.connect(_on_place_mode_toggled)
@@ -211,6 +218,10 @@ func _build_ui() -> void:
 	_update_place_button_look(false)
 	var generate := Button.new()
 	generate.text = "Сгенерировать по граням"
+	generate.tooltip_text = (
+		"Шесть точек по центрам сторон футпринта — потом лишние удали.\n"
+		+ "Для фары/кронштейна обычно лучше кликнуть одну точку вручную."
+	)
 	generate.pressed.connect(_on_generate_pressed)
 	_steps_box.add_child(generate)
 
@@ -227,6 +238,7 @@ func _build_ui() -> void:
 	_kind_option.add_item("Подвеска")
 	_kind_option.add_item("Батарея")
 	_kind_option.add_item("Источник энергии")
+	_kind_option.add_item("O₂-модуль")
 	_kind_option.item_selected.connect(_on_kind_selected)
 	_steps_box.add_child(_kind_option)
 	_part_id_edit = LineEdit.new()
@@ -237,12 +249,14 @@ func _build_ui() -> void:
 	_display_name_edit.placeholder_text = "Название для игрока"
 	_display_name_edit.text_changed.connect(_on_display_name_changed)
 	_steps_box.add_child(_display_name_edit)
+	_steps_box.add_child(_build_oxygen_step())
 	var params_hint := Label.new()
 	params_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	params_hint.text = (
 		"Тонкая настройка (радиус, жёсткость, ёмкость батареи…) — в инспекторе корня.\n"
 		+ "Для батареи/источника не забудь поставить электроточки на шаге 3"
-		+ " (⚡, роль вход/выход)."
+		+ " (⚡, роль вход/выход).\n"
+		+ "Для O₂-модуля — cargo-точки (📦, вход или вход/выход); электричество не обязательно."
 	)
 	_steps_box.add_child(params_hint)
 	var bake := Button.new()
@@ -495,6 +509,7 @@ func _sync_to_edited_scene() -> void:
 			(child as Control).modulate.a = 1.0
 	_refresh_suspension_ui()
 	_refresh_wheel_tire_ui()
+	_refresh_oxygen_ui()
 	if not has_root:
 		return
 	_model_label.text = (
@@ -593,6 +608,8 @@ func _selected_socket_kind() -> MountPadMarker.SocketKind:
 			return MountPadMarker.SocketKind.WHEEL_SOCKET
 		3:
 			return MountPadMarker.SocketKind.ELECTRIC_PORT
+		4:
+			return MountPadMarker.SocketKind.CARGO_PORT
 		_:
 			return MountPadMarker.SocketKind.STRUCTURAL
 
@@ -607,8 +624,27 @@ func _selected_port_role() -> MountPadMarker.PortRole:
 			return MountPadMarker.PortRole.BIDIRECTIONAL
 
 
+func _rebuild_port_role_options(cargo_only: bool) -> void:
+	if _port_role_option == null:
+		return
+	var previous := _port_role_option.selected
+	_port_role_option.clear()
+	_port_role_option.add_item("Вход и выход")
+	_port_role_option.add_item("Только вход")
+	if not cargo_only:
+		_port_role_option.add_item("Только выход (источник)")
+	_port_role_option.selected = mini(
+		previous,
+		_port_role_option.item_count - 1
+	)
+
+
 func _on_socket_kind_selected(index: int) -> void:
-	_port_role_option.visible = index == 3
+	var is_electric := index == 3
+	var is_cargo := index == 4
+	_port_role_option.visible = is_electric or is_cargo
+	if is_electric or is_cargo:
+		_rebuild_port_role_options(is_cargo)
 
 
 func _on_rotate_pressed(axis: Vector3) -> void:
@@ -1016,6 +1052,13 @@ func _refresh_suspension_ui() -> void:
 func _on_generate_pressed() -> void:
 	if _root == null:
 		return
+	# FULL_SURFACE means "no markers"; the button asks for face markers, so
+	# flip to PER_SIDE first — otherwise generate is a silent no-op.
+	if (
+		_root.mount_generation
+		== PartAuthoringRoot.MountGeneration.FULL_SURFACE
+	):
+		_root.mount_generation = PartAuthoringRoot.MountGeneration.PER_SIDE
 	_root.generate_mounts()
 	EditorInterface.mark_scene_as_unsaved()
 	_diagnostics_label.text = "\n".join(_root.last_bake_diagnostics)
@@ -1028,6 +1071,106 @@ func _on_kind_selected(index: int) -> void:
 	EditorInterface.mark_scene_as_unsaved()
 	_refresh_suspension_ui()
 	_refresh_wheel_tire_ui()
+	_refresh_oxygen_ui()
+
+
+func _build_oxygen_step() -> Control:
+	_oxygen_box = VBoxContainer.new()
+	_oxygen_box.visible = false
+	_oxygen_box.add_child(_step_header("Параметры O₂-модуля"))
+	var hint := Label.new()
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint.text = (
+		"Ёмкость / стартовый запас / скорость выдачи и электрика consumer."
+		+ " На шаге 3 нужна ≥1 cargo-точка (📦)."
+	)
+	_oxygen_box.add_child(hint)
+	_o2_capacity_spin = _add_spin_row(
+		_oxygen_box, "ёмкость, L", 0.1, 100000.0, 1.0, "capacity_l"
+	)
+	_o2_capacity_spin.value_changed.connect(_on_o2_capacity_changed)
+	_o2_initial_spin = _add_spin_row(
+		_oxygen_box, "старт, L", 0.0, 100000.0, 1.0, "initial_l при первом spawn"
+	)
+	_o2_initial_spin.value_changed.connect(_on_o2_initial_changed)
+	_o2_dispense_spin = _add_spin_row(
+		_oxygen_box, "выдача, L/s", 0.01, 1000.0, 0.01, "dispense_lps"
+	)
+	_o2_dispense_spin.value_changed.connect(_on_o2_dispense_changed)
+	_o2_idle_spin = _add_spin_row(
+		_oxygen_box, "idle, W", 0.0, 100000.0, 1.0, "idle_w при enabled"
+	)
+	_o2_idle_spin.value_changed.connect(_on_o2_idle_changed)
+	_o2_active_spin = _add_spin_row(
+		_oxygen_box,
+		"active +idle, W",
+		0.0,
+		100000.0,
+		1.0,
+		"active_w — дополнительная мощность при выдаче; итог idle_w + active_w"
+	)
+	_o2_active_spin.value_changed.connect(_on_o2_active_changed)
+	return _oxygen_box
+
+
+func _refresh_oxygen_ui() -> void:
+	if _oxygen_box == null:
+		return
+	var is_o2 := (
+		_root != null
+		and _root.part_kind == PartAuthoringRoot.PartKind.OXYGEN_MODULE
+	)
+	_oxygen_box.visible = is_o2
+	if not is_o2:
+		return
+	_set_spin_if_idle(_o2_capacity_spin, _root.o2_capacity_l)
+	_set_spin_if_idle(_o2_initial_spin, _root.o2_initial_l)
+	_set_spin_if_idle(_o2_dispense_spin, _root.o2_dispense_lps)
+	_set_spin_if_idle(_o2_idle_spin, _root.o2_idle_w)
+	_set_spin_if_idle(_o2_active_spin, _root.o2_active_w)
+
+
+func _set_spin_if_idle(spin: SpinBox, value: float) -> void:
+	if spin == null:
+		return
+	if spin.get_line_edit().has_focus():
+		return
+	spin.set_value_no_signal(value)
+
+
+func _on_o2_capacity_changed(value: float) -> void:
+	if _root == null or is_equal_approx(_root.o2_capacity_l, value):
+		return
+	_root.o2_capacity_l = value
+	EditorInterface.mark_scene_as_unsaved()
+
+
+func _on_o2_initial_changed(value: float) -> void:
+	if _root == null or is_equal_approx(_root.o2_initial_l, value):
+		return
+	_root.o2_initial_l = value
+	EditorInterface.mark_scene_as_unsaved()
+
+
+func _on_o2_dispense_changed(value: float) -> void:
+	if _root == null or is_equal_approx(_root.o2_dispense_lps, value):
+		return
+	_root.o2_dispense_lps = value
+	EditorInterface.mark_scene_as_unsaved()
+
+
+func _on_o2_idle_changed(value: float) -> void:
+	if _root == null or is_equal_approx(_root.o2_idle_w, value):
+		return
+	_root.o2_idle_w = value
+	EditorInterface.mark_scene_as_unsaved()
+
+
+func _on_o2_active_changed(value: float) -> void:
+	if _root == null or is_equal_approx(_root.o2_active_w, value):
+		return
+	_root.o2_active_w = value
+	EditorInterface.mark_scene_as_unsaved()
 
 
 func _on_part_id_changed(text: String) -> void:
