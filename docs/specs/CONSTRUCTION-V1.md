@@ -376,9 +376,13 @@ Preview ghost повторяет projection path:
   assembly, потому что такая клетка может соединиться с другим element длинной
   конструкции и визуально увести блок от aim;
 - первый valid attach-resolve фиксирует `target_port_cell` и `snap_dir` на время
-  rotate/re-aim того же contact. Следующие ориентации используют этот grid contact,
-  а не повторно вычисленный floating ray point, который может перескочить через
-  cell boundary;
+  rotate/re-aim того же contact (`has_locked_attach` / ключи `locked_*` на hit;
+  `locked_target_port_cell == Vector3i.ZERO` — валидный origin face, не «нет
+  lock»). Следующие ориентации используют этот grid contact, а не повторно
+  вычисленный floating ray point, который может перескочить через cell boundary;
+- `collider_local_cell` на hit — optional presence (`has_collider_local_cell` /
+  ключ в snapshot); authored cell `Vector3i.ZERO` валиден и не путается с
+  отсутствием meta;
 - ground rotate держит baseline footprint center (`ConstructionPlacement.baseline_ground_pivot`)
   через `held_ground_pivot` в preview/gateway.
 

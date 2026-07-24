@@ -53,6 +53,10 @@ func _run() -> void:
 		return
 	if not _test_gateway_attach_orientation_replay():
 		return
+	if not _test_locked_origin_port_survives_rotation():
+		return
+	if not _test_collider_local_cell_zero_resolves():
+		return
 	if not _test_snap_scan_tracks_assembly_motion():
 		return
 	if not _test_snap_vehicle_attach_follows_velocity():
@@ -620,8 +624,7 @@ func _test_rotation_snap_pivot_parity() -> bool:
 			var snap_context := ConstructionPlacement._attach_snap_context(
 				world,
 				assembly,
-				target,
-				target.get("metadata", {})
+				target
 			)
 			var pivot_origin := GridPoseUtil.pivot_compensated_origin(
 				frame,
@@ -1151,13 +1154,11 @@ func _test_gateway_attach_orientation_replay() -> bool:
 		return _fail("gateway attach replay baseline invalid")
 	var baseline_origin: Vector3i = baseline_plan["origin_cell"]
 	var snap_context: Dictionary = baseline_plan.get("attach_snap_context", {})
-	var locked_metadata: Dictionary = direct_hit.get("metadata", {}).duplicate(true)
-	locked_metadata["locked_target_port_cell"] = snap_context.get(
+	direct_hit["locked_target_port_cell"] = snap_context.get(
 		"target_port_cell",
 		Vector3i.ZERO
 	)
-	locked_metadata["locked_snap_dir"] = snap_context.get("snap_dir", Vector3i.UP)
-	direct_hit["metadata"] = locked_metadata
+	direct_hit["locked_snap_dir"] = snap_context.get("snap_dir", Vector3i.UP)
 	var held_pivot := GridPoseUtil.world_footprint_pivot(
 		baseline_plan["preview_root_transform"],
 		baseline_plan["archetype"],
@@ -1192,6 +1193,122 @@ func _test_gateway_attach_orientation_replay() -> bool:
 		return _fail(
 			"gateway attach replay origin drift %s -> %s"
 			% [baseline_origin, replay_plan["origin_cell"]]
+		)
+	_free_fixture(fixture)
+	return true
+
+
+func _test_locked_origin_port_survives_rotation() -> bool:
+	## locked_target_port_cell == ZERO must stay locked when the ray would
+	## otherwise recompute a different face (manual rotate / re-aim).
+	var fixture := _new_fixture()
+	var world: SimulationWorld = fixture["world"]
+	var anchor := _spawn_anchored_frame(world)
+	if not anchor.is_ok():
+		return _fail("origin-port lock anchor spawn failed")
+	var assembly_id := int(anchor.data["assembly_id"])
+	var assembly := world.get_assembly_raw(assembly_id)
+	var anchor_element := world.get_element(int(anchor.data["element_id"]))
+	var frame := assembly.motion.transform
+	var locked_hit := InteractionHit.create(
+		frame * Vector3(10.0, 10.0, 10.0),
+		frame.basis.y,
+		1.0,
+		InteractionHit.KIND_SIMULATION_ELEMENT,
+		null,
+		StringName(str(anchor_element.element_id)),
+		{
+			"element_id": anchor_element.element_id,
+			"assembly_id": assembly_id,
+			"aim_direction": Vector3.FORWARD,
+			"locked_target_port_cell": Vector3i.ZERO,
+			"locked_snap_dir": Vector3i.RIGHT,
+			"has_locked_attach": true,
+		}
+	).snapshot()
+	var snap := ConstructionPlacement._attach_snap_context(
+		world,
+		assembly,
+		locked_hit
+	)
+	if snap.get("target_port_cell", Vector3i(9, 9, 9)) != Vector3i.ZERO:
+		_free_fixture(fixture)
+		return _fail(
+			"locked origin port ignored: got %s"
+			% snap.get("target_port_cell")
+		)
+	if snap.get("snap_dir", Vector3i.ZERO) != Vector3i.RIGHT:
+		_free_fixture(fixture)
+		return _fail("locked snap_dir not honored for origin port")
+	_free_fixture(fixture)
+	return true
+
+
+func _test_collider_local_cell_zero_resolves() -> bool:
+	## Non-finite hit point falls back to collider_local_cell; authored ZERO
+	## must resolve to the element origin, not "missing meta".
+	var fixture := _new_fixture()
+	var world: SimulationWorld = fixture["world"]
+	var anchor := _spawn_anchored_frame(world)
+	if not anchor.is_ok():
+		return _fail("collider-zero anchor spawn failed")
+	var assembly_id := int(anchor.data["assembly_id"])
+	var assembly := world.get_assembly_raw(assembly_id)
+	var anchor_element := world.get_element(int(anchor.data["element_id"]))
+	var present := InteractionHit.create(
+		Vector3(INF, INF, INF),
+		Vector3.RIGHT,
+		1.0,
+		InteractionHit.KIND_SIMULATION_ELEMENT,
+		null,
+		StringName(str(anchor_element.element_id)),
+		{
+			"element_id": anchor_element.element_id,
+			"assembly_id": assembly_id,
+			"aim_direction": Vector3.FORWARD,
+			"collider_local_cell": Vector3i.ZERO,
+			"has_collider_local_cell": true,
+		}
+	).snapshot()
+	var snap_present := ConstructionPlacement._attach_snap_context(
+		world,
+		assembly,
+		present
+	)
+	var expected := anchor_element.origin_cell
+	if snap_present.get("target_port_cell", Vector3i(9, 9, 9)) != expected:
+		_free_fixture(fixture)
+		return _fail(
+			"authored collider cell ZERO unresolved: got %s want %s"
+			% [snap_present.get("target_port_cell"), expected]
+		)
+	var absent := InteractionHit.create(
+		Vector3(INF, INF, INF),
+		Vector3.RIGHT,
+		1.0,
+		InteractionHit.KIND_SIMULATION_ELEMENT,
+		null,
+		StringName(str(anchor_element.element_id)),
+		{
+			"element_id": anchor_element.element_id,
+			"assembly_id": assembly_id,
+			"aim_direction": Vector3.FORWARD,
+		}
+	).snapshot()
+	if InteractionHit.has_collider_local_cell_in(absent):
+		_free_fixture(fixture)
+		return _fail("snapshot must omit collider_local_cell when unset")
+	var snap_absent := ConstructionPlacement._attach_snap_context(
+		world,
+		assembly,
+		absent
+	)
+	var fallback := Vector3i.ZERO - Vector3i.RIGHT
+	if snap_absent.get("target_port_cell", Vector3i(9, 9, 9)) != fallback:
+		_free_fixture(fixture)
+		return _fail(
+			"absent collider cell should use snap_dir fallback, got %s"
+			% snap_absent.get("target_port_cell")
 		)
 	_free_fixture(fixture)
 	return true
@@ -1441,8 +1558,7 @@ func _test_power_source_attach_rotation_cycle() -> bool:
 				var snap_context := ConstructionPlacement._attach_snap_context(
 					world,
 					assembly,
-					target,
-					target.get("metadata", {})
+					target
 				)
 				var snap_origin := GridPoseUtil.snap_origin_without_pivot(
 					source,

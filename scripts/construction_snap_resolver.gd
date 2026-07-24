@@ -277,12 +277,11 @@ static func _make_candidate(
 
 
 static func _target_key(target: Dictionary) -> String:
-	var metadata: Dictionary = target.get("metadata", {})
 	return "%s|%s|%s|%s" % [
 		target.get("target_kind", &""),
-		metadata.get("element_id", -1),
-		metadata.get("snap_cell", Vector3i.ZERO),
-		metadata.get("snap_dir", Vector3i.ZERO),
+		target.get("element_id", -1),
+		target.get("snap_cell", Vector3i.ZERO),
+		target.get("snap_dir", Vector3i.ZERO),
 	]
 
 
@@ -453,16 +452,17 @@ func _prefilter_attach_fits_inner(
 	target: Dictionary,
 	rotated_footprint: Array[Vector3i] = []
 ) -> bool:
-	var metadata: Dictionary = target.get("metadata", {})
-	if not metadata.has("snap_cell"):
+	if not target.has("snap_cell"):
 		return true
-	var assembly := world.get_assembly_raw(int(metadata.get("assembly_id", 0)))
+	var assembly := world.get_assembly_raw(
+		InteractionHit.assembly_id_from(target)
+	)
 	if assembly == null or archetype == null:
 		return true
 	var origin: Vector3i = GridPoseUtil.snap_origin_for_target_cell(
 		archetype,
-		metadata.get("snap_cell", Vector3i.ZERO),
-		metadata.get("snap_dir", Vector3i.UP),
+		Vector3i(target.get("snap_cell", Vector3i.ZERO)),
+		Vector3i(target.get("snap_dir", Vector3i.UP)),
 		orientation_index
 	)
 	# Occupancy Dictionary is revision-cached and already hot — prefer a
@@ -569,6 +569,15 @@ func _scan_faces_native(
 		var world_point: Vector3 = entry.get("world_point", Vector3.ZERO)
 		var world_normal: Vector3 = entry.get("world_normal", Vector3.UP)
 		var distance := float(entry.get("distance", ray_origin.distance_to(world_point)))
+		var hit_fields := {
+			"element_id": int(metadata.get("element_id", -1)),
+			"assembly_id": assembly_id,
+			"aim_direction": ray_direction,
+			"snap_cell": metadata.get("snap_cell", Vector3i.ZERO),
+			"snap_dir": metadata.get("snap_dir", Vector3i.ZERO),
+		}
+		if metadata.has("collider_local_cell"):
+			hit_fields["collider_local_cell"] = metadata["collider_local_cell"]
 		var target := InteractionHit.create(
 			world_point,
 			world_normal,
@@ -576,17 +585,7 @@ func _scan_faces_native(
 			InteractionHit.KIND_SIMULATION_ELEMENT,
 			null,
 			StringName(str(metadata.get("element_id", -1))),
-			{
-				"element_id": int(metadata.get("element_id", -1)),
-				"assembly_id": assembly_id,
-				"collider_local_cell": metadata.get(
-					"collider_local_cell",
-					Vector3i.ZERO
-				),
-				"aim_direction": ray_direction,
-				"snap_cell": metadata.get("snap_cell", Vector3i.ZERO),
-				"snap_dir": metadata.get("snap_dir", Vector3i.ZERO),
-			}
+			hit_fields
 		).snapshot()
 		ranked.append({
 			"key": str(entry.get("key", "")),

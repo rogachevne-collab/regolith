@@ -119,46 +119,6 @@ static func find_hinge_joint_for_element(
 	return joint
 
 
-static func enrich_interaction_metadata(
-	world: SimulationWorld,
-	element_id: int,
-	metadata: Dictionary
-) -> void:
-	var joint := find_hinge_joint_for_element(world, element_id)
-	if joint == null or joint.motor == null:
-		return
-	var motor := joint.motor
-	metadata["hinge_joint_id"] = joint.joint_id
-	metadata["hinge_base_element_id"] = joint.element_a_id
-	metadata["hinge_top_element_id"] = joint.element_b_id
-	metadata["hinge_observed_angle_rad"] = motor.observed_position_m
-	metadata["hinge_observed_velocity_rad_s"] = motor.observed_velocity_mps
-	metadata["hinge_target_velocity_rad_s"] = motor.clamp_target_velocity()
-	metadata["hinge_forward_velocity_rad_s"] = motor.extend_velocity_mps
-	metadata["hinge_reverse_velocity_rad_s"] = motor.retract_velocity_mps
-	metadata["hinge_torque_limit_nm"] = motor.force_limit_n
-	metadata["hinge_lower_limit_rad"] = motor.lower_limit_m
-	metadata["hinge_upper_limit_rad"] = motor.upper_limit_m
-	metadata["hinge_powered"] = PistonProjectionUtil.is_piston_powered(
-		world,
-		joint.element_a_id
-	)
-	metadata["hinge_motor_enabled"] = motor.enabled
-	var base_element := world.get_element(joint.element_a_id)
-	if base_element != null:
-		var archetype := base_element.get_archetype()
-		if archetype != null and archetype.hinge_definition != null:
-			var definition := archetype.hinge_definition
-			metadata["hinge_max_velocity_rad_s"] = definition.max_velocity_rad_s
-			metadata["hinge_max_torque_limit_nm"] = definition.max_torque_limit_nm
-			metadata["hinge_authored_lower_limit_rad"] = definition.min_angle_rad
-			metadata["hinge_authored_upper_limit_rad"] = definition.max_angle_rad
-	var actuator_status := ActuatorSimulationService.status_name_for_motor(motor)
-	metadata["actuator_status"] = actuator_status
-	if StringName(metadata.get("status_reason", &"ok")) in [&"ok", &"standby"]:
-		metadata["status_reason"] = actuator_status
-
-
 static func hinge_joint_for_elements(
 	joints: Array[SimulationJoint],
 	base_element_id: int,

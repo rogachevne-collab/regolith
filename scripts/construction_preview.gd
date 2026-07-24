@@ -159,18 +159,17 @@ func _update_resolution() -> void:
 			_held_attach_snap_context.clear()
 		if _held_attach_pivot.is_finite():
 			held_attach_pivot = _held_attach_pivot
-			var metadata: Dictionary = direct_hit.get("metadata", {}).duplicate(true)
-			metadata["locked_target_port_cell"] = (
+			direct_hit["locked_target_port_cell"] = (
 				_held_attach_snap_context.get(
 					"target_port_cell",
 					Vector3i.ZERO
 				)
 			)
-			metadata["locked_snap_dir"] = _held_attach_snap_context.get(
+			direct_hit["locked_snap_dir"] = _held_attach_snap_context.get(
 				"snap_dir",
 				Vector3i.UP
 			)
-			direct_hit["metadata"] = metadata
+			direct_hit["has_locked_attach"] = true
 	var context_key := _resolve_context_key(
 		aim,
 		direct_hit,
@@ -315,9 +314,14 @@ func _should_resolve(target: Dictionary) -> bool:
 	# HUD status_reason is often actuator/power state (idle, no_power, …)
 	# when aiming at a piston head/base. That must NOT kill construction
 	# resolve — otherwise horizontal pistons show no ghost at all.
-	var status := StringName(
-		target.get("metadata", {}).get("status_reason", &"ok")
-	)
+	var status := StringName(&"ok")
+	var element_id := InteractionHit.element_id_from(target)
+	if element_id > 0 and _gateway != null:
+		var world := _gateway.get_world()
+		if world != null:
+			var card := world.get_interaction_card(element_id)
+			if card != null:
+				status = StringName(card.keys.get("status_reason", &"ok"))
 	return status not in [
 		&"element_broken",
 		&"invalid_target",

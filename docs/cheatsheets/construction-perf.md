@@ -454,7 +454,7 @@
 
 ### 49. Лагает **только прицел**, FPS падает в build mode
 
-- **Сначала отделить симптом:** сидишь в ровере / build tool **не** активен, небо OK а FPS падает на любом блоке сборки → это **не** construction preview (в seat preview выключен). Смотри `docs/cheatsheets/interaction-read-model.md` и `InteractionQuery._target_metadata` / `list_joints`. Контракт: `PLAYER-INTERACTION-V1` § Interaction Read-Model.
+- **Сначала отделить симптом:** сидишь в ровере / build tool **не** активен, небо OK а FPS падает на любом блоке сборки → это **не** construction preview (в seat preview выключен). Смотри closed Interaction Read-Model: `docs/cheatsheets/interaction-read-model.md` (thin Query → `get_interaction_card`). Контракт: `PLAYER-INTERACTION-V1` § Interaction Read-Model.
 - **Первые подозреваемые (именно build + ghost):** `ConstructionSnapResolver._collect_face_candidates`, `ConstructionPreviewSnapshot.build`, `validate_attach_preview` pack, `_seat_ground_plan`, `_guard_placement_collision`. Включить `ConstructionPerf.ENABLED` локально.
 - **Целесообразность:** Сначала убедиться что активен build и идёт resolve; затем `ConstructionPerf.ENABLED` и разбивка; проверить cache по `_cached_resolve_context_key`.
 - **Простая альтернатива:** Грубее квантование луча / реже полный resolve при медленном прицеле; уменьшить число сборок в snapshot (AABB); не держать ручной cycle snap без нужды; временно ставить простой archetype для локализации узкого места.

@@ -52,8 +52,7 @@ static func _plan_inner(
 	var attach_snap_context: Dictionary = {}
 	var target_kind := StringName(target.get("target_kind", &""))
 	if target_kind == InteractionHit.KIND_SIMULATION_ELEMENT:
-		var metadata: Dictionary = target.get("metadata", {})
-		var assembly_id := int(metadata.get("assembly_id", 0))
+		var assembly_id := InteractionHit.assembly_id_from(target)
 		var assembly := world.get_assembly(assembly_id)
 		if assembly == null or assembly.tombstoned:
 			return _failed(StructuralCommandResult.REASON_INVALID_REFERENCE)
@@ -62,8 +61,7 @@ static func _plan_inner(
 		var snap_context := _attach_snap_context(
 			world,
 			assembly,
-			target,
-			metadata
+			target
 		)
 		attach_snap_context = snap_context.duplicate(true)
 		command.origin_cell = _resolve_attach_origin(
@@ -87,10 +85,7 @@ static func _plan_inner(
 			)
 		)
 	elif target_kind == InteractionHit.KIND_VOXEL:
-		var metadata: Dictionary = target.get("metadata", {})
-		var aim_direction := Vector3(
-			metadata.get("aim_direction", Vector3.FORWARD)
-		)
+		var aim_direction := InteractionHit.aim_direction_from(target)
 		var surface_point := Vector3(target.get("point", Vector3.ZERO))
 		# Field-upright orientation keeps the base level on slopes; only the
 		# discrete grid frame is snapped. The continuous root keeps the exact
@@ -251,10 +246,7 @@ static func _surface_up_for_target(target: Dictionary) -> Vector3:
 	var up := Vector3(
 		target.get(
 			"surface_up",
-			target.get("metadata", {}).get(
-				"surface_up",
-				target.get("normal", Vector3.UP)
-			)
+			target.get("normal", Vector3.UP)
 		)
 	)
 	if not up.is_finite() or up.length_squared() <= 0.000001:
@@ -314,7 +306,7 @@ static func _dominant_grid_direction(direction: Vector3) -> Vector3i:
 static func _attach_frame_for_target(
 	world: SimulationWorld,
 	assembly: SimulationAssembly,
-	metadata: Dictionary
+	target: Dictionary
 ) -> Transform3D:
 	# Hit->cell mapping and the ghost follow the aimed element's LIVE body
 	# group frame: group colliders keep blueprint-local offsets, so on a
@@ -323,7 +315,7 @@ static func _attach_frame_for_target(
 	# itself stays in blueprint grid space and is unaffected.
 	if assembly == null or assembly.motion == null:
 		return Transform3D.IDENTITY
-	var element_id := int(metadata.get("element_id", 0))
+	var element_id := InteractionHit.element_id_from(target)
 	if element_id > 0 and world != null:
 		var element := world.get_element(element_id)
 		if element != null and element.assembly_id == assembly.assembly_id:
@@ -334,28 +326,31 @@ static func _attach_frame_for_target(
 static func _attach_snap_context(
 	world: SimulationWorld,
 	assembly: SimulationAssembly,
-	target: Dictionary,
-	metadata: Dictionary
+	target: Dictionary
 ) -> Dictionary:
 	var assembly_world_transform := _attach_frame_for_target(
 		world,
 		assembly,
-		metadata
+		target
 	)
-	if (
-		metadata.has("locked_target_port_cell")
-		and metadata.has("locked_snap_dir")
-	):
-		return {
-			"target_port_cell": metadata["locked_target_port_cell"],
-			"snap_dir": metadata["locked_snap_dir"],
-			"assembly_world_transform": assembly_world_transform,
-		}
+	# Port cell ZERO is a valid lock (origin face). Presence is explicit —
+	# do not treat default Vector3i.ZERO as "no lock".
+	if InteractionHit.has_locked_attach_in(target):
+		var locked_port := Vector3i(
+			target.get("locked_target_port_cell", Vector3i.ZERO)
+		)
+		var locked_dir := Vector3i(target.get("locked_snap_dir", Vector3i.ZERO))
+		if locked_dir != Vector3i.ZERO:
+			return {
+				"target_port_cell": locked_port,
+				"snap_dir": locked_dir,
+				"assembly_world_transform": assembly_world_transform,
+			}
 	var point := Vector3(target.get("point", Vector3.ZERO))
 	var normal := Vector3(target.get("normal", Vector3.UP)).normalized()
 	# Prefer the nearest authored structural pad on the aimed element so a
 	# glancing hit on a large piston head deck does not snap to a side cell.
-	var element_id := int(metadata.get("element_id", 0))
+	var element_id := InteractionHit.element_id_from(target)
 	if element_id > 0 and point.is_finite():
 		var target_element := world.get_element(element_id)
 		var nearest := GridSurfaceUtil.nearest_assembly_face_to_hit(
@@ -378,16 +373,21 @@ static func _attach_snap_context(
 			point + normal * SURFACE_EPSILON
 		)
 		target_port_cell = GridMetric.meters_to_cell_floor(local_point) - snap_dir
-	elif metadata.has("element_id"):
+	elif element_id > 0:
 		var target_element := world.get_element(element_id)
+		# Authored collider cell ZERO is valid; absence uses a presence marker /
+		# key, not "!= Vector3i.ZERO".
 		if (
 			target_element != null
-			and metadata.has("collider_local_cell")
+			and InteractionHit.has_collider_local_cell_in(target)
 		):
+			var collider_local_cell := Vector3i(
+				target.get("collider_local_cell", Vector3i.ZERO)
+			)
 			target_port_cell = (
 				target_element.origin_cell
 				+ OrientationUtil.rotate_cell(
-					metadata.get("collider_local_cell", Vector3i.ZERO),
+					collider_local_cell,
 					target_element.orientation_index
 				)
 			)
@@ -419,16 +419,14 @@ static func ranked_attach_plans(
 		!= InteractionHit.KIND_SIMULATION_ELEMENT
 	):
 		return []
-	var metadata: Dictionary = target.get("metadata", {})
-	var assembly_id := int(metadata.get("assembly_id", 0))
+	var assembly_id := InteractionHit.assembly_id_from(target)
 	var assembly := world.get_assembly(assembly_id)
 	if assembly == null or assembly.tombstoned:
 		return []
 	var snap_context := _attach_snap_context(
 		world,
 		assembly,
-		target,
-		metadata
+		target
 	)
 	var ranked_origins := _ranked_attach_origins(
 		world,
@@ -477,8 +475,7 @@ static func _plan_for_attach_origin(
 	snap_context: Dictionary,
 	origin_cell: Vector3i
 ) -> Dictionary:
-	var metadata: Dictionary = target.get("metadata", {})
-	var assembly_id := int(metadata.get("assembly_id", 0))
+	var assembly_id := InteractionHit.assembly_id_from(target)
 	var assembly := world.get_assembly(assembly_id)
 	if assembly == null or assembly.tombstoned:
 		return _failed(StructuralCommandResult.REASON_INVALID_REFERENCE)
