@@ -12,6 +12,11 @@ macos.release = "./bin/libvoxel.macos.template_release.universal.framework/libvo
 ios.debug = "./bin/libvoxel.ios.editor.arm64.dylib"
 ios.release = "./bin/libvoxel.ios.template_release.arm64.dylib"
 
+; Double-precision first (project runs custom Godot precision=double).
+; Debug exports reuse the editor.double library (upstream Voxel pattern).
+windows.debug.double.x86_64 = "./bin/libvoxel.windows.editor.double.x86_64.dll"
+windows.release.double.x86_64 = "./bin/libvoxel.windows.template_release.double.x86_64.dll"
+
 windows.debug.x86_64 = "./bin/libvoxel.windows.editor.x86_64.dll"
 windows.release.x86_64 = "./bin/libvoxel.windows.template_release.x86_64.dll"
 

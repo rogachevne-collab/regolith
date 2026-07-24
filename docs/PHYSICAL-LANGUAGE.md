@@ -197,7 +197,10 @@ ElementArchetype {
 
 Роли элементов:
 
-- `Frame` — несущая структура;
+- `Frame` — несущая структура; косметические варианты той же роли на grid 0.5 m —
+  `frame_slope_45` (скос 45°), `frame_antenna` (мачта ~2 m), `frame_lamp`
+  (фара; pivot = крепление, mesh `Lamp` = emissive) — см.
+  `docs/specs/CONSTRUCTION-V1.md` § масштаб;
 - `ControlSeat` — место управления;
 - `Source` — генератор или аккумулятор;
 - `Tank` — жидкость, газ, энергия;

@@ -2,7 +2,7 @@
 
 entry_symbol = "regolith_construction_preview_library_init"
 compatibility_minimum = "4.5"
-reloadable = true
+reloadable = false
 
 [libraries]
 

@@ -8,6 +8,9 @@
 bin/
 *.zip
 
+# Local Windows game export (see tools/export_windows_debug.ps1)
+build/
+
 # Voxel Tools — keep macOS binaries only
 addons/zylann.voxel/bin/libvoxel.android.*
 addons/zylann.voxel/bin/libvoxel.ios.*
