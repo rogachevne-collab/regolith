@@ -32,9 +32,9 @@ Actuator сам пушит позу (change + max 10 Hz). Industry пишет `d
 | HUD readers | `scripts/ui/hud_*.gd` (keys from card flatten; cargo HUD → 2b) |
 | Kernel test | `scripts/test_interaction_index.gd` / `scenes/test_interaction_index.tscn` |
 
-Phase 1–2c landed: index + card + thin Query; industry writes `display_*`
-on tick; actuators push DisplayPose (≤ `DISPLAY_POSE_HZ`, stop/status flush).
-Aim/card only read. K-terminal full snapshot → Phase 3 dirty-signature.
+Phase 1–3 landed: index + card + thin Query; industry `display_*`;
+actuator DisplayPose push; HUD/terminal dirty-signature (K open skips full
+snapshot/list rebuild while topology idle; audit ≤1 Hz).
 
 ## Triage
 
@@ -45,7 +45,7 @@ Aim/card only read. K-terminal full snapshot → Phase 3 dirty-signature.
 | Aim в head поршня «нет actuator» / кривая поза | dual-endpoint `driven_joint` + DisplayPose push |
 | После load кривые joint/поза | `clear_interaction_index` на restore |
 | Лаг только на processor/fabricator | industry `display_*` writer на тике, не graph в card |
-| K-пульт открыт → FPS падает | `control_terminal_snapshot` / Phase 3, не aim card |
+| K-пульт открыт → FPS падает | `hud_control_terminal` dirty-signature / full audit; не aim card |
 
 ## Запреты на aim path
 

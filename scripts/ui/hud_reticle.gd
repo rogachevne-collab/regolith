@@ -10,6 +10,8 @@ var _reticle: ColorRect
 var _reticle_mat: ShaderMaterial
 var _tline: Label
 var _last_color := Color(1, 1, 1, 1)
+var _last_summary := ""
+var _last_summary_key := ""
 
 
 func setup(ctx: Dictionary) -> void:
@@ -68,8 +70,27 @@ func _process(_delta: float) -> void:
 	if color != _last_color:
 		_reticle_mat.set_shader_parameter("color", color)
 		_last_color = color
-	_tline.text = _target_summary(hit)
+	var summary_key := _summary_key(hit)
+	if summary_key != _last_summary_key:
+		_last_summary_key = summary_key
+		_last_summary = _target_summary(hit)
+	_tline.text = _last_summary
 	_tline.visible = not _tline.text.is_empty()
+
+
+func _summary_key(hit: InteractionHit) -> String:
+	if not hit.valid:
+		return ""
+	if hit.target_kind != InteractionHit.KIND_SIMULATION_ELEMENT:
+		return str(hit.target_kind)
+	var meta := hit.metadata
+	return "%s|%s|%s|%s|%s" % [
+		str(meta.get("element_id", 0)),
+		str(meta.get("archetype_id", "")),
+		str(meta.get("status_reason", "")),
+		str(meta.get("actuator_status", "")),
+		str(meta.get("missing_input_resource_id", "")),
+	]
 
 
 func _target_summary(hit: InteractionHit) -> String:

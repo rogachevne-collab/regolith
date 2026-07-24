@@ -178,9 +178,10 @@ Player-built ровер расширяет `control_seat` на simulation elemen
 
 ## Interaction Read-Model
 
-Статус: контракт внедрения. Phase 1–2c в коде (index, thin Query/card,
-industry `display_*`, actuator DisplayPose push+Hz). Phase 3 — HUD/terminal
-dirty-signature. Этот раздел — единственный источник правды по ownership и bans.
+Статус: контракт внедрения. Phase 1–3 в коде (index, thin Query/card,
+industry `display_*`, actuator DisplayPose push+Hz, HUD/terminal
+dirty-signature). Phase 4 — cleanup/docs. Этот раздел — единственный
+источник правды по ownership и bans.
 
 ### Зачем
 

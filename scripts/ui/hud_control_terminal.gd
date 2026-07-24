@@ -169,7 +169,15 @@ var _open := false
 
 ## Обновление живых значений — 10 Гц (окно модальное, чаще не нужно).
 const REFRESH_S := 0.1
+## Полный snapshot/list audit: ловит аварии без topology bump (Phase 3).
+const FULL_AUDIT_S := 1.0
 var _refresh_left := 0.0
+var _full_audit_left := 0.0
+## Dirty-signature: не пересобирать список/аварии и не гонять полный snap зря.
+var _last_structure_key := ""
+var _last_structure_sig := ""
+var _last_live_sig := ""
+var _last_bar_sig := ""
 var _interact_release_latch := false
 var _list_box: VBoxContainer
 var _list_scroll: ScrollContainer
@@ -364,6 +372,10 @@ func open() -> void:
 	if not seated:
 		_target_assembly = 0
 	_refresh_left = 0.0
+	_full_audit_left = 0.0
+	_last_structure_key = ""
+	_last_structure_sig = ""
+	_last_live_sig = ""
 	_apply_open_state()
 	_refresh()
 
@@ -373,6 +385,9 @@ func close() -> void:
 		return
 	_open = false
 	_release_holds()
+	_last_structure_key = ""
+	_last_structure_sig = ""
+	_last_live_sig = ""
 	_apply_open_state()
 	UIWindowStack.remove(self)
 
@@ -420,6 +435,7 @@ func _process(delta: float) -> void:
 			_fault_text = ""
 			_update_fault_cell()
 	_refresh_left = maxf(_refresh_left - delta, 0.0)
+	_full_audit_left = maxf(_full_audit_left - delta, 0.0)
 	if _refresh_left > 0.0:
 		return
 	_refresh_left = REFRESH_S
@@ -440,37 +456,70 @@ func _refresh() -> void:
 	# снапшот (хост + привязки), а не полный обход сборки/тревог/энергоблока на
 	# ~16 мс. Полный снапшот строим лишь когда окно открыто и его видно.
 	if not _open:
-		var bar_snap: Dictionary = _gateway.call(
-			"control_terminal_bar_snapshot",
-			_target_assembly,
-			_aimed_element_id()
-		)
-		if not bool(bar_snap.get("valid", false)):
-			_set_target_assembly(0)
-			_apply_bar_snapshot(0, [])
-			return
-		if _target_assembly <= 0:
-			_set_target_assembly(int(bar_snap.get("assembly_id", 0)))
-		var closed_bar: Dictionary = bar_snap.get("action_bar", {})
-		_apply_bar_snapshot(
-			int(bar_snap.get("control_seat_element_id", 0)),
-			closed_bar.get("pages", [])
-		)
+		_refresh_bar_closed()
 		return
+	_refresh_open()
+
+
+func _refresh_bar_closed() -> void:
+	if not _gateway.has_method("control_terminal_bar_snapshot"):
+		return
+	var bar_snap: Dictionary = _gateway.call(
+		"control_terminal_bar_snapshot",
+		_target_assembly,
+		_aimed_element_id()
+	)
+	if not bool(bar_snap.get("valid", false)):
+		_set_target_assembly(0)
+		_apply_bar_snapshot(0, [])
+		_last_bar_sig = ""
+		return
+	if _target_assembly <= 0:
+		_set_target_assembly(int(bar_snap.get("assembly_id", 0)))
+	var host_id := int(bar_snap.get("control_seat_element_id", 0))
+	var closed_bar: Dictionary = bar_snap.get("action_bar", {})
+	var pages: Array = closed_bar.get("pages", [])
+	var bar_sig := "%d|%d" % [host_id, hash(pages)]
+	if bar_sig == _last_bar_sig:
+		return
+	_last_bar_sig = bar_sig
+	_apply_bar_snapshot(host_id, pages)
+
+
+## Phase 3: полный snapshot+list rebuild только при structural dirty / audit;
+## иначе — O(1) live выбранного узла + power.
+func _refresh_open() -> void:
+	var world: SimulationWorld = null
+	if _gateway.has_method("get_world"):
+		world = _gateway.call("get_world") as SimulationWorld
+	var assembly_id := _target_assembly
+	if assembly_id <= 0:
+		assembly_id = _assembly_id_from_aim()
+	var structure_key := _open_structure_key(world, assembly_id)
+	var need_full := (
+		structure_key != _last_structure_key
+		or _full_audit_left <= 0.0
+		or _nodes.is_empty()
+	)
+	if not need_full:
+		_refresh_open_live_only(world, assembly_id)
+		return
+	_full_audit_left = FULL_AUDIT_S
+	_last_structure_key = structure_key
 	var snap: Dictionary = _gateway.call(
 		"control_terminal_snapshot",
 		_target_assembly,
 		_aimed_element_id()
 	)
 	if not bool(snap.get("valid", false)):
-		# Молча оставлять на экране mock-данные нельзя: пульт врал бы живыми на
-		# вид показаниями несуществующей техники.
 		_set_target_assembly(0)
 		_apply_bar_snapshot(0, [])
-		if _open:
-			_fill_unit(snap)
-			_fill_nodes([])
-			_fill_alarms([])
+		_fill_unit(snap)
+		_fill_nodes([])
+		_fill_alarms([])
+		_last_structure_sig = ""
+		_last_live_sig = ""
+		_last_structure_key = ""
 		return
 	if _target_assembly <= 0:
 		_set_target_assembly(int(snap.get("assembly_id", 0)))
@@ -479,10 +528,176 @@ func _refresh() -> void:
 		int(snap.get("control_seat_element_id", 0)),
 		bar.get("pages", [])
 	)
-	if _open:
-		_fill_unit(snap)
-		_fill_nodes(snap.get("nodes", []))
-		_fill_alarms(snap.get("alarms", []))
+	_fill_unit(snap)
+	var nodes: Array = snap.get("nodes", [])
+	var alarms: Array = snap.get("alarms", [])
+	var structure_sig := _structure_sig_from_lists(nodes, alarms)
+	var live_sig := _live_sig_from_snap(snap, nodes)
+	if structure_sig != _last_structure_sig:
+		_fill_nodes(nodes)
+		_fill_alarms(alarms)
+		_last_structure_sig = structure_sig
+	else:
+		# Список тот же — только данные + фейсплейт при live change.
+		_nodes = nodes
+		if live_sig != _last_live_sig:
+			_fill_faceplate()
+	_last_live_sig = live_sig
+
+
+func _refresh_open_live_only(world: SimulationWorld, assembly_id: int) -> void:
+	if world == null or assembly_id <= 0:
+		return
+	var power := VehiclePowerSnapshotBuilder.build(world, assembly_id)
+	_fill_unit({
+		"valid": true,
+		"assembly_id": assembly_id,
+		"element_count": (
+			world.get_assembly_raw(assembly_id).element_ids.size()
+			if world.get_assembly_raw(assembly_id) != null
+			else 0
+		),
+		"power": power,
+	})
+	if _selected_element_id <= 0:
+		return
+	if not _patch_selected_node_live(world):
+		return
+	var live_sig := _live_sig_from_node(_selected_node(), power)
+	if live_sig == _last_live_sig:
+		return
+	_last_live_sig = live_sig
+	_fill_faceplate()
+
+
+func _open_structure_key(world: SimulationWorld, assembly_id: int) -> String:
+	var topo := 0
+	if world != null and assembly_id > 0:
+		var assembly := world.get_assembly_raw(assembly_id)
+		if assembly != null:
+			topo = assembly.topology_revision
+	return "%d|%d|%d|%s|%s" % [
+		assembly_id,
+		topo,
+		_host_element_id,
+		_filter,
+		_search,
+	]
+
+
+func _assembly_id_from_aim() -> int:
+	var hint := _aimed_element_id()
+	if hint <= 0 or _gateway == null or not _gateway.has_method("get_world"):
+		return 0
+	var world: SimulationWorld = _gateway.call("get_world") as SimulationWorld
+	if world == null:
+		return 0
+	var element := world.get_element(hint)
+	return element.assembly_id if element != null else 0
+
+
+func _structure_sig_from_lists(nodes: Array, alarms: Array) -> String:
+	var parts: PackedStringArray = PackedStringArray()
+	for node_variant: Variant in nodes:
+		if not node_variant is Dictionary:
+			continue
+		var node: Dictionary = node_variant
+		parts.append(
+			"%d:%s:%s:%s" % [
+				int(node.get("element_id", 0)),
+				str(node.get("archetype_id", "")),
+				str(node.get("severity", "")),
+				str(node.get("status", "")),
+			]
+		)
+	parts.append("a%d" % alarms.size())
+	for alarm_variant: Variant in alarms:
+		if not alarm_variant is Dictionary:
+			continue
+		var alarm: Dictionary = alarm_variant
+		parts.append(
+			"A%d:%s" % [
+				int(alarm.get("element_id", 0)),
+				str(alarm.get("status", "")),
+			]
+		)
+	return "|".join(parts)
+
+
+func _live_sig_from_snap(snap: Dictionary, nodes: Array) -> String:
+	var power: Dictionary = snap.get("power", {})
+	var selected: Dictionary = {}
+	for node_variant: Variant in nodes:
+		if not node_variant is Dictionary:
+			continue
+		var node: Dictionary = node_variant
+		if int(node.get("element_id", -1)) == _selected_element_id:
+			selected = node
+			break
+	return _live_sig_from_node(selected, power)
+
+
+func _live_sig_from_node(node: Dictionary, power: Dictionary) -> String:
+	var detail: Dictionary = node.get("detail", {}) if not node.is_empty() else {}
+	return "%d|%s|%.4f|%s|%.3f|%.3f|%s" % [
+		_selected_element_id,
+		str(node.get("status", "")),
+		float(node.get("value", 0.0)),
+		str(detail.get("enabled", "")),
+		float(power.get("demand_w", 0.0)),
+		float(power.get("battery_fraction", 0.0)),
+		str(power.get("powered", "")),
+	]
+
+
+func _patch_selected_node_live(world: SimulationWorld) -> bool:
+	var element := world.get_element(_selected_element_id)
+	if element == null:
+		return false
+	var card := world.get_interaction_card(_selected_element_id)
+	if card == null:
+		return false
+	for i: int in range(_nodes.size()):
+		if not _nodes[i] is Dictionary:
+			continue
+		var node: Dictionary = _nodes[i]
+		if int(node.get("element_id", -1)) != _selected_element_id:
+			continue
+		node["status"] = card.keys.get(
+			"actuator_status",
+			card.keys.get("status_reason", node.get("status", &"ok"))
+		)
+		node["severity"] = (
+			"ok"
+			if StringName(node["status"]) in [&"ok", &"idle", &"standby", &"moving"]
+			else str(node.get("severity", "warn"))
+		)
+		if card.keys.has("piston_observed_position_m"):
+			node["value"] = float(card.keys["piston_observed_position_m"])
+		elif card.keys.has("rotor_observed_angle_rad"):
+			node["value"] = float(card.keys["rotor_observed_angle_rad"])
+		elif card.keys.has("hinge_observed_angle_rad"):
+			node["value"] = float(card.keys["hinge_observed_angle_rad"])
+		var detail: Dictionary = node.get("detail", {})
+		if detail is Dictionary:
+			if card.keys.has("piston_motor_enabled"):
+				detail["enabled"] = bool(card.keys["piston_motor_enabled"])
+			elif card.keys.has("rotor_motor_enabled"):
+				detail["enabled"] = bool(card.keys["rotor_motor_enabled"])
+			elif card.keys.has("hinge_motor_enabled"):
+				detail["enabled"] = bool(card.keys["hinge_motor_enabled"])
+			var joint_id := int(node.get("joint_id", 0))
+			if joint_id > 0:
+				var joint := world.get_joint(joint_id)
+				if joint != null and joint.motor != null:
+					detail["observed"] = joint.motor.observed_position_m
+					detail["observed_velocity"] = joint.motor.observed_velocity_mps
+					detail["target_position_m"] = joint.motor.target_position_m
+					detail["power_draw_w"] = joint.motor.power_draw_w
+			node["detail"] = detail
+		_nodes[i] = node
+		return true
+	return false
 
 
 # ---------- компактная лента (hud_compact_action_bar.gd) ----------
@@ -542,6 +757,10 @@ func _set_target_assembly(assembly_id: int) -> void:
 	_selected_element_id = 0
 	_cancel_rename()
 	_page = 0
+	_last_structure_key = ""
+	_last_structure_sig = ""
+	_last_live_sig = ""
+	_full_audit_left = 0.0
 	_fill_pages()
 	_fill_slots()
 
@@ -1422,6 +1641,7 @@ func select_element(element_id: int) -> void:
 	if element_id == _selected_element_id:
 		return
 	_selected_element_id = element_id
+	_last_live_sig = ""
 	_cancel_rename()
 	_rebuild_list()
 

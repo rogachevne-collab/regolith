@@ -45,6 +45,8 @@ var _machine_progress_mat: ShaderMaterial
 var _machine_progress_value: Label
 var _max_integrity_cache: Dictionary = {}
 var _last_store_element_id := -1
+## Phase 3: skip string/theme churn when aim card fields unchanged.
+var _last_panel_sig := ""
 var _panel_overlay: ColorRect
 var _panel_overlay_mat: ShaderMaterial
 
@@ -306,13 +308,28 @@ func _process(_delta: float) -> void:
 		return
 	if HudTokens.modal_window_open(self):
 		_panel.visible = false
+		_last_panel_sig = ""
 		return
 	var hit := _query.current_hit
 	if not hit.valid or hit.target_kind != InteractionHit.KIND_SIMULATION_ELEMENT:
 		_panel.visible = false
+		_last_panel_sig = ""
 		return
 	_panel.visible = true
 	var meta := hit.metadata
+	var panel_sig := _panel_sig(hit, meta)
+	# Distance updates every frame while walking; keep it live even when gated.
+	_distance.text = "%.1f М" % hit.distance
+	if panel_sig == _last_panel_sig:
+		# Actuator/machine blocks still need live pose/tune while aimed.
+		if HudActuatorTuneUtil.is_actuator_meta(meta):
+			_refresh_actuator_info(hit, meta, StringName(meta.get("status_reason", &"ok")))
+		elif str(meta.get("archetype_id", "")) in ["processor", "fabricator", "electrolyzer"]:
+			_refresh_machine_info(str(meta.get("archetype_id", "")), meta, hit)
+		elif str(meta.get("archetype_id", "")) == "cargo_store":
+			_refresh_store_view("cargo_store", meta)
+		return
+	_last_panel_sig = panel_sig
 	var archetype_id := str(meta.get("archetype_id", ""))
 	var status := StringName(meta.get("status_reason", &"element_incomplete"))
 	var status_color := HudTokens.color_for_status(status)
@@ -323,7 +340,6 @@ func _process(_delta: float) -> void:
 		int(meta.get("element_id", 0)) % 100,
 		_index_letter(int(meta.get("element_id", 0))),
 	]
-	_distance.text = "%.1f М" % hit.distance
 	_name_val.text = _gateway.archetype_display_name(archetype_id).to_upper()
 
 	_status_val.text = _status_summary(meta, status)
@@ -337,6 +353,20 @@ func _process(_delta: float) -> void:
 		return
 	_actuator_tune_box.visible = false
 	_refresh_machine_info(archetype_id, meta, hit)
+
+
+func _panel_sig(hit: InteractionHit, meta: Dictionary) -> String:
+	return "%d|%d|%s|%s|%s|%s|%.3f|%s|%s" % [
+		int(meta.get("element_id", 0)),
+		int(meta.get("assembly_id", 0)),
+		str(meta.get("archetype_id", "")),
+		str(meta.get("status_reason", "")),
+		str(meta.get("actuator_status", "")),
+		str(meta.get("missing_input_resource_id", "")),
+		float(meta.get("integrity", 0.0)),
+		str(meta.get("machine_enabled", "")),
+		str(hit.target_kind),
+	]
 
 
 func _status_summary(meta: Dictionary, status: StringName) -> String:
