@@ -18,6 +18,8 @@ func _run() -> void:
 		return
 	if not _test_cargo_connectivity_and_contention():
 		return
+	if not _test_broken_seat_evicts_occupant():
+		return
 	print("OXYGEN: PASS")
 	get_tree().quit(0)
 
@@ -324,6 +326,47 @@ func _test_cargo_connectivity_and_contention() -> bool:
 	) != 1:
 		return _fail("direct cockpit cargo connection was not discovered")
 	_free_world(direct_world)
+	return true
+
+
+## Broken / removed ControlSeat must emit seat_occupant_evicted and clear
+## occupancy — silent prune was the coop "stuck in wreck" trap.
+func _test_broken_seat_evicts_occupant() -> bool:
+	var world := _make_world()
+	var spawned := _spawn(world, [
+		_placement("seat", Slice01Archetypes.cockpit(), Vector3i.ZERO),
+	])
+	if not spawned.is_ok():
+		return _fail("seat fixture did not spawn for eviction test")
+	var seat_id := int(spawned.data["local_to_element_id"]["seat"])
+	if not world.register_player_seat_context("driver", seat_id):
+		return _fail("register seat context failed")
+	var seen: Array = []
+	world.seat_occupant_evicted.connect(
+		func(player_id: String, element_id: int, assembly_id: int) -> void:
+			seen.append({
+				"player_id": player_id,
+				"element_id": element_id,
+				"assembly_id": assembly_id,
+			})
+	)
+	var seat := world.get_element(seat_id)
+	seat.integrity = 0.0
+	seat.sync_build_progress_from_integrity()
+	if seat.is_operational():
+		return _fail("seat should be non-operational after integrity zero")
+	world.prune_seat_contexts()
+	if world.get_player_seat_element_id("driver") != 0:
+		return _fail("prune must clear occupancy for a broken seat")
+	if seen.is_empty():
+		return _fail("prune must emit seat_occupant_evicted")
+	if str(seen[0].get("player_id", "")) != "driver":
+		return _fail("eviction signal player_id mismatch")
+	if int(seen[0].get("element_id", 0)) != seat_id:
+		return _fail("eviction signal seat_element_id mismatch")
+	if int(seen[0].get("assembly_id", 0)) <= 0:
+		return _fail("eviction signal must carry assembly_id")
+	_free_world(world)
 	return true
 
 

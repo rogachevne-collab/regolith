@@ -23,6 +23,7 @@ func _run_tests() -> void:
 		_test_parking_brake_spares_flight,
 		_test_parking_brake_holds_when_wheels_off,
 		_test_modal_zero_frame,
+		_test_baked_drive_steer_axes,
 	]
 	for test: Callable in tests:
 		if not bool(test.call()):
@@ -247,4 +248,23 @@ func _test_modal_zero_frame() -> bool:
 		and frame.gyros_route_enabled
 	):
 		return _fail("modal zero_frame keeps route gates from policy")
+	return true
+
+
+## Coop stream bakes drive/steer via Input.get_axis; prefer those over move_*.
+func _test_baked_drive_steer_axes() -> bool:
+	var frame := SeatInputRouter.route(
+		_raw({
+			"move_forward": 0.0,
+			"move_left": 0.0,
+			"drive": 0.75,
+			"steer": -0.5,
+		}),
+		_policy(),
+		false
+	)
+	if absf(frame.drive_command - 0.75) > 0.001:
+		return _fail("baked drive axis ignored: %s" % frame.drive_command)
+	if absf(frame.steering_command - (-0.5)) > 0.001:
+		return _fail("baked steer axis ignored: %s" % frame.steering_command)
 	return true

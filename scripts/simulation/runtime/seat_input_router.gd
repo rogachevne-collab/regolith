@@ -35,6 +35,11 @@ static func route(
 	var look_y := clampf(float(raw.get("look_y", 0.0)), -1.0, 1.0)
 	var roll_left := clampf(float(raw.get("roll_left", 0.0)), 0.0, 1.0)
 	var roll_right := clampf(float(raw.get("roll_right", 0.0)), 0.0, 1.0)
+	# Optional pre-baked axes (coop stream): same sign as get_axis below.
+	var has_drive_axis := raw.has("drive")
+	var has_steer_axis := raw.has("steer")
+	var drive_axis := clampf(float(raw.get("drive", 0.0)), -1.0, 1.0)
+	var steer_axis := clampf(float(raw.get("steer", 0.0)), -1.0, 1.0)
 
 	# Latched assembly-wide parking brake is a safety hold: always publish
 	# brake=1 / drive=steer=0 even when Control Wheels is OFF (pilot channels
@@ -44,9 +49,13 @@ static func route(
 		frame.steering_command = 0.0
 		frame.brake_command = 1.0
 	elif policy.control_wheels:
-		frame.drive_command = clampf(forward - back, -1.0, 1.0)
-		# Match legacy Input.get_axis(move_right, move_left).
-		frame.steering_command = clampf(left - right, -1.0, 1.0)
+		# Match Input.get_axis(move_back, move_forward) / (move_right, move_left).
+		frame.drive_command = (
+			drive_axis if has_drive_axis else clampf(forward - back, -1.0, 1.0)
+		)
+		frame.steering_command = (
+			steer_axis if has_steer_axis else clampf(left - right, -1.0, 1.0)
+		)
 		frame.brake_command = space
 	if policy.control_thrusters:
 		# Seat forward is body −Z: move_forward → −z translate.

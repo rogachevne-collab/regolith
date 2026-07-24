@@ -3901,6 +3901,16 @@ func _restore_evacuated_drivers() -> void:
 			continue
 		if player.has_method("enter_vehicle"):
 			player.call("enter_vehicle", body, seat_local)
+		# Coop replica seat: enter_vehicle turns interpolation ON (host path);
+		# re-assert OFF so the camera does not smear on streamed kinematic bodies.
+		if (
+			player is Node3D
+			and (player as Node3D).has_meta("coop_replica_seat")
+		):
+			(player as Node3D).physics_interpolation_mode = (
+				Node.PHYSICS_INTERPOLATION_MODE_OFF
+			)
+			(player as Node3D).reset_physics_interpolation()
 
 func _remove_element_records_for_assembly(
 	assembly_id: int

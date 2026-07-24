@@ -28,6 +28,13 @@ signal structural_command_completed(
 signal player_inventory_changed()
 ## Emitted when any channel of one player's suit actually moved.
 signal suit_changed(player_id: String)
+## Occupancy dropped because the seat is gone / broken. Listeners must finish
+## presentation eject (local attach / remote RPC); the map entry is already gone.
+signal seat_occupant_evicted(
+	player_id: String,
+	seat_element_id: int,
+	assembly_id: int
+)
 
 ## COOP-HOST-V0 stage 2: host worlds simulate; replicas only mirror the host.
 ## When false, local mutation entry points refuse with push_error (invariant
@@ -315,6 +322,18 @@ func get_player_seat_element_id(player_id: String) -> int:
 	return int(_player_seat_contexts.get(player_id, 0))
 
 
+## Occupancy is also the oxygen service's "which assembly is this player in"
+## record, which several players may share; the one-driver-per-seat rule is
+## enforced by the seat command, not by register_player_seat_context.
+func is_seat_occupied(seat_element_id: int) -> bool:
+	if seat_element_id <= 0:
+		return false
+	for player_id: String in _player_seat_contexts.keys():
+		if int(_player_seat_contexts[player_id]) == seat_element_id:
+			return true
+	return false
+
+
 func list_seat_context_player_ids() -> Array[String]:
 	var ids: Array[String] = []
 	for player_id: String in _player_seat_contexts.keys():
@@ -323,6 +342,8 @@ func list_seat_context_player_ids() -> Array[String]:
 	return ids
 
 
+## Drop occupancy for seats that are gone / non-operational and notify listeners
+## (gateway force-ejects the driver — silent erase alone traps seated players).
 func prune_seat_contexts() -> void:
 	for player_id: String in list_seat_context_player_ids():
 		var seat_id := get_player_seat_element_id(player_id)
@@ -333,7 +354,7 @@ func prune_seat_contexts() -> void:
 			or seat.get_archetype() == null
 			or not seat.get_archetype().roles.has("ControlSeat")
 		):
-			_player_seat_contexts.erase(player_id)
+			_evict_seat_occupant(player_id, seat_id, seat)
 
 
 func apply_oxygen_refill(command: OxygenRefillCommand) -> Dictionary:
@@ -843,9 +864,25 @@ func clear_element_instance_state(element_id: int) -> void:
 	_wheel_runtime.erase(element_id)
 	_action_bars.erase(element_id)
 	_seat_controls.erase(element_id)
+	# Evict before erase so the signal still carries assembly_id from the seat
+	# row (element may already be removed from _elements by topology).
 	for player_id: String in list_seat_context_player_ids():
 		if get_player_seat_element_id(player_id) == element_id:
-			_player_seat_contexts.erase(player_id)
+			_evict_seat_occupant(player_id, element_id, get_element(element_id))
+
+
+## Remove one occupancy row and notify. `seat` may be null when the element
+## was already erased from the world map.
+func _evict_seat_occupant(
+	player_id: String,
+	seat_element_id: int,
+	seat: SimulationElement
+) -> void:
+	if player_id.is_empty() or not _player_seat_contexts.has(player_id):
+		return
+	var assembly_id := seat.assembly_id if seat != null else 0
+	_player_seat_contexts.erase(player_id)
+	seat_occupant_evicted.emit(player_id, seat_element_id, assembly_id)
 
 
 ## @deprecated Alias — use clear_element_instance_state.
@@ -1904,8 +1941,19 @@ func begin_structural_batch() -> void:
 
 func end_structural_batch() -> void:
 	_structural_batch_depth = maxi(_structural_batch_depth - 1, 0)
-	if _structural_batch_depth == 0 and _deferred_derived_recompute:
+	if _structural_batch_depth > 0:
+		return
+	var had_mutations := _deferred_derived_recompute
+	if had_mutations:
 		_recompute_derived_now()
+		# Place/weld inside the batch suppress structural_event (see
+		# _emit_structural_event). Emit one commit so host-side listeners —
+		# notably CoopSession snapshot dirty — see the mutation. Compose
+		# goes through apply_structural_command_now, not WorldCommandGateway,
+		# so command_completed alone cannot mark the world dirty.
+		# Kind is NOT world_restored: that one is ignored on purpose to avoid
+		# restore → broadcast → restore loops on clients.
+		_emit_structural_event({"kind": &"structural_batch_committed"})
 
 
 func _emit_structural_event(event: Dictionary) -> void:
