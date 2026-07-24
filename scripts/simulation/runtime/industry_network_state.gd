@@ -156,6 +156,16 @@ func is_link_active(world: SimulationWorld, link_id: int) -> bool:
 	return IndustryElectricPortUtil.link_still_valid(world, get_link(link_id))
 
 
+## Последний построенный граф БЕЗ ревалидации мира. ensure_graph_current
+## прогоняет prune_dangling_links + active_links по всем линкам мира на каждый
+## вызов (до кэш-проверки) — на большой базе это ~10 мс. Настоящий индустри-тик
+## зовёт ensure_graph_current каждый тик и держит _graph свежим; поверхностям
+## только для чтения (HUD-снапшоты, 5–10 Гц) достаточно этого кэша, максимум на
+## один тик устаревшего.
+func cached_graph() -> IndustryElectricGraph:
+	return _graph
+
+
 func ensure_graph_current(world: SimulationWorld) -> IndustryElectricGraph:
 	prune_dangling_links(world)
 	# Cross-assembly endpoints can move and endpoint elements can change state

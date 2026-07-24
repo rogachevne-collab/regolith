@@ -18,9 +18,10 @@ static func build(world: SimulationWorld, assembly_id: int) -> Dictionary:
 	if assembly == null:
 		return failure(&"invalid_assembly")
 
-	WheelSimulationService.sync_power_demand(world)
-	ActuatorSimulationService.sync_power_demand(world)
-	ThrusterSimulationService.sync_power_demand(world)
+	# Спрос НЕ пересчитываем здесь: dynamic_power_w держит свежим индустри-тик
+	# (IndustryElectricBudget.apply_tick, 4 Гц). Панель — читалка, ей достаточно
+	# последнего значения; свой пересчёт (3 прохода по элементам/джойнтам) стоил
+	# ~5 мс на снапшот и был чистым дублированием тика.
 
 	var battery_kwh := 0.0
 	var battery_max_kwh := 0.0
@@ -111,7 +112,10 @@ static func _resolve_assembly_network(
 	world: SimulationWorld,
 	assembly: SimulationAssembly
 ) -> Dictionary:
-	var graph := world.get_industry_network().ensure_graph_current(world)
+	# Читаем последний граф без ревалидации всех линков мира (ensure_graph_current
+	# делал prune+validate по всему миру на каждый снапшот ≈10 мс). Индустри-тик
+	# держит его свежим; для HUD на 5 Гц кэш идеален.
+	var graph := world.get_industry_network().cached_graph()
 	var consumers: Array[SimulationElement] = []
 	for element_id: int in assembly.element_ids:
 		var element := world.get_element(element_id)
@@ -133,8 +137,26 @@ static func _resolve_assembly_network(
 			"power_reason": &"ok",
 		}
 
+	# Только компоненты, куда входят элементы ЭТОЙ сборки. Управляемый ровер
+	# самопитаем (своя батарея/распределитель), его потребители лежат в его же
+	# компоненте. Строить сеть по каждому компоненту мира (огромный электрограф
+	# базы) на каждый refresh стоило ~27 мс/кадр сидя — это и была вторая
+	# половина просадки «в кабине». Компромисс: если ровер запаркован в радиусе
+	# распределителя базы и питается от неё по воздуху, HUD покажет только своё
+	# питание. Настоящий энергобаланс (IndustryElectricBudget.apply_tick) считает
+	# мир целиком и не затронут.
+	var assembly_element_set: Dictionary = {}
+	for element_id: int in assembly.element_ids:
+		assembly_element_set[element_id] = true
 	var supplied_networks: Array[Dictionary] = []
 	for component: Array in graph.components():
+		var touches_assembly := false
+		for element_id_variant: Variant in component:
+			if assembly_element_set.has(int(element_id_variant)):
+				touches_assembly = true
+				break
+		if not touches_assembly:
+			continue
 		var component_network := IndustryElectricBudget.build_component_network(
 			world,
 			component

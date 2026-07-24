@@ -11,6 +11,7 @@ func _run_tests() -> void:
 		_test_seed_once_no_refill_after_drain,
 		_test_drive_demand_drains_battery,
 		_test_snapshot_eta_matches_drain,
+		_test_drill_and_cable_rover_snapshot,
 		_test_format_eta,
 	]
 	for test: Callable in tests:
@@ -148,6 +149,69 @@ func _test_snapshot_eta_matches_drain() -> bool:
 			"idle demand (%.1f) must be below drive demand (%.1f)"
 			% [idle_demand, demand_w]
 		)
+	session.queue_free()
+	return true
+
+
+## Реальный ровер несёт буры (потребители-инструменты) И провод
+## battery→distributor. Дефолтный демо-ровер их не имеет, поэтому этот тест
+## гоняет снапшот через изменённый билдер именно на этой топологии: cached_graph
+## + сеть только по компонентам сборки должны корректно признать ровер запитанным
+## своим кабелем и учесть спрос при живом линке и множестве потребителей.
+func _test_drill_and_cable_rover_snapshot() -> bool:
+	var session := _boot_demo_session()
+	for archetype: ElementArchetype in Slice01Archetypes.load_all_required():
+		session.world.get_archetype_registry().register(archetype)
+	for archetype: ElementArchetype in Slice01Archetypes.load_actuator_archetypes():
+		session.world.get_archetype_registry().register(archetype)
+	var world := session.world
+	var result: Dictionary = RoverComposer.spawn_on_terrain_from_phrase(
+		session,
+		Vector3(8.0, 0.0, 0.0),
+		"колбаса на 12 колёсах, кокпит в центре, питание сбоку, два бура на морде"
+	)
+	if not bool(result.get("ok", false)):
+		session.queue_free()
+		return _fail(
+			"drill rover spawn failed: %s %s"
+			% [result.get("error", ""), result.get("failures", [])]
+		)
+	var assembly_id := int(result["assembly_id"])
+
+	var drill_count := 0
+	for element: SimulationElement in world.list_elements():
+		if element.assembly_id != assembly_id:
+			continue
+		var arch := element.get_archetype()
+		if arch != null and arch.archetype_id == "stationary_drill":
+			drill_count += 1
+	if drill_count < 2:
+		session.queue_free()
+		return _fail("drill rover должен нести 2 бура, got %d" % drill_count)
+
+	var links := world.get_industry_network().list_links()
+	if links.is_empty():
+		session.queue_free()
+		return _fail("drill rover должен нести провод battery→distributor")
+
+	var locomotion := world.get_locomotion_controller(assembly_id)
+	locomotion.activate()
+	locomotion.set_parking_brake(false)
+	locomotion.set_drive_command(1.0)
+	IndustryElectricBudget.apply_tick(world, 0.25)
+	var snap := VehiclePowerSnapshotBuilder.build(world, assembly_id)
+	if not bool(snap.get("valid", false)):
+		session.queue_free()
+		return _fail("drill rover snapshot invalid: %s" % str(snap.get("reason", "?")))
+	if not bool(snap.get("powered", false)):
+		session.queue_free()
+		return _fail(
+			"drill rover должен быть запитан своим кабелем — cached_graph/скоуп "
+			+ "сети потеряли покрытие потребителей"
+		)
+	if float(snap.get("demand_w", 0.0)) <= 0.0:
+		session.queue_free()
+		return _fail("drill rover под газом должен иметь demand_w>0")
 	session.queue_free()
 	return true
 

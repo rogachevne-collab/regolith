@@ -7,7 +7,9 @@ const PANEL_SIZE := Vector2(252, 118)
 const BAR_LEN := 140.0
 const WARN_FRACTION := 0.5
 const CRIT_FRACTION := 0.25
-const REFRESH_S := 0.2
+## Батарея тянется часами, нагрузка меняется на нажатие газа — читалке хватает
+## 1 Гц. 5 Гц гоняли снапшот впустую (см. wheel-perf: «настроил и поехал»).
+const REFRESH_S := 1.0
 
 var _gateway: WorldCommandGateway
 var _player: Node
