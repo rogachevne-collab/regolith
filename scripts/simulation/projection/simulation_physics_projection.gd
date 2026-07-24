@@ -275,7 +275,9 @@ func align_body_motion(
 	return sync_body_motion_now(target_assembly_id)
 
 func _physics_process(delta: float) -> void:
-	if _world == null:
+	# Replica worlds (COOP-HOST-V0): no actuator ticks, no Jolt pose read-back
+	# — poses arrive over the network via sync_assembly_motion instead.
+	if _world == null or not _world.authoritative:
 		return
 	_tick_rotor_actuators(delta)
 	_tick_piston_actuators(delta)
@@ -1014,26 +1016,10 @@ func _project_assembly_single(
 			colliders_by_element[element_id] = []
 		colliders_by_element[element_id].append(collider)
 	var motion: AssemblyMotionState = seed_motion.duplicate_state()
-	if release_from_anchor:
-		motion.transform.origin += (
-			motion.transform.basis.y.normalized()
-			* ThrusterSimulationService.activation_clearance_m(
-				_world,
-				assembly_id
-			)
-		)
-		locomotion.mark_released_from_anchor()
-	if active_locomotive:
-		motion.frozen = false
-		motion.sleeping = false
-	elif anchored:
-		motion.frozen = true
-		motion.linear_velocity = Vector3.ZERO
-		motion.angular_velocity = Vector3.ZERO
-		motion.sleeping = true
-	elif _is_locomotive_assembly(assembly_id):
-		# Floating mobile: dynamic; wheels use parking_brake, flight uses thrust.
-		if not locomotion.has_released_from_anchor():
+	# Replica worlds skip the whole motion policy: snapshot motion is the truth
+	# verbatim, and mark_released_from_anchor would mutate serialized state.
+	if _world.authoritative:
+		if release_from_anchor:
 			motion.transform.origin += (
 				motion.transform.basis.y.normalized()
 				* ThrusterSimulationService.activation_clearance_m(
@@ -1042,26 +1028,45 @@ func _project_assembly_single(
 				)
 			)
 			locomotion.mark_released_from_anchor()
-		motion.frozen = false
-		motion.sleeping = false
-	else:
-		# By construction: not anchored (that is the branch above), and nothing
-		# aboard can move it — _is_locomotive_assembly, wheels or thrusters, just
-		# failed. Every thaw path in the game is gated on exactly that
-		# capability: driver input (_update_parking_freeze), seat entry
-		# (gateway._wake_rover_body), a dig nearby (wake_frozen_near). Carrying
-		# `frozen` forward here therefore parks a body with nobody holding the
-		# key — not a StaticBody, so the rest of the game reads it as loose, yet
-		# deaf to every force there is. That is how an anchored assembly already
-		# marked released_from_anchor ended up a permanent statue: rigid,
-		# immovable, impossible to so much as tug with a rope. Let Jolt sleep it
-		# instead; sleeping costs the same and it wakes on contact.
-		motion.frozen = false
-		if motion_override != null:
-			motion.sleeping = seed_motion.sleeping
-		if seed_motion.frozen:
-			# Thawed out of a park: left asleep, it would hang where it was.
+		if active_locomotive:
+			motion.frozen = false
 			motion.sleeping = false
+		elif anchored:
+			motion.frozen = true
+			motion.linear_velocity = Vector3.ZERO
+			motion.angular_velocity = Vector3.ZERO
+			motion.sleeping = true
+		elif _is_locomotive_assembly(assembly_id):
+			# Floating mobile: dynamic; wheels use parking_brake, flight uses thrust.
+			if not locomotion.has_released_from_anchor():
+				motion.transform.origin += (
+					motion.transform.basis.y.normalized()
+					* ThrusterSimulationService.activation_clearance_m(
+						_world,
+						assembly_id
+					)
+				)
+				locomotion.mark_released_from_anchor()
+			motion.frozen = false
+			motion.sleeping = false
+		else:
+			# By construction: not anchored (that is the branch above), and nothing
+			# aboard can move it — _is_locomotive_assembly, wheels or thrusters, just
+			# failed. Every thaw path in the game is gated on exactly that
+			# capability: driver input (_update_parking_freeze), seat entry
+			# (gateway._wake_rover_body), a dig nearby (wake_frozen_near). Carrying
+			# `frozen` forward here therefore parks a body with nobody holding the
+			# key — not a StaticBody, so the rest of the game reads it as loose, yet
+			# deaf to every force there is. That is how an anchored assembly already
+			# marked released_from_anchor ended up a permanent statue: rigid,
+			# immovable, impossible to so much as tug with a rope. Let Jolt sleep it
+			# instead; sleeping costs the same and it wakes on contact.
+			motion.frozen = false
+			if motion_override != null:
+				motion.sleeping = seed_motion.sleeping
+			if seed_motion.frozen:
+				# Thawed out of a park: left asleep, it would hang where it was.
+				motion.sleeping = false
 	if mounted == null:
 		add_child(body)
 		body.global_transform = motion.transform
@@ -1095,10 +1100,15 @@ func _project_assembly_single(
 			rigid.freeze = false if motion_override != null else motion.frozen
 		else:
 			rigid.freeze = motion.frozen
+		if not _world.authoritative:
+			# Replica bodies never simulate: the network sets their poses.
+			rigid.freeze_mode = RigidBody3D.FREEZE_MODE_KINEMATIC
+			rigid.freeze = true
 		if (
 			_impact_service != null
 			and mounted == null
 			and not anchored
+			and _world.authoritative
 		):
 			_impact_service.configure_impact_body(
 				rigid,
@@ -1147,7 +1157,9 @@ func _project_assembly_multibody(
 	var active_locomotive := _is_active_locomotive(assembly_id)
 	var locomotion := _world.get_locomotion_controller(assembly_id)
 	if (
-		active_locomotive
+		# Replica: snapshot motion verbatim, no serialized-state mutation.
+		_world.authoritative
+		and active_locomotive
 		and seed_motion.frozen
 		and _world.assembly_has_anchor(assembly_id)
 		and not locomotion.has_released_from_anchor()
@@ -1284,7 +1296,11 @@ func _project_assembly_multibody(
 				# drop piston forces); carriage keeps the signal-based mode.
 				# Wheel bodies are never impact bodies: rolling contact must
 				# not feed the damage pipeline.
-				if _impact_service != null and not is_wheel_group:
+				if (
+					_impact_service != null
+					and not is_wheel_group
+					and _world.authoritative
+				):
 					var impact_mode := (
 						ImpactResolverService.ImpactBodyMode.MONITOR_ONLY
 						if is_carriage
@@ -1293,6 +1309,10 @@ func _project_assembly_multibody(
 					_impact_service.configure_impact_body(rigid, impact_mode)
 				if not is_wheel_group:
 					_apply_locomotive_rigid_tuning(assembly_id, rigid)
+			if not _world.authoritative:
+				# Replica bodies never simulate: the network sets their poses.
+				rigid.freeze_mode = RigidBody3D.FREEZE_MODE_KINEMATIC
+				rigid.freeze = true
 		add_child(body)
 		_apply_collision_profile(assembly_id, body)
 		_apply_body_groups(assembly_id, body)
@@ -1310,7 +1330,12 @@ func _project_assembly_multibody(
 
 	var piston_records: Array[Dictionary] = []
 	var rotor_records: Array[Dictionary] = []
-	for spec_variant: Variant in compiled.get("driven_specs", []):
+	# Replica: no Jolt constraints between kinematic bodies — the network sets
+	# every group pose; joints would only add solver noise.
+	var driven_specs: Array = (
+		compiled.get("driven_specs", []) if _world.authoritative else []
+	)
+	for spec_variant: Variant in driven_specs:
 		if not spec_variant is Dictionary:
 			continue
 		var spec: Dictionary = spec_variant
@@ -1547,13 +1572,16 @@ func _project_assembly_multibody(
 		_rotor_constraints.erase(assembly_id)
 	else:
 		_rotor_constraints[assembly_id] = rotor_records
-	_wheel_constraints[assembly_id] = _build_wheel_constraints(
-		assembly_id,
-		wheel_groups,
-		groups_map
-	)
+	if _world.authoritative:
+		_wheel_constraints[assembly_id] = _build_wheel_constraints(
+			assembly_id,
+			wheel_groups,
+			groups_map
+		)
+	else:
+		_wheel_constraints.erase(assembly_id)
 	var motion: AssemblyMotionState = seed_motion.duplicate_state()
-	if _world.assembly_has_anchor(assembly_id):
+	if _world.authoritative and _world.assembly_has_anchor(assembly_id):
 		if not active_locomotive:
 			motion.frozen = true
 			motion.linear_velocity = Vector3.ZERO

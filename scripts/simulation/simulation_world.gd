@@ -29,6 +29,14 @@ signal player_inventory_changed()
 ## Emitted when any channel of one player's suit actually moved.
 signal suit_changed(player_id: String)
 
+## COOP-HOST-V0 stage 2: host worlds simulate; replicas only mirror the host.
+## When false, local mutation entry points refuse with push_error (invariant
+## C1). Sanctioned replica writes: restore_snapshot and
+## sync_assembly_motion / sync_assembly_body_group_motion(s) (network poses).
+## Not gated yet (stage 3, host-only callers today): world-loot mutators,
+## assign_player_hotbar_instance, set_resource_amount / ensure_* plumbing.
+@export var authoritative := true
+
 ## Monotonic world-wide topology counter: bumps on every structural mutation.
 ## Cheap staleness check for presentation-side caches (snap resolve reuse).
 var topology_generation := 0
@@ -229,6 +237,8 @@ func apply_suit_damage(
 	source: StringName = &"",
 	emit_change: bool = true
 ) -> bool:
+	if _refuse_replica_write(&"apply_suit_damage"):
+		return false
 	var suit := ensure_suit_state(player_id)
 	if not suit.apply_damage(amount, source):
 		return false
@@ -237,10 +247,14 @@ func apply_suit_damage(
 	return true
 
 func fill_suit_state(player_id: String) -> void:
+	if _refuse_replica_write(&"fill_suit_state"):
+		return
 	if ensure_suit_state(player_id).fill():
 		suit_changed.emit(player_id)
 
 func tick_suits(delta: float) -> void:
+	if _refuse_replica_write(&"tick_suits"):
+		return
 	for player_id: String in list_suit_state_ids():
 		var suit: SimulationSuitState = _suits[player_id]
 		if SuitLifeSupportService.tick_suit(self, player_id, suit, delta):
@@ -356,12 +370,16 @@ func get_cargo_adjacency_graph() -> Array[Dictionary]:
 	return ensure_cargo_graph_current().list_edges()
 
 func industry_tick(delta_s: float) -> void:
+	if _refuse_replica_write(&"industry_tick"):
+		return
 	if _industry_runner == null:
 		_industry_runner = IndustrySimulation.new()
 		(_industry_runner as IndustrySimulation).bind_world(self)
 	(_industry_runner as IndustrySimulation).tick(self, delta_s)
 
 func advance_industry_time(delta_s: float) -> void:
+	if _refuse_replica_write(&"advance_industry_time"):
+		return
 	_simulation_time_s += maxf(delta_s, 0.0)
 	_purge_expired_loot_piles()
 
@@ -446,6 +464,8 @@ func disconnect_network(
 	return apply_structural_command_now(command)
 
 func apply_transfer_resource(command: TransferResourceCommand) -> Dictionary:
+	if _refuse_replica_write(&"apply_transfer_resource"):
+		return {"reason": &"not_authoritative"}
 	var service := CargoTransferService.new()
 	var result := service.transfer_resource_command(self, command)
 	if StringName(result.get("reason", &"")) == &"ok":
@@ -455,6 +475,8 @@ func apply_transfer_resource(command: TransferResourceCommand) -> Dictionary:
 func apply_set_machine_enabled(
 	command: SetMachineEnabledCommand
 ) -> Dictionary:
+	if _refuse_replica_write(&"apply_set_machine_enabled"):
+		return {"reason": &"not_authoritative"}
 	if _industry_runner == null:
 		_industry_runner = IndustrySimulation.new()
 		(_industry_runner as IndustrySimulation).bind_world(self)
@@ -466,6 +488,8 @@ func apply_set_machine_enabled(
 ## `state_revision` элемента (как weld/damage/repair), поэтому пересчёт связности,
 ## compound collider и `Assembly.revision` не трогаются.
 func apply_set_element_name(command: SetElementNameCommand) -> Dictionary:
+	if _refuse_replica_write(&"apply_set_element_name"):
+		return {"reason": &"not_authoritative"}
 	if command == null or command.element_id <= 0:
 		return {"reason": &"invalid_target"}
 	var element := get_element(command.element_id)
@@ -494,6 +518,8 @@ func apply_set_element_name(command: SetElementNameCommand) -> Dictionary:
 func apply_configure_action_slot(
 	command: ConfigureActionSlotCommand
 ) -> Dictionary:
+	if _refuse_replica_write(&"apply_configure_action_slot"):
+		return {"reason": &"not_authoritative"}
 	if command == null or command.host_element_id <= 0:
 		return {"reason": &"invalid_target"}
 	var host := get_element(command.host_element_id)
@@ -527,6 +553,8 @@ func apply_configure_action_slot(
 func apply_configure_seat_controls(
 	command: ConfigureSeatControlsCommand
 ) -> Dictionary:
+	if _refuse_replica_write(&"apply_configure_seat_controls"):
+		return {"reason": &"not_authoritative"}
 	if command == null or command.seat_element_id <= 0:
 		return {"reason": &"invalid_target"}
 	var seat := get_element(command.seat_element_id)
@@ -555,21 +583,29 @@ func apply_configure_seat_controls(
 func apply_set_actuator_target(
 	command: SetActuatorTargetCommand
 ) -> Dictionary:
+	if _refuse_replica_write(&"apply_set_actuator_target"):
+		return {"reason": &"not_authoritative"}
 	return ActuatorSimulationService.apply_set_actuator_target(self, command)
 
 func apply_configure_actuator(
 	command: ConfigureActuatorCommand
 ) -> Dictionary:
+	if _refuse_replica_write(&"apply_configure_actuator"):
+		return {"reason": &"not_authoritative"}
 	return ActuatorSimulationService.apply_configure_actuator(self, command)
 
 func apply_configure_wheel(
 	command: ConfigureWheelCommand
 ) -> Dictionary:
+	if _refuse_replica_write(&"apply_configure_wheel"):
+		return {"reason": &"not_authoritative"}
 	return WheelSimulationService.apply_configure_wheel(self, command)
 
 func apply_configure_suspension(
 	command: ConfigureSuspensionCommand
 ) -> Dictionary:
+	if _refuse_replica_write(&"apply_configure_suspension"):
+		return {"reason": &"not_authoritative"}
 	return WheelSimulationService.apply_configure_suspension(self, command)
 
 func get_locomotion_controller(
@@ -820,6 +856,8 @@ func sync_actuator_observation(
 	ActuatorSimulationService.tick_joint(self, joint, 0.0)
 
 func tick_actuators(delta_s: float) -> void:
+	if _refuse_replica_write(&"tick_actuators"):
+		return
 	if delta_s <= 0.0:
 		return
 	# Iterate the dict in place. list_joints() sorts+allocates every rigid joint
@@ -832,12 +870,16 @@ func tick_actuators(delta_s: float) -> void:
 		ActuatorSimulationService.tick_joint(self, joint, delta_s)
 
 func apply_enqueue_recipe(command: EnqueueRecipeCommand) -> Dictionary:
+	if _refuse_replica_write(&"apply_enqueue_recipe"):
+		return {"reason": &"not_authoritative"}
 	if _industry_runner == null:
 		_industry_runner = IndustrySimulation.new()
 		(_industry_runner as IndustrySimulation).bind_world(self)
 	return (_industry_runner as IndustrySimulation).apply_enqueue_recipe(command)
 
 func apply_dequeue_recipe(command: DequeueRecipeCommand) -> Dictionary:
+	if _refuse_replica_write(&"apply_dequeue_recipe"):
+		return {"reason": &"not_authoritative"}
 	if _industry_runner == null:
 		_industry_runner = IndustrySimulation.new()
 		(_industry_runner as IndustrySimulation).bind_world(self)
@@ -980,7 +1022,21 @@ func resolve_assembly_id(assembly_id: int) -> int:
 		current = int(_redirects[current])
 	return current
 
+## Screams and returns true when a replica just tried to mutate locally (C1,
+## COOP-HOST-V0). Per-frame ticks are also gated at their drivers
+## (session/projection), so on a healthy client this fires only on genuine
+## invariant violations, not 60×/s.
+func _refuse_replica_write(entry: StringName) -> bool:
+	if authoritative:
+		return false
+	push_error(
+		"SimulationWorld replica rejected %s (C1, COOP-HOST-V0)" % entry
+	)
+	return true
+
 func submit_structural_command(command: StructuralCommand) -> int:
+	if _refuse_replica_write(&"submit_structural_command"):
+		return 0
 	if command == null:
 		return 0
 	var queued := command.execution_copy()
@@ -996,6 +1052,12 @@ func submit_structural_command(command: StructuralCommand) -> int:
 func apply_structural_command_now(
 	command: StructuralCommand
 ) -> StructuralCommandResult:
+	# Before command-id allocation: a refused command must leave the world
+	# bit-identical, including allocator.next_command_id.
+	if _refuse_replica_write(&"apply_structural_command_now"):
+		return StructuralCommandResult.failed(
+			StructuralCommandResult.REASON_NOT_AUTHORITATIVE
+		)
 	if command == null:
 		return StructuralCommandResult.failed(
 			StructuralCommandResult.REASON_INVALID_TARGET
@@ -1253,6 +1315,10 @@ func emit_world_restored() -> void:
 
 func _flush_commands() -> void:
 	_flush_scheduled = false
+	# Queue may have been filled before the flag flipped to replica.
+	if _refuse_replica_write(&"_flush_commands"):
+		_command_queue.clear()
+		return
 	while not _command_queue.is_empty():
 		var command: StructuralCommand = _command_queue.pop_front()
 		var result := _execute_structural_command(command)

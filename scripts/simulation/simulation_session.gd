@@ -36,6 +36,9 @@ func _ready() -> void:
 
 
 func _physics_process(delta: float) -> void:
+	# Replica sessions (COOP-HOST-V0) never advance the world locally.
+	if world == null or not world.authoritative:
+		return
 	_industry_simulation.tick(world, delta)
 	world.tick_suits(delta)
 	var gateway: WorldCommandGateway = null
