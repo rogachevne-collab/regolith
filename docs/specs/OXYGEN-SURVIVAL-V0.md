@@ -131,7 +131,7 @@ fixture; см. `docs/authoring_parts.md`.
 
 - **Keyed store**, ключ `oxygen` only; `capacity_l` из definition.
 - `current_l` сериализуется в element snapshot; участвует в **mass coupling**
-  (`mass_per_l` × `current_l`, fixture рядом с bulk `oxygen`: 0.2 kg/L).
+  через fixture bulk `oxygen`: 0.2 kg на 2 L, то есть 0.1 kg/L.
 - Содержимое **не** участвует в cargo auto-transfer (push/pull Industry tick).
 
 ### Bootstrap / restore

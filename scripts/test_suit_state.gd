@@ -160,6 +160,20 @@ func _test_atmosphere_and_hypoxia() -> bool:
 			)
 		_free_world(world)
 
+	var partial := _make_world()
+	var partial_profile := SimulationEnvironmentProfile.new()
+	partial_profile.oxygen_saturation = 0.5
+	partial.set_environment_profile(partial_profile)
+	var partial_hypoxic := partial.ensure_suit_state("player")
+	partial_hypoxic.set_oxygen(0.0)
+	partial.tick_suits(10.0)
+	if partial_hypoxic.health != partial_hypoxic.health_max:
+		return _fail("partial atmosphere damaged during real-time grace")
+	partial.tick_suits(2.0)
+	if absf(partial_hypoxic.health - (partial_hypoxic.health_max - 5.0)) > EPS:
+		return _fail("partial atmosphere did not scale post-grace hypoxia rate")
+	_free_world(partial)
+
 	var vacuum := _make_world()
 	var hypoxic := vacuum.ensure_suit_state("player")
 	hypoxic.set_oxygen(0.0)

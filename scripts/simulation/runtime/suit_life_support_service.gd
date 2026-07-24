@@ -37,10 +37,12 @@ static func tick_suit(
 	var previous_exposure := suit.hypoxia_exposure_s
 	var previous_tick := suit.hypoxia_tick_accumulator_s
 	var previous_health := suit.health
-	suit.hypoxia_exposure_s += empty_delta_s * atmosphere_factor
+	# Grace is configured in real seconds after the tank empties. Atmospheric
+	# oxygen scales post-grace hypoxia damage, not the grace duration itself.
+	suit.hypoxia_exposure_s += empty_delta_s
 	var grace_s := _balance_float("hypoxia_grace_s", 10.0)
 	if suit.hypoxia_exposure_s > grace_s:
-		suit.hypoxia_tick_accumulator_s += (
+		suit.hypoxia_tick_accumulator_s += atmosphere_factor * (
 			maxf(suit.hypoxia_exposure_s - grace_s, 0.0)
 			- maxf(previous_exposure - grace_s, 0.0)
 		)

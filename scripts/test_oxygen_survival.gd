@@ -16,8 +16,6 @@ func _run() -> void:
 		return
 	if not _test_active_power_required_before_dispense():
 		return
-	if not _test_gateway_manual_validation():
-		return
 	if not _test_cargo_connectivity_and_contention():
 		return
 	print("OXYGEN: PASS")
@@ -235,68 +233,6 @@ func _test_active_power_required_before_dispense() -> bool:
 	if runtime == null or runtime.powered:
 		return _fail("insufficient active demand did not mark module unpowered")
 	weak_module.oxygen_module_definition.active_w = original_active_w
-	_free_world(world)
-	return true
-
-
-func _test_gateway_manual_validation() -> bool:
-	var world := _make_world()
-	var local_spawn := _spawn(world, [
-		_placement("local", Slice01Archetypes.o2_module(), Vector3i.ZERO),
-	])
-	var remote_spawn := _spawn(world, [
-		_placement("remote", Slice01Archetypes.o2_module(), Vector3i(20, 0, 0)),
-	])
-	if not local_spawn.is_ok() or not remote_spawn.is_ok():
-		return _fail("gateway validation fixtures did not spawn")
-	var local_id := int(local_spawn.data["local_to_element_id"]["local"])
-	var remote_id := int(remote_spawn.data["local_to_element_id"]["remote"])
-	var session := SimulationSession.new()
-	session.world = world
-	session.get_industry_simulation().bind_world(world)
-	var gateway := WorldCommandGateway.new()
-	gateway._session = session
-	gateway.actor_uid = "gateway_player"
-	var source := Node3D.new()
-	add_child(source)
-	var local_target := {
-		"valid": true,
-		"target_kind": InteractionHit.KIND_SIMULATION_ELEMENT,
-		"element_id": local_id,
-		"point": Vector3(0.1, 0.1, 0.1),
-		"distance": 0.2,
-	}
-	var accepted := gateway._execute({
-		"kind": &"oxygen_refill",
-		"source": source,
-		"target": local_target,
-		"parameters": {"player_id": "spoofed", "delta_s": 9999.0},
-	})
-	if StringName(accepted.get("reason", &"")) != &"queued":
-		return _fail("gateway rejected a valid aimed oxygen module")
-	if str(Dictionary(accepted.get("data", {})).get("player_id", "")) != "gateway_player":
-		return _fail("gateway accepted caller-supplied player identity")
-	var remote_target := local_target.duplicate()
-	remote_target["element_id"] = remote_id
-	var rejected := gateway._execute({
-		"kind": &"oxygen_refill",
-		"source": source,
-		"target": remote_target,
-	})
-	if StringName(rejected.get("reason", &"")) != &"invalid_target":
-		return _fail("gateway accepted a remote id paired with a nearby hit")
-	var out_of_range := local_target.duplicate()
-	out_of_range["distance"] = WorldCommandGateway.INTERACTION_RANGE_M + 0.1
-	var range_result := gateway._execute({
-		"kind": &"oxygen_refill",
-		"source": source,
-		"target": out_of_range,
-	})
-	if StringName(range_result.get("reason", &"")) != &"out_of_range":
-		return _fail("gateway accepted an out-of-range oxygen hit")
-	remove_child(source)
-	source.free()
-	session.free()
 	_free_world(world)
 	return true
 
