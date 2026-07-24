@@ -11,6 +11,7 @@ Actuators command surface, параллельно и **до** визуально
 - `docs/specs/POC-ACTUATORS-V1.md`, `POC-ACTUATORS-V2-ROTOR.md`,
   `POC-ACTUATORS-V3-HINGE.md`;
 - `docs/specs/INDUSTRY-V1.md` (machine enable, stores);
+- `docs/specs/CONTROL-AXES-V0.md` (continuous seat routing);
 - `docs/specs/HUD-UI-01.md` (тулбар, терминал).
 
 ## Цель
@@ -222,6 +223,22 @@ sink; иначе откладываются. **Тюнинг** этих элем�
   влезает. Инверсия меняет знак `drive_command` в одной точке проекции, поэтому
   ей следуют и разгон, и телеметрия. Флаг едет в snapshot состояния колеса.
 
+### ControlSeat — per-seat route toggles
+
+`ControlSeat` (cockpit и др.) **listable** в Control Terminal: фейсплейт показывает
+тумблеры маршрутов continuous input. Непрерывные оси — `CONTROL-AXES-V0`; здесь
+только latched per-seat policy.
+
+| action_id | input_kind | emits |
+|---|---|---|
+| `seat.control_wheels_toggle` | toggle | `configure_seat_controls{control_wheels=!current}` |
+| `seat.control_thrusters_toggle` | toggle | `configure_seat_controls{control_thrusters=!current}` |
+| `seat.control_gyros_toggle` | toggle | `configure_seat_controls{control_gyros=!current}` |
+
+`host_element_id` = `element_id` сиденья. Default все три `true`. Отключение
+канала обнуляет его semantic output и гасит dampening этого consumer; latched
+`dampeners` / parking brake на assembly не трогаются.
+
 Зачем: собранная из кирпичиков техника не знает, «куда перёд» — колёса на разных
 бортах/ориентациях иначе поедут врозь. Поворотность и направление — это то, что
 игрок обязан донастроить с пульта после сборки.
@@ -395,7 +412,7 @@ override. Более того, в коде нет вообще ни одной �
 - **Гейт — роль, не типизированный Definition.** В отличие от колеса
   (`wheel_definition` — типизированный ресурс с границами), у `ControlSeat`
   нет своего `*Definition`, только тег `roles.has("ControlSeat")` — та же
-  проверка, что уже делает `WheelPlacementUtil.enrich_control_seat_metadata`.
+  проверка, что делает `InteractionCard` / `roles.has("ControlSeat")`.
   Хранилище само не гейтует (как и `ensure_wheel_instance_state`); гейт — на
   границах: снапшот-валидация и команда bind/clear.
 - **Команда — одна, по образцу `set_element_name`** (надёжная, упорядоченная,
@@ -426,7 +443,7 @@ override. Более того, в коде нет вообще ни одной �
 - **`cockpit`** (уже есть, роль `ControlSeat`+`Frame`) — без изменений.
 - **`control_terminal`** (новый архетип, роль `ControlSeat`+`Frame`) —
   **не садит**. Роль `ControlSeat` в коде сегодня жёстко привязана к посадке
-  (`enrich_control_seat_metadata` → `KIND_CONTROL_SEAT` → `toggle_control_seat`
+  (`InteractionCard` `control_seat` → `KIND_CONTROL_SEAT` → `toggle_control_seat`
   → `_enter_rover_seat` → `player.enter_vehicle`, плюс жёсткий гейт
   `ThrusterSimulationService.is_mobile_assembly` — стационарный пульт на
   неподвижной базе получил бы `blocked/not_mobile`). Перехват — **до**
@@ -439,11 +456,15 @@ override. Более того, в коде нет вообще ни одной �
   для этого архетипа никогда не эмитится. Второй слой защиты — сам
   `WorldCommandGateway._toggle_control_seat` явно отклоняет
   `archetype_id == "control_terminal"`, если что-то всё же до него дойдёт.
-- **Резолв хоста для бара.** `ControlTerminalSnapshotBuilder.build()` находит
-  `ControlSeat`-элемент сборки (перебор `assembly.element_ids`, тот же
-  паттерн, что везде в кодовой базе — общего хелпера «найти элемент по
-  предикату» нет) и кладёт `control_seat_element_id` в снапшот. Полное окно
-  адресует бар этим id, не `assembly_id`.
+- **Резолв хоста для бара.** `ControlTerminalSnapshotBuilder.build()` /
+  `build_bar_only()`:
+  1. явный `host_hint` с ролью `ControlSeat` на сборке — побеждает (сиденье /
+     pin / прицел в кокпит; multi-seat не переключается молча);
+  2. `host_hint` — non-seat элемент той же сборки (K / прицел в раму) →
+     детерминированный `ControlSeat` сборки (минимальный `element_id`);
+  3. hint отсутствует или вне сборки → `control_seat_element_id = 0` (нет
+     silent lowest-seat fallback).
+  Полное окно адресует бар этим id, не `assembly_id`.
 
 ## Диагностика
 

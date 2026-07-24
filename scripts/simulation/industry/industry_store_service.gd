@@ -52,9 +52,7 @@ static func capacity_l_for_store(world: SimulationWorld, store_id: String) -> fl
 		var element := world.get_element(element_id)
 		if element == null:
 			return 0.0
-		return IndustryArchetypeProfile.keyed_store_capacity_l(
-			element.archetype_id
-		)
+		return IndustryArchetypeProfile.keyed_store_capacity_l_for_element(element)
 	element_id = parse_buffer_element_id(store_id)
 	if element_id > 0:
 		var element := world.get_element(element_id)
@@ -167,8 +165,8 @@ static func ensure_element_keyed_store(
 ) -> SimulationResourceStore:
 	if element == null:
 		return null
-	var capacity := IndustryArchetypeProfile.keyed_store_capacity_l(
-		element.archetype_id
+	var capacity := IndustryArchetypeProfile.keyed_store_capacity_l_for_element(
+		element
 	)
 	if capacity <= 0.0:
 		return null
@@ -176,17 +174,61 @@ static func ensure_element_keyed_store(
 	var store := world.ensure_resource_store(store_id)
 	if store != null:
 		store.capacity_l = capacity
+		store.allowed_resource_ids = (
+			PackedStringArray(["oxygen"])
+			if is_oxygen_module(element)
+			else PackedStringArray()
+		)
 	return store
 
 
-static func sync_element_storage(world: SimulationWorld, element: SimulationElement) -> void:
+static func is_oxygen_module(element: SimulationElement) -> bool:
+	return (
+		element != null
+		and element.get_archetype() != null
+		and element.get_archetype().oxygen_module_definition != null
+	)
+
+
+static func is_oxygen_module_store(
+	world: SimulationWorld,
+	store_id: String
+) -> bool:
+	var element_id := parse_element_id_from_store(store_id)
+	return element_id > 0 and is_oxygen_module(world.get_element(element_id))
+
+
+static func resource_allowed_in_store(
+	world: SimulationWorld,
+	store_id: String,
+	resource_id: String
+) -> bool:
+	if is_oxygen_module_store(world, store_id):
+		return resource_id == "oxygen"
+	return true
+
+
+static func sync_element_storage(
+	world: SimulationWorld,
+	element: SimulationElement,
+	fresh_creation: bool = false
+) -> void:
 	if element == null:
 		return
 	if (
-		element.is_operational()
-		and IndustryArchetypeProfile.has_keyed_store(element.archetype_id)
+		(element.is_operational() or fresh_creation)
+		and IndustryArchetypeProfile.has_keyed_store_for_element(element)
 	):
-		ensure_element_keyed_store(world, element)
+		var store_id := element_store_id(element.element_id)
+		var existed := world.get_resource_store(store_id) != null
+		var store := ensure_element_keyed_store(world, element)
+		# Only authoritative creation paths pass fresh_creation=true. Restore,
+		# weld, repair, reprojection and ordinary resync never seed.
+		if fresh_creation and not existed and is_oxygen_module(element):
+			var definition := element.get_archetype().oxygen_module_definition
+			var liters_per_unit := ResourceCatalog.volume_per_unit_l("oxygen")
+			if store != null and liters_per_unit > ResourceCatalog.EPSILON:
+				store.set_amount("oxygen", definition.initial_l / liters_per_unit)
 	if IndustryArchetypeProfile.has_internal_buffer(element.archetype_id):
 		if element.industry_buffer == null:
 			element.industry_buffer = ElementIndustryBuffer.new()
@@ -210,7 +252,7 @@ static func content_mass_kg(world: SimulationWorld, element: SimulationElement) 
 	var total := 0.0
 	if element.industry_buffer != null:
 		total += element.industry_buffer.mass_kg()
-	if IndustryArchetypeProfile.has_keyed_store(element.archetype_id):
+	if IndustryArchetypeProfile.has_keyed_store_for_element(element):
 		var store := world.get_resource_store(
 			element_store_id(element.element_id)
 		)

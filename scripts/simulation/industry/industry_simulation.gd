@@ -9,6 +9,7 @@ var _transfer_service := CargoTransferService.new()
 var _recipe_runner := RecipeRunnerService.new()
 var _drill_service := StationaryDrillService.new()
 var _dozer_service := DozerBladeService.new()
+var _oxygen_refill_service := OxygenRefillService.new()
 var _tick_accumulator := 0.0
 var _event_bound := false
 
@@ -95,10 +96,29 @@ func apply_transfer_command(
 	return _transfer_service.transfer_resource_command(_world, command)
 
 
+func queue_manual_oxygen_refill(command: OxygenRefillCommand) -> Dictionary:
+	if _world == null:
+		return {"status": &"failed", "reason": &"not_ready", "accepted_l": 0.0}
+	return _oxygen_refill_service.apply_manual(_world, command)
+
+
 func apply_set_machine_enabled(command: SetMachineEnabledCommand) -> Dictionary:
 	if _world == null:
 		return {"status": &"failed", "reason": &"not_ready"}
 	var element := _world.get_element(command.element_id)
+	if element != null and IndustryStoreService.is_oxygen_module(element):
+		if not element.is_operational():
+			return {"status": &"failed", "reason": &"element_incomplete"}
+		var runtime := _world.ensure_industry_element_runtime(element.element_id)
+		runtime.machine_enabled = command.enabled
+		if not command.enabled:
+			runtime.dynamic_power_w = 0.0
+			runtime.oxygen_manual_dispensed_since_tick = false
+		element.industry_functional_reason = (
+			&"disabled" if not command.enabled else &"ok"
+		)
+		element.bump_state_revision()
+		return {"status": &"ok", "reason": &"ok"}
 	if element != null and (
 		element.archetype_id == "stationary_drill"
 		or element.archetype_id.begins_with("test_stationary_drill")
@@ -145,7 +165,13 @@ func apply_dequeue_recipe(command: DequeueRecipeCommand) -> Dictionary:
 func _tick_once(world: SimulationWorld, tick_interval: float) -> void:
 	_cargo_graph = world.ensure_cargo_graph_current()
 	world.get_industry_network().ensure_graph_current(world)
+	_oxygen_refill_service.prepare_auto_refill(
+		world,
+		_cargo_graph,
+		tick_interval
+	)
 	IndustryElectricBudget.apply_tick(world, tick_interval)
+	_oxygen_refill_service.execute_auto_refill(world)
 	_recipe_runner.tick(
 		world,
 		_cargo_graph,

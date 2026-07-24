@@ -9,6 +9,9 @@ const _SCRIPT := preload(
 var store_id: String = ""
 ## Volume limit for Industry v1; INF means uncoupled from capacity checks.
 var capacity_l: float = INF
+## Empty means unrestricted. Specialized stores (OxygenModule) narrow this
+## when IndustryStoreService binds them.
+var allowed_resource_ids: PackedStringArray = PackedStringArray()
 var _amounts: Dictionary = {}
 
 
@@ -19,6 +22,10 @@ func amount(resource_id: String) -> float:
 func can_remove(resource_id: String, requested: float) -> bool:
 	if (
 		resource_id.is_empty()
+		or (
+			not allowed_resource_ids.is_empty()
+			and not allowed_resource_ids.has(resource_id)
+		)
 		or not is_finite(requested)
 		or requested < 0.0
 		or ResourceCatalog.rejects_fractional_amount(resource_id, requested)
@@ -34,6 +41,10 @@ func can_add(
 ) -> bool:
 	if (
 		resource_id.is_empty()
+		or (
+			not allowed_resource_ids.is_empty()
+			and not allowed_resource_ids.has(resource_id)
+		)
 		or not is_finite(added)
 		or added < 0.0
 		or ResourceCatalog.rejects_fractional_amount(resource_id, added)
@@ -81,6 +92,10 @@ func remove(resource_id: String, requested: float) -> bool:
 func set_amount(resource_id: String, value: float) -> bool:
 	if (
 		resource_id.is_empty()
+		or (
+			not allowed_resource_ids.is_empty()
+			and not allowed_resource_ids.has(resource_id)
+		)
 		or not is_finite(value)
 		or value < 0.0
 		or ResourceCatalog.rejects_fractional_amount(resource_id, value)

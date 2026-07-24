@@ -149,6 +149,36 @@ func shortest_hop_distance(from_id: int, to_id: int) -> int:
 	return -1
 
 
+## Breadth-first nearest match. Visits only the reachable cargo component once;
+## sorted neighbors make equal-hop selection deterministic by element id.
+func nearest_reachable_matching(
+	world: SimulationWorld,
+	from_id: int,
+	accepts: Callable
+) -> int:
+	if world == null or from_id <= 0 or not accepts.is_valid():
+		return 0
+	var pending: Array[int] = [from_id]
+	var visited: Dictionary = {from_id: true}
+	while not pending.is_empty():
+		var level_count := pending.size()
+		var best_id := 0
+		for _index: int in range(level_count):
+			var current_id := int(pending.pop_front())
+			var element := world.get_element(current_id)
+			if element != null and accepts.call(element):
+				if best_id == 0 or current_id < best_id:
+					best_id = current_id
+			for neighbor_id: int in neighbors(current_id):
+				if visited.has(neighbor_id):
+					continue
+				visited[neighbor_id] = true
+				pending.append(neighbor_id)
+		if best_id > 0:
+			return best_id
+	return 0
+
+
 func nearest_cargo_store_element_id(
 	world: SimulationWorld,
 	from_element_id: int
@@ -158,9 +188,8 @@ func nearest_cargo_store_element_id(
 	for element: SimulationElement in world.list_elements():
 		if (
 			not element.is_operational()
-			or not IndustryArchetypeProfile.has_keyed_store(
-				element.archetype_id
-			)
+			or not IndustryArchetypeProfile.has_keyed_store_for_element(element)
+			or IndustryStoreService.is_oxygen_module(element)
 		):
 			continue
 		var distance := shortest_hop_distance(
@@ -197,9 +226,8 @@ func nearest_cargo_store_element_id_with_resource(
 	for element: SimulationElement in world.list_elements():
 		if (
 			not element.is_operational()
-			or not IndustryArchetypeProfile.has_keyed_store(
-				element.archetype_id
-			)
+			or not IndustryArchetypeProfile.has_keyed_store_for_element(element)
+			or IndustryStoreService.is_oxygen_module(element)
 		):
 			continue
 		var store := IndustryStoreService.ensure_element_keyed_store(
@@ -241,9 +269,8 @@ func connected_store_element_ids_with_resource(
 	for element: SimulationElement in world.list_elements():
 		if (
 			not element.is_operational()
-			or not IndustryArchetypeProfile.has_keyed_store(
-				element.archetype_id
-			)
+			or not IndustryArchetypeProfile.has_keyed_store_for_element(element)
+			or IndustryStoreService.is_oxygen_module(element)
 		):
 			continue
 		var store := IndustryStoreService.ensure_element_keyed_store(

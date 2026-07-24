@@ -417,9 +417,11 @@ SuspensionInstanceState {  # ключ: element_id подвески
 
 ### Interaction
 
-`InteractionQuery`: если archetype наведённого элемента имеет роль
-`ControlSeat`, kind = `KIND_CONTROL_SEAT`; в metadata — `assembly_id`,
-`element_id`, локальный seat offset.
+`InteractionQuery`: kind = `KIND_CONTROL_SEAT` только когда элемент с ролью
+`ControlSeat` **operational** (`InteractionCard.is_enterable_control_seat`);
+incomplete / broken сиденье остаётся `KIND_SIMULATION_ELEMENT` (без enter
+prompt). Typed hit fields — `assembly_id`, `element_id`; sim keys on
+`InteractionCard`.
 
 `WorldCommandGateway._toggle_control_seat` получает ветку для simulation
 element:
@@ -427,20 +429,33 @@ element:
 - найти `RigidBody3D` assembly через projection;
 - `player.enter_vehicle(body, seat_world_transform)` (существующий механизм,
   используемый launch vehicle);
-- включить input routing на `AssemblyLocomotionController` этой assembly;
-- exit → `player.exit_vehicle(world_position)`, снять routing.
+- активировать `AssemblyLocomotionController` assembly;
+- exit → `player.exit_vehicle(world_position)`, `clear_driver_input`.
 
 ### Input routing
 
-`AssemblyLocomotionController` (per assembly) хранит `drive_command`,
-`brake_command`, `steering_command`, `parking_brake` (default `true`).
-Когда игрок seated и vehicle — locomotive assembly:
+Цепочка (см. `CONTROL-AXES-V0.md`): `WorldCommandGateway` (raw InputMap) →
+`SeatInputRouter` (per-seat policy + latched PB) → `SeatInputFrame` →
+`AssemblyLocomotionController.apply_driver_frame`. Один occupied seat — один
+writer за тик; policy строго с `element_id` сиденья (`SeatControlState`).
 
-- input actions из `project.godot` (`move_forward`/`move_back`,
-  поворот влево/вправо) → `set_drive_command` / `set_steering_command`;
-- `jump` (Space) → рабочий `brake_command` (service brake);
-- `toggle_parking_brake` (P) → toggle `parking_brake`; engage только при
-  почти нулевой скорости body, иначе отказ;
+Per-seat toggles (`control_wheels` / `control_thrusters` / `control_gyros`,
+default `true`): `configure_seat_controls` или Control Terminal faceplate на
+`ControlSeat` (`CONTROL-ACTIONS-V0.md`). Effective gates на locomotion
+подавляют wheel/thruster/gyro consumers (manual + dampening) по каналу.
+
+`AssemblyLocomotionController` (per assembly) хранит continuous channels +
+latched `parking_brake` (default `true`) и `dampeners` (default `true`,
+assembly-wide, не per-seat). Когда игрок seated:
+
+- W/S, A/D → semantic drive/steer и/или translate по включённым routes;
+- Space (`jump` ∪ `move_up`) → `brake_command` на колёса **и** `translate.y`
+  на thrusters независимо (fan-out, не mutex flight/loco);
+- mouse/QE → attitude gyros, независимо от thrusters;
+- `toggle_parking_brake` (P) → toggle assembly-wide `parking_brake` (не gated
+  Control Wheels — SE safety); engage только при почти нулевой скорости body,
+  иначе отказ. Latched PB держит колёса даже при `control_wheels=false`;
+- `toggle_dampeners` (Z) → toggle latched `dampeners` assembly-wide;
 - при `parking_brake`: gateway выставляет `drive=0`, `steer=0`, `brake=1`;
   wheel tick на grounded паре держит колесо **bristle-моделью** статического
   трения: жёсткая пружина, привязывающая контактный патч к якорю на грунте

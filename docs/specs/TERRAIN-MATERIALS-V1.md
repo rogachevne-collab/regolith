@@ -23,6 +23,7 @@
 | где что лежит на луне | «Распределение на планете» |
 | как бур считает добычу | «Добыча и yield» |
 | кислород и водород | «Вода, кислород, водород» |
+| скафандр / OxygenModule (не ISRU bulk) | `OXYGEN-SURVIVAL-V0.md` |
 | электролизер | «Машина electrolyzer» |
 | цепочки и рецепты | «Переработка» |
 | как должно выглядеть | «Визуал» |
@@ -179,7 +180,7 @@ fallback'ом; у материала свой `collectible_fraction` **пере�
 
 | `item_id` | Роль |
 |---|---|
-| `oxygen` | дыхание / окислитель (SuitState later) |
+| `oxygen` | bulk ISRU / окислитель; **не** auto-refill скафандра в v0 (см. `OXYGEN-SURVIVAL-V0.md`) |
 | `hydrogen` | восстановление ильменита; топливо later |
 
 Масса/объём на unit — калибруемые fixtures (ориентир в реализации рядом с
@@ -357,9 +358,10 @@ water → electrolyze_water (Electrolyzer) → oxygen + hydrogen
 
 ### Что не делаем для газов в v1
 
-- трубы fluid Flow, давление, утечки;
+- трубы fluid/gas Flow, давление, утечки, sealed volumes;
 - баллоны как unique instances (достаточно bulk в store);
-- пополнение SuitState из `oxygen` (можно повесить later на те же item_id);
+- auto-transfer bulk `oxygen` → SuitState или OxygenModule (пополнение скафандра —
+  `OXYGEN-SURVIVAL-V0.md`; пополнение модуля из cargo — **deferred**);
 - сжижение / zero-boil-off storage как отдельная механика.
 
 ## Машина electrolyzer
@@ -522,7 +524,8 @@ net:          ΔH₂ = 0,  ΔO₂ = +0.5,  +residue
 - molten regolith electrolysis / FFC / carbothermal с привозным углеродом;
 - He-3;
 - ore detector UI (можно later по тем же indices);
-- fluid pipes / Atmosphere / SuitState refill;
+- fluid/gas pipes, sealed Atmosphere, **module replenishment** from bulk stores;
+  suit O₂ + OxygenModule — `OXYGEN-SURVIVAL-V0.md`;
 - Mk2 efficiency tiers;
 - полная экономическая балансировка чисел.
 

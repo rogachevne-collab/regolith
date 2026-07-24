@@ -3,9 +3,8 @@ extends Node
 const _HeadlessTestHarness := preload("res://scripts/testing/headless_test_harness.gd")
 ## Headless PoC gate for the authoritative suit state (docs/specs/HUD-UI-01.md
 ## Phase 2, docs/specs/COOP-HOST-V0.md "Per-peer player state"). Asserts
-## normalized fractions, clamping at 0..max, the world's `suit_changed` signal
-## firing (and staying quiet on no-op), the placeholder drain/regen stub, that
-## suits are per player id, and that they survive a snapshot round-trip.
+## liter oxygen semantics, atmosphere-scaled drain/hypoxia, per-player isolation,
+## signaling, and backward-compatible snapshot migration.
 
 const EPS := 0.0001
 
@@ -25,6 +24,8 @@ func _run() -> void:
 	if not _test_change_signal():
 		return
 	if not _test_drain_regen():
+		return
+	if not _test_atmosphere_and_hypoxia():
 		return
 	if not _test_per_player_isolation():
 		return
@@ -109,7 +110,6 @@ func _test_change_signal() -> bool:
 func _test_drain_regen() -> bool:
 	var world := _make_world()
 	var suit := world.ensure_suit_state("player")
-	suit.oxygen_drain_per_sec = 4.0
 	suit.hydrogen_drain_per_sec = 2.0
 	suit.health_regen_per_sec = 1.0
 
@@ -122,8 +122,8 @@ func _test_drain_regen() -> bool:
 	world.tick_suits(2.0)
 	if _changed_ids.size() != 1:
 		return _fail("tick with movement should emit once, got %d" % _changed_ids.size())
-	if absf(suit.oxygen - 42.0) > EPS:
-		return _fail("oxygen after 2s drain expected 42, got %f" % suit.oxygen)
+	if absf(suit.oxygen - 49.96) > EPS:
+		return _fail("oxygen after 2s drain expected 49.96 L, got %f" % suit.oxygen)
 	if absf(suit.hydrogen - 46.0) > EPS:
 		return _fail("hydrogen after 2s drain expected 46, got %f" % suit.hydrogen)
 	if absf(suit.health - 52.0) > EPS:
@@ -137,6 +137,48 @@ func _test_drain_regen() -> bool:
 
 	world.suit_changed.disconnect(_on_suit_changed)
 	_free_world(world)
+	return true
+
+
+func _test_atmosphere_and_hypoxia() -> bool:
+	for fixture: Dictionary in [
+		{"saturation": 0.0, "expected": 9.98},
+		{"saturation": 0.5, "expected": 9.99},
+		{"saturation": 1.0, "expected": 10.0},
+	]:
+		var world := _make_world()
+		var profile := SimulationEnvironmentProfile.new()
+		profile.oxygen_saturation = float(fixture["saturation"])
+		world.set_environment_profile(profile)
+		var suit := world.ensure_suit_state("player")
+		suit.set_oxygen(10.0)
+		world.tick_suits(1.0)
+		if absf(suit.oxygen - float(fixture["expected"])) > EPS:
+			return _fail(
+				"atmosphere %.1f oxygen expected %.3f, got %.3f"
+				% [profile.oxygen_saturation, fixture["expected"], suit.oxygen]
+			)
+		_free_world(world)
+
+	var vacuum := _make_world()
+	var hypoxic := vacuum.ensure_suit_state("player")
+	hypoxic.set_oxygen(0.0)
+	vacuum.tick_suits(10.0)
+	if hypoxic.health != hypoxic.health_max:
+		return _fail("hypoxia damaged during grace")
+	vacuum.tick_suits(1.0)
+	if hypoxic.health >= hypoxic.health_max:
+		return _fail("hypoxia did not apply periodic damage after grace")
+	var breathable := SimulationEnvironmentProfile.new()
+	breathable.oxygen_saturation = 1.0
+	vacuum.set_environment_profile(breathable)
+	var empty_before := hypoxic.oxygen
+	vacuum.tick_suits(1.0)
+	if hypoxic.hypoxia_exposure_s != 0.0:
+		return _fail("100% atmosphere did not reset hypoxia")
+	if hypoxic.oxygen != empty_before:
+		return _fail("100% atmosphere passively refilled the tank")
+	_free_world(vacuum)
 	return true
 
 
@@ -170,6 +212,8 @@ func _test_snapshot_round_trip() -> bool:
 	suit.set_health(41.0)
 	suit.set_oxygen(17.5)
 	suit.oxygen_drain_per_sec = 2.25
+	suit.hypoxia_exposure_s = 4.0
+	suit.hypoxia_tick_accumulator_s = 0.5
 	world.ensure_suit_state("player:2").set_hydrogen(3.0)
 
 	var snapshot := world.capture_snapshot()
@@ -188,6 +232,19 @@ func _test_snapshot_round_trip() -> bool:
 			"drain rate after round-trip expected 2.25, got %f"
 			% restored.oxygen_drain_per_sec
 		)
+	if (
+		absf(restored.hypoxia_exposure_s - 4.0) > EPS
+		or absf(restored.hypoxia_tick_accumulator_s - 0.5) > EPS
+	):
+		return _fail("hypoxia timers did not survive round-trip")
+	var migrated := SimulationSuitState.from_dict({
+		"health": 80.0,
+		"oxygen": 12.0,
+		"oxygen_max": 40.0,
+		"hydrogen": 20.0,
+	})
+	if migrated.oxygen != 12.0 or migrated.oxygen_max != 40.0:
+		return _fail("legacy oxygen snapshot keys did not migrate")
 	var second := world.get_suit_state("player:2")
 	if second == null or absf(second.hydrogen - 3.0) > EPS:
 		return _fail("second player's suit did not survive the round-trip")

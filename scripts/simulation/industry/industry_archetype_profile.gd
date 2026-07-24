@@ -24,8 +24,29 @@ static func has_keyed_store(archetype_id: String) -> bool:
 	return _capacity_map("keyed_store_capacity_l").has(archetype_id)
 
 
+static func has_keyed_store_for_element(element: SimulationElement) -> bool:
+	if element == null:
+		return false
+	var archetype := element.get_archetype()
+	return (
+		(archetype != null and archetype.oxygen_module_definition != null)
+		or has_keyed_store(element.archetype_id)
+	)
+
+
 static func keyed_store_capacity_l(archetype_id: String) -> float:
 	return float(_capacity_map("keyed_store_capacity_l").get(archetype_id, 0.0))
+
+
+static func keyed_store_capacity_l_for_element(
+	element: SimulationElement
+) -> float:
+	if element == null:
+		return 0.0
+	var archetype := element.get_archetype()
+	if archetype != null and archetype.oxygen_module_definition != null:
+		return archetype.oxygen_module_definition.capacity_l
+	return keyed_store_capacity_l(element.archetype_id)
 
 
 static func internal_buffer_capacity_l(archetype_id: String) -> float:

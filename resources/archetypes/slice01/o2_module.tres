@@ -1,0 +1,43 @@
+[gd_resource type="Resource" script_class="ElementArchetype" load_steps=7 format=3]
+
+[ext_resource type="Script" path="res://scripts/simulation/resources/build_requirement.gd" id="1_req"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/collider_definition.gd" id="2_col"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/port_definition.gd" id="3_port"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/oxygen_module_definition.gd" id="4_o2"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/element_archetype.gd" id="5_arch"]
+
+[sub_resource type="Resource" id="Requirement"]
+script = ExtResource("1_req")
+resource_id = "plate_metal"
+amount = 6.0
+
+[sub_resource type="Resource" id="Collider"]
+script = ExtResource("2_col")
+
+[sub_resource type="Resource" id="CargoPort"]
+script = ExtResource("3_port")
+port_id = "cargo_io"
+kind = 7
+local_face = 0
+compatibility_tags = PackedStringArray("cargo")
+
+[sub_resource type="Resource" id="OxygenDefinition"]
+script = ExtResource("4_o2")
+capacity_l = 200.0
+initial_l = 200.0
+dispense_lps = 0.5
+idle_w = 10.0
+active_w = 50.0
+
+[resource]
+script = ExtResource("5_arch")
+archetype_id = "o2_module"
+display_name = "Кислородный модуль"
+roles = PackedStringArray("OxygenModule")
+mass_kg = 80.0
+footprint_cells = Array[Vector3i]([Vector3i(0, 0, 0)])
+structural_surface_policy = 1
+colliders = Array[ExtResource("2_col")]([SubResource("Collider")])
+ports = Array[ExtResource("3_port")]([SubResource("CargoPort")])
+build_requirements = Array[ExtResource("1_req")]([SubResource("Requirement")])
+oxygen_module_definition = SubResource("OxygenDefinition")

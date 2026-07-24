@@ -13,14 +13,19 @@ var parking_brake: bool = true
 ## One-shot chassis lift already applied; skip on re-enter / reload.
 var released_from_anchor: bool = false
 
-## Flight (POC-THRUSTERS-V0): SE-like 6DOF in body local space.
+## Flight (POC-THRUSTERS-V0 / CONTROL-AXES-V0): SE-like 6DOF in body local space.
 ## Godot body axes: x = right, y = up, −z = forward; each component −1..1.
 var translate_command: Vector3 = Vector3.ZERO
 var pitch_command: float = 0.0
 var yaw_command: float = 0.0
 var roll_command: float = 0.0
-## Inertial dampeners; default on (SE-like).
+## Inertial dampeners; default on (SE-like). Latched assembly-wide — not per-seat.
 var dampeners: bool = true
+## Effective seat-route gates from the active writer's SeatInputFrame this tick.
+## Consumers must suppress manual + dampening force/torque when their gate is off.
+var wheels_route_enabled: bool = false
+var thrusters_route_enabled: bool = false
+var gyros_route_enabled: bool = false
 
 
 func activate() -> void:
@@ -33,6 +38,9 @@ func deactivate() -> void:
 
 
 func clear_driver_input() -> void:
+	## Zero continuous pilot channels. Route gates are left alone so an
+	## unmanned but still-activated craft keeps dampener consumers according
+	## to the last seat writer's policy (exit ≠ toggle channel OFF).
 	drive_command = 0.0
 	steering_command = 0.0
 	brake_command = 0.0
@@ -42,8 +50,39 @@ func clear_driver_input() -> void:
 	roll_command = 0.0
 
 
+## Atomically replace all continuous driver fields from a routed frame.
+func apply_driver_frame(frame: SeatInputFrame) -> void:
+	if frame == null:
+		clear_driver_input()
+		return
+	drive_command = clampf(frame.drive_command, -1.0, 1.0)
+	steering_command = clampf(frame.steering_command, -1.0, 1.0)
+	brake_command = clampf(frame.brake_command, 0.0, 1.0)
+	set_translate_command(frame.translate_command)
+	set_attitude_commands(
+		frame.pitch_command,
+		frame.yaw_command,
+		frame.roll_command
+	)
+	wheels_route_enabled = frame.wheels_route_enabled
+	thrusters_route_enabled = frame.thrusters_route_enabled
+	gyros_route_enabled = frame.gyros_route_enabled
+
+
 func is_activated() -> bool:
 	return activated
+
+
+func is_thrusters_route_enabled() -> bool:
+	return thrusters_route_enabled
+
+
+func is_gyros_route_enabled() -> bool:
+	return gyros_route_enabled
+
+
+func is_wheels_route_enabled() -> bool:
+	return wheels_route_enabled
 
 
 func is_parking_brake() -> bool:
@@ -140,6 +179,9 @@ func to_dict() -> Dictionary:
 		"yaw_command": yaw_command,
 		"roll_command": roll_command,
 		"dampeners": dampeners,
+		"wheels_route_enabled": wheels_route_enabled,
+		"thrusters_route_enabled": thrusters_route_enabled,
+		"gyros_route_enabled": gyros_route_enabled,
 	}
 
 
@@ -162,6 +204,11 @@ func apply_dict(data: Dictionary) -> void:
 	yaw_command = float(data.get("yaw_command", 0.0))
 	roll_command = float(data.get("roll_command", 0.0))
 	dampeners = bool(data.get("dampeners", true))
+	# Missing keys (pre-feature rows): default ON so activated dampener consumers
+	# keep working after restore — same as pre-route-gate flight/wheel ticks.
+	wheels_route_enabled = bool(data.get("wheels_route_enabled", true))
+	thrusters_route_enabled = bool(data.get("thrusters_route_enabled", true))
+	gyros_route_enabled = bool(data.get("gyros_route_enabled", true))
 
 
 func duplicate_state() -> AssemblyLocomotionController:

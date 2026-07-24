@@ -15,6 +15,7 @@ KERNEL=(
 	test_interaction_index
 	test_simulation_wheel
 	test_control_actions
+	test_seat_input_router
 	test_simulation_thruster
 	test_vehicle_power
 	test_rover_compose
@@ -33,6 +34,7 @@ KERNEL=(
 	test_terrain_materials
 	test_player_inventory_hotbar
 	test_suit_state
+	test_oxygen_survival
 	test_connected_block_visual
 	test_impact_destruction
 	test_granular_patch

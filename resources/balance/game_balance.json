@@ -1,6 +1,12 @@
 {
   "version": 1,
   "comment": "Authoritative Game Balance v0. Edit this file to tune items, recipes, economy, drills, power, and per-element mass/BOM/actuator numbers. Geometry/ports stay in resources/archetypes/slice01/*.tres. See docs/specs/GAME-BALANCE-V0.md.",
+  "suit_life_support": {
+    "base_drain_lps": 0.02,
+    "hypoxia_grace_s": 10.0,
+    "hypoxia_damage_hp": 5.0,
+    "hypoxia_tick_s": 1.0
+  },
   "items": {
     "raw_regolith": {
       "category": "ore",
@@ -632,6 +638,10 @@
         "is_consumer": true,
         "idle_w": 40.0
       },
+      "o2_module": {
+        "is_consumer": true,
+        "idle_w": 10.0
+      },
       "piston_base_large": {
         "is_consumer": true,
         "idle_w": 0.0
@@ -1070,6 +1080,22 @@
         }
       ],
       "max_integrity": 400.0
+    },
+    "o2_module": {
+      "mass_kg": 80.0,
+      "build_requirements": [
+        {
+          "resource_id": "plate_metal",
+          "amount": 6.0
+        }
+      ],
+      "oxygen_module": {
+        "capacity_l": 200.0,
+        "initial_l": 200.0,
+        "dispense_lps": 0.5,
+        "idle_w": 10.0,
+        "active_w": 50.0
+      }
     },
     "large_frame": {
       "mass_kg": 625.0,

@@ -209,6 +209,10 @@ static func apply_element(archetype: ElementArchetype) -> void:
 		archetype.power_source_definition,
 		entry.get("power_source", {})
 	)
+	_apply_definition_overlay(
+		archetype.oxygen_module_definition,
+		entry.get("oxygen_module", {})
+	)
 	_applied_archetype_ids[archetype_id] = true
 
 

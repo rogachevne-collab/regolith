@@ -30,6 +30,7 @@ enum StructuralSurfacePolicy {
 @export var hinge_definition: HingeDefinition
 @export var battery_definition: BatteryDefinition
 @export var power_source_definition: PowerSourceDefinition
+@export var oxygen_module_definition: OxygenModuleDefinition
 @export var suspension_definition: SuspensionDefinition
 @export var wheel_definition: WheelDefinition
 @export var thruster_definition: ThrusterDefinition

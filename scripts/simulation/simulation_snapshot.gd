@@ -1,7 +1,7 @@
 class_name SimulationSnapshot
 extends RefCounted
 
-const VERSION := 9
+const VERSION := 10
 
 static var last_validate_error: String = ""
 
@@ -23,6 +23,7 @@ static func capture(world) -> Dictionary:
 		"wheel_instances": world.list_wheel_instance_rows(),
 		"suspension_instances": world.list_suspension_instance_rows(),
 		"action_bars": world.list_action_bar_rows(),
+		"seat_control_states": world.list_seat_control_rows(),
 		"locomotion_assemblies": world.list_locomotion_rows(),
 		"world_loot_piles": world.list_world_loot_piles(),
 		"simulation_time_s": world.get_simulation_time_s(),
@@ -52,7 +53,9 @@ static func _reject(reason: String) -> bool:
 static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 	last_validate_error = ""
 	var version := int(snapshot.get("version", 0))
-	if version != VERSION:
+	## Capture writes VERSION 10. Loader also accepts v9: missing
+	## seat_control_states → empty (per-seat defaults on read).
+	if version != VERSION and version != 9:
 		last_validate_error = "bad_version:%d" % version
 		return false
 	var archetype_rows: Variant = snapshot.get("archetypes")
@@ -73,6 +76,8 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 		[]
 	)
 	var action_bar_rows: Variant = snapshot.get("action_bars", [])
+	## Optional: v9 and older-in-spirit rows omit the key → defaults.
+	var seat_control_rows: Variant = snapshot.get("seat_control_states", [])
 	var locomotion_rows: Variant = snapshot.get("locomotion_assemblies", [])
 	var loot_rows: Variant = snapshot.get("world_loot_piles", [])
 	var simulation_time_s := float(snapshot.get("simulation_time_s", 0.0))
@@ -87,6 +92,7 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 		or not wheel_instance_rows is Array
 		or not suspension_instance_rows is Array
 		or not action_bar_rows is Array
+		or not seat_control_rows is Array
 		or not locomotion_rows is Array
 		or not allocator_data is Dictionary
 	):
@@ -312,6 +318,27 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 			return false
 		action_bars[element_id] = ActionBarState.from_dict(state_row)
 
+	# Per-ControlSeat routing policy; same role gate as ActionBarState.
+	var seat_controls: Dictionary = {}
+	for row_variant: Variant in seat_control_rows:
+		if not row_variant is Dictionary:
+			return false
+		var seat_row: Dictionary = row_variant
+		var seat_element_id := int(seat_row.get("element_id", 0))
+		var seat_state_row: Variant = seat_row.get("state", {})
+		var seat_element := elements.get(seat_element_id) as SimulationElement
+		if (
+			seat_element == null
+			or seat_controls.has(seat_element_id)
+			or seat_element.get_archetype() == null
+			or not seat_element.get_archetype().roles.has("ControlSeat")
+			or not seat_state_row is Dictionary
+		):
+			return false
+		seat_controls[seat_element_id] = SeatControlState.from_dict(
+			seat_state_row
+		)
+
 	var joints: Dictionary = {}
 	var canonical_joints: Dictionary = {}
 	var max_joint_id := 0
@@ -494,6 +521,24 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 			or stores.has(store.store_id)
 		):
 			return false
+		var store_element_id := IndustryStoreService.parse_element_id_from_store(
+			store.store_id
+		)
+		if store_element_id > 0:
+			var store_element := elements.get(store_element_id) as SimulationElement
+			if (
+				store_element != null
+				and IndustryStoreService.is_oxygen_module(store_element)
+			):
+				for resource_id: String in store.resource_ids():
+					if resource_id != "oxygen":
+						return _reject("oxygen_module_store_resource")
+				var module_capacity := (
+					store_element.get_archetype()
+					.oxygen_module_definition.capacity_l
+				)
+				if store.volume_l() > module_capacity + ResourceCatalog.EPSILON:
+					return _reject("oxygen_module_store_over_capacity")
 		stores[store.store_id] = store
 
 	var industry_network := IndustryNetworkState.create_default()
@@ -577,6 +622,8 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 		)
 	for element_id: int in _sorted_int_keys(action_bars):
 		world.register_action_bar_state(element_id, action_bars[element_id])
+	for element_id: int in _sorted_int_keys(seat_controls):
+		world.register_seat_control_state(element_id, seat_controls[element_id])
 	for row_variant: Variant in locomotion_rows:
 		if not row_variant is Dictionary:
 			return false
@@ -628,6 +675,7 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 				return false
 			world._register_world_loot_pile(pile)
 	world._register_simulation_time(simulation_time_s)
+	IndustryStoreService.sync_all_elements(world)
 	return true
 
 

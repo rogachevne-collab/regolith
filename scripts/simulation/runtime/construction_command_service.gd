@@ -100,7 +100,7 @@ static func place_element(world,
 	# live at placement; the fact is stored on the block and re-verified on split.
 	if not new_assembly:
 		ConstructionCommandService.record_placement_terrain_contact(world, assembly, element, joint_ids)
-	IndustryStoreService.sync_element_storage(world, element)
+	IndustryStoreService.sync_element_storage(world, element, true)
 	assembly.bump_revision()
 	world._notify_topology_changed(assembly.assembly_id)
 	joint_ids.sort()
@@ -856,8 +856,8 @@ static func place_driven_element(world,
 	assembly.element_ids.sort()
 	if not new_assembly:
 		ConstructionCommandService.record_placement_terrain_contact(world, assembly, base_element, joint_ids)
-	IndustryStoreService.sync_element_storage(world, base_element)
-	IndustryStoreService.sync_element_storage(world, head_element)
+	IndustryStoreService.sync_element_storage(world, base_element, true)
+	IndustryStoreService.sync_element_storage(world, head_element, true)
 	assembly.bump_revision()
 	world._notify_topology_changed(assembly.assembly_id)
 	joint_ids.sort()

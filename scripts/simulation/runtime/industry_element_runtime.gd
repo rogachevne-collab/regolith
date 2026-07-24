@@ -12,6 +12,9 @@ var battery_initialized: bool = false
 var active_recipe_power_w: float = 0.0
 ## Transient actuator/tool demand. Recomputed from current control state.
 var dynamic_power_w: float = 0.0
+## Transient hand-off: manual O2 dispense is charged on the next industry
+## cadence without forcing a full electric-budget world scan per hold command.
+var oxygen_manual_dispensed_since_tick: bool = false
 var power_reason: StringName = &"ok"
 var powered: bool = false
 var machine_state: IndustryMachineState = null
@@ -32,6 +35,7 @@ static func create_default() -> IndustryElementRuntime:
 	runtime.battery_initialized = false
 	runtime.active_recipe_power_w = 0.0
 	runtime.dynamic_power_w = 0.0
+	runtime.oxygen_manual_dispensed_since_tick = false
 	runtime.power_reason = &"ok"
 	runtime.powered = false
 	runtime.machine_state = IndustryMachineState.create_default()
@@ -90,6 +94,7 @@ static func from_dict(data: Dictionary) -> IndustryElementRuntime:
 		0.0
 	)
 	runtime.dynamic_power_w = 0.0
+	runtime.oxygen_manual_dispensed_since_tick = false
 	var machine_row: Variant = data.get("machine_state", {})
 	if machine_row is Dictionary and not machine_row.is_empty():
 		runtime.machine_state = IndustryMachineState.from_dict(machine_row)

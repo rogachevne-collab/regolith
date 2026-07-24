@@ -29,6 +29,8 @@ ADR. Интеграция в Erebus — через Erebus Lite addon, когда
 | баланс / стоимость / масса / тюнинг буров и актуаторов | `specs/GAME-BALANCE-V0.md`; cheatsheet `game-balance` |
 | TerrainMaterial, рудные зоны, добыча по материалу вокселя | `specs/TERRAIN-MATERIALS-V1.md` |
 | Кислород / водород / электролизер (ISRU) | `specs/TERRAIN-MATERIALS-V1.md` § «Вода, кислород, водород», «Машина electrolyzer» |
+| Кислород скафандра, OxygenModule, атмосфера планеты | `specs/OXYGEN-SURVIVAL-V0.md`; bulk `oxygen` — TERRAIN-MATERIALS-V1 |
+| `SimulationEnvironmentProfile`, `oxygen_saturation` | `specs/OXYGEN-SURVIVAL-V0.md` § SimulationEnvironmentProfile |
 | Карта луны (M), метки, слой залежей | `specs/MAP-UI-01.md` |
 | Volume, Atmosphere (герметичность) | «Примитивы» → «Volume и Atmosphere» |
 | Blueprint (чертежи, baked) | «Примитивы» → «Blueprint» |
@@ -37,7 +39,7 @@ ADR. Интеграция в Erebus — через Erebus Lite addon, когда
 | кинетический удар, разрушение, упор актуатора | «Кинетический удар (Impact Destruction v0)» |
 | метеориты, падение, кратер, debug spawn | «Метеориты v0»; `specs/METEORITES-V0.md` |
 | логи, инспекция, отладка симуляции | «Диагностируемость» |
-| скафандр (кислород, энергия) | «Состояние скафандра (SuitState)» |
+| скафандр (кислород, энергия, гипоксия) | «Состояние скафандра (SuitState)»; `specs/OXYGEN-SURVIVAL-V0.md` |
 | бюджеты производительности | «Производительность» |
 | прицел / InteractionQuery / карточка блока (read-model) | `specs/PLAYER-INTERACTION-V1.md` § Interaction Read-Model; cheatsheet `interaction-read-model` |
 | мультиплеер (задел) | «Сетевой контракт на будущее» |
@@ -395,6 +397,10 @@ Field {
 ```
 
 В будущем поля могут быть локальными, но v0 использует одно поле на локацию.
+Для выживания v0 дыхательный контракт — не состав `atmosphere`, а immutable
+`oxygen_saturation` (0..1) в `SimulationEnvironmentProfile` сцены/planetoid
+(Moon = 0); см. `specs/OXYGEN-SURVIVAL-V0.md`. Герметичные объёмы и давление —
+вне v0.
 
 ### Surface
 
@@ -830,10 +836,11 @@ debug-спавна рядом с игроком — на узле `MeteoriteSyst
 ## Состояние скафандра (SuitState)
 
 `SimulationSuitState` — минимальное authoritative состояние выживания игрока:
-`health` (hp), `oxygen` (O₂) и `hydrogen` (H₂), каждое как `current` + `max` с
-нормализованной долей. Это самодостаточное survival-state, а **не** полная
-система атмосфер/жизнеобеспечения (герметичные объёмы, давление, утечки
-`volume_leaking`, газообмен) — они остаются вне scope.
+`health` (hp), `oxygen` (O₂, **литры** `current_l` + `capacity_l`) и
+`hydrogen` (H₂, `current` + `max` с нормализованной долей). Полный контракт
+O₂, гипоксии, пополнения и `SimulationEnvironmentProfile.oxygen_saturation` —
+`docs/specs/OXYGEN-SURVIVAL-V0.md`. Это survival-state, а **не** герметичные
+объёмы, давление, утечки `volume_leaking` и gas Flow — они вне v0.
 
 **Владение.** Состояние живёт в `SimulationWorld`, по одному на `player_id`
 (`ensure_suit_state` / `apply_suit_damage` / `tick_suits`, сигнал
@@ -843,7 +850,13 @@ debug-спавна рядом с игроком — на узле `MeteoriteSyst
 «Per-peer player state»).
 
 Тик не самозапускающийся: его вызывает `SimulationSession`, чтобы
-headless-тесты шагали детерминированно.
+headless-тесты шагали детерминированно. Расход O₂:
+`base_drain_lps × (1 − oxygen_saturation)`; при пустом tank — grace, затем
+periodic hypoxia damage (H₂ и death/respawn — вне OXYGEN-SURVIVAL-V0).
+
+Пополнение O₂ — **OxygenModule** (hold E, seated auto-refill); bulk item
+`oxygen` из ISRU в скафандр **не** перекачивается автоматически. Пополнение
+**модуля** из cargo — deferred в v0.
 
 `SuitState` (узел на сцене игрока) — **view**, а не состояние: он зеркалит
 суту своего `player_id` и переизлучает `changed` для HUD. HUD (`Vitals`)

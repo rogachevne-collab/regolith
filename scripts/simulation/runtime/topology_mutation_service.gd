@@ -56,7 +56,7 @@ static func remove_element_from_topology(world,
 	for joint_id: int in removed_joint_ids:
 		world._unregister_joint(joint_id)
 	world._elements.erase(element.element_id)
-	world.clear_wheel_element_state(element.element_id)
+	world.clear_element_instance_state(element.element_id)
 	for resource_id: Variant in refunds.keys():
 		store.add(str(resource_id), float(refunds[resource_id]))
 	removed_joint_ids.sort()

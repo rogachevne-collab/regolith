@@ -16,6 +16,7 @@
 [ext_resource type="Script" path="res://scripts/granular_voxel_world.gd" id="18"]
 [ext_resource type="PackedScene" uid="uid://solarskydecor001" path="res://scenes/solar_sky_decor.tscn" id="19"]
 [ext_resource type="Script" path="res://scripts/day_night_cycle.gd" id="20"]
+[ext_resource type="Resource" path="res://resources/environment/moon_simulation_environment.tres" id="24_sim_env"]
 
 [sub_resource type="SphereShape3D" id="SphereShape_gravity"]
 radius = 675.0
@@ -119,6 +120,7 @@ enabled = true
 
 [node name="SimulationSession" parent="." unique_id=1580499463 instance=ExtResource("11")]
 gateway_path = NodePath("../WorldCommandGateway")
+environment_profile = ExtResource("24_sim_env")
 
 [node name="BaseSpawn" type="Marker3D" parent="." unique_id=490737595]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 9500, 0)

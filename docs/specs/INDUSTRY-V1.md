@@ -86,7 +86,8 @@ Input / tick
 
 - ветряки, солнечные панели, Satisfactory-столбы (после slice);
 - fluid/gas/thermal Flow и Atmosphere (баллонный bulk O₂/H₂/water — в
-  `TERRAIN-MATERIALS-V1.md`, не как трубы; SuitState refill — later);
+  `TERRAIN-MATERIALS-V1.md`, не как трубы; SuitState O₂ refill —
+  `OXYGEN-SURVIVAL-V0.md`; пополнение OxygenModule из bulk cargo — deferred);
 - tier машин (Mk2) и duplicate «efficiency recipes»;
 - крафт кабеля/трубы как inventory item (link = edge + mesh; без расходуемого предмета);
 - conveyors с физическими предметами;
@@ -130,7 +131,9 @@ ItemType {
 | `tool_connector` | `tool` | `discrete` | 1.5 | 4.0 |
 
 Категории `consumable` / `bottle` используются для bulk `water` / `oxygen` /
-`hydrogen` (см. TERRAIN-MATERIALS-V1); refill SuitState — later.
+`hydrogen` (см. TERRAIN-MATERIALS-V1); auto-transfer bulk → SuitState или
+OxygenModule — deferred; suit refill из OxygenModule —
+`OXYGEN-SURVIVAL-V0.md`.
 
 ### Player tool instances и hotbar
 

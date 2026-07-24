@@ -20,6 +20,16 @@ func _run_tests() -> void:
 		_test_action_bar_snapshot_roundtrip,
 		_test_snapshot_rejects_action_bar_on_non_control_seat,
 		_test_dismantle_host_clears_action_bar,
+		_test_seat_control_defaults_and_mutation,
+		_test_seat_control_rejects_non_control_seat,
+		_test_seat_control_snapshot_roundtrip_and_orphan,
+		_test_dismantle_host_clears_seat_control,
+		_test_two_seats_independent_routing,
+		_test_snapshot_v9_loads_without_seat_control_states,
+		_test_host_hint_pin_prefers_pinned,
+		_test_non_seat_hint_resolves_assembly_host,
+		_test_interaction_card_seat_flags_and_toggle_invert,
+		_test_seat_control_ref_is_stable,
 	]
 	for test: Callable in tests:
 		if not bool(test.call()):
@@ -312,6 +322,341 @@ func _test_dismantle_host_clears_action_bar() -> bool:
 	for row: Dictionary in rows:
 		if int(row.get("element_id", 0)) == host_id:
 			return _fail("action bar survived host dismantle")
+	return true
+
+
+func _configure_seat(
+	world: SimulationWorld,
+	seat_id: int,
+	wheels = null,
+	thrusters = null,
+	gyros = null
+) -> Dictionary:
+	var command := ConfigureSeatControlsCommand.new()
+	command.seat_element_id = seat_id
+	command.control_wheels = wheels
+	command.control_thrusters = thrusters
+	command.control_gyros = gyros
+	return world.apply_configure_seat_controls(command)
+
+
+func _test_seat_control_defaults_and_mutation() -> bool:
+	var world := _boot_world()
+	var built := _build_terminal_host(world)
+	if built.has("error"):
+		world.free()
+		return _fail("host setup failed: %s" % built["error"])
+	var host_id := int(built["host_id"])
+	if world.has_seat_control_state(host_id):
+		world.free()
+		return _fail("peek/read must not create seat_control row")
+	var peeked := world.peek_seat_control_state(host_id)
+	if not (
+		peeked.control_wheels
+		and peeked.control_thrusters
+		and peeked.control_gyros
+	):
+		world.free()
+		return _fail("defaults should be all true")
+	var host := world.get_element(host_id)
+	var revision_before := host.state_revision
+	var result := _configure_seat(world, host_id, false, null, true)
+	if StringName(result.get("reason", &"")) != &"ok":
+		world.free()
+		return _fail("configure_seat_controls failed: %s" % result.get("reason"))
+	if not world.has_seat_control_state(host_id):
+		world.free()
+		return _fail("mutation must create seat_control row")
+	var state := world.ensure_seat_control_state(host_id)
+	if state.control_wheels or not state.control_thrusters or not state.control_gyros:
+		world.free()
+		return _fail("partial mutation mismatch: %s" % state.to_dict())
+	if host.state_revision <= revision_before:
+		world.free()
+		return _fail("configure_seat_controls did not bump state_revision")
+	# Verb invert pattern: toggle wheels back on.
+	var toggled := _configure_seat(world, host_id, not state.control_wheels, null, null)
+	if not bool(toggled.get("control_wheels", false)):
+		world.free()
+		return _fail("toggle verb did not invert control_wheels")
+	world.free()
+	return true
+
+
+func _test_seat_control_rejects_non_control_seat() -> bool:
+	var world := _boot_world()
+	var built := _build_terminal_host(world)
+	if built.has("error"):
+		world.free()
+		return _fail("host setup failed: %s" % built["error"])
+	var result := _configure_seat(world, int(built["foundation_id"]), false, false, false)
+	var rows := world.list_seat_control_rows()
+	world.free()
+	if StringName(result.get("reason", &"")) == &"ok":
+		return _fail("configure_seat_controls on non-ControlSeat should fail")
+	for row: Dictionary in rows:
+		if int(row.get("element_id", 0)) == int(built["foundation_id"]):
+			return _fail("rejected configure still created seat_control row")
+	return true
+
+
+func _test_seat_control_snapshot_roundtrip_and_orphan() -> bool:
+	var world := _boot_world()
+	var built := _build_terminal_host(world)
+	if built.has("error"):
+		world.free()
+		return _fail("host setup failed: %s" % built["error"])
+	var host_id := int(built["host_id"])
+	if StringName(
+		_configure_seat(world, host_id, true, false, true).get("reason", &"")
+	) != &"ok":
+		world.free()
+		return _fail("configure failed")
+	var snapshot := world.capture_snapshot()
+	if int(snapshot.get("version", 0)) != SimulationSnapshot.VERSION:
+		world.free()
+		return _fail("snapshot version mismatch")
+	var restored: SimulationWorld = SimulationSnapshot.create_from_snapshot(snapshot)
+	if restored == null:
+		world.free()
+		return _fail(
+			"seat_control snapshot restore failed: %s"
+			% SimulationSnapshot.last_validate_error
+		)
+	var state := restored.peek_seat_control_state(host_id)
+	if state.control_thrusters or not state.control_wheels or not state.control_gyros:
+		world.free()
+		restored.free()
+		return _fail("seat_control did not survive roundtrip: %s" % state.to_dict())
+	# Orphan / wrong role rejected.
+	snapshot["seat_control_states"] = [
+		{"element_id": int(built["foundation_id"]), "state": {"control_wheels": false}}
+	]
+	var bad: SimulationWorld = SimulationSnapshot.create_from_snapshot(snapshot)
+	world.free()
+	restored.free()
+	if bad != null:
+		bad.free()
+		return _fail("seat_control on non-ControlSeat must be rejected")
+	return true
+
+
+func _test_dismantle_host_clears_seat_control() -> bool:
+	var world := _boot_world()
+	var built := _build_terminal_host(world)
+	if built.has("error"):
+		world.free()
+		return _fail("host setup failed: %s" % built["error"])
+	var host_id := int(built["host_id"])
+	if StringName(
+		_configure_seat(world, host_id, false, true, true).get("reason", &"")
+	) != &"ok":
+		world.free()
+		return _fail("configure failed")
+	var dismantle := DismantleElementCommand.new()
+	dismantle.element_id = host_id
+	dismantle.expected_assembly_revision = int(
+		world.get_assembly_raw(int(built["assembly_id"])).topology_revision
+	)
+	dismantle.store_id = PlayerIdentity.store_id("player")
+	var result := world.apply_structural_command_now(dismantle)
+	if not result.is_ok():
+		world.free()
+		return _fail("dismantle failed: %s" % result.reason)
+	var rows := world.list_seat_control_rows()
+	world.free()
+	for row: Dictionary in rows:
+		if int(row.get("element_id", 0)) == host_id:
+			return _fail("seat_control survived host dismantle")
+	return true
+
+
+func _test_two_seats_independent_routing() -> bool:
+	## Two ControlSeat hosts (separate assemblies) — policy is per seat_id.
+	var world := _boot_world()
+	var built_a := _build_terminal_host(world)
+	var built_b := _build_terminal_host(world)
+	if built_a.has("error") or built_b.has("error"):
+		world.free()
+		return _fail(
+			"hosts: %s / %s" % [built_a.get("error"), built_b.get("error")]
+		)
+	var seat_a := int(built_a["host_id"])
+	var seat_b := int(built_b["host_id"])
+	if StringName(
+		_configure_seat(world, seat_a, true, false, true).get("reason", &"")
+	) != &"ok":
+		world.free()
+		return _fail("configure a failed")
+	if StringName(
+		_configure_seat(world, seat_b, false, true, false).get("reason", &"")
+	) != &"ok":
+		world.free()
+		return _fail("configure b failed")
+	var pa := world.peek_seat_control_state(seat_a)
+	var pb := world.peek_seat_control_state(seat_b)
+	world.free()
+	if pa.control_thrusters or not pa.control_wheels or not pa.control_gyros:
+		return _fail("seat a policy corrupted")
+	if pb.control_wheels or not pb.control_thrusters or pb.control_gyros:
+		return _fail("seat b policy corrupted / not independent")
+	return true
+
+
+func _test_snapshot_v9_loads_without_seat_control_states() -> bool:
+	var world := _boot_world()
+	var built := _build_terminal_host(world)
+	if built.has("error"):
+		world.free()
+		return _fail("host setup failed: %s" % built["error"])
+	var host_id := int(built["host_id"])
+	var snapshot := world.capture_snapshot()
+	snapshot["version"] = 9
+	snapshot.erase("seat_control_states")
+	var restored: SimulationWorld = SimulationSnapshot.create_from_snapshot(
+		snapshot
+	)
+	if restored == null:
+		world.free()
+		return _fail(
+			"v9 without seat_control_states must load: %s"
+			% SimulationSnapshot.last_validate_error
+		)
+	var policy := restored.get_seat_control_state_ref(host_id)
+	var ok := (
+		policy.control_wheels
+		and policy.control_thrusters
+		and policy.control_gyros
+		and not restored.has_seat_control_state(host_id)
+	)
+	world.free()
+	restored.free()
+	if not ok:
+		return _fail("v9 load must expose defaults without creating a row")
+	return true
+
+
+func _test_host_hint_pin_prefers_pinned() -> bool:
+	var pinned := ControlTerminalSnapshotBuilder.host_hint_for_refresh(42, 7)
+	var fallthrough := ControlTerminalSnapshotBuilder.host_hint_for_refresh(0, 7)
+	if pinned != 42:
+		return _fail("pinned host must win over look-away aim")
+	if fallthrough != 7:
+		return _fail("no pin → fallthrough hint")
+	return true
+
+
+func _test_non_seat_hint_resolves_assembly_host() -> bool:
+	## K / look-at-frame: non-seat hint on the assembly still gets an action bar
+	## host; explicit seat hint stays pinned; hint=0 does not invent a seat.
+	var world := _boot_world()
+	var built := _build_terminal_host(world)
+	if built.has("error"):
+		world.free()
+		return _fail("host setup failed: %s" % built["error"])
+	var assembly_id := int(built["assembly_id"])
+	var host_id := int(built["host_id"])
+	var foundation_id := int(built["foundation_id"])
+	var from_frame := ControlTerminalSnapshotBuilder.build_bar_only(
+		world,
+		assembly_id,
+		foundation_id
+	)
+	if not bool(from_frame.get("valid", false)):
+		world.free()
+		return _fail("non-seat hint snapshot invalid")
+	if int(from_frame.get("control_seat_element_id", 0)) != host_id:
+		world.free()
+		return _fail(
+			"non-seat hint must resolve assembly ControlSeat host, got %d"
+			% int(from_frame.get("control_seat_element_id", 0))
+		)
+	var from_seat := ControlTerminalSnapshotBuilder.build_bar_only(
+		world,
+		assembly_id,
+		host_id
+	)
+	if int(from_seat.get("control_seat_element_id", 0)) != host_id:
+		world.free()
+		return _fail("explicit seat hint must stay pinned")
+	var no_hint := ControlTerminalSnapshotBuilder.build_bar_only(
+		world,
+		assembly_id,
+		0
+	)
+	if int(no_hint.get("control_seat_element_id", -1)) != 0:
+		world.free()
+		return _fail("hint=0 must not invent a lowest-seat host")
+	world.free()
+	return true
+
+
+func _test_interaction_card_seat_flags_and_toggle_invert() -> bool:
+	## Compact-bar path: invert from authoritative state when `_nodes` empty.
+	var world := _boot_world()
+	var built := _build_terminal_host(world)
+	if built.has("error"):
+		world.free()
+		return _fail("host setup failed: %s" % built["error"])
+	var host_id := int(built["host_id"])
+	if StringName(
+		_configure_seat(world, host_id, true, false, true).get("reason", &"")
+	) != &"ok":
+		world.free()
+		return _fail("configure failed")
+	var card := world.get_interaction_card(host_id)
+	if card == null or not card.keys.has("control_thrusters"):
+		world.free()
+		return _fail("InteractionCard must publish seat routing flags")
+	if bool(card.keys.get("control_thrusters", true)):
+		world.free()
+		return _fail("card must reflect authoritative thrusters=false")
+	# Invert path used by closed compact bar (no terminal node detail).
+	var next_thrusters := not SeatControlState.flag_of(
+		world.get_seat_control_state_ref(host_id),
+		"control_thrusters"
+	)
+	if not next_thrusters:
+		world.free()
+		return _fail("invert of false must be true")
+	var toggled := _configure_seat(world, host_id, null, next_thrusters, null)
+	if not bool(toggled.get("control_thrusters", false)):
+		world.free()
+		return _fail("toggle OFF→ON must stick via authoritative state")
+	var off_again := not SeatControlState.flag_of(
+		world.get_seat_control_state_ref(host_id),
+		"control_thrusters"
+	)
+	var toggled_off := _configure_seat(world, host_id, null, off_again, null)
+	world.free()
+	if bool(toggled_off.get("control_thrusters", true)):
+		return _fail("toggle ON→OFF must stick (closed-bar invert path)")
+	return true
+
+
+func _test_seat_control_ref_is_stable() -> bool:
+	var world := _boot_world()
+	var built := _build_terminal_host(world)
+	if built.has("error"):
+		world.free()
+		return _fail("host setup failed: %s" % built["error"])
+	var host_id := int(built["host_id"])
+	var defaults_a := world.get_seat_control_state_ref(host_id)
+	var defaults_b := world.get_seat_control_state_ref(host_id)
+	if defaults_a != defaults_b:
+		world.free()
+		return _fail("missing row must return shared defaults_ref")
+	_configure_seat(world, host_id, false, true, true)
+	var row_a := world.get_seat_control_state_ref(host_id)
+	var row_b := world.get_seat_control_state_ref(host_id)
+	if row_a != row_b or row_a.control_wheels:
+		world.free()
+		return _fail("ensure row must be stable shared ref")
+	world.clear_element_instance_state(host_id)
+	if world.has_seat_control_state(host_id):
+		world.free()
+		return _fail("clear_element_instance_state must drop seat_control row")
+	world.free()
 	return true
 
 

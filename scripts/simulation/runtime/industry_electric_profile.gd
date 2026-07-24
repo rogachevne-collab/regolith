@@ -53,6 +53,9 @@ static func for_element(element: SimulationElement) -> Dictionary:
 		profile["is_consumer"] = true
 		if float(profile["idle_w"]) <= 0.0:
 			profile["idle_w"] = _mechanism_idle_w(archetype)
+	if archetype.oxygen_module_definition != null:
+		profile["is_consumer"] = true
+		profile["idle_w"] = archetype.oxygen_module_definition.idle_w
 	if (
 		profile["is_consumer"]
 		and float(profile["idle_w"]) <= 0.0
@@ -110,6 +113,8 @@ static func output_w(element: SimulationElement) -> float:
 static func idle_w(element: SimulationElement) -> float:
 	if element != null:
 		var archetype := element.get_archetype()
+		if archetype != null and archetype.oxygen_module_definition != null:
+			return archetype.oxygen_module_definition.idle_w
 		if archetype != null and archetype.wheel_definition != null:
 			return archetype.wheel_definition.idle_w
 		if archetype != null and archetype.thruster_definition != null:

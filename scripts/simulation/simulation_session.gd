@@ -6,6 +6,7 @@ const SLICE01_BASE_MINIMAL := preload(
 )
 
 @export var gateway_path: NodePath
+@export var environment_profile: SimulationEnvironmentProfile
 
 @onready var world: SimulationWorld = $SimulationWorld
 @onready var projection: SimulationPhysicsProjection = (
@@ -22,6 +23,7 @@ var _industry_simulation := IndustrySimulation.new()
 
 
 func _ready() -> void:
+	world.set_environment_profile(environment_profile)
 	projection.bind_world(world)
 	visuals.bind(world, projection)
 	piston_visuals.bind(world, projection)
@@ -55,6 +57,10 @@ func apply_set_machine_enabled(command: SetMachineEnabledCommand) -> Dictionary:
 	return world.apply_set_machine_enabled(command)
 
 
+func apply_oxygen_refill(command: OxygenRefillCommand) -> Dictionary:
+	return _industry_simulation.queue_manual_oxygen_refill(command)
+
+
 func apply_set_element_name(command: SetElementNameCommand) -> Dictionary:
 	return world.apply_set_element_name(command)
 
@@ -83,6 +89,12 @@ func apply_configure_action_slot(
 	command: ConfigureActionSlotCommand
 ) -> Dictionary:
 	return world.apply_configure_action_slot(command)
+
+
+func apply_configure_seat_controls(
+	command: ConfigureSeatControlsCommand
+) -> Dictionary:
+	return world.apply_configure_seat_controls(command)
 
 
 func apply_configure_suspension(

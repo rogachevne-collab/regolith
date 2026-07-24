@@ -15,7 +15,9 @@ func _run_tests() -> void:
 		_test_flight_assembly_detection,
 		_test_thrust_and_gyro_math,
 		_test_power_demand_scales_with_throttle,
+		_test_route_gates_suppress_power_and_allow_gyro_only,
 		_test_locomotion_flight_snapshot_roundtrip,
+		_test_route_gates_persist_and_dampeners_after_restore,
 		_test_hopper_demo_spawn,
 	]
 	for test: Callable in tests:
@@ -190,13 +192,20 @@ func _test_power_demand_scales_with_throttle() -> bool:
 	helper.weld_all()
 	var locomotion := world.get_locomotion_controller(helper.assembly_id)
 	locomotion.activate()
-	locomotion.set_translate_command(Vector3.ZERO)
+	var idle_frame := SeatInputFrame.new()
+	idle_frame.thrusters_route_enabled = true
+	idle_frame.gyros_route_enabled = true
+	locomotion.apply_driver_frame(idle_frame)
 	ThrusterSimulationService.sync_power_demand(world)
 	var thruster_id := int(helper.element_ids["thruster"])
 	var idle_dyn := world.ensure_industry_element_runtime(thruster_id).dynamic_power_w
 	if idle_dyn > 0.001:
 		return _fail("zero translate must demand 0 dynamic W, got %s" % idle_dyn)
-	locomotion.set_translate_command(Vector3(0.0, 1.0, 0.0))
+	var thrust_frame := SeatInputFrame.new()
+	thrust_frame.translate_command = Vector3(0.0, 1.0, 0.0)
+	thrust_frame.thrusters_route_enabled = true
+	thrust_frame.gyros_route_enabled = true
+	locomotion.apply_driver_frame(thrust_frame)
 	ThrusterSimulationService.sync_power_demand(world)
 	var full := world.ensure_industry_element_runtime(thruster_id).dynamic_power_w
 	var expected := Slice01Archetypes.thruster().thruster_definition.power_draw_w
@@ -205,11 +214,79 @@ func _test_power_demand_scales_with_throttle() -> bool:
 	return true
 
 
+## Consumer gates: thruster channel OFF suppresses thrust power even with
+## translate set; gyro-only route still loads gyros (no thruster presence needed).
+func _test_route_gates_suppress_power_and_allow_gyro_only() -> bool:
+	var world := _boot_world()
+	var helper := AssemblyBuildHelper.new(world, PlayerIdentity.store_id("player"))
+	helper.ensure_materials(300.0)
+	if not helper.spawn_anchor(Slice01Archetypes.frame()):
+		return _fail("spawn: %s" % helper.last_error)
+	if not helper.place(Slice01Archetypes.thruster(), Vector3i(0, -1, 0), 0, "thruster"):
+		return _fail("thruster: %s" % helper.last_error)
+	if not helper.place(Slice01Archetypes.gyro(), Vector3i(1, 0, 0), 0, "gyro"):
+		return _fail("gyro: %s" % helper.last_error)
+	helper.weld_all()
+	var locomotion := world.get_locomotion_controller(helper.assembly_id)
+	locomotion.activate()
+	var thrusters_off := SeatInputFrame.new()
+	thrusters_off.translate_command = Vector3(0.0, 1.0, 0.0)
+	thrusters_off.pitch_command = 1.0
+	thrusters_off.thrusters_route_enabled = false
+	thrusters_off.gyros_route_enabled = true
+	locomotion.apply_driver_frame(thrusters_off)
+	ThrusterSimulationService.sync_power_demand(world)
+	var thruster_id := int(helper.element_ids["thruster"])
+	var gyro_id := int(helper.element_ids["gyro"])
+	var thrust_w := world.ensure_industry_element_runtime(thruster_id).dynamic_power_w
+	var gyro_w := world.ensure_industry_element_runtime(gyro_id).dynamic_power_w
+	if thrust_w > 0.001:
+		return _fail("thrusters_route off must suppress thrust power, got %s" % thrust_w)
+	if gyro_w <= 0.001:
+		return _fail("gyros_route on without thruster route must still load gyro")
+	# Gyro-only assembly (no thruster) still accepts gyro route.
+	var gyro_world := _boot_world()
+	var gyro_helper := AssemblyBuildHelper.new(
+		gyro_world,
+		PlayerIdentity.store_id("player")
+	)
+	gyro_helper.ensure_materials(200.0)
+	if not gyro_helper.spawn_anchor(Slice01Archetypes.frame()):
+		return _fail("gyro-only spawn: %s" % gyro_helper.last_error)
+	if not gyro_helper.place(Slice01Archetypes.gyro(), Vector3i(0, 1, 0), 0, "gyro"):
+		return _fail("gyro-only place: %s" % gyro_helper.last_error)
+	gyro_helper.weld_all()
+	if ThrusterSimulationService.is_flight_assembly(
+		gyro_world,
+		gyro_helper.assembly_id
+	):
+		return _fail("gyro-only must not be classified as flight assembly")
+	var gyro_loco := gyro_world.get_locomotion_controller(gyro_helper.assembly_id)
+	gyro_loco.activate()
+	var gyro_frame := SeatInputFrame.new()
+	gyro_frame.yaw_command = 1.0
+	gyro_frame.gyros_route_enabled = true
+	gyro_loco.apply_driver_frame(gyro_frame)
+	ThrusterSimulationService.sync_power_demand(gyro_world)
+	var only_gyro_id := int(gyro_helper.element_ids["gyro"])
+	var only_gyro_w := (
+		gyro_world.ensure_industry_element_runtime(only_gyro_id).dynamic_power_w
+	)
+	world.free()
+	gyro_world.free()
+	if only_gyro_w <= 0.001:
+		return _fail("gyro-without-thruster consumer gate must load gyro power")
+	return true
+
+
 func _test_locomotion_flight_snapshot_roundtrip() -> bool:
 	var locomotion := AssemblyLocomotionController.new()
 	locomotion.set_translate_command(Vector3(0.5, 1.0, -0.25))
 	locomotion.set_attitude_commands(0.1, -0.2, 0.3)
 	locomotion.set_dampeners(false)
+	locomotion.thrusters_route_enabled = true
+	locomotion.gyros_route_enabled = false
+	locomotion.wheels_route_enabled = true
 	var row := locomotion.to_dict()
 	if row.get("translate_command") is Vector3:
 		return _fail("translate_command must serialize JSON-safe, not Vector3")
@@ -228,12 +305,80 @@ func _test_locomotion_flight_snapshot_roundtrip() -> bool:
 		return _fail("dampeners=false lost in JSON roundtrip")
 	if not is_equal_approx(restored.pitch_command, 0.1):
 		return _fail("pitch_command lost in JSON roundtrip")
+	if (
+		not restored.is_thrusters_route_enabled()
+		or restored.is_gyros_route_enabled()
+		or not restored.is_wheels_route_enabled()
+	):
+		return _fail("route gates lost in JSON roundtrip")
+	# Pre-feature rows omit gate keys → defaults ON (dampeners keep working).
+	var legacy_gates := AssemblyLocomotionController.new()
+	legacy_gates.apply_dict({"activated": true, "dampeners": true})
+	if not (
+		legacy_gates.is_thrusters_route_enabled()
+		and legacy_gates.is_gyros_route_enabled()
+		and legacy_gates.is_wheels_route_enabled()
+	):
+		return _fail("missing route-gate keys must default ON")
 	var legacy := AssemblyLocomotionController.new()
 	legacy.apply_dict({"thrust_command": 0.7})
 	if not is_equal_approx(legacy.translate_command.y, 0.7):
 		return _fail(
 			"legacy thrust_command must map to translate.y, got %s"
 			% legacy.translate_command
+		)
+	return true
+
+
+## Activated craft with dampeners: route gates survive world snapshot so
+## consumers keep applying after restore (no silent gate-off).
+func _test_route_gates_persist_and_dampeners_after_restore() -> bool:
+	var world := _boot_world()
+	var helper := AssemblyBuildHelper.new(world, PlayerIdentity.store_id("player"))
+	helper.ensure_materials(300.0)
+	if not helper.spawn_anchor(Slice01Archetypes.frame()):
+		return _fail("spawn: %s" % helper.last_error)
+	if not helper.place(Slice01Archetypes.thruster(), Vector3i(0, -1, 0), 0, "thruster"):
+		return _fail("thruster: %s" % helper.last_error)
+	if not helper.place(Slice01Archetypes.gyro(), Vector3i(1, 0, 0), 0, "gyro"):
+		return _fail("gyro: %s" % helper.last_error)
+	helper.weld_all()
+	var locomotion := world.get_locomotion_controller(helper.assembly_id)
+	locomotion.activate()
+	locomotion.set_dampeners(true)
+	var frame := SeatInputFrame.new()
+	frame.thrusters_route_enabled = true
+	frame.gyros_route_enabled = true
+	frame.wheels_route_enabled = true
+	locomotion.apply_driver_frame(frame)
+	var snapshot := world.capture_snapshot()
+	var restored: SimulationWorld = SimulationSnapshot.create_from_snapshot(
+		snapshot
+	)
+	if restored == null:
+		world.free()
+		return _fail(
+			"restore failed: %s" % SimulationSnapshot.last_validate_error
+		)
+	var loco2 := restored.get_locomotion_controller(helper.assembly_id)
+	if not loco2.is_activated() or not loco2.is_dampeners():
+		world.free()
+		restored.free()
+		return _fail("activated+dampeners lost after restore")
+	if not (
+		loco2.is_thrusters_route_enabled() and loco2.is_gyros_route_enabled()
+	):
+		world.free()
+		restored.free()
+		return _fail("route gates not persisted — dampeners would stop")
+	ThrusterSimulationService.sync_power_demand(restored)
+	var gyro_id := int(helper.element_ids["gyro"])
+	var gyro_w := restored.ensure_industry_element_runtime(gyro_id).dynamic_power_w
+	world.free()
+	restored.free()
+	if gyro_w <= 0.001:
+		return _fail(
+			"after restore, dampener gyro load must be non-zero (got %s)" % gyro_w
 		)
 	return true
 
@@ -281,6 +426,25 @@ func _spawn_hopper(session: SimulationSession) -> Dictionary:
 	)
 
 
+## Kernel fixtures apply a driver frame with route gates on — projection
+## consumers require thrusters_route_enabled / gyros_route_enabled.
+func _apply_flight_frame(
+	locomotion: AssemblyLocomotionController,
+	translate: Vector3,
+	pitch: float = 0.0,
+	yaw: float = 0.0,
+	roll: float = 0.0
+) -> void:
+	var frame := SeatInputFrame.new()
+	frame.translate_command = translate
+	frame.pitch_command = pitch
+	frame.yaw_command = yaw
+	frame.roll_command = roll
+	frame.thrusters_route_enabled = true
+	frame.gyros_route_enabled = true
+	locomotion.apply_driver_frame(frame)
+
+
 func _test_hopper_thruster_powered() -> bool:
 	var session := _boot_session()
 	var result := _spawn_hopper(session)
@@ -290,7 +454,7 @@ func _test_hopper_thruster_powered() -> bool:
 	var assembly_id := int(result.get("assembly_id", 0))
 	var locomotion := session.world.get_locomotion_controller(assembly_id)
 	locomotion.activate()
-	locomotion.set_translate_command(Vector3(0.0, 1.0, 0.0))
+	_apply_flight_frame(locomotion, Vector3(0.0, 1.0, 0.0))
 	ThrusterSimulationService.sync_power_demand(session.world)
 	IndustryElectricBudget.apply_tick(session.world, 0.1)
 	var thruster_id := int(result.get("element_ids", {}).get("thruster", 0))
@@ -313,7 +477,7 @@ func _test_hopper_no_power_when_battery_empty() -> bool:
 	var assembly_id := int(result.get("assembly_id", 0))
 	var locomotion := session.world.get_locomotion_controller(assembly_id)
 	locomotion.activate()
-	locomotion.set_translate_command(Vector3(0.0, 1.0, 0.0))
+	_apply_flight_frame(locomotion, Vector3(0.0, 1.0, 0.0))
 	ThrusterSimulationService.sync_power_demand(session.world)
 	IndustryElectricBudget.apply_tick(session.world, 0.1)
 	var thruster_id := int(result.get("element_ids", {}).get("thruster", 0))
@@ -342,7 +506,7 @@ func _test_hopper_lifts_off() -> bool:
 	var assembly_id := int(result.get("assembly_id", 0))
 	var locomotion := session.world.get_locomotion_controller(assembly_id)
 	locomotion.set_parking_brake(false)
-	locomotion.set_translate_command(Vector3(0.0, 1.0, 0.0))
+	_apply_flight_frame(locomotion, Vector3(0.0, 1.0, 0.0))
 	HopperDemoSpawn.wake_flight_body(session, assembly_id)
 	var body := session.projection.get_physics_body(assembly_id) as RigidBody3D
 	if body == null:
@@ -370,7 +534,7 @@ func _test_hopper_lifts_off() -> bool:
 	if lift_m < 2.0:
 		session.queue_free()
 		return _fail("hopper lifted only %.2f m in 3 s" % lift_m)
-	locomotion.set_attitude_commands(0.35, 0.0, 0.0)
+	_apply_flight_frame(locomotion, Vector3(0.0, 1.0, 0.0), 0.35, 0.0, 0.0)
 	var hop_start := body.global_position
 	for _step: int in range(360):
 		IndustryElectricBudget.apply_tick(session.world, 1.0 / 60.0)

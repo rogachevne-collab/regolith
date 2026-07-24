@@ -51,12 +51,18 @@ var _player_inventory: PlayerInventoryRegistry
 var _player_inventory_revision := 0
 ## player_id → SimulationSuitState.
 var _suits: Dictionary = {}
+## Immutable scene/world config; intentionally excluded from snapshots.
+var _environment_profile := SimulationEnvironmentProfile.new()
+## Ephemeral occupancy: player_id → ControlSeat element_id. Never snapshotted.
+var _player_seat_contexts: Dictionary = {}
 var _industry_network := IndustryNetworkState.create_default()
 var _industry_elements: Dictionary = {}
 var _wheel_instances: Dictionary = {}
 var _suspension_instances: Dictionary = {}
 ## element_id хоста (роль ControlSeat) → ActionBarState (CONTROL-ACTIONS-V0).
 var _action_bars: Dictionary = {}
+## element_id ControlSeat → SeatControlState (semantic seat routing policy).
+var _seat_controls: Dictionary = {}
 var _wheel_runtime: Dictionary = {}
 var _assembly_locomotion: Dictionary = {}
 var _cargo_graph := CargoGraph.new()
@@ -115,6 +121,9 @@ func list_elements_unsorted() -> Array[SimulationElement]:
 		i += 1
 	return result
 
+## Sorted alloc of all joints — snapshot/impact/authoring/tests only.
+## Not for aim/HUD/terminal: use InteractionIndex / driven_joint_for_element
+## or iter_joints_for_assembly.
 func list_joints() -> Array[SimulationJoint]:
 	var result: Array[SimulationJoint] = []
 	for joint_id: int in _sorted_keys(_joints):
@@ -217,25 +226,93 @@ func list_suit_state_ids() -> Array[String]:
 func apply_suit_damage(
 	player_id: String,
 	amount: float,
-	source: StringName = &""
+	source: StringName = &"",
+	emit_change: bool = true
 ) -> bool:
 	var suit := ensure_suit_state(player_id)
 	if not suit.apply_damage(amount, source):
 		return false
-	suit_changed.emit(player_id)
+	if emit_change:
+		suit_changed.emit(player_id)
 	return true
 
 func fill_suit_state(player_id: String) -> void:
 	if ensure_suit_state(player_id).fill():
 		suit_changed.emit(player_id)
 
-## Advances the placeholder drain/regen for every known suit. Driven by
-## SimulationSession so headless tests can step it deterministically.
 func tick_suits(delta: float) -> void:
-	for player_id: String in _suits.keys():
+	for player_id: String in list_suit_state_ids():
 		var suit: SimulationSuitState = _suits[player_id]
-		if suit.tick(delta):
+		if SuitLifeSupportService.tick_suit(self, player_id, suit, delta):
 			suit_changed.emit(player_id)
+
+
+func notify_suit_changed(player_id: String) -> void:
+	if _suits.has(player_id):
+		suit_changed.emit(player_id)
+
+
+func set_environment_profile(profile: SimulationEnvironmentProfile) -> void:
+	_environment_profile = (
+		profile if profile != null else SimulationEnvironmentProfile.new()
+	)
+
+
+func get_environment_profile() -> SimulationEnvironmentProfile:
+	return _environment_profile
+
+
+func register_player_seat_context(player_id: String, seat_element_id: int) -> bool:
+	if player_id.is_empty() or seat_element_id <= 0:
+		return false
+	var seat := get_element(seat_element_id)
+	if (
+		seat == null
+		or seat.get_archetype() == null
+		or not seat.get_archetype().roles.has("ControlSeat")
+		or not seat.is_operational()
+	):
+		return false
+	_player_seat_contexts[player_id] = seat_element_id
+	return true
+
+
+func clear_player_seat_context(player_id: String) -> void:
+	_player_seat_contexts.erase(player_id)
+
+
+func get_player_seat_element_id(player_id: String) -> int:
+	return int(_player_seat_contexts.get(player_id, 0))
+
+
+func list_seat_context_player_ids() -> Array[String]:
+	var ids: Array[String] = []
+	for player_id: String in _player_seat_contexts.keys():
+		ids.append(player_id)
+	ids.sort()
+	return ids
+
+
+func prune_seat_contexts() -> void:
+	for player_id: String in list_seat_context_player_ids():
+		var seat_id := get_player_seat_element_id(player_id)
+		var seat := get_element(seat_id)
+		if (
+			seat == null
+			or not seat.is_operational()
+			or seat.get_archetype() == null
+			or not seat.get_archetype().roles.has("ControlSeat")
+		):
+			_player_seat_contexts.erase(player_id)
+
+
+func apply_oxygen_refill(command: OxygenRefillCommand) -> Dictionary:
+	if _industry_runner == null:
+		_industry_runner = IndustrySimulation.new()
+		(_industry_runner as IndustrySimulation).bind_world(self)
+	return (_industry_runner as IndustrySimulation).queue_manual_oxygen_refill(
+		command
+	)
 
 func get_player_inventory() -> PlayerInventoryRegistry:
 	return _player_inventory
@@ -445,6 +522,36 @@ func apply_configure_action_slot(
 	}
 
 
+## Per-ControlSeat routing policy. Operational не требуется — настройки
+## переживают damage/repair. Меняет только переданные поля.
+func apply_configure_seat_controls(
+	command: ConfigureSeatControlsCommand
+) -> Dictionary:
+	if command == null or command.seat_element_id <= 0:
+		return {"reason": &"invalid_target"}
+	var seat := get_element(command.seat_element_id)
+	if seat == null:
+		return {"reason": &"invalid_target"}
+	var archetype := seat.get_archetype()
+	if archetype == null or not archetype.roles.has("ControlSeat"):
+		return {"reason": &"invalid_target"}
+	var state := ensure_seat_control_state(command.seat_element_id)
+	if command.control_wheels != null:
+		state.control_wheels = bool(command.control_wheels)
+	if command.control_thrusters != null:
+		state.control_thrusters = bool(command.control_thrusters)
+	if command.control_gyros != null:
+		state.control_gyros = bool(command.control_gyros)
+	seat.bump_state_revision()
+	return {
+		"reason": &"ok",
+		"seat_element_id": command.seat_element_id,
+		"control_wheels": state.control_wheels,
+		"control_thrusters": state.control_thrusters,
+		"control_gyros": state.control_gyros,
+	}
+
+
 func apply_set_actuator_target(
 	command: SetActuatorTargetCommand
 ) -> Dictionary:
@@ -590,6 +697,49 @@ func list_action_bar_rows() -> Array[Dictionary]:
 		})
 	return rows
 
+
+## Не гейтует по роли — гейт на команде / snapshot-валидации (как ActionBar).
+func ensure_seat_control_state(element_id: int) -> SeatControlState:
+	if not _seat_controls.has(element_id):
+		_seat_controls[element_id] = SeatControlState.new()
+	return _seat_controls[element_id] as SeatControlState
+
+
+## Read-only пути не должны создавать persistent row (открытие UI / card).
+func has_seat_control_state(element_id: int) -> bool:
+	return _seat_controls.has(element_id)
+
+
+func register_seat_control_state(
+	element_id: int,
+	state: SeatControlState
+) -> void:
+	if element_id > 0 and state != null:
+		_seat_controls[element_id] = state
+
+
+func list_seat_control_rows() -> Array[Dictionary]:
+	var rows: Array[Dictionary] = []
+	for element_id: int in _sorted_keys(_seat_controls):
+		rows.append({
+			"element_id": element_id,
+			"state": (_seat_controls[element_id] as SeatControlState).to_dict(),
+		})
+	return rows
+
+
+## Read-only shared ref (R9): table row or immutable defaults. Do not mutate
+## defaults_ref(); mutations go through ensure_seat_control_state / command.
+func get_seat_control_state_ref(element_id: int) -> SeatControlState:
+	if _seat_controls.has(element_id):
+		return _seat_controls[element_id] as SeatControlState
+	return SeatControlState.defaults_ref()
+
+
+## Duplicate for callers that need an owned copy (tests / UI snapshots).
+func peek_seat_control_state(element_id: int) -> SeatControlState:
+	return get_seat_control_state_ref(element_id).duplicate_state()
+
 func get_wheel_runtime(wheel_element_id: int) -> Dictionary:
 	return _wheel_runtime.get(wheel_element_id, {})
 
@@ -633,15 +783,22 @@ func store_wheel_runtime(
 		runtime[key] = value
 	_wheel_runtime[wheel_element_id] = runtime
 
-## Название по историческому первому потребителю; на деле — общая точка
-## очистки instance side-table'ов при удалении элемента (см. единственный
-## вызов в topology_mutation_service.gd, он зовётся для любого удалённого
-## элемента, не только колёсного).
-func clear_wheel_element_state(element_id: int) -> void:
+## Общая очистка per-element instance side-table'ов при удалении элемента
+## (topology_mutation_service — любой удалённый элемент, не только колёсный).
+func clear_element_instance_state(element_id: int) -> void:
 	_wheel_instances.erase(element_id)
 	_suspension_instances.erase(element_id)
 	_wheel_runtime.erase(element_id)
 	_action_bars.erase(element_id)
+	_seat_controls.erase(element_id)
+	for player_id: String in list_seat_context_player_ids():
+		if get_player_seat_element_id(player_id) == element_id:
+			_player_seat_contexts.erase(player_id)
+
+
+## @deprecated Alias — use clear_element_instance_state.
+func clear_wheel_element_state(element_id: int) -> void:
+	clear_element_instance_state(element_id)
 
 func sync_actuator_observation(
 	joint_id: int,
@@ -1072,6 +1229,8 @@ func restore_snapshot(snapshot: Dictionary, emit_event := true) -> bool:
 	_wheel_instances = restored._wheel_instances
 	_suspension_instances = restored._suspension_instances
 	_action_bars = restored._action_bars
+	_seat_controls = restored._seat_controls
+	_player_seat_contexts.clear()
 	_wheel_runtime.clear()
 	_assembly_locomotion = restored._assembly_locomotion
 	_world_loot_piles = restored._world_loot_piles
@@ -1084,6 +1243,7 @@ func restore_snapshot(snapshot: Dictionary, emit_event := true) -> bool:
 	clear_interaction_index()
 	_rebuild_joint_assembly_index()
 	restored.free()
+	IndustryStoreService.sync_all_elements(self)
 	if emit_event:
 		emit_world_restored()
 	return true
@@ -1187,7 +1347,7 @@ func _spawn_blueprint(
 	)
 	for element: SimulationElement in spawned:
 		_elements[element.element_id] = element
-		IndustryStoreService.sync_element_storage(self, element)
+		IndustryStoreService.sync_element_storage(self, element, true)
 	for joint: SimulationJoint in new_joints:
 		_register_joint(joint)
 	_assemblies[assembly_id] = assembly

@@ -8,6 +8,7 @@
 - `docs/specs/SIMULATION-KERNEL-V0.md`;
 - `docs/specs/INDUSTRY-V1.md`;
 - `docs/specs/ROVER-MODULES-V1.md` (ControlSeat / locomotion pattern);
+- `docs/specs/CONTROL-AXES-V0.md` (semantic seat routing);
 - `docs/CONCEPT.md` (орбитальная механика не ядро; hop/VTOL допустимы).
 
 ## Цель
@@ -144,23 +145,38 @@ Legacy `thrust_command` в snapshot читается как `translate.y`.
 
 ## ControlSeat bindings (SE-like)
 
-Когда assembly — flight (`is_flight_assembly`) и seat occupied:
+Когда operational `ControlSeat` occupied, `WorldCommandGateway` собирает raw
+InputMap strengths и `SeatInputRouter` публикует **semantic channels** в
+`SeatInputFrame` по per-seat policy (`control_wheels` / `control_thrusters` /
+`control_gyros`, default `true`). `AssemblyLocomotionController` — единственный
+writer continuous state на assembly за тик. См. `CONTROL-AXES-V0.md`.
 
-| Input action | Command |
+Нет mutex «flight побеждает locomotion»: каналы **broadcast** независимо.
+Включены оба — WASD одновременно drive/steer (колёса) и translate (трастеры).
+
+| Input action | Semantic channel (если route ON) |
 |---|---|
-| `move_forward` / `move_back` | `translate.z` (forward = −z, Godot camera axis) |
-| `move_left` / `move_right` | `translate.x` (±strafe) |
-| `move_up` / `move_down` | `translate.y` (Space / C) |
-| mouse X / Y (FP, not orbit) | `yaw` / `pitch` |
-| `roll_left` / `roll_right` | `roll` (Q / E) |
-| `toggle_dampeners` | toggle `dampeners` (Z) |
+| `move_forward` / `move_back` | wheels: drive; thrusters: `translate.z` (−z forward) |
+| `move_left` / `move_right` | wheels: steer; thrusters: `translate.x` |
+| `jump` ∪ `move_up` / `move_down` | wheels: `brake_command`; thrusters: `translate.y` (Space fan-out) |
+| mouse X / Y (FP, not orbit) | gyros: `yaw` / `pitch` (независимо от thrusters) |
+| `roll_left` / `roll_right` | gyros: `roll` (Q / E) |
+| `toggle_dampeners` (Z) | latched `dampeners` assembly-wide |
+| `toggle_parking_brake` (P) | latched `parking_brake` assembly-wide (только при `control_wheels`) |
 
 Orbit camera (`toggle_vehicle_camera` / V): freelook вокруг craft, мышь не рулит.
 
-Если assembly одновременно locomotive (колёса) **и** flight: flight bindings
-побеждают (WASD = translate, не drive). Parking brake остаётся на `P`.
+**Effective gates** (`*_route_enabled` на locomotion): consumer подавляет manual
+force/torque **и** dampening по своему каналу, когда gate off. Latched
+`dampeners` / parking brake сохраняются; при modal UI (терминал) continuous
+channels обнуляются, gates остаются — dampeners продолжают работать.
 
-Seat entry разрешён для `is_mobile_assembly` = locomotive ∨ flight.
+Per-seat toggles — `configure_seat_controls` / Control Terminal faceplate
+(`CONTROL-ACTIONS-V0.md`).
+
+Seat entry: operational элемент с ролью `ControlSeat` (не только
+`is_mobile_assembly`). Политика «можно ли активировать не-mobile assembly» —
+вне этой спеки.
 
 ## Acceptance
 
@@ -173,7 +189,6 @@ Seat entry разрешён для `is_mobile_assembly` = locomotive ∨ flight.
 
 ## Лестница после v0
 
-1. Mode switch wheel/flight на hybrid.
-2. Per-thruster groups / differential.
-3. Fuel Store + mass flow.
-4. Moon experiment + point gravity hop.
+1. Per-thruster differential / groups (semantic channels уже broadcast).
+2. Fuel Store + mass flow.
+3. Moon experiment + point gravity hop.

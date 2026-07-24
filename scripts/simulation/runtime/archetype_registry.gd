@@ -132,6 +132,9 @@ static func _fingerprint_from_schema(
 		"gyro_definition": _gyro_definition_row(
 			archetype.gyro_definition
 		),
+		"oxygen_module_definition": _oxygen_module_definition_row(
+			archetype.oxygen_module_definition
+		),
 		"internal_archetype": archetype.internal_archetype,
 		"ports": ports,
 		"colliders": colliders,
@@ -264,6 +267,20 @@ static func _gyro_definition_row(
 		"power_draw_w": definition.power_draw_w,
 		"idle_w": definition.idle_w,
 		"dampen_gain": definition.dampen_gain,
+	}
+
+
+static func _oxygen_module_definition_row(
+	definition: OxygenModuleDefinition
+) -> Dictionary:
+	if definition == null:
+		return {}
+	return {
+		"capacity_l": definition.capacity_l,
+		"initial_l": definition.initial_l,
+		"dispense_lps": definition.dispense_lps,
+		"idle_w": definition.idle_w,
+		"active_w": definition.active_w,
 	}
 
 

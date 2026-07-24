@@ -24,6 +24,13 @@ func transfer_between_stores(
 		return _failed(&"invalid_target")
 	if not is_finite(requested_amount) or requested_amount < 0.0:
 		return _failed(&"invalid_target")
+	# OxygenModule cargo ports are topology-only in v0. Its finite tank can be
+	# mutated only by OxygenRefillService / fresh-creation seeding.
+	if (
+		IndustryStoreService.is_oxygen_module_store(world, from_store_id)
+		or IndustryStoreService.is_oxygen_module_store(world, to_store_id)
+	):
+		return _failed(&"transfer_blocked")
 	if not instance_id.is_empty():
 		return _transfer_player_tool_instance(
 			world,

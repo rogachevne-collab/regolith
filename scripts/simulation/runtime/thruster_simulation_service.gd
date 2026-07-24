@@ -106,18 +106,25 @@ static func sync_power_demand(world: SimulationWorld) -> void:
 		var locomotion := world.get_locomotion_controller(assembly.assembly_id)
 		if not locomotion.is_activated():
 			continue
-		var translate_load := locomotion.translate_magnitude()
-		for thruster: SimulationElement in list_thruster_elements(
-			world,
-			assembly.assembly_id
-		):
-			var definition: ThrusterDefinition = (
-				thruster.get_archetype().thruster_definition
-			)
-			var runtime := world.ensure_industry_element_runtime(
-				thruster.element_id
-			)
-			runtime.dynamic_power_w = definition.power_draw_w * translate_load
+		var translate_load := (
+			locomotion.translate_magnitude()
+			if locomotion.is_thrusters_route_enabled()
+			else 0.0
+		)
+		if locomotion.is_thrusters_route_enabled():
+			for thruster: SimulationElement in list_thruster_elements(
+				world,
+				assembly.assembly_id
+			):
+				var definition: ThrusterDefinition = (
+					thruster.get_archetype().thruster_definition
+				)
+				var runtime := world.ensure_industry_element_runtime(
+					thruster.element_id
+				)
+				runtime.dynamic_power_w = definition.power_draw_w * translate_load
+		if not locomotion.is_gyros_route_enabled():
+			continue
 		var attitude_mag := maxf(
 			absf(locomotion.pitch_command),
 			maxf(
