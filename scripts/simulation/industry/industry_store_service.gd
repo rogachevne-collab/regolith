@@ -193,10 +193,13 @@ static func sync_element_storage(world: SimulationWorld, element: SimulationElem
 
 
 static func sync_all_elements(world: SimulationWorld) -> void:
-	# No player store is created here any more: a world-wide element sync has
-	# no business inventing a store for one particular player. Player stores
-	# come from spawn (seed_player_starter_resources) or from the snapshot.
+	# Full walk — only for restore/bind. Topology place/dismantle syncs the
+	# touched element(s) directly; do not call this on every frame place.
 	ensure_player_inventory(world)
+	if world.has_method("list_elements_unsorted"):
+		for element: SimulationElement in world.list_elements_unsorted():
+			sync_element_storage(world, element)
+		return
 	for element: SimulationElement in world.list_elements():
 		sync_element_storage(world, element)
 

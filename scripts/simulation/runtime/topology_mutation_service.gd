@@ -47,11 +47,16 @@ static func remove_element_from_topology(world,
 			if amount > 0.000001:
 				refunds[str(resource_id)] = amount
 
+	# Footprint before erase — projection needs it to refresh neighbour face masks
+	# without a full assembly visual rebuild.
+	var removed_occupied_cells: Array[Vector3i] = []
+	for cell: Vector3i in element.occupied_cells():
+		removed_occupied_cells.append(cell)
+
 	for joint_id: int in removed_joint_ids:
 		world._joints.erase(joint_id)
 	world._elements.erase(element.element_id)
 	world.clear_wheel_element_state(element.element_id)
-	world._notify_topology_changed()
 	for resource_id: Variant in refunds.keys():
 		store.add(str(resource_id), float(refunds[resource_id]))
 	removed_joint_ids.sort()
@@ -59,6 +64,8 @@ static func remove_element_from_topology(world,
 	if remaining_elements.is_empty():
 		world._assemblies.erase(assembly.assembly_id)
 		world.clear_assembly_locomotion(assembly.assembly_id)
+		# Assembly gone — clear its caches; cargo sync sees the removal.
+		world._notify_topology_changed(assembly.assembly_id)
 		world._emit_structural_event({
 			"kind": &"assembly_removed",
 			"command_id": command_id,
@@ -79,7 +86,7 @@ static func remove_element_from_topology(world,
 		var reconcile_ids: Array[int] = [assembly.assembly_id]
 		world._reconcile_terrain_anchors_for_assemblies(reconcile_ids)
 		assembly.bump_revision()
-		world._notify_topology_changed()
+		world._notify_topology_changed(assembly.assembly_id)
 		world._emit_structural_event({
 			"kind": &"assembly_changed",
 			"command_id": command_id,
@@ -87,6 +94,7 @@ static func remove_element_from_topology(world,
 			"topology_revision": assembly.topology_revision,
 			"removed_element_id": element.element_id,
 			"removed_joint_ids": removed_joint_ids,
+			"removed_occupied_cells": removed_occupied_cells,
 		})
 		return StructuralCommandResult.ok({
 			"assembly_removed": false,
@@ -129,7 +137,7 @@ static func remove_element_from_topology(world,
 	affected_assembly_ids.append_array(new_ids)
 	world._reconcile_terrain_anchors_for_assemblies(affected_assembly_ids)
 	assembly.bump_revision()
-	world._notify_topology_changed()
+	world._notify_topology_changed()  # multi-assembly — full cache clear
 	world._emit_structural_event({
 		"kind": &"assembly_split",
 		"command_id": command_id,
@@ -195,7 +203,7 @@ static func break_rigid_joint(world,
 		var reconcile_ids: Array[int] = [assembly.assembly_id]
 		world._reconcile_terrain_anchors_for_assemblies(reconcile_ids)
 		assembly.bump_revision()
-		world._notify_topology_changed()
+		world._notify_topology_changed(assembly.assembly_id)
 		world._emit_structural_event({
 			"kind": &"rigid_joint_broken",
 			"command_id": command.command_id,

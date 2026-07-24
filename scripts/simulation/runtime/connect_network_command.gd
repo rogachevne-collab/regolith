@@ -30,6 +30,11 @@ var slack: float = CableAnchorUtil.DEFAULT_SLACK
 ## around an obstacle is longer than its chord; this is the floor under the
 ## rest length so it is not born overstretched.
 var routed_m: float = 0.0
+## Local up at the click, world-space. An endpoint with `element_id == 0` is
+## driven into the ground as a stake standing along this — the runtime cannot
+## ask for it itself, because gravity lives on a scene node and a command does
+## not have one.
+var stake_up: Vector3 = Vector3.UP
 
 
 func is_rope() -> bool:
@@ -56,4 +61,5 @@ func execution_copy() -> StructuralCommand:
 	copy.attach_b = attach_b
 	copy.slack = slack
 	copy.routed_m = routed_m
+	copy.stake_up = stake_up
 	return copy

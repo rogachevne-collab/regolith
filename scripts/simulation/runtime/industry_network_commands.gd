@@ -127,13 +127,40 @@ static func connect_network(world,
 static func connect_rope(world,
 	command: ConnectNetworkCommand
 ) -> StructuralCommandResult:
+	# An end on bare terrain gets a stake driven for it, and the rope ties to
+	# the stake. Both stakes go in before validation so the endpoints the rest
+	# of this function sees are ordinary elements — there is no such thing as a
+	# rope end attached to the landscape any more. Order matters on failure:
+	# the second stake is only driven once the first succeeded, so a run that
+	# cannot be paid for leaves at most one stake standing rather than a pair
+	# with no cable between them.
+	var element_a_id := command.element_a_id
+	var element_b_id := command.element_b_id
+	var attach_a := command.attach_a
+	var attach_b := command.attach_b
+	if element_a_id <= 0:
+		var stake_a: StructuralCommandResult = CableStakeUtil.ensure(
+			world, attach_a, command.stake_up
+		)
+		if not stake_a.is_ok():
+			return stake_a
+		element_a_id = int(stake_a.data.get("element_id", 0))
+		attach_a = CableStakeUtil.tie_point(attach_a, command.stake_up)
+	if element_b_id <= 0:
+		var stake_b: StructuralCommandResult = CableStakeUtil.ensure(
+			world, attach_b, command.stake_up
+		)
+		if not stake_b.is_ok():
+			return stake_b
+		element_b_id = int(stake_b.data.get("element_id", 0))
+		attach_b = CableStakeUtil.tie_point(attach_b, command.stake_up)
 	var validation: StructuralCommandResult = (
 		IndustryElectricPortUtil.validate_rope_endpoints(
 			world,
-			command.element_a_id,
-			command.attach_a,
-			command.element_b_id,
-			command.attach_b
+			element_a_id,
+			attach_a,
+			element_b_id,
+			attach_b
 		)
 	)
 	if not validation.is_ok():
@@ -142,9 +169,9 @@ static func connect_rope(world,
 	var link_id: int = world._allocator.allocate_link_id()
 	var link: IndustryElectricLink = world._industry_network.add_link(
 		link_id,
-		command.element_a_id,
+		element_a_id,
 		"",
-		command.element_b_id,
+		element_b_id,
 		"",
 		PackedVector3Array(),
 		PackedInt32Array(),
@@ -153,13 +180,13 @@ static func connect_rope(world,
 			# вместе с тем, к чему привязан.
 			"attach_a": CableAnchorUtil.localize(
 				world,
-				command.element_a_id,
-				command.attach_a
+				element_a_id,
+				attach_a
 			),
 			"attach_b": CableAnchorUtil.localize(
 				world,
-				command.element_b_id,
-				command.attach_b
+				element_b_id,
+				attach_b
 			),
 			# The slack wheel prices the rope off the STRAIGHT span, but the
 			# player laid it along `routed_m` — around a block that path is

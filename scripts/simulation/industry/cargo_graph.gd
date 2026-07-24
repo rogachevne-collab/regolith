@@ -20,6 +20,37 @@ func list_edges() -> Array[Dictionary]:
 	return _edges.duplicate(true)
 
 
+## Keep graph current after topology edits. Skips the O(n²) cargo edge scan when
+## every dirty assembly has no cargo ports (lone frame place next to rovers).
+func sync(world: SimulationWorld) -> void:
+	if world == null:
+		return
+	var live_ids: Dictionary = {}
+	var needs_edge_rebuild := false
+	for assembly: SimulationAssembly in world.list_assemblies():
+		if assembly == null or assembly.tombstoned:
+			continue
+		live_ids[assembly.assembly_id] = true
+		var previous := int(
+			_topology_revision_by_assembly.get(assembly.assembly_id, -1)
+		)
+		if previous == assembly.topology_revision:
+			continue
+		if _assembly_has_cargo_capable_element(world, assembly):
+			needs_edge_rebuild = true
+		else:
+			_topology_revision_by_assembly[assembly.assembly_id] = (
+				assembly.topology_revision
+			)
+	for assembly_id_variant: Variant in _topology_revision_by_assembly.keys():
+		if not live_ids.has(int(assembly_id_variant)):
+			# Removed assembly may have owned cargo edges.
+			needs_edge_rebuild = true
+			break
+	if needs_edge_rebuild:
+		rebuild(world)
+
+
 func rebuild(world: SimulationWorld) -> void:
 	clear()
 	if world == null:
@@ -30,9 +61,14 @@ func rebuild(world: SimulationWorld) -> void:
 		_topology_revision_by_assembly[assembly.assembly_id] = (
 			assembly.topology_revision
 		)
+	# Neighbor-cell probe per cargo port (not pairwise all×all).
 	var operational: Array[SimulationElement] = []
-	for element: SimulationElement in world.list_elements():
-		if element != null and element.is_operational():
+	for element: SimulationElement in world.list_elements_unsorted():
+		if (
+			element != null
+			and element.is_operational()
+			and CargoConnectivity.element_has_cargo_port(element)
+		):
 			operational.append(element)
 	for edge: Dictionary in CargoConnectivity.find_adjacent_cargo_edges(
 		operational
@@ -43,6 +79,23 @@ func rebuild(world: SimulationWorld) -> void:
 			str(edge["port_a"]),
 			str(edge["port_b"])
 		)
+
+
+static func _assembly_has_cargo_capable_element(
+	world: SimulationWorld,
+	assembly: SimulationAssembly
+) -> bool:
+	if world == null or assembly == null:
+		return false
+	for element_id_variant: Variant in assembly.element_ids:
+		var element: SimulationElement = world.get_element(int(element_id_variant))
+		if (
+			element != null
+			and element.is_operational()
+			and CargoConnectivity.element_has_cargo_port(element)
+		):
+			return true
+	return false
 
 
 func needs_rebuild_for_assembly(

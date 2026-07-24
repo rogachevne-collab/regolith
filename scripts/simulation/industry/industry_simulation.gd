@@ -18,7 +18,9 @@ func bind_world(world: SimulationWorld) -> void:
 	if _world != null and not _event_bound:
 		_world.structural_event.connect(_on_structural_event)
 		_event_bound = true
-	_rebuild_from_world()
+	if _world != null:
+		IndustryStoreService.sync_all_elements(_world)
+		_cargo_graph = _world.ensure_cargo_graph_current()
 
 
 func bind(world: SimulationWorld) -> void:
@@ -195,31 +197,20 @@ func _on_element_state_changed(event: Dictionary) -> void:
 	if StringName(event.get("change_kind", &"")) == &"damage":
 		return
 	if bool(event.get("operational_changed", false)):
-		_rebuild_from_world()
+		# World already synced the element + rebuilt cargo in
+		# _emit_element_state_changed. Just refresh our handle.
+		_cargo_graph = _world.get_cargo_graph()
 
 
 func _on_topology_or_state_changed(event: Dictionary) -> void:
 	if _world == null:
 		return
 	var kind := StringName(event.get("kind", &""))
-	if kind == &"world_restored" or _needs_cargo_graph_rebuild():
-		_rebuild_from_world()
-
-
-func _needs_cargo_graph_rebuild() -> bool:
-	for assembly: SimulationAssembly in _world.list_assemblies():
-		if assembly.tombstoned:
-			continue
-		if _cargo_graph.needs_rebuild_for_assembly(
-			assembly.assembly_id,
-			assembly.topology_revision
-		):
-			return true
-	return false
-
-
-func _rebuild_from_world() -> void:
-	if _world == null:
+	# World._notify_topology_changed already synced stores + cargo. Do not
+	# duplicate that O(n²) work on every frame place next to parked rovers.
+	if kind == &"world_restored":
+		IndustryStoreService.sync_all_elements(_world)
+		_world.get_cargo_graph().rebuild(_world)
+		_cargo_graph = _world.get_cargo_graph()
 		return
-	IndustryStoreService.sync_all_elements(_world)
-	_cargo_graph.rebuild(_world)
+	_cargo_graph = _world.ensure_cargo_graph_current()

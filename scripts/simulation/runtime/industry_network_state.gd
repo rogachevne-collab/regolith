@@ -9,6 +9,7 @@ var industry_network_revision: int = 0
 var _links: Array[IndustryElectricLink] = []
 var _link_by_id: Dictionary = {}
 var _pair_keys: Dictionary = {}
+var _rope_link_count: int = 0
 var _graph := IndustryElectricGraph.new()
 var _cached_active_signature: String = "\n"
 var _cached_network_revision: int = -1
@@ -16,6 +17,10 @@ var _cached_network_revision: int = -1
 
 func list_links() -> Array[IndustryElectricLink]:
 	return _links.duplicate()
+
+
+func rope_link_count() -> int:
+	return _rope_link_count
 
 
 func get_link(link_id: int) -> IndustryElectricLink:
@@ -80,6 +85,8 @@ func add_link(
 	_links.append(link)
 	_link_by_id[link_id] = link
 	_register_pair_key(link)
+	if link.is_rope():
+		_rope_link_count += 1
 	return link
 
 
@@ -90,6 +97,8 @@ func remove_link(link_id: int) -> IndustryElectricLink:
 	_links.erase(link)
 	_link_by_id.erase(link_id)
 	_erase_pair_key(link)
+	if link.is_rope():
+		_rope_link_count = maxi(_rope_link_count - 1, 0)
 	return link
 
 
@@ -117,14 +126,18 @@ func remove_link_by_endpoints(
 func prune_dangling_links(world: SimulationWorld) -> bool:
 	var removed := false
 	var survivors: Array[IndustryElectricLink] = []
+	var rope_count := 0
 	for link: IndustryElectricLink in _links:
 		if IndustryElectricPortUtil.link_endpoints_exist(world, link):
 			survivors.append(link)
+			if link.is_rope():
+				rope_count += 1
 			continue
 		_link_by_id.erase(link.link_id)
 		_erase_pair_key(link)
 		removed = true
 	_links = survivors
+	_rope_link_count = rope_count
 	if removed:
 		bump_revision()
 	return removed
@@ -176,6 +189,7 @@ func load_from_dict(data: Dictionary) -> void:
 	_links.clear()
 	_link_by_id.clear()
 	_pair_keys.clear()
+	_rope_link_count = 0
 	var rows: Variant = data.get("electric_links", [])
 	if rows is Array:
 		for row_variant: Variant in rows:
@@ -187,6 +201,8 @@ func load_from_dict(data: Dictionary) -> void:
 			_links.append(link)
 			_link_by_id[link.link_id] = link
 			_register_pair_key(link)
+			if link.is_rope():
+				_rope_link_count += 1
 	_cached_active_signature = "\n"
 	_cached_network_revision = -1
 

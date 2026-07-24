@@ -2,58 +2,76 @@ class_name CargoConnectivity
 extends RefCounted
 
 ## Face-adjacent cargo port pairing across operational elements (undirected).
+## Edges are found by asking each cargo port "who occupies the cell in front of
+## me?" — O(ports), not O(elements²).
 
 
 static func find_adjacent_cargo_edges(
 	elements: Array[SimulationElement]
 ) -> Array[Dictionary]:
-	var edges: Array[Dictionary] = []
-	var sorted_elements: Array[SimulationElement] = elements.duplicate()
-	sorted_elements.sort_custom(
-		func(left: SimulationElement, right: SimulationElement) -> bool:
-			return left.element_id < right.element_id
-	)
-	for left_index: int in range(sorted_elements.size()):
-		for right_index: int in range(
-			left_index + 1,
-			sorted_elements.size()
-		):
-			var left: SimulationElement = sorted_elements[left_index]
-			var right: SimulationElement = sorted_elements[right_index]
-			if not left.is_operational() or not right.is_operational():
-				continue
-			var connection := _cargo_connection(left, right)
-			if connection.is_empty():
-				continue
-			edges.append({
-				"element_a": left.element_id,
-				"port_a": connection["left_port_id"],
-				"element_b": right.element_id,
-				"port_b": connection["right_port_id"],
-			})
-	return edges
-
-
-static func _cargo_connection(
-	left: SimulationElement,
-	right: SimulationElement
-) -> Dictionary:
-	var left_archetype: ElementArchetype = left.get_archetype()
-	var right_archetype: ElementArchetype = right.get_archetype()
-	if left_archetype == null or right_archetype == null:
-		return {}
-	for left_port: PortDefinition in left_archetype.ports:
-		if not _is_cargo_port(left_port):
+	var by_id: Dictionary = {}
+	var cell_owner: Dictionary = {}
+	for element_variant: Variant in elements:
+		var element: SimulationElement = element_variant
+		if element == null or not element.is_operational():
 			continue
-		for right_port: PortDefinition in right_archetype.ports:
-			if not _is_cargo_port(right_port):
+		if not element_has_cargo_port(element):
+			continue
+		by_id[element.element_id] = element
+		for cell: Vector3i in element.occupied_cells():
+			cell_owner[cell] = element.element_id
+
+	var edges: Array[Dictionary] = []
+	var seen: Dictionary = {}
+	for element_id_variant: Variant in by_id.keys():
+		var element: SimulationElement = by_id[element_id_variant]
+		var archetype: ElementArchetype = element.get_archetype()
+		if archetype == null:
+			continue
+		for port: PortDefinition in archetype.ports:
+			if not _is_cargo_port(port):
 				continue
-			if _ports_form_cargo_edge(left, left_port, right, right_port):
-				return {
-					"left_port_id": left_port.port_id,
-					"right_port_id": right_port.port_id,
-				}
-	return {}
+			var port_cell := _element_port_cell(element, port)
+			var port_dir := _element_port_direction(element, port)
+			var neighbor_id := int(cell_owner.get(port_cell + port_dir, 0))
+			if neighbor_id <= 0 or neighbor_id == element.element_id:
+				continue
+			# Undirected: emit once per pair from the lower element id.
+			if neighbor_id < element.element_id:
+				continue
+			var neighbor: SimulationElement = by_id.get(neighbor_id)
+			if neighbor == null or not neighbor.is_operational():
+				continue
+			var neighbor_archetype: ElementArchetype = neighbor.get_archetype()
+			if neighbor_archetype == null:
+				continue
+			for neighbor_port: PortDefinition in neighbor_archetype.ports:
+				if not _is_cargo_port(neighbor_port):
+					continue
+				if not _ports_form_cargo_edge(
+					element,
+					port,
+					neighbor,
+					neighbor_port
+				):
+					continue
+				var key := "%d|%s|%d|%s" % [
+					element.element_id,
+					port.port_id,
+					neighbor_id,
+					neighbor_port.port_id,
+				]
+				if seen.has(key):
+					break
+				seen[key] = true
+				edges.append({
+					"element_a": element.element_id,
+					"port_a": port.port_id,
+					"element_b": neighbor_id,
+					"port_b": neighbor_port.port_id,
+				})
+				break
+	return edges
 
 
 static func _ports_form_cargo_edge(
@@ -104,6 +122,18 @@ static func _element_port_direction(
 
 static func _is_cargo_port(port: PortDefinition) -> bool:
 	return port != null and port.kind == PortDefinition.Kind.CARGO
+
+
+static func element_has_cargo_port(element: SimulationElement) -> bool:
+	if element == null:
+		return false
+	var archetype: ElementArchetype = element.get_archetype()
+	if archetype == null:
+		return false
+	for port: PortDefinition in archetype.ports:
+		if _is_cargo_port(port):
+			return true
+	return false
 
 
 static func _cargo_tags_compatible(
