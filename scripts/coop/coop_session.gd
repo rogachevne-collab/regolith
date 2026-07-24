@@ -24,6 +24,12 @@ const SUIT_INTERVAL := 1.0
 const SNAPSHOT_DEBOUNCE := 0.3
 const SNAPSHOT_FLOOR_MS := 1000
 const NICK_PATH := "user://player_nick.txt"
+## Loopback single-instance mutex. The first game process on a machine binds it;
+## a second process (two windows for testing) fails to bind, learns it is a
+## secondary instance, and takes a distinct session uid — otherwise both would
+## read the same user://player_uid.txt and coop would mistake them for the same
+## player. Different machines each bind their own, so real peers are unaffected.
+const INSTANCE_LOCK_PORT := 47800
 
 ## Host command kinds that must NOT trigger a snapshot broadcast (terrain /
 ## granular churn — host drilling would storm client rebuilds). Everything else
@@ -66,6 +72,8 @@ var _snapshot_dirty := false
 var _snapshot_debounce := 0.0
 var _last_broadcast_ms := 0
 var _host_hooks_connected := false
+## Held for the process lifetime by the primary instance (see INSTANCE_LOCK_PORT).
+var _instance_lock: PacketPeerUDP
 
 
 func _ready() -> void:
@@ -79,7 +87,8 @@ func _ready() -> void:
 	_avatars_root.name = "RemoteAvatars"
 	add_child(_avatars_root)
 
-	_apply_sandbox_override()
+	if not _apply_sandbox_override():
+		_apply_instance_disambiguation()
 	_local_uid = PlayerIdentity.local_uid()
 	_local_nick = _load_nick()
 
@@ -119,18 +128,37 @@ func _physics_process(delta: float) -> void:
 ## does not collide with the host on uid or fight it for the dig SQLite lock.
 ## Runs before bootstrap._ready (child readies first), so the stream label lands
 ## before the dig stream is configured.
-func _apply_sandbox_override() -> void:
+func _apply_sandbox_override() -> bool:
 	var label := ""
 	for arg: String in OS.get_cmdline_user_args():
 		if arg.begins_with("--coop-sandbox="):
 			label = arg.substr("--coop-sandbox=".length())
 	if label.is_empty():
-		return
+		return false
 	MoonTerrainParams.set_test_stream_label("coop_" + label)
 	PlayerIdentity.override_local_uid("sandbox_" + label)
 	if _gateway != null:
 		_gateway.actor_uid = PlayerIdentity.local_uid()
 	print("CoopSession: sandbox '%s', uid=%s" % [label, PlayerIdentity.local_uid()])
+	return true
+
+
+## Give a second game process on this machine a distinct uid, so two windows can
+## host+join each other without the --coop-sandbox flag. The primary binds the
+## loopback mutex port and keeps its stable saved uid; a secondary fails the bind
+## and appends a random session suffix. Real peers on other machines each bind
+## successfully and keep their own stable uid.
+func _apply_instance_disambiguation() -> void:
+	var lock := PacketPeerUDP.new()
+	if lock.bind(INSTANCE_LOCK_PORT, "127.0.0.1") == OK:
+		_instance_lock = lock
+		return
+	var base := PlayerIdentity.local_uid()
+	var distinct := "%s_w%08x" % [base, randi()]
+	PlayerIdentity.override_local_uid(distinct)
+	if _gateway != null:
+		_gateway.actor_uid = PlayerIdentity.local_uid()
+	print("CoopSession: secondary instance on this machine, uid=%s" % distinct)
 
 
 func _load_nick() -> String:
@@ -273,6 +301,12 @@ func _srv_hello(hello: Dictionary) -> void:
 	if uid.is_empty():
 		_reject(peer, &"no_uid")
 		return
+	if uid == _local_uid:
+		# Same identity as the host — two windows on one machine without the
+		# --coop-sandbox flag, or a copied player_uid.txt. Refuse loudly instead
+		# of letting them silently fail to see each other.
+		_reject(peer, &"uid_is_host")
+		return
 	var reg := _registry.register(peer, uid, nick)
 	if reg != &"ok":
 		_reject(peer, reg)
@@ -331,7 +365,10 @@ func _on_server_disconnected() -> void:
 
 @rpc("authority", "call_remote", "reliable", CH_MAIN)
 func _cli_join_denied(reason: StringName) -> void:
-	_err("join denied by host: %s" % reason)
+	if reason == &"uid_is_host" or reason == &"uid_conflict":
+		_err("join denied: same player identity as the host. Two windows on one machine need '-- --coop-sandbox=guest' on the second, or use 127.0.0.1.")
+	else:
+		_err("join denied by host: %s" % reason)
 	multiplayer.multiplayer_peer = null
 	_mode = Mode.OFFLINE
 
