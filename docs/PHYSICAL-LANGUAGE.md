@@ -39,6 +39,7 @@ ADR. Интеграция в Erebus — через Erebus Lite addon, когда
 | логи, инспекция, отладка симуляции | «Диагностируемость» |
 | скафандр (кислород, энергия) | «Состояние скафандра (SuitState)» |
 | бюджеты производительности | «Производительность» |
+| прицел / InteractionQuery / карточка блока (read-model) | `specs/PLAYER-INTERACTION-V1.md` § Interaction Read-Model; cheatsheet `interaction-read-model` |
 | мультиплеер (задел) | «Сетевой контракт на будущее» |
 | порядок PoC, что вне скоупа v0 | «Лестница PoC», «Не входит в v0» |
 
@@ -859,6 +860,10 @@ carve- и assembly-impact путей.
 - Compound collider пересобирается пакетно после структурных команд.
 - Network и structural graph пересчитываются только после изменения топологии.
 - Кинематические декоративные механизмы не входят в solver.
+- Interaction cards — derived read-model у симуляции (topology-patched;
+  actuators/industry пушат display сами). Aim / HUD — O(1) consumer:
+  без `list_joints()` и без cargo graph walks на пути прицела.
+  Контракт: `specs/PLAYER-INTERACTION-V1.md` § Interaction Read-Model.
 
 ## Сетевой контракт на будущее
 

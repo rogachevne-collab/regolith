@@ -145,7 +145,7 @@ InteractionHit {
   target_kind
   collider
   target_id
-  metadata
+  metadata   # for KIND_SIMULATION_ELEMENT: filled from Interaction Read-Model
 }
 ```
 
@@ -160,15 +160,170 @@ InteractionHit {
 - инструмент применяет собственный `max_range` к готовому hit;
   build place обязан использовать тот же reach, что и `build_max_distance`;
 - пустой результат представлен явно, не `null`-словарём;
-- presentation может читать hit, но не менять его.
+- presentation может читать hit, но не менять его;
+- для `KIND_SIMULATION_ELEMENT` Query **не** строит карточку цели сам:
+  берёт `element_id` из shape meta, читает
+  `SimulationWorld.get_interaction_card(element_id)` (см. § Interaction
+  Read-Model), склеивает с hit geometry. Aim path не вызывает
+  `list_joints()`, enrich-сканы placement util и cargo graph walks.
 
 Минимальные `target_kind`: `none`, `voxel`, `body`, `placed_block`,
-`control_seat`.
+`control_seat`, `simulation_element`, `electric_cable`, `world_loot`,
+`granular`, `terrain_debris`.
 
 Player-built ровер расширяет `control_seat` на simulation element с ролью
 `ControlSeat` (кокпит): наведение даёт enter/exit vehicle и WASD-управление,
 `configure_wheel`/`configure_suspension` открываются на `drive_wheel` и
 `wheel_suspension`. Полный контракт — `specs/ROVER-MODULES-V1.md`.
+
+## Interaction Read-Model
+
+Статус: контракт внедрения (Phase 0). Код index/card — последующие фазы;
+этот раздел — единственный источник правды по ownership и bans.
+
+### Зачем
+
+Прицел не должен каждый physics-кадр заново узнавать состав сборки
+(скан всех joints, cargo graph). Сборка уже знает свою топологию.
+Interaction Read-Model — derived read-model у `SimulationWorld`: структура
+патчит/инвалидирует его на structural events; actuators и industry пушат
+display-поля сами; Query/HUD/tools только читают.
+
+Не путать с **ConstructionPreview** (призрак place/snap). Preview в
+`ControlSeat` уже выключен. Лаг «сижу в ровере, навёл на блок → FPS падает»
+при неактивном build — симптом Read-Model / Query metadata, не construction
+snap. Шпаргалка: `docs/cheatsheets/interaction-read-model.md`.
+
+### Ownership
+
+| Писатель | Что пишет |
+|---|---|
+| Structural mutate (place/dismantle/split/merge/joint) | `InteractionIndex` StructuralEntry, `element_id → driven_joint_id` (оба endpoint'а) |
+| `_notify_topology_changed` | invalidate assembly / clear all (как occupancy); **не** точечный patch (нет `element_id`) |
+| `restore_from` / `world_restored` | `clear_interaction_index()`; lazy rebuild on demand |
+| `ActuatorSimulationService` (driven joint) | `ActuatorDisplayPose` на своей entry |
+| Industry / electric / recipe tick | `display_*` на `IndustryElementRuntime` (status, cargo HUD, missing input) |
+| InteractionQuery / HUD / tools | **только читают** |
+
+Hit geometry (`point`, `normal`, `distance`, `aim_direction`,
+`collider_local_cell`) — из ray / projection shape meta, **не** из index.
+
+### Слои
+
+1. **StructuralEntry** — identity, roles, `driven_joint_id`+kind, authored
+   caps, wheel/suspension markers, `control_seat`. Stamp =
+   `assembly.topology_revision`.
+2. **ActuatorDisplayPose** — observed extension/angle, `actuator_status`,
+   at-rest. Display stamp, не topology bump.
+3. **Live overlay** — O(1) из element / industry runtime / motor-by-joint-id /
+   DisplayPose при сборке `InteractionCard`.
+
+Публичный API `SimulationWorld` (без fat Dictionary / dual legacy API):
+
+```text
+get_interaction_structure(element_id) -> InteractionStructure   # RefCounted
+get_interaction_card(element_id) -> InteractionCard             # RefCounted, in-place
+driven_joint_for_element(element_id) -> SimulationJoint|null
+interaction_roles_for_element(element_id) -> PackedStringArray
+clear_interaction_index()
+```
+
+`InteractionCard` — единственный read API для aim/HUD. Commands на click
+берут `element_id` / `joint_id` и делают authoritative lookup, не доверяют
+устаревшему fat dict.
+
+### ActuatorDisplayPose
+
+Писатель — сам driven joint / `ActuatorSimulationService` на **своём** изменении
+(не глобальный опрос всех motors).
+
+- idle / pose не изменилась → silence;
+- pose изменилась meaningfully → write, не чаще `DISPLAY_POSE_HZ = 10`;
+- status изменился → write status сразу;
+- STOP / IDLE / fault-stop → flush pose+status сразу;
+- place / restore → seed один раз;
+- index: и `element_a`, и `element_b` → один `driven_joint_id`.
+
+Физика / visuals / construction snap **не** читают DisplayPose — только
+RigidBody / projection.
+
+### Aim path bans
+
+На пути InteractionQuery → card для sim-element **запрещено**:
+
+- `world.list_joints()`;
+- `Piston/Rotor/HingePlacementUtil.find_*_joint_for_element` linear scans;
+- `RecipeRunnerService.connected_supply_amount` /
+  `connected_cargo_has_path` / `preview_idle_reason_for_recipe`;
+- cargo graph walks внутри `IndustryStatusUtil` disambiguation
+  (reason берётся из `display_status_reason` на runtime).
+
+Единственный joint lookup на aim/HUD/terminal hot path —
+`driven_joint_for_element` (InteractionIndex). `compile_body_groups` /
+`driven_specs` остаются для physics multibody, не для aim.
+
+### Structural / Live / Drop (ключи card)
+
+**Structural** (index; патч на topology):
+
+`element_id`, `assembly_id`, `archetype_id`, `control_seat`,
+`piston_joint_id` / `rotor_joint_id` / `hinge_joint_id`,
+`wheel_element_id`, `suspension_element_id`,
+authored/max clamps (`piston_authored_*`, `piston_max_*`, `rotor_max_*`,
+`hinge_authored_*`, `hinge_max_*`, `wheel_max_*`, `wheel_authored_max_steering_angle_rad`,
+`suspension_min_travel_m`, `suspension_max_travel_m`).
+
+**Live** (O(1) runtime / DisplayPose / industry `display_*`):
+
+`integrity`, `status_reason` (из `display_status_reason` или O(1) structural/disabled),
+`machine_enabled`, `actuator_status`, observed/target pose & velocities,
+powered/enabled/tune scalars, recipe progress/queue/`active_recipe_id`,
+`missing_input_resource_id`, `cargo_network_*` (только из `display_*`),
+`wheel_powered`, `wheel_status`, wheel/suspension tune scalars,
+`aim_direction` (hit geometry).
+
+**Drop** (не входят в card; не писать с aim):
+
+`shape_index`, `collider_index`, `build_progress`, `state_revision`,
+`pending_recipe_id`, `*_base_element_id` / `*_head_element_id` /
+`*_top_element_id`, `piston_speed_limit_mps`,
+`rotor_observed_velocity_rad_s`, `hinge_observed_velocity_rad_s`,
+`wheel_grounded`, `wheel_compression_m`, `wheel_normal_force_n`,
+`wheel_slip_speed_mps`, `wheel_authored_drive_torque_n_m`,
+`seat_offset_local`, `locomotive`, `flight`, `mobile`
+(gateway при enter пересчитывает mobile сам).
+
+Non-sim bypass (loot / electric cable / granular) по-прежнему через
+collider `interaction_metadata` — вне InteractionIndex.
+
+### Invalidate / patch / restore
+
+| Событие | Index |
+|---|---|
+| `_notify_topology_changed(assembly_id > 0)` | invalidate entries этой сборки |
+| `_notify_topology_changed(0)` | clear all |
+| place / dismantle (mutation site) | точечный patch, если известны ids; иначе lazy rebuild |
+| split / merge | invalidate затронутых (часто global clear) + lazy |
+| restore / `world_restored` | `clear_interaction_index()` обязателен |
+| configure_* / set_machine_enabled | structural index не трогать |
+| actuator pose/status change | patch `ActuatorDisplayPose` only |
+
+Lazy rebuild on `get_*`, если stamp ≠ `topology_revision` или entry нет
+(как occupancy cache).
+
+### Acceptance (внедрение)
+
+1. Обесточенный стоящий ровер: FPS при прицеле в небо ≈ FPS при прицеле в
+   обычный frame (порядок величины; verify в игре).
+2. Aim в piston/rotor/hinge **base и head/top** → один и тот же driven joint.
+3. Actuator в движении: DisplayPose обновляется ≤ 10 Hz; на STOP — flush;
+   idle actuator не пишет pose.
+4. place / dismantle / split / restore: joint map и seed позы корректны
+   (headless `test_interaction_index`).
+5. Construction preview attach к роверу не использует actuator
+   `status_reason` как structural deny (существующий фильтр preview).
+6. Aim на processor/fabricator без cargo graph на aim path (industry
+   `display_*`).
 
 ## ToolAction и commands
 
