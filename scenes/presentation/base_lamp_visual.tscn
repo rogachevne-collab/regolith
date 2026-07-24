@@ -1,0 +1,14 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="PackedScene" uid="uid://cvfxglxq5kgq2" path="res://resources/models/base_lamp.fbx" id="1_fbx"]
+[ext_resource type="Material" uid="uid://cpartpoly01" path="res://resources/materials/part_polystyrene.tres" id="2_housing"]
+[ext_resource type="Material" uid="uid://cpartlampemis" path="res://resources/materials/part_lamp_emissive.tres" id="3_lamp"]
+[ext_resource type="Script" path="res://scripts/presentation/apply_lamp_materials.gd" id="4_script"]
+
+[node name="BaseLampVisual" type="Node3D"]
+script = ExtResource("4_script")
+housing_material = ExtResource("2_housing")
+lamp_material = ExtResource("3_lamp")
+lamp_node_name = "Lamp"
+
+[node name="Model" parent="." instance=ExtResource("1_fbx")]

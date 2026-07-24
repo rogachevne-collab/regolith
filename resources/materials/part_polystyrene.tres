@@ -1,0 +1,28 @@
+[gd_resource type="StandardMaterial3D" format=3 uid="uid://cpartpoly01"]
+
+[ext_resource type="Texture2D" path="res://resources/textures/rough_polystyrene/albedo.png" id="1_albedo"]
+[ext_resource type="Texture2D" path="res://resources/textures/rough_polystyrene/normal.png" id="2_normal"]
+[ext_resource type="Texture2D" path="res://resources/textures/rough_polystyrene/roughness.png" id="4_roughness"]
+[ext_resource type="Texture2D" path="res://resources/textures/rough_polystyrene/ao.png" id="5_ao"]
+
+[resource]
+albedo_color = Color(1, 0.82, 0.42, 1)
+albedo_texture = ExtResource("1_albedo")
+metallic = 0.0
+metallic_specular = 0.42
+roughness = 0.88
+roughness_texture = ExtResource("4_roughness")
+roughness_texture_channel = 0
+normal_enabled = true
+normal_scale = 0.55
+normal_texture = ExtResource("2_normal")
+ao_enabled = true
+ao_light_affect = 0.25
+ao_texture = ExtResource("5_ao")
+ao_texture_channel = 0
+texture_filter = 2
+texture_repeat = true
+uv1_scale = Vector3(0.85, 0.85, 0.85)
+uv1_triplanar = true
+uv1_triplanar_sharpness = 4.0
+uv1_world_triplanar = true

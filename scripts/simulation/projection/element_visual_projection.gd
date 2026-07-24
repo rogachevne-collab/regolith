@@ -752,14 +752,22 @@ func _uses_rover_matte(element: SimulationElement) -> bool:
 	# Lamp visual owns housing + emissive lens materials.
 	if element.archetype_id == "frame_lamp":
 		return false
+	## Frame blocks use sci_fi_panel (metallic PBR + SSR), not foam matte.
 	if archetype.roles.has("Frame"):
-		return true
+		return false
 	if archetype.is_wheel() or archetype.is_suspension():
 		return true
 	match element.archetype_id:
 		"cockpit", "control_terminal", "power_battery_small", "power_distributor_small", "cargo_pipe":
 			return true
 	return false
+
+
+func _is_frame_panel(element: SimulationElement) -> bool:
+	if element == null or element.archetype_id == "frame_lamp":
+		return false
+	var archetype := element.get_archetype()
+	return archetype != null and archetype.roles.has("Frame")
 
 
 func _paint_mesh_tree(node: Node, material: Material) -> void:
@@ -780,6 +788,8 @@ func _material_for(element: SimulationElement) -> StandardMaterial3D:
 	var archetype := element.get_archetype()
 	if archetype != null and archetype.is_wheel():
 		return _materials["polystyrene_wheel"]
+	if _is_frame_panel(element):
+		return _materials["sci_fi_panel"]
 	if _uses_rover_matte(element):
 		return _materials["polystyrene"]
 	if reason == &"element_incomplete":
@@ -795,6 +805,8 @@ func _rim_material_for(element: SimulationElement) -> StandardMaterial3D:
 	var archetype := element.get_archetype()
 	if archetype != null and archetype.is_wheel():
 		return _materials["polystyrene_wheel"]
+	if _is_frame_panel(element):
+		return _materials["sci_fi_panel"]
 	if _uses_rover_matte(element):
 		return _materials["polystyrene"]
 	if reason == &"element_incomplete":
@@ -840,6 +852,10 @@ func _create_materials() -> void:
 		load("res://resources/materials/part_polystyrene_wheel.tres")
 		as StandardMaterial3D
 	)
+	var sci_fi := (
+		load("res://resources/materials/sci_fi_panel1.tres")
+		as StandardMaterial3D
+	)
 	_materials["polystyrene"] = (
 		poly if poly != null
 		else _material(Color(0.82, 0.64, 0.2, 1.0), 0.0, false, 0.88)
@@ -847,6 +863,10 @@ func _create_materials() -> void:
 	_materials["polystyrene_wheel"] = (
 		poly_wheel if poly_wheel != null
 		else _material(Color(0.18, 0.18, 0.2, 1.0), 0.0, false, 0.9)
+	)
+	_materials["sci_fi_panel"] = (
+		sci_fi if sci_fi != null
+		else _material(Color(0.55, 0.58, 0.62, 1.0), 0.85, false, 0.45)
 	)
 	_materials["rim_frame"] = _rim_material(
 		Color(0.28, 0.16, 0.06, 1.0),

@@ -1,0 +1,25 @@
+[gd_resource type="Resource" script_class="ElementArchetype" format=3]
+
+[ext_resource type="Script" uid="uid://c2p36g85wqkru" path="res://scripts/simulation/resources/build_requirement.gd" id="1_bom"]
+[ext_resource type="Script" uid="uid://b6d2jhfw581hb" path="res://scripts/simulation/resources/collider_definition.gd" id="2_col"]
+[ext_resource type="Script" uid="uid://bxidpb3tep3ih" path="res://scripts/simulation/resources/element_archetype.gd" id="4_arch"]
+
+[sub_resource type="Resource" id="Requirement"]
+script = ExtResource("1_bom")
+resource_id = "plate_metal"
+amount = 2.0
+
+[sub_resource type="Resource" id="Collider"]
+script = ExtResource("2_col")
+
+[resource]
+script = ExtResource("4_arch")
+archetype_id = "frame_lamp"
+display_name = "Фара"
+roles = PackedStringArray("Frame")
+mass_kg = 12.0
+colliders = Array[ExtResource("2_col")]([SubResource("Collider")])
+structural_surface_policy = 1
+build_requirements = Array[ExtResource("1_bom")]([SubResource("Requirement")])
+visual_scene_path = "res://scenes/presentation/base_lamp_visual.tscn"
+visual_offset = Vector3(0.25, 0.25, 0.25)

@@ -1,15 +1,15 @@
-[gd_scene load_steps=4 format=3 uid="uid://cbe115y65kfbq"]
+[gd_scene load_steps=4 format=3]
 
-[ext_resource type="PackedScene" uid="uid://cr8tkngjj7bre" path="res://resources/models/base_block_05m.fbx" id="1_fbx"]
+[ext_resource type="PackedScene" uid="uid://bvbt2sekighpd" path="res://resources/models/base_antenna.fbx" id="1_fbx"]
 [ext_resource type="Material" uid="uid://qlo5jto2x2mx" path="res://resources/materials/sci_fi_panel1.tres" id="2_mat"]
 [ext_resource type="Script" path="res://scripts/presentation/apply_mesh_material.gd" id="3_script"]
 
-[node name="BaseBlock05mVisual" type="Node3D"]
+[node name="BaseAntennaVisual" type="Node3D"]
 script = ExtResource("3_script")
 material = ExtResource("2_mat")
-mesh_node_name = "Box009"
+mesh_node_name = "Box011"
 
 [node name="Model" parent="." instance=ExtResource("1_fbx")]
 
-[node name="Box009" parent="Model" index="0"]
+[node name="Box011" parent="Model" index="0"]
 material_override = ExtResource("2_mat")
