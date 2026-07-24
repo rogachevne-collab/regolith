@@ -22,18 +22,16 @@ const CABLE_ROPE_COLLISION_BUDGET := 320
 ## has ground, and how much ground has to disappear before it tears loose.
 const CABLE_ANCHOR_PROBE_INTERVAL_S := 0.33
 const CABLE_ANCHOR_PROBE_RADIUS := 0.3
-## A cable counts as still below this particle speed, m/s. Speed and not
-## displacement: a cable that is creeping has not settled, it is creeping.
-const CABLE_FREEZE_SPEED_M_S := 0.02
-## Consecutive still ticks before a same-body cable freezes. Long enough that a
-## cable dropped into place gets to hang itself first.
+## The host body counts as at rest below these speeds. Read the body, not the
+## cable: the cable lags the body's micro-rotation and so never looks still in
+## the body frame, but the body's own velocity has no such lag. Generous enough
+## that an idle rover wobbling on its suspension still counts as parked, tight
+## enough that a driving one does not.
+const CABLE_FREEZE_BODY_LIN_M_S := 0.05
+const CABLE_FREEZE_BODY_ANG_R_S := 0.05
+## Consecutive at-rest ticks before a same-body cable freezes. Long enough that
+## a cable dropped into place gets to hang itself first.
 const CABLE_FREEZE_TICKS := 30
-## Cosine of the largest tilt of the body relative to gravity a frozen shape
-## survives. ~8 degrees: past that the sag hangs somewhere else.
-const CABLE_FREEZE_UP_DOT := 0.99
-## Total movement of both ends in the body's own frame that wakes a frozen
-## cable, metres.
-const CABLE_FREEZE_ANCHOR_EPS_M := 0.02
 ## How much further a rope has to run out before it thaws a parked endpoint,
 ## measured against the slackest that rope has been since it last woke anything.
 ## Accumulating instead of comparing tick to tick matters: a slow winch adds
@@ -97,6 +95,11 @@ var _rope_collision_cursor := 0
 ## link_id → slackest overshoot seen since this rope last thawed an endpoint.
 ## See ROPE_WAKE_OVERSHOOT_M and _wake_roped_bodies.
 var _rope_wake_overshoot: Dictionary = {}
+## Drivers reparented off bodies about to queue_free (seat entry + Static→Rigid
+## / multibody reproject). Restored onto the live seat body after rebuild —
+## otherwise Player+Camera die with the old RigidBody and the viewport shows
+## only default_clear_color.
+var _evacuated_drivers: Array[Dictionary] = []
 
 func bind_impact_service(service: ImpactResolverService) -> void:
 	_impact_service = service
@@ -121,10 +124,12 @@ func unbind_world() -> void:
 func rebuild_all() -> void:
 	_clear_all_bodies()
 	if _world == null:
+		_restore_evacuated_drivers()
 		return
 	for assembly: SimulationAssembly in _world.list_assemblies():
 		if not assembly.tombstoned:
 			_project_assembly(assembly.assembly_id, null)
+	_restore_evacuated_drivers()
 
 ## All live rigid bodies for an assembly (root or multibody groups). Used by
 ## visual projection to find a removed element's mesh after element_records
@@ -232,6 +237,7 @@ func project_assembly_now(
 	if get_physics_body(assembly_id) != null:
 		_remove_body(assembly_id)
 	_project_assembly(assembly_id, motion_override)
+	_restore_evacuated_drivers()
 
 func sync_body_motion_now(assembly_id: int) -> bool:
 	if _world == null:
@@ -682,6 +688,7 @@ func _reproject_assembly(assembly_id: int) -> void:
 	)
 	_remove_body(assembly_id)
 	_project_assembly(assembly_id, motion, live_capture)
+	_restore_evacuated_drivers()
 
 func _handle_split(event: Dictionary) -> void:
 	var survivor_id: int = int(event["survivor_assembly_id"])
@@ -714,6 +721,7 @@ func _handle_split(event: Dictionary) -> void:
 		parent_body_id,
 		live_capture
 	)
+	_restore_evacuated_drivers()
 
 func _project_split_child(
 	assembly_id: int,
@@ -808,6 +816,7 @@ func _handle_merge(event: Dictionary) -> void:
 	_remove_body(loser_id)
 	_remove_body(survivor_id)
 	_project_assembly(survivor_id, merged_motion)
+	_restore_evacuated_drivers()
 
 func _merged_motion(
 	survivor_id: int,
@@ -1874,14 +1883,21 @@ func _assembly_rigid_bodies(assembly_id: int) -> Array[RigidBody3D]:
 
 
 func _set_assembly_bodies_frozen(assembly_id: int, frozen: bool) -> void:
+	# Пишем в тело только на реальной смене состояния. Путь езды зовёт wake
+	# каждый тик (has_active_input); без этих гардов каждый такой вызов
+	# переписывал freeze/sleeping на всех телах сборки в физсервер — лишний
+	# шторм на уже-разбуженных телах во время движения.
 	for rigid: RigidBody3D in _assembly_rigid_bodies(assembly_id):
 		if frozen:
-			rigid.linear_velocity = Vector3.ZERO
-			rigid.angular_velocity = Vector3.ZERO
-			rigid.freeze = true
+			if not rigid.freeze:
+				rigid.linear_velocity = Vector3.ZERO
+				rigid.angular_velocity = Vector3.ZERO
+				rigid.freeze = true
 		else:
-			rigid.freeze = false
-			rigid.sleeping = false
+			if rigid.freeze:
+				rigid.freeze = false
+			if rigid.sleeping:
+				rigid.sleeping = false
 
 
 ## Wake every dynamic body of the assembly (seat entry, drive input, dig).
@@ -2185,8 +2201,11 @@ func _tick_wheel_record(
 		record["motor_target_v"] = target_forward_rad_s
 		record["motor_limit_n"] = torque_limit
 	if active_input:
-		wheel_body.sleeping = false
-		if root_body is RigidBody3D:
+		# Только на смене состояния: этот тик идёт на каждое колесо каждый кадр,
+		# безусловная запись sleeping будила уже-разбуженные тела 12×/тик.
+		if wheel_body.sleeping:
+			wheel_body.sleeping = false
+		if root_body is RigidBody3D and (root_body as RigidBody3D).sleeping:
 			(root_body as RigidBody3D).sleeping = false
 
 	# --- Telemetry (same keys the raycast model published) ---
@@ -2297,6 +2316,19 @@ func _tick_cable_ropes(delta: float) -> void:
 		var link: IndustryElectricLink = ropes[
 			(offset + _rope_collision_cursor) % ropes.size()
 		]
+		var state: Variant = _rope_states.get(link.link_id)
+		# Frozen fast path, before anything is computed. A frozen cable is a
+		# solved shape riding its body; the only work it can need is to notice
+		# the machine changed under it. We do not re-derive that from geometry
+		# every tick — the assembly already counts its own structural mutations
+		# in topology_revision, so this is one dict lookup and two compares, and
+		# a frozen cable costs nothing else: no anchor resolve, no body lookup,
+		# no solver step. Any weld, grind, split or merge on that assembly bumps
+		# the revision and drops it back to full simulation for ~0.5 s until it
+		# re-freezes.
+		if _cable_frozen_current(link, state):
+			live[link.link_id] = state
+			continue
 		var anchor_a := CableAnchorUtil.endpoint_world_position(
 			_world,
 			link.element_a,
@@ -2314,7 +2346,6 @@ func _tick_cable_ropes(delta: float) -> void:
 			(anchor_a + anchor_b) * 0.5
 		)
 		var up := -gravity.normalized() if gravity.length_squared() > 0.0 else Vector3.UP
-		var state: Variant = _rope_states.get(link.link_id)
 		if use_xpbd_cable_rope:
 			collision_budget = _tick_one_xpbd_rope(
 				link,
@@ -2414,12 +2445,11 @@ func _tick_one_xpbd_rope(
 	var shared_body: RigidBody3D = (
 		body_a if body_a != null and body_a == body_b else null
 	)
-	if shared_body != null and state is Dictionary:
-		if _cable_frozen_holds(
-			state, link, shared_body, gravity, anchor_a, anchor_b
-		):
-			live[link.link_id] = state
-			return collision_budget
+	# A frozen cable is caught by the tick loop's fast path and never reaches
+	# here — either it was never frozen, or _cable_frozen_current just thawed it
+	# (clearing _frozen and resetting the settle counter). So there is nothing
+	# to clean up here, and touching _still_ticks would reset the very counter
+	# _cable_try_freeze is trying to accumulate at the end of this function.
 	if not state is Dictionary:
 		state = XpbdCableRopeSolverScript.create_state(
 			anchor_a,
@@ -2438,8 +2468,13 @@ func _tick_one_xpbd_rope(
 				link.rest_length_m
 			)
 		)
+	# A same-body cable never collides with the world (see step's collide_world):
+	# it is strapped to one chassis and self-collision with that jittering
+	# chassis is the energy pump that kept it awake. It also costs no collision
+	# budget — which is the whole reason the freeze path exists.
+	var collide_world := shared_body == null
 	var particles := XpbdCableRopeSolverScript.path(state).size()
-	var collides := space_state != null and collision_budget >= particles
+	var collides := collide_world and space_state != null and collision_budget >= particles
 	if collides:
 		collision_budget -= particles
 	var result: Dictionary = XpbdCableRopeSolverScript.step(
@@ -2455,14 +2490,15 @@ func _tick_one_xpbd_rope(
 		body_b,
 		_rope_endpoint_backing(body_a),
 		_rope_endpoint_backing(body_b),
-		link.break_force_n
+		link.break_force_n,
+		collide_world
 	)
 	if bool(result.get("snapped", false)):
 		snapped.append(link.link_id)
 		return collision_budget
 	live[link.link_id] = state
 	if shared_body != null:
-		_cable_try_freeze(state, link, shared_body, gravity, anchor_a, anchor_b)
+		_cable_try_freeze(state, link, shared_body)
 	_wake_roped_bodies(
 		link.link_id,
 		body_a,
@@ -2475,87 +2511,109 @@ func _tick_one_xpbd_rope(
 # --- frozen cables -----------------------------------------------------------
 
 
-## Freeze once the cable has stopped moving on its own. Not a timer and not
-## "some ticks after placement": the rope answers the question itself, and its
-## answer does not depend on length, slack or where the machine happens to be
-## standing. The counter RESETS on any tick above the threshold rather than
-## accumulating, or a cable would ripen into frozen in the middle of a shake.
-##
-## Speed, not displacement. A cable still creeping has not settled, it is
-## creeping — that distinction is the one the old verlet ropes got wrong, where
-## a "settled" test passed on a rope that was still travelling 0.3 m every five
-## seconds.
+## Freeze a same-body cable once its host has been at rest long enough for the
+## cable to hang itself, then leave it frozen indefinitely — it thaws only when
+## the machine changes under it (see _cable_frozen_current), not when it drives.
+## The at-rest counter RESETS the moment the host moves, so a cable never
+## freezes mid-shake.
 func _cable_try_freeze(
 	state: Dictionary,
 	link: IndustryElectricLink,
-	body: RigidBody3D,
-	gravity: Vector3,
-	anchor_a: Vector3,
-	anchor_b: Vector3
+	body: RigidBody3D
 ) -> void:
 	var sim = state.get("sim")
 	if sim == null:
 		return
-	if sim.max_speed() > CABLE_FREEZE_SPEED_M_S:
+	# The assembly and the revision it is at now. This is the whole waking
+	# mechanism: the assembly counts its own structural mutations, so a frozen
+	# cable watches one integer instead of re-deriving "did the machine change"
+	# from geometry every tick.
+	var element := _world.get_element(link.element_a)
+	if element == null:
+		return
+	var assembly := _world.get_assembly_raw(element.assembly_id)
+	if assembly == null:
+		return
+	# Read the HOST BODY's rest, not the cable's. This was the whole bug behind
+	# "the tint never shows": a machine body is never perfectly still — it
+	# micro-rotates on its suspension a fraction of a degree a tick — and the
+	# cable's middle particles LAG that rotation, so in the body's own frame the
+	# cable always appears to be moving, however dead-still it looks. Any
+	# threshold on the cable's own residual therefore never accumulates on a
+	# real rover. The body's velocity has no such lag: a parked or idle machine
+	# reads near-zero, a driving one does not. That is the honest "is the
+	# machine at rest" signal, and it cannot be fooled by the cable lagging.
+	var at_rest := (
+		body.freeze
+		or body.sleeping
+		or (
+			body.linear_velocity.length() < CABLE_FREEZE_BODY_LIN_M_S
+			and body.angular_velocity.length() < CABLE_FREEZE_BODY_ANG_R_S
+		)
+	)
+	if not at_rest:
 		state["_still_ticks"] = 0
 		return
 	var still := int(state.get("_still_ticks", 0)) + 1
 	state["_still_ticks"] = still
 	if still < CABLE_FREEZE_TICKS:
 		return
+	# Everything the frozen shape is only true FOR is recorded next to it, so
+	# waking is a comparison rather than a guess. The shape is captured in the
+	# body's frame after CABLE_FREEZE_TICKS at rest, by which point the cable
+	# has hung itself under gravity — the host stopped moving well before then.
 	var to_local := body.global_transform.affine_inverse()
 	var path_local := PackedVector3Array()
 	for point: Vector3 in sim.positions:
 		path_local.append(to_local * point)
-	# Everything the frozen shape is only true FOR is recorded next to it, so
-	# waking is a comparison rather than a guess.
 	state["_frozen"] = {
+		# Body only for rendering: rope_path rides the frozen local shape on this
+		# transform. Waking never reads it — that is the assembly revision below.
 		"body": body,
 		"path_local": path_local,
-		"up_local": (to_local.basis * -gravity).normalized(),
+		"assembly_id": assembly.assembly_id,
+		"revision": assembly.topology_revision,
 		"rest_m": link.rest_length_m,
-		"anchor_a_local": to_local * anchor_a,
-		"anchor_b_local": to_local * anchor_b,
 	}
 
 
-## Whether a frozen shape is still the truth. Anything that could have bent the
-## cable wakes it: the body tipped relative to gravity so the sag hangs
-## elsewhere, the winch paid rope out, an end moved because a block was built or
-## destroyed, or the two ends stopped sharing a body.
-func _cable_frozen_holds(
-	state: Dictionary,
-	link: IndustryElectricLink,
-	body: RigidBody3D,
-	gravity: Vector3,
-	anchor_a: Vector3,
-	anchor_b: Vector3
-) -> bool:
-	var frozen: Dictionary = state.get("_frozen", {})
+## The tick-loop fast path: is this a frozen cable whose machine has not changed
+## under it? One dict lookup on the state, one on the assembly, two compares —
+## and if it holds, the caller skips the entire rope tick for this cable.
+##
+## Waking is entirely the assembly's own change-reporting. Any weld, grind,
+## split or merge on that assembly bumps its topology_revision; the assembly
+## vanishing (a split re-roots into new ids) fails the lookup. Either way the
+## stamp no longer matches and the cable drops back to full simulation, where it
+## re-settles and re-freezes in about half a second. The winch is the one change
+## that is a link property rather than an assembly mutation, so rest length is
+## compared directly. Nothing here reads the cable's geometry or the body's
+## pose: a driving, tilting, slamming machine changes none of these numbers, and
+## that is the point — the cable is bolted to the frame and rides it for free.
+func _cable_frozen_current(link: IndustryElectricLink, state: Variant) -> bool:
+	if not state is Dictionary:
+		return false
+	var frozen: Dictionary = (state as Dictionary).get("_frozen", {})
 	if frozen.is_empty():
 		return false
-	var frozen_body: RigidBody3D = frozen.get("body")
-	if frozen_body == null or not is_instance_valid(frozen_body) or frozen_body != body:
-		state.erase("_frozen")
-		return false
 	if not is_equal_approx(float(frozen.get("rest_m", -1.0)), link.rest_length_m):
-		state.erase("_frozen")
+		_thaw(state as Dictionary)
 		return false
-	var to_local := body.global_transform.affine_inverse()
-	var up_local: Vector3 = frozen.get("up_local", Vector3.UP)
-	if (to_local.basis * -gravity).normalized().dot(up_local) < CABLE_FREEZE_UP_DOT:
-		state.erase("_frozen")
-		return false
-	# An end that moved in the body's own frame means the machine changed under
-	# the cable — a block welded on, a block ground off — not that it drove.
-	var moved := (
-		(to_local * anchor_a).distance_to(frozen.get("anchor_a_local", Vector3.ZERO))
-		+ (to_local * anchor_b).distance_to(frozen.get("anchor_b_local", Vector3.ZERO))
-	)
-	if moved > CABLE_FREEZE_ANCHOR_EPS_M:
-		state.erase("_frozen")
+	var assembly := _world.get_assembly_raw(int(frozen.get("assembly_id", 0)))
+	if assembly == null or assembly.topology_revision != int(frozen.get("revision", -1)):
+		_thaw(state as Dictionary)
 		return false
 	return true
+
+
+## Drop a cable's frozen shape AND its at-rest counter. The counter matters:
+## the machine just changed under the cable, so it must get the full settle
+## window to re-hang against the new geometry before it can freeze again —
+## without the reset a still machine re-freezes the very next tick, snapshotting
+## the stale shape it had before the change.
+func _thaw(state: Dictionary) -> void:
+	state.erase("_frozen")
+	state["_still_ticks"] = 0
 
 ## Solved rope path in world space for presentation. Empty when the rope has
 ## not been stepped yet — the caller falls back to the analytic curve.
@@ -3386,6 +3444,7 @@ func _remove_group_bodies(assembly_id: int) -> void:
 		if _mounted_bodies.get(assembly_id) == body:
 			_clear_body_colliders(body)
 		else:
+			_evacuate_seated_drivers(body)
 			body.collision_layer = 0
 			body.collision_mask = 0
 			body.process_mode = Node.PROCESS_MODE_DISABLED
@@ -3640,12 +3699,75 @@ func _remove_body(assembly_id: int) -> void:
 		if _mounted_bodies.get(assembly_id) == body:
 			_clear_body_colliders(body)
 		else:
+			_evacuate_seated_drivers(body)
 			body.collision_layer = 0
 			body.collision_mask = 0
 			body.process_mode = Node.PROCESS_MODE_DISABLED
 			body.queue_free()
 	_bodies.erase(assembly_id)
 	_projected_revision.erase(assembly_id)
+
+
+## Pull seated Player nodes off a body before queue_free. Seat entry parents the
+## driver under the chassis; StaticBody→RigidBody / multibody reproject must not
+## take the camera with the doomed body (blue clear-color screen).
+func _evacuate_seated_drivers(body: PhysicsBody3D) -> void:
+	if body == null or not is_instance_valid(body):
+		return
+	var to_move: Array[Node] = []
+	for child_node: Node in body.get_children():
+		if (
+			child_node.has_method("is_in_vehicle")
+			and child_node.has_method("enter_vehicle")
+			and bool(child_node.call("is_in_vehicle"))
+		):
+			to_move.append(child_node)
+	for child_node: Node in to_move:
+		var driver := child_node as Node3D
+		if driver == null:
+			continue
+		var seat_local := driver.position
+		var world_xform := driver.global_transform
+		var element_id := int(driver.get_meta("control_seat_element_id", 0))
+		body.remove_child(driver)
+		add_child(driver)
+		driver.global_transform = world_xform
+		_evacuated_drivers.append({
+			"player": driver,
+			"seat_local": seat_local,
+			"element_id": element_id,
+		})
+
+
+func _restore_evacuated_drivers() -> void:
+	if _evacuated_drivers.is_empty():
+		return
+	var pending: Array[Dictionary] = _evacuated_drivers.duplicate()
+	_evacuated_drivers.clear()
+	for entry: Dictionary in pending:
+		var player_variant: Variant = entry.get("player")
+		if (
+			player_variant == null
+			or not (player_variant is Node)
+			or not is_instance_valid(player_variant)
+		):
+			continue
+		var player := player_variant as Node
+		var element_id := int(entry.get("element_id", 0))
+		var seat_local: Vector3 = entry.get("seat_local", Vector3.ZERO)
+		var body: PhysicsBody3D = null
+		if element_id > 0:
+			body = (
+				get_element_projection(element_id).get("body") as PhysicsBody3D
+			)
+		if body == null or not is_instance_valid(body):
+			push_warning(
+				"SimulationPhysicsProjection: seated driver evacuated but seat body missing (element %d)"
+				% element_id
+			)
+			continue
+		if player.has_method("enter_vehicle"):
+			player.call("enter_vehicle", body, seat_local)
 
 func _remove_element_records_for_assembly(
 	assembly_id: int

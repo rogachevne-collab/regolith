@@ -1243,6 +1243,9 @@ func _enter_rover_seat(
 	)
 	if body == null or not is_instance_valid(body):
 		return _result(&"not_ready")
+	# Survives chassis reproject: physics projection evacuates/restores the
+	# driver by this meta when StaticBody→RigidBody frees the old body.
+	player.set_meta("control_seat_element_id", element_id)
 	if player.has_method("enter_vehicle"):
 		player.call("enter_vehicle", body, seat_offset)
 	if player.has_method("set_vehicle_flight_controls"):
@@ -1262,6 +1265,19 @@ func _enter_rover_seat(
 		_session.visuals.rebuild_assembly(assembly_id)
 	if _session.piston_visuals != null:
 		_session.piston_visuals.rebuild_assembly(assembly_id)
+	# Rebind if activate/rebuild swapped the body under the driver this frame.
+	body = (
+		_session.projection.get_element_projection(element_id).get("body")
+		as PhysicsBody3D
+	)
+	if (
+		body != null
+		and is_instance_valid(body)
+		and is_instance_valid(player)
+		and player.get_parent() != body
+		and player.has_method("enter_vehicle")
+	):
+		player.call("enter_vehicle", body, seat_offset)
 	return _result(&"ok", {
 		"assembly_id": assembly_id,
 		"element_id": element_id,
@@ -1376,6 +1392,8 @@ func _exit_rover_seat(player: Node3D) -> Dictionary:
 			)
 	if player.has_method("exit_vehicle"):
 		player.call("exit_vehicle", exit_position)
+	if player.has_meta("control_seat_element_id"):
+		player.remove_meta("control_seat_element_id")
 	if player.has_method("set_gameplay_input_enabled"):
 		player.call("set_gameplay_input_enabled", true)
 	var locomotion := _session.world.get_locomotion_controller(assembly_id)

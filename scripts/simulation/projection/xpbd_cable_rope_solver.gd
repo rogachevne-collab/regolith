@@ -17,7 +17,24 @@ const MASS_PER_M := 0.15
 const RADIUS := 0.024
 const SUBSTEPS := 32
 const ITERATIONS := 2
+## Internal fibre friction, 1/s. The core defaults to 0.5, which is right for a
+## free rope in vacuum — it rings forever because on the moon there is nothing
+## to stop it. A cable strapped along a machine is not that rope: it is
+## sheathed, clipped and rubbing on everything it passes, and its pins are
+## driven by a chassis that never stops jittering, so every tick puts a little
+## energy back in. Without this a cable on a rover wobbles for as long as the
+## rover exists. Galilean by construction (ADR 0003): it damps stretching,
+## bending and vibration, never a rope swinging as a whole, so a cable lifting
+## a load still swings.
+const DAMPING := 4.0
 const COLLISION_MASK := 3
+## Terrain only — the crust, not machines. The plane cache exists because it
+## survives between ticks, and that is only true of geometry that does not
+## move: a plane taken off a rover's flank is stored in world space and is
+## wrong the instant the rover shifts a millimetre, so the cable gets shoved
+## toward a wall that is no longer there, every tick, forever. Machine surfaces
+## belong to the analytic pass, which interpolates their transforms properly.
+const TERRAIN_COLLISION_MASK := 1
 const QUERY_MARGIN_M := 1.0
 ## How far ahead of each particle the moon is sampled. The crust is a concave
 ## mesh rebuilt as it is dug, so it never reaches the analytic collider set —
@@ -50,6 +67,7 @@ static func create_state(
 	sim.radius = RADIUS
 	sim.substeps = SUBSTEPS
 	sim.iterations = ITERATIONS
+	sim.damping = DAMPING
 	sim.lay_line(anchor_a, anchor_b, 0.0001)
 	sim.pin(0)
 	sim.pin(count - 1)
@@ -69,7 +87,7 @@ static func _sample_terrain(sim: XPBDRope, space_state: PhysicsDirectSpaceState3
 	sim.local_planes = RopeColliders.sample_local_planes(
 		sim.positions,
 		space_state,
-		COLLISION_MASK,
+		TERRAIN_COLLISION_MASK,
 		RADIUS,
 		TERRAIN_PROBE_MARGIN_M,
 		RopeColliders.body_rids(sim.colliders)
@@ -89,7 +107,8 @@ static func step(
 	body_b: RigidBody3D = null,
 	backing_a: Dictionary = {},
 	backing_b: Dictionary = {},
-	break_force_n: float = 0.0
+	break_force_n: float = 0.0,
+	collide_world: bool = true
 ) -> Dictionary:
 	var result := {
 		"tension_n": 0.0,
@@ -116,7 +135,17 @@ static func step(
 	var pin_vel_b := _pin_velocity(body_b, anchor_b)
 	sim.move_pin(0, anchor_a, pin_vel_a)
 	sim.move_pin(sim.segment_count(), anchor_b, pin_vel_b)
-	if space_state != null:
+	if not collide_world:
+		# A cable with both ends on one body is strapped to that body, and its
+		# only collider worth fighting is that same body — which jitters on its
+		# suspension every tick, shoving the cable and pumping in energy it can
+		# never shed, so it wobbles forever and never settles enough to freeze.
+		# It is an internal hop between two fixed points on one chassis; it has
+		# nothing to hang over. Skipping collision lets it settle to its pure
+		# catenary (then freeze), and costs nothing — which was the point.
+		sim.colliders = []
+		sim.local_planes = PackedVector4Array()
+	elif space_state != null:
 		# Terrain every tick, whatever the budget says. The budget is there to
 		# ration the analytic gather, and rationing the GROUND is what makes a
 		# slack cable sink: it sags a little on each tick it is skipped, and
@@ -124,7 +153,7 @@ static func step(
 		# again — the cable is simply inside the moon from then on. Shapes can
 		# wait their turn; the crust cannot.
 		_sample_terrain(sim, space_state)
-	if collide_shapes and space_state != null:
+	if collide_world and collide_shapes and space_state != null:
 		var prev_cache: Dictionary = state.get("_collider_prev", {})
 		var gathered := RopeColliders.gather_from_space(
 			sim.positions, space_state, COLLISION_MASK, QUERY_MARGIN_M, prev_cache
