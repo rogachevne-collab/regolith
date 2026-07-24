@@ -6,6 +6,30 @@ point at them; edit the files, every scene follows.
 
 `.tres` comments are stripped by `ResourceSaver`, so the reasoning lives here.
 
+## Project presentation (not in this .tres)
+
+Owned by `project.godot` `[display]` / `[rendering]`:
+
+| Setting | Value | Reason |
+| --- | --- | --- |
+| Window | 1920×1080 | Was 1280×720 — edges and terrain LOD read softer at low res |
+| Screen-space AA | SMAA (`screen_space_aa=2`) | Cheap edge cleanup without MSAA cost |
+| Debanding | on | Kills banding on sky / ambient gradients |
+
+## Directional shadows (`main.tscn` sun)
+
+Strategy: **sharp near / fade far**. One atlas cannot stay crisp at 1.5 km.
+
+| Knob | Value | Reason |
+| --- | --- | --- |
+| `max_distance` | 576 | Was 1536; terrain `view_distance` is 512 — longer range only mush |
+| `fade_start` | 0.8 | Distant shadows dissolve instead of hard cut / mushy edge |
+| `shadow_blur` | 0.65 | Was 1.25; lunar sun has tiny angular size → harder penumbra |
+| `normal_bias` | 1.25 | Was 2.5; less floaty contact after blur drop |
+| splits | 0.03 / 0.10 / 0.28 | More texels on player / rover / build range |
+| `blend_splits` | off | Long outdoor + blend → stripe shimmer on near casters |
+| atlas `size` | 8192 | Project setting; more texels for the same cascades |
+
 ## What is set and why
 
 | Block | Value | Reason |
@@ -15,7 +39,8 @@ point at them; edit the files, every scene follows.
 | Ambient | sky contribution **0.0**, energy **1.0** | Was 0.7 / 0.42, inherited from the old inline env. Sky contribution 0.7 against a black starfield throws away 70% of the fill for nothing, so ambient was effectively dead: 0.42 and 0.20 rendered identically, and at a low sun the shadowed half of the frame fell to pure black with zero detail. Fill now comes from `ambient_light_color` (bluish — it stands in for earthshine + regolith bounce). `DayNightCycle` rewrites the energy every frame, so the matching `day_ambient_energy` / `flat_*` overrides live on that node in `main.tscn` and `granular_corridor_test.tscn`. |
 | SSIL | on, intensity 0.35 | Regolith albedo bounce into shadowed crater walls. Was 0.9 and made shadows read grey — on the Moon they should stay near black with just enough bounce to keep detail. **First thing to cut when GPU-bound.** |
 | SSAO | unchanged from the old inline env | Already tuned; only `light_affect`/`ao_channel_affect` nudged off zero. |
-| Glow | additive, intensity 0.2, threshold 2.0, levels 4–5 | Vacuum has no atmospheric bloom, but the camera does. Threshold 1.4 + lifted exposure put the *whole sunlit ground* over the line and the screen washed out; at 2.0 only the sun disc and hot emitters cross it. Levels 4–5 = one broad soft halo instead of a tight ring. |
+| SSR | on, max_steps 48, fade_out 1.5 | Screen-space reflections for metallic frame panels / glass under hard sun. Matte regolith barely shows it. Half-res is the engine default. Console: `env_ssr`. No ReflectionProbe yet (open construction + moving spawn). |
+| Glow | Screen blend (4.6+ default order: before tonemap), intensity 0.25, threshold 2.0, levels 4–5 | Vacuum has no atmospheric bloom, but the camera does. Threshold 1.4 + lifted exposure put the *whole sunlit ground* over the line and the screen washed out; at 2.0 only the sun disc and hot emitters cross it. Levels 4–5 = one broad soft halo instead of a tight ring. Was Additive; switched to Screen to match Godot 4.6+ glow-before-tonemap behaviour. |
 | Fog | off | Vacuum. The distance haze in `flat_moon.tscn` is a deliberate non-physical exception, left alone. |
 | SDFGI | off | Heaviest switch in the renderer, and the world streams. SSIL covers the near-field bounce that actually reads. |
 

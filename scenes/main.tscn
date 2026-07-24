@@ -38,16 +38,18 @@ light_color = Color(0.98, 0.99, 1, 1)
 light_energy = 1.55
 shadow_enabled = true
 shadow_bias = 0.05
-shadow_normal_bias = 2.5
-shadow_blur = 1.25
+shadow_normal_bias = 1.25
+shadow_blur = 0.65
 directional_shadow_mode = 2
 ## blend_splits + large max_distance → moving stripe shimmer on near casters.
 directional_shadow_blend_splits = false
-directional_shadow_max_distance = 1536.0
+## Cap near terrain view_distance (512); was 1536 and ate atlas texels.
+directional_shadow_max_distance = 576.0
+directional_shadow_fade_start = 0.8
 ## Pack resolution toward the camera (fractions of max_distance).
-directional_shadow_split_1 = 0.04
-directional_shadow_split_2 = 0.12
-directional_shadow_split_3 = 0.35
+directional_shadow_split_1 = 0.03
+directional_shadow_split_2 = 0.1
+directional_shadow_split_3 = 0.28
 directional_shadow_pancake_size = 20.0
 
 [node name="Earthshine" type="DirectionalLight3D" parent="." unique_id=666809088]

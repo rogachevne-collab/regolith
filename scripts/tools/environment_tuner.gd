@@ -10,6 +10,7 @@ extends WorldEnvironment
 ##   env_glow 1 0.2 2.0              enabled, intensity, hdr threshold
 ##   env_ssil 1 0.35                 regolith bounce into shadow (costly)
 ##   env_ssao 1 0.65
+##   env_ssr 1                       screen-space reflections (metallic parts)
 ##   env_grade 1.05 1.08             contrast, saturation
 ##   env_ambient 0.42 0.7            energy, sky contribution
 ##   env_sun 1.55                    DayNightCycle key-light energy
@@ -27,7 +28,7 @@ extends WorldEnvironment
 
 const _COMMANDS: Array[StringName] = [
 	&"env_preset", &"env_exposure", &"env_glow", &"env_ssil", &"env_ssao",
-	&"env_grade", &"env_ambient", &"env_sun", &"env_autoexposure",
+	&"env_ssr", &"env_grade", &"env_ambient", &"env_sun", &"env_autoexposure",
 	&"env_dump", &"env_save", &"env_reload",
 ]
 
@@ -54,6 +55,7 @@ func _register_console_commands() -> void:
 	LimboConsole.register_command(env_glow, "env_glow", "on [intensity] [hdr_threshold]")
 	LimboConsole.register_command(env_ssil, "env_ssil", "on [intensity] - bounce light, costly")
 	LimboConsole.register_command(env_ssao, "env_ssao", "on [intensity]")
+	LimboConsole.register_command(env_ssr, "env_ssr", "on - screen-space reflections")
 	LimboConsole.register_command(env_grade, "env_grade", "[contrast] [saturation]")
 	LimboConsole.register_command(env_ambient, "env_ambient", "[energy] [sky_contribution]")
 	LimboConsole.register_command(env_sun, "env_sun", "key light energy")
@@ -137,6 +139,14 @@ func env_ssao(enabled: bool, intensity: float = -1.0) -> void:
 	if intensity >= 0.0:
 		env.ssao_intensity = intensity
 	_info("ssao %s  intensity=%.3f" % ["on" if enabled else "off", env.ssao_intensity])
+
+
+func env_ssr(enabled: bool) -> void:
+	var env := environment
+	if env == null:
+		return
+	env.ssr_enabled = enabled
+	_info("ssr %s  max_steps=%d" % ["on" if enabled else "off", env.ssr_max_steps])
 
 
 func env_grade(contrast: float = -1.0, saturation: float = -1.0) -> void:

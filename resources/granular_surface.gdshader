@@ -156,9 +156,14 @@ uniform float u_planet_radius : hint_range(0.0, 20000.0, 1.0) = 0.0;
 // ground it sits on are graded once and identically.
 uniform float u_exposure : hint_range(0.3, 1.5, 0.01) = 0.52;
 uniform float u_contrast : hint_range(0.5, 2.0, 0.01) = 1.0;
-uniform float u_chroma : hint_range(0.0, 1.0, 0.01) = 0.0;
+uniform float u_chroma : hint_range(0.0, 1.0, 0.01) = 0.10;
 uniform float u_specular : hint_range(0.0, 0.5, 0.01) = 0.06;
 uniform float u_roughness : hint_range(0.0, 1.0, 0.01) = 0.93;
+// Match crust tint_lunar_variation (heap must not read greyer than ground).
+uniform float u_tint_strength : hint_range(0.0, 0.25, 0.005) = 0.06;
+uniform vec3 u_tint_warm : source_color = vec3(1.06, 0.98, 0.90);
+uniform vec3 u_tint_cool : source_color = vec3(0.94, 0.97, 1.04);
+uniform float u_tint_height_m : hint_range(2.0, 40.0, 0.5) = 14.0;
 
 varying vec3 v_local;
 varying vec3 v_model;
@@ -317,6 +322,20 @@ vec3 grade_lunar(vec3 c) {
 	return clamp(c * u_exposure, vec3(0.02), vec3(0.95));
 }
 
+vec3 tint_lunar_variation(vec3 c, vec3 world) {
+	if (u_tint_strength < 0.001) {
+		return c;
+	}
+	float h_signal = u_planet_radius > 1.0
+		? (length(world) - u_planet_radius)
+		: world.y;
+	float h_t = smoothstep(-u_tint_height_m, u_tint_height_m, h_signal);
+	float n = hash33(floor(world * 0.012)).x;
+	float t = clamp(mix(1.0 - h_t, n, 0.45), 0.0, 1.0);
+	vec3 tint = mix(u_tint_warm, u_tint_cool, t);
+	return c * mix(vec3(1.0), tint, u_tint_strength);
+}
+
 void vertex() {
 	v_model = VERTEX;
 	vec3 world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
@@ -470,8 +489,10 @@ void fragment() {
 		+ (f_id - 0.5) * 2.0 * u_grain_tone * 0.6 * f_high * fine_w;
 	vec3 base = mix(u_rock_color, u_dust_color, crevice * 0.65);
 	base *= mix(1.0, 1.0 - u_crevice_shade, crevice * crevice);
+	vec3 world = (MODEL_MATRIX * vec4(v_model, 1.0)).xyz;
+	base = tint_lunar_variation(base * photo * tone, world);
 
-	ALBEDO = grade_lunar(base * photo * tone);
+	ALBEDO = grade_lunar(base);
 	METALLIC = 0.0;
 	ROUGHNESS = u_roughness;
 	SPECULAR = u_specular;

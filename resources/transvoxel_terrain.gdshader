@@ -92,8 +92,16 @@ uniform float u_wall_albedo_end : hint_range(0.0, 1.0, 0.01) = 0.0;
 // Final grade — the only place albedo value/chroma is touched.
 uniform float u_exposure : hint_range(0.3, 1.5, 0.01) = 0.58;
 uniform float u_contrast : hint_range(0.5, 2.0, 0.01) = 1.0;
-uniform float u_chroma : hint_range(0.0, 1.0, 0.01) = 0.02;
+// Was 0.02 (near-B&W Sin City vs colored props). Slight chroma lets
+// height/noise tint read without going Mars.
+uniform float u_chroma : hint_range(0.0, 1.0, 0.01) = 0.10;
 uniform float u_specular : hint_range(0.0, 0.5, 0.01) = 0.15;
+// Subtle warm/cool albedo drift from crater height + surface fbm.
+uniform float u_tint_strength : hint_range(0.0, 0.25, 0.005) = 0.06;
+uniform vec3 u_tint_warm : source_color = vec3(1.06, 0.98, 0.90);
+uniform vec3 u_tint_cool : source_color = vec3(0.94, 0.97, 1.04);
+uniform float u_tint_height_m : hint_range(2.0, 40.0, 0.5) = 14.0;
+uniform float u_tint_noise_scale : hint_range(0.001, 0.05, 0.001) = 0.012;
 uniform float u_radial_up : hint_range(0.0, 1.0, 1.0) = 0.0;
 uniform float u_planet_radius : hint_range(0.0, 20000.0, 1.0) = 0.0;
 // Baked equirect albedo brightness (dark maria + fresh-crater ray systems),
@@ -322,6 +330,19 @@ vec3 grade_lunar(vec3 c) {
 	c = mix(vec3(l), c, u_chroma);
 	c = vec3(0.32) + (c - vec3(0.32)) * u_contrast;
 	return clamp(c * u_exposure, vec3(0.02), vec3(0.95));
+}
+
+// Very light warm (bowl / low) ↔ cool (ridge / high) drift. Height + fbm so
+// it follows crater topography without painting hard isolines.
+vec3 tint_lunar_variation(vec3 c, float h_signal, vec3 meter_pos, vec3 surf_dir) {
+	if (u_tint_strength < 0.001) {
+		return c;
+	}
+	float h_t = smoothstep(-u_tint_height_m, u_tint_height_m, h_signal);
+	float n = fbm_surface(meter_pos, surf_dir, u_tint_noise_scale);
+	float t = clamp(mix(1.0 - h_t, n, 0.45), 0.0, 1.0);
+	vec3 tint = mix(u_tint_warm, u_tint_cool, t);
+	return c * mix(vec3(1.0), tint, u_tint_strength);
 }
 
 void vertex() {
@@ -553,6 +574,7 @@ void fragment() {
 		tex_col *= mix(1.0, bright, u_moon_brightness_strength);
 	}
 
+	tex_col = tint_lunar_variation(tex_col, h_signal, meter_pos, surf_dir);
 	ALBEDO = grade_lunar(tex_col);
 
 	vec3 normal_perturb =

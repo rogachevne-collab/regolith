@@ -34,6 +34,6 @@ shader_parameter/u_wall_mix = 0.0
 shader_parameter/u_moon_brightness_strength = 0.0
 shader_parameter/u_moon_brightness_on = 0.0
 shader_parameter/u_exposure = 0.52
-shader_parameter/u_chroma = 0.0
+shader_parameter/u_chroma = 0.10
 shader_parameter/u_hex_rotation = 0.06
 shader_parameter/u_radial_up = 1.0

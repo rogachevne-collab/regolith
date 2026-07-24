@@ -74,7 +74,7 @@ script = ExtResource("13")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.75, 0)
 current = true
 fov = 80.0
-far = 20000.0
+far = 10000.0
 script = ExtResource("2")
 
 [node name="MiningLight" type="SpotLight3D" parent="Camera" unique_id=1608737082]
