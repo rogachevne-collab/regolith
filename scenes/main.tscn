@@ -17,6 +17,7 @@
 [ext_resource type="PackedScene" uid="uid://solarskydecor001" path="res://scenes/solar_sky_decor.tscn" id="19"]
 [ext_resource type="Script" path="res://scripts/day_night_cycle.gd" id="20"]
 [ext_resource type="Resource" path="res://resources/environment/moon_simulation_environment.tres" id="24_sim_env"]
+[ext_resource type="Script" path="res://scripts/coop/coop_session.gd" id="25_coop"]
 
 [sub_resource type="SphereShape3D" id="SphereShape_gravity"]
 radius = 675.0
@@ -27,6 +28,9 @@ radius = 675.0
 script = ExtResource("1")
 enable_boulder_instancer = true
 boulder_density_scale = -1.0
+
+[node name="CoopSession" type="Node" parent="."]
+script = ExtResource("25_coop")
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1964025307]
 environment = ExtResource("21")

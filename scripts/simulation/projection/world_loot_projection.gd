@@ -55,6 +55,10 @@ func _ensure_terrain_accepts_loot() -> void:
 
 
 func _write_back_positions() -> void:
+	# Replica (COOP-HOST-V0): pile positions come from host snapshots, never
+	# from local free-fall. Writing back would mutate the replica (C1).
+	if not _world.authoritative:
+		return
 	for pile_id_variant: Variant in _bodies.keys():
 		var pile_id := int(pile_id_variant)
 		var body := _bodies[pile_id] as RigidBody3D
@@ -131,6 +135,10 @@ func _make_pile(row: Dictionary) -> RigidBody3D:
 	body.angular_damp = 0.2
 	body.physics_material_override = _physics_material
 	body.mass = maxf(amount_kg, 0.05)
+	if not _world.authoritative:
+		# Replica loot never simulates: positions ride host snapshots.
+		body.freeze_mode = RigidBody3D.FREEZE_MODE_KINEMATIC
+		body.freeze = true
 	body.set_meta("interaction_metadata", {
 		"loot_pile_id": pile_id,
 		"resource_id": resource_id,
@@ -162,6 +170,9 @@ func _make_pile(row: Dictionary) -> RigidBody3D:
 
 func _on_loot_body_entered(other_body: Node, pile_id: int) -> void:
 	if _world == null or not other_body is RigidBody3D:
+		return
+	# Replica: merges are a host decision (they mutate the world). Skip.
+	if not _world.authoritative:
 		return
 	var metadata: Variant = other_body.get_meta("interaction_metadata", {})
 	if not metadata is Dictionary:

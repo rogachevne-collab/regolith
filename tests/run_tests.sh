@@ -38,6 +38,7 @@ KERNEL=(
 	test_connected_block_visual
 	test_impact_destruction
 	test_snapshot_replica
+	test_coop_codec
 	test_granular_patch
 	test_granular_lens_scoop
 	test_granular_sinter

@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://coop_remote_player"]
+
+[ext_resource type="Script" path="res://scripts/coop/remote_player.gd" id="1_rp"]
+
+[node name="RemotePlayer" type="Node3D"]
+script = ExtResource("1_rp")

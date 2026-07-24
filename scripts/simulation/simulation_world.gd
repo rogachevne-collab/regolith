@@ -224,6 +224,22 @@ func ensure_suit_state(player_id: String) -> SimulationSuitState:
 func has_suit_state(player_id: String) -> bool:
 	return _suits.has(player_id)
 
+## Sanctioned replica write (COOP-HOST-V0 stage 3): mirror one suit's values
+## from the host between full snapshots, so the client's own O2 bar keeps
+## draining instead of freezing at join time. Rejected on an authoritative
+## world — the host owns its suits. `values` is SimulationSuitState.to_dict().
+func sync_suit_state(player_id: String, values: Dictionary) -> void:
+	if authoritative:
+		push_error(
+			"SimulationWorld authoritative rejected sync_suit_state (host owns suits)"
+		)
+		return
+	var suit := SimulationSuitState.from_dict(values)
+	var previous := get_suit_state(player_id)
+	_suits[player_id] = suit
+	if previous == null or previous.to_dict() != suit.to_dict():
+		suit_changed.emit(player_id)
+
 func list_suit_state_ids() -> Array[String]:
 	var ids: Array[String] = []
 	for player_id: String in _suits.keys():

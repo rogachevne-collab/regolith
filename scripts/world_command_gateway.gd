@@ -14,6 +14,8 @@ signal command_completed(command_id: int, result: Dictionary)
 const GROUND_SEAT_EMBED := 0.02
 const INTERACTION_RANGE_M := 4.5
 const INTERACTION_SOURCE_MARGIN_M := 1.5
+## Aim can sit slightly outside the authored collider AABB (mesh bevel / float).
+const _OXYGEN_MODULE_HIT_MARGIN_M := 0.2
 const _GROUND_SEAT_SAMPLES: Array[Vector2] = [
 	Vector2(0.0, 0.0),
 	Vector2(-0.5, -0.5),
@@ -138,11 +140,26 @@ func _probe_assembly_terrain_contact(
 	)
 
 
+## Installed by CoopSession on a client (COOP-HOST-V0). When valid, submit()
+## routes commands to the host instead of executing locally (invariant C1).
+var _network_submit: Callable = Callable()
+
+
+func set_network_submit(hook: Callable) -> void:
+	_network_submit = hook
+
+
 func submit(command: Dictionary) -> int:
 	var queued := command.duplicate(true)
 	var command_id := _next_command_id
 	_next_command_id += 1
 	queued["id"] = command_id
+	# On a client, hand the command to the transport and stop — nothing executes
+	# locally (the client world is a replica). The host stamps identity and runs
+	# it; the result comes back through complete_remote().
+	if _network_submit.is_valid():
+		_network_submit.call(command_id, queued)
+		return command_id
 	# The gateway decides whose resources a command spends — not the caller.
 	# Today that is always the local player; under coop this is the one line
 	# that becomes "the peer that sent it" (COOP-HOST-V0 "Транспорт команд"),
@@ -156,12 +173,44 @@ func submit(command: Dictionary) -> int:
 	return command_id
 
 
+## Host-side network entry: run a command on behalf of a connected peer. The
+## peer's uid/store are stamped here (never trusted from the wire) and `source`
+## is the peer's remote-avatar node, so range checks (e.g. oxygen_refill) work.
+func submit_as(peer_uid: String, command: Dictionary, source_node: Node) -> int:
+	var queued := command.duplicate(true)
+	var command_id := _next_command_id
+	_next_command_id += 1
+	queued["id"] = command_id
+	queued["actor_uid"] = peer_uid
+	queued["store_id"] = PlayerIdentity.store_id(peer_uid)
+	queued["source"] = source_node
+	_queue.append(queued)
+	if not _flush_scheduled:
+		_flush_scheduled = true
+		call_deferred("_flush")
+	return command_id
+
+
+## Client-side: deliver a host result under the client's own local command id,
+## so every HUD/tool reconciliation loop keyed on command_completed works
+## unchanged.
+func complete_remote(command_id: int, result: Dictionary) -> void:
+	command_completed.emit(command_id, result)
+
+
 func _flush() -> void:
 	_flush_scheduled = false
 	while not _queue.is_empty():
 		var command: Dictionary = _queue.pop_front()
 		var command_id: int = command["id"]
+		# Handlers read the actor_uid MEMBER (not the command dict). Point it at
+		# whoever this command belongs to for the duration of its execution, then
+		# restore the local player — this is what makes per-peer stores work
+		# without touching every handler (COOP-HOST-V0 "Транспорт команд").
+		var previous_actor := actor_uid
+		actor_uid = String(command.get("actor_uid", previous_actor))
 		var result := _execute(command)
+		actor_uid = previous_actor
 		result["command_kind"] = command.get("kind", StringName())
 		command_completed.emit(
 			command_id,
@@ -170,6 +219,11 @@ func _flush() -> void:
 
 
 func _execute(command: Dictionary) -> Dictionary:
+	# Second lock on invariant C1: a replica never executes a mutating command,
+	# whatever the caller. Host worlds are authoritative and pass straight
+	# through.
+	if _session != null and _session.world != null and not _session.world.authoritative:
+		return _result(&"not_authoritative")
 	if not command.has("kind") or not command.has("target"):
 		return _result(&"invalid_target")
 	var target: Dictionary = command["target"]
@@ -1061,17 +1115,9 @@ func _oxygen_refill(command_data: Dictionary, target: Dictionary) -> Dictionary:
 		return _result(&"invalid_target")
 	# Bind the claimed id to the aimed world point as well as the snapshot kind;
 	# a peer cannot pair a nearby hit with a known remote module id.
-	var module_position := _session.world.element_world_transform(
-		module_element_id
-	).origin
-	var footprint_reach := GridMetric.CELL_SIZE_M
-	for cell: Vector3i in module.get_archetype().footprint_cells:
-		footprint_reach = maxf(
-			footprint_reach,
-			Vector3(cell).length() * GridMetric.CELL_SIZE_M
-			+ GridMetric.CELL_SIZE_M
-		)
-	if module_position.distance_to(point) > footprint_reach:
+	# Reach uses collider AABB (not origin→max-footprint-cell): multi-cell tanks
+	# have far corners beyond that old radius while still being valid hits.
+	if not _oxygen_module_hit_in_reach(module, point):
 		return _result(&"invalid_target")
 	var command := OxygenRefillCommand.new()
 	command.player_id = actor_uid
@@ -1081,6 +1127,38 @@ func _oxygen_refill(command_data: Dictionary, target: Dictionary) -> Dictionary:
 		StringName(result.get("reason", &"invalid_target")),
 		result
 	)
+
+
+## True when `point` lies on/near any authored collider of the module.
+func _oxygen_module_hit_in_reach(
+	module: SimulationElement,
+	point: Vector3
+) -> bool:
+	if module == null or not point.is_finite():
+		return false
+	var archetype := module.get_archetype()
+	if archetype == null:
+		return false
+	var group_tf := _session.world.element_group_transform(module.element_id)
+	if archetype.colliders.is_empty():
+		var origin := _session.world.element_world_transform(
+			module.element_id
+		).origin
+		return origin.distance_to(point) <= (
+			GridMetric.CELL_SIZE_M + _OXYGEN_MODULE_HIT_MARGIN_M
+		)
+	for collider: ColliderDefinition in archetype.colliders:
+		if collider == null:
+			continue
+		var bounds := GridPoseUtil.collider_world_aabb(
+			group_tf,
+			module.origin_cell,
+			module.orientation_index,
+			collider
+		).grow(_OXYGEN_MODULE_HIT_MARGIN_M)
+		if bounds.has_point(point):
+			return true
+	return false
 
 
 func _place_block(
@@ -2277,7 +2355,9 @@ func apply_connect_network(
 ## element id 0 landed on bare terrain and gets a stake driven for it — see
 ## [CableStakeUtil]. [param stake_up] is local up at the click: gravity lives
 ## on a scene node, and the command that runs on the world cannot go looking
-## for one.
+## for one. [param link_kind] is ELECTRIC (the `connect` tool's slack cable,
+## current behaviour) or MECHANICAL (the `rope` tool, ROPE-CHAIN-V0): a
+## physical rope/chain that mass-couples instead of conducting.
 func apply_connect_rope(
 	element_a_id: int,
 	attach_a: Vector3,
@@ -2285,7 +2365,8 @@ func apply_connect_rope(
 	attach_b: Vector3,
 	slack: float = CableAnchorUtil.DEFAULT_SLACK,
 	routed_m: float = 0.0,
-	stake_up: Vector3 = Vector3.UP
+	stake_up: Vector3 = Vector3.UP,
+	link_kind: int = IndustryElectricLink.Kind.ELECTRIC
 ) -> Dictionary:
 	if _session == null:
 		return _result(&"not_ready")
@@ -2299,6 +2380,7 @@ func apply_connect_rope(
 	command.slack = slack
 	command.routed_m = maxf(routed_m, 0.0) if is_finite(routed_m) else 0.0
 	command.stake_up = stake_up
+	command.link_kind = link_kind
 	var result := _session.world.apply_structural_command_now(command)
 	if result == null:
 		return _result(&"not_ready")
@@ -2320,7 +2402,12 @@ func _connect_network(
 			parameters.get("attach_b", Vector3.ZERO),
 			float(parameters.get("slack", CableAnchorUtil.DEFAULT_SLACK)),
 			float(parameters.get("routed_m", 0.0)),
-			parameters.get("stake_up", Vector3.UP)
+			parameters.get("stake_up", Vector3.UP),
+			(
+				IndustryElectricLink.Kind.MECHANICAL
+				if bool(parameters.get("mechanical", false))
+				else IndustryElectricLink.Kind.ELECTRIC
+			)
 		)
 	return apply_connect_network(
 		int(parameters.get("element_a_id", 0)),

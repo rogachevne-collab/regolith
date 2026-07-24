@@ -130,6 +130,55 @@ func is_world_ready() -> bool:
 	return _world_ready
 
 
+## While a client is connected to a host (COOP-HOST-V0), its local session world
+## is a replica of the host's — saving it would overwrite this machine's own
+## single-player save with someone else's world. CoopSession flips this on join
+## and off on leave/disconnect (leave reloads the scene anyway).
+var _coop_persistence_inhibited := false
+
+
+func set_coop_persistence_inhibited(inhibited: bool) -> void:
+	_coop_persistence_inhibited = inhibited
+
+
+## Flush this machine's own single-player progress once, then stop persisting —
+## called by CoopSession the moment a join is accepted, before the host snapshot
+## replaces the local world.
+func save_now_then_inhibit_persistence() -> void:
+	await _persist_world(true)
+	_coop_persistence_inhibited = true
+
+
+## Re-drop the local player near a world point using the existing settle
+## machinery (COOP-HOST-V0 join: land the client next to the host). Async.
+func reseat_player_near(target_world: Vector3) -> void:
+	var dir := target_world.normalized()
+	if dir.length_squared() < 0.000001:
+		dir = _player_spawn_hint
+	_player_spawn_hint = dir
+	if _player.has_method("set_spawn_locked"):
+		_player.set_spawn_locked(true)
+	var hold := MoonGeometry.spawn_hold_point(dir)
+	_player.global_position = hold
+	_set_spawn_streaming_focus(true)
+	var resolved := await _resolve_spawn_with_floor(
+		hold,
+		_gravity_field.probe_direction_toward_ground(hold),
+		MoonGeometry.surface_point(dir),
+		PHYSICS_GROUND_TIMEOUT_LOAD_MS
+	)
+	_player.call("begin_spawn_settle", resolved)
+	var settle_frames := 0
+	while not _player.call("is_spawn_settled"):
+		await get_tree().physics_frame
+		settle_frames += 1
+		if settle_frames >= MAX_SPAWN_SETTLE_FRAMES:
+			_player.call("set_spawn_ready", _snap_spawn_to_ground(_player.global_position))
+			break
+	_resync_player_camera()
+	_set_spawn_streaming_focus(false)
+
+
 func _ready() -> void:
 	## Hold quit until dig SQLite save+flush finishes (cave/base must survive reload).
 	get_tree().auto_accept_quit = false
@@ -228,7 +277,12 @@ func _notification(what: int) -> void:
 func _exit_tree() -> void:
 	## Best-effort if Stop/kill skipped WM_CLOSE; no flush race here.
 	_persist_world_snapshot_only(true)
-	if persist_digs and _terrain is VoxelLodTerrain and _digs_dirty:
+	if (
+		persist_digs
+		and _terrain is VoxelLodTerrain
+		and _digs_dirty
+		and not _coop_persistence_inhibited
+	):
 		(_terrain as VoxelLodTerrain).save_modified_blocks()
 	WorldPersistence.save_path_override = ""
 
@@ -559,6 +613,9 @@ func _persist_world(force := false) -> void:
 
 
 func _persist_world_snapshot_only(force := false) -> void:
+	# Client of a coop host: never write the replicated world to the local save.
+	if _coop_persistence_inhibited:
+		return
 	if not _world_ready or _session == null:
 		return
 	if (
@@ -598,7 +655,9 @@ func _request_quit_after_persist() -> void:
 func _persist_digs_durable() -> void:
 	if _dig_persist_in_flight:
 		return
-	if not persist_digs or not (_terrain is VoxelLodTerrain):
+	# Coop client: skip the SQLite dig flush too, but still honor a pending quit
+	# so leaving/closing never hangs.
+	if not persist_digs or not (_terrain is VoxelLodTerrain) or _coop_persistence_inhibited:
 		if _quit_after_dig_persist:
 			get_tree().quit()
 		return
