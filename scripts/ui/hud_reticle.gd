@@ -19,6 +19,12 @@ func setup(ctx: Dictionary) -> void:
 	_gateway = ctx.get("gateway")
 
 
+func _aim_keys(hit: InteractionHit) -> Dictionary:
+	if _gateway == null:
+		return {}
+	return hit.card_keys(_gateway.get_world())
+
+
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -83,7 +89,7 @@ func _summary_key(hit: InteractionHit) -> String:
 		return ""
 	if hit.target_kind != InteractionHit.KIND_SIMULATION_ELEMENT:
 		return str(hit.target_kind)
-	var meta := hit.metadata
+	var meta := _aim_keys(hit)
 	return "%s|%s|%s|%s|%s" % [
 		str(meta.get("element_id", 0)),
 		str(meta.get("archetype_id", "")),
@@ -98,14 +104,15 @@ func _target_summary(hit: InteractionHit) -> String:
 		return ""
 	if hit.target_kind != InteractionHit.KIND_SIMULATION_ELEMENT:
 		return ""
-	var archetype_id := str(hit.metadata.get("archetype_id", ""))
+	var meta := _aim_keys(hit)
+	var archetype_id := str(meta.get("archetype_id", ""))
 	if archetype_id in ["processor", "fabricator", "stationary_drill", "cargo_store"]:
 		return ""
 	if archetype_id.is_empty():
 		return ""
 	var display := _gateway.archetype_display_name(archetype_id).to_upper()
-	var status := StringName(hit.metadata.get("status_reason", &"element_incomplete"))
-	return "%s  \u00b7  %s" % [display, _status_summary(hit.metadata, status)]
+	var status := StringName(meta.get("status_reason", &"element_incomplete"))
+	return "%s  \u00b7  %s" % [display, _status_summary(meta, status)]
 
 
 func _status_summary(meta: Dictionary, status: StringName) -> String:

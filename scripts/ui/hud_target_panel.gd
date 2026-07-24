@@ -1,6 +1,6 @@
 extends Control
 ## Top-left target readout panel. Presentation only: reads
-## InteractionQuery.current_hit metadata for a simulation element and displays
+## InteractionQuery.current_hit + InteractionCard for a simulation element and displays
 ## its name / status / integrity with the frozen state palette. Hidden unless a
 ## simulation element is targeted. Never mutates state.
 
@@ -55,6 +55,12 @@ func setup(ctx: Dictionary) -> void:
 	_query = ctx.get("query")
 	_gateway = ctx.get("gateway")
 	_tools = ctx.get("tools")
+
+
+func _aim_keys(hit: InteractionHit) -> Dictionary:
+	if _gateway == null:
+		return {}
+	return hit.card_keys(_gateway.get_world())
 
 
 func _ready() -> void:
@@ -316,7 +322,7 @@ func _process(_delta: float) -> void:
 		_last_panel_sig = ""
 		return
 	_panel.visible = true
-	var meta := hit.metadata
+	var meta := _aim_keys(hit)
 	var panel_sig := _panel_sig(hit, meta)
 	# Distance updates every frame while walking; keep it live even when gated.
 	_distance.text = "%.1f М" % hit.distance

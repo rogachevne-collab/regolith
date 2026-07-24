@@ -29,22 +29,31 @@ const SUSPENSION_ROWS: Array[Dictionary] = [
 ## WheelPlacementUtil кладёт wheel_element_id / suspension_element_id любому
 ## колесу и любой подвеске, включая испечённые визардом. Со списком id
 ## авторская деталь молча оставалась без панели настройки.
-static func rows_for_hit(hit: InteractionHit) -> Array[Dictionary]:
-	if hit == null or not hit.valid:
+static func rows_for_keys(keys: Dictionary) -> Array[Dictionary]:
+	if keys.is_empty():
 		return []
-	if hit.metadata.has("wheel_element_id"):
+	if keys.has("wheel_element_id"):
 		return WHEEL_ROWS
-	if hit.metadata.has("suspension_element_id"):
+	if keys.has("suspension_element_id"):
 		return SUSPENSION_ROWS
 	return []
 
 
-static func panel_title(hit: InteractionHit) -> String:
-	if hit != null and hit.valid:
-		if hit.metadata.has("wheel_element_id"):
-			return "КОЛЕСО"
-		if hit.metadata.has("suspension_element_id"):
-			return "ПОДВЕСКА"
+static func rows_for_hit(
+	hit: InteractionHit,
+	world: SimulationWorld = null
+) -> Array[Dictionary]:
+	if hit == null or not hit.valid:
+		return []
+	return rows_for_keys(hit.card_keys(world))
+
+
+static func panel_title(hit: InteractionHit, world: SimulationWorld = null) -> String:
+	var keys := hit.card_keys(world) if hit != null and hit.valid else {}
+	if keys.has("wheel_element_id"):
+		return "КОЛЕСО"
+	if keys.has("suspension_element_id"):
+		return "ПОДВЕСКА"
 	return "МОДУЛЬ"
 
 
@@ -126,14 +135,21 @@ static func next_value(meta: Dictionary, field: String, delta: float) -> float:
 	return -1.0
 
 
-static func configure_kind_for_hit(hit: InteractionHit) -> StringName:
-	if hit == null or not hit.valid:
-		return &""
-	if hit.metadata.has("wheel_element_id"):
+static func configure_kind_for_keys(keys: Dictionary) -> StringName:
+	if keys.has("wheel_element_id"):
 		return &"configure_wheel"
-	if hit.metadata.has("suspension_element_id"):
+	if keys.has("suspension_element_id"):
 		return &"configure_suspension"
 	return &""
+
+
+static func configure_kind_for_hit(
+	hit: InteractionHit,
+	world: SimulationWorld = null
+) -> StringName:
+	if hit == null or not hit.valid:
+		return &""
+	return configure_kind_for_keys(hit.card_keys(world))
 
 
 static func parameter_name_for_field(field: String) -> String:

@@ -34,6 +34,12 @@ func setup(ctx: Dictionary) -> void:
 		_gateway.command_completed.connect(_on_command_completed)
 
 
+func _aim_keys(hit: InteractionHit) -> Dictionary:
+	if _gateway == null:
+		return {}
+	return hit.card_keys(_gateway.get_world())
+
+
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -52,7 +58,7 @@ func blocks_world_interact() -> bool:
 func try_open_on_target(hit: InteractionHit) -> bool:
 	if _open or hit == null or not hit.valid:
 		return false
-	if HudWheelTuneUtil.rows_for_hit(hit).is_empty():
+	if HudWheelTuneUtil.rows_for_hit(hit, _gateway.get_world()).is_empty():
 		return false
 	if not UIWindowStack.push(self, Callable(self, "close")):
 		return false
@@ -92,8 +98,7 @@ func _current_hit() -> InteractionHit:
 	var hit := _query.current_hit
 	if (
 		hit.valid
-		and int(hit.metadata.get("element_id", 0))
-		== int(_target_hit.metadata.get("element_id", 0))
+		and hit.element_id == _target_hit.element_id
 	):
 		return hit
 	return _target_hit
@@ -198,7 +203,7 @@ func _rebuild_tune_rows() -> void:
 	for child_node: Node in _tune_box.get_children():
 		child_node.queue_free()
 	_tune_values.clear()
-	for row: Dictionary in HudWheelTuneUtil.rows_for_hit(_target_hit):
+	for row: Dictionary in HudWheelTuneUtil.rows_for_hit(_target_hit, _gateway.get_world()):
 		_build_tune_row(_tune_box, str(row["key"]), str(row["field"]))
 
 
@@ -236,15 +241,14 @@ func _build_tune_row(parent_node: Node, key: String, field: String) -> void:
 func _refresh_from_hit(hit: InteractionHit) -> void:
 	if hit == null or not hit.valid:
 		return
-	_title.text = HudWheelTuneUtil.panel_title(hit)
-	# По возможностям детали, а не по списку id: испечённая визардом деталь
-	# иначе молча остаётся без строки руля.
-	var is_wheel := hit.metadata.has("wheel_element_id")
+	_title.text = HudWheelTuneUtil.panel_title(hit, _gateway.get_world())
+	var meta := _aim_keys(hit)
+	var is_wheel := meta.has("wheel_element_id")
 	_steer_row.visible = is_wheel
 	if is_wheel:
-		var powered := bool(hit.metadata.get("wheel_powered", false))
+		var powered := bool(meta.get("wheel_powered", false))
 		var status := StringName(
-			hit.metadata.get(
+			meta.get(
 				"wheel_status",
 				&"ok" if powered else &"no_power"
 			)
@@ -260,23 +264,23 @@ func _refresh_from_hit(hit: InteractionHit) -> void:
 			HudTokens.COL_OK if status == &"ok" else HudTokens.COL_WARNING
 		)
 		_steer_val.text = (
-			"поворотное" if bool(hit.metadata.get("wheel_steerable", false))
+			"поворотное" if bool(meta.get("wheel_steerable", false))
 			else "фиксированное"
 		)
 	else:
 		_status_val.text = "—"
 		_status_val.add_theme_color_override("font_color", HudTokens.COL_DIM)
-	for row: Dictionary in HudWheelTuneUtil.rows_for_hit(hit):
+	for row: Dictionary in HudWheelTuneUtil.rows_for_hit(hit, _gateway.get_world()):
 		var field := str(row["field"])
 		var label: Label = _tune_values.get(field)
 		if label != null:
-			label.text = HudWheelTuneUtil.format_value(field, hit.metadata)
+			label.text = HudWheelTuneUtil.format_value(field, meta)
 
 
 func _on_toggle_steerable() -> void:
 	if _gateway == null or not _target_hit.valid:
 		return
-	var meta := _current_hit().metadata
+	var meta := _aim_keys(_current_hit())
 	var command_id := _gateway.submit({
 		"kind": &"configure_wheel",
 		"source": self,
@@ -292,11 +296,11 @@ func _on_toggle_steerable() -> void:
 func _on_tune_pressed(field: String, direction: int) -> void:
 	if _gateway == null or not _target_hit.valid:
 		return
-	var meta := _current_hit().metadata
+	var meta := _aim_keys(_current_hit())
 	var new_value := HudWheelTuneUtil.next_value(meta, field, direction)
 	if new_value < 0.0:
 		return
-	var kind := HudWheelTuneUtil.configure_kind_for_hit(_target_hit)
+	var kind := HudWheelTuneUtil.configure_kind_for_hit(_target_hit, _gateway.get_world())
 	if kind.is_empty():
 		return
 	var parameters := {}

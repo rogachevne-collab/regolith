@@ -159,6 +159,9 @@ var _bar_pages: Array = []
 ## резолвлен. Отдельно от _target_assembly: бар принадлежит хосту, список
 ## узлов — сборке, это разные скоупы (CONTROL-ACTIONS-V0 «Хосты бара»).
 var _host_element_id := 0
+## Pin explicit ControlSeat host while the terminal is open — look-away must
+## not resolve host to 0 or silently switch seats (no lowest-seat fallback).
+var _pinned_host_element_id := 0
 var _page := 0
 var _strip: HBoxContainer
 var _page_row: HBoxContainer
@@ -270,6 +273,11 @@ const COMMANDS := {
 		["wheel.steerable_toggle", "sliders", "Поворотное", "тумб"],
 		["wheel.invert_drive_toggle", "reverse", "Направление", "тумб"],
 	],
+	"control_seat": [
+		["seat.control_wheels_toggle", "sliders", "Колёса", "тумб"],
+		["seat.control_thrusters_toggle", "power", "Тяга", "тумб"],
+		["seat.control_gyros_toggle", "rotate_cw", "Гиро", "тумб"],
+	],
 }
 
 ## Глаголы «удерж»: нажал — поехал, отпустил — стоп. Всё остальное — разовое.
@@ -345,9 +353,11 @@ func try_open_on_target(hit: InteractionHit) -> bool:
 		hit == null
 		or not hit.valid
 		or hit.distance > INTERACT_RANGE_M
-		or str(hit.metadata.get("archetype_id", "")) != "control_terminal"
+		or str(hit.card_keys(_gateway.get_world()).get("archetype_id", "")) != "control_terminal"
 	):
 		return false
+	# Pin the aimed ControlSeat before open so refresh can't lose it.
+	_pinned_host_element_id = hit.element_id
 	open()
 	return true
 
@@ -384,6 +394,7 @@ func close() -> void:
 	if not _open:
 		return
 	_open = false
+	_pinned_host_element_id = 0
 	_release_holds()
 	_last_structure_key = ""
 	_last_structure_sig = ""
@@ -461,13 +472,20 @@ func _refresh() -> void:
 	_refresh_open()
 
 
+func _snapshot_host_hint() -> int:
+	return ControlTerminalSnapshotBuilder.host_hint_for_refresh(
+		_pinned_host_element_id,
+		_aimed_element_id()
+	)
+
+
 func _refresh_bar_closed() -> void:
 	if not _gateway.has_method("control_terminal_bar_snapshot"):
 		return
 	var bar_snap: Dictionary = _gateway.call(
 		"control_terminal_bar_snapshot",
 		_target_assembly,
-		_aimed_element_id()
+		_snapshot_host_hint()
 	)
 	if not bool(bar_snap.get("valid", false)):
 		_set_target_assembly(0)
@@ -509,11 +527,10 @@ func _refresh_open() -> void:
 	var snap: Dictionary = _gateway.call(
 		"control_terminal_snapshot",
 		_target_assembly,
-		_aimed_element_id()
+		_snapshot_host_hint()
 	)
 	if not bool(snap.get("valid", false)):
-		_set_target_assembly(0)
-		_apply_bar_snapshot(0, [])
+		# Keep pin / host while open — look-away must not wipe the terminal.
 		_fill_unit(snap)
 		_fill_nodes([])
 		_fill_alarms([])
@@ -523,11 +540,11 @@ func _refresh_open() -> void:
 		return
 	if _target_assembly <= 0:
 		_set_target_assembly(int(snap.get("assembly_id", 0)))
+	var host_id := int(snap.get("control_seat_element_id", 0))
+	if _open and host_id > 0:
+		_pinned_host_element_id = host_id
 	var bar: Dictionary = snap.get("action_bar", {})
-	_apply_bar_snapshot(
-		int(snap.get("control_seat_element_id", 0)),
-		bar.get("pages", [])
-	)
+	_apply_bar_snapshot(host_id, bar.get("pages", []))
 	_fill_unit(snap)
 	var nodes: Array = snap.get("nodes", [])
 	var alarms: Array = snap.get("alarms", [])
@@ -639,11 +656,14 @@ func _live_sig_from_snap(snap: Dictionary, nodes: Array) -> String:
 
 func _live_sig_from_node(node: Dictionary, power: Dictionary) -> String:
 	var detail: Dictionary = node.get("detail", {}) if not node.is_empty() else {}
-	return "%d|%s|%.4f|%s|%.3f|%.3f|%s" % [
+	return "%d|%s|%.4f|%s|%s|%s|%s|%.3f|%.3f|%s" % [
 		_selected_element_id,
 		str(node.get("status", "")),
 		float(node.get("value", 0.0)),
 		str(detail.get("enabled", "")),
+		str(detail.get("control_wheels", "")),
+		str(detail.get("control_thrusters", "")),
+		str(detail.get("control_gyros", "")),
 		float(power.get("demand_w", 0.0)),
 		float(power.get("battery_fraction", 0.0)),
 		str(power.get("powered", "")),
@@ -686,6 +706,12 @@ func _patch_selected_node_live(world: SimulationWorld) -> bool:
 				detail["enabled"] = bool(card.keys["rotor_motor_enabled"])
 			elif card.keys.has("hinge_motor_enabled"):
 				detail["enabled"] = bool(card.keys["hinge_motor_enabled"])
+			if card.keys.has("control_wheels"):
+				detail["control_wheels"] = bool(card.keys["control_wheels"])
+			if card.keys.has("control_thrusters"):
+				detail["control_thrusters"] = bool(card.keys["control_thrusters"])
+			if card.keys.has("control_gyros"):
+				detail["control_gyros"] = bool(card.keys["control_gyros"])
 			var joint_id := int(node.get("joint_id", 0))
 			if joint_id > 0:
 				var joint := world.get_joint(joint_id)
@@ -768,11 +794,10 @@ func _set_target_assembly(assembly_id: int) -> void:
 func _aimed_element_id() -> int:
 	if _query == null:
 		return 0
-	var hit: Variant = _query.get("current_hit")
-	if hit == null or not bool(hit.get("valid")):
+	var hit: InteractionHit = _query.current_hit
+	if hit == null or not hit.valid:
 		return 0
-	var meta: Dictionary = hit.get("metadata")
-	return int(meta.get("element_id", 0))
+	return hit.element_id
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -833,8 +858,8 @@ func _submit(command_kind: String, element_id: int, params: Dictionary) -> void:
 		"source": self,
 		"target": {
 			"valid": true,
-			"target_kind": &"element",
-			"metadata": {"element_id": element_id},
+			"target_kind": InteractionHit.KIND_SIMULATION_ELEMENT,
+			"element_id": element_id,
 		},
 		"parameters": params,
 	})
@@ -944,6 +969,26 @@ func _live_detail(element_id: int, joint_id: int) -> Dictionary:
 	return {}
 
 
+## Seat route flags for toggle invert. Closed compact bar has empty `_nodes` —
+## read InteractionCard / authoritative SeatControlState, never assume default
+## true (that would make OFF→ON stick and never toggle OFF).
+func _seat_route_flag(element_id: int, key: String) -> bool:
+	var detail := _live_detail(element_id, 0)
+	if detail.has(key):
+		return bool(detail[key])
+	if _gateway != null and _gateway.has_method("get_world"):
+		var world: SimulationWorld = _gateway.call("get_world") as SimulationWorld
+		if world != null:
+			var card := world.get_interaction_card(element_id)
+			if card != null and card.keys.has(key):
+				return bool(card.keys[key])
+			return SeatControlState.flag_of(
+				world.get_seat_control_state_ref(element_id),
+				key
+			)
+	return true
+
+
 static func _is_momentary(action_id: String) -> bool:
 	return action_id in MOMENTARY_ACTIONS
 
@@ -990,6 +1035,30 @@ func _run_action(spec: Dictionary, pressed: bool) -> void:
 				"wheel_element_id": element_id,
 				"invert_drive": not bool(
 					_live_detail(element_id, 0).get("drive_inverted", false)
+				),
+			})
+		"seat.control_wheels_toggle":
+			_submit("configure_seat_controls", element_id, {
+				"seat_element_id": element_id,
+				"control_wheels": not _seat_route_flag(
+					element_id,
+					"control_wheels"
+				),
+			})
+		"seat.control_thrusters_toggle":
+			_submit("configure_seat_controls", element_id, {
+				"seat_element_id": element_id,
+				"control_thrusters": not _seat_route_flag(
+					element_id,
+					"control_thrusters"
+				),
+			})
+		"seat.control_gyros_toggle":
+			_submit("configure_seat_controls", element_id, {
+				"seat_element_id": element_id,
+				"control_gyros": not _seat_route_flag(
+					element_id,
+					"control_gyros"
 				),
 			})
 		"actuator.stop":
@@ -1914,6 +1983,23 @@ func _fp_readings(node: Dictionary, kind: String, detail: Dictionary) -> Control
 			"м/с"
 		))
 		return v
+	if kind == "control_seat":
+		v.add_child(_pv_row(
+			"Колёса",
+			"вкл" if bool(detail.get("control_wheels", true)) else "выкл",
+			""
+		))
+		v.add_child(_pv_row(
+			"Тяга",
+			"вкл" if bool(detail.get("control_thrusters", true)) else "выкл",
+			""
+		))
+		v.add_child(_pv_row(
+			"Гирои",
+			"вкл" if bool(detail.get("control_gyros", true)) else "выкл",
+			""
+		))
+		return v
 	if kind == "suspension":
 		# «Ход» тут был бы тем же числом, что «Ход подвески» в параметрах ниже —
 		# живой телеметрии сжатия у подвески нет, дублировать нечего.
@@ -1961,7 +2047,7 @@ func _fp_readings(node: Dictionary, kind: String, detail: Dictionary) -> Control
 
 func _fp_setpoints(kind: String, detail: Dictionary) -> Control:
 	var ids: Array = SETPOINTS.get(kind, [])
-	if kind != "wheel" and ids.is_empty():
+	if kind != "wheel" and kind != "control_seat" and ids.is_empty():
 		return null
 	var v := _vbox(9)
 	if kind == "wheel":
@@ -1978,6 +2064,28 @@ func _fp_setpoints(kind: String, detail: Dictionary) -> Control:
 			"Назад",
 			"Вперёд",
 			"wheel.invert_drive_toggle"
+		))
+	elif kind == "control_seat":
+		v.add_child(_sw_row(
+			"Control Wheels",
+			bool(detail.get("control_wheels", true)),
+			"Вкл",
+			"Выкл",
+			"seat.control_wheels_toggle"
+		))
+		v.add_child(_sw_row(
+			"Control Thrusters",
+			bool(detail.get("control_thrusters", true)),
+			"Вкл",
+			"Выкл",
+			"seat.control_thrusters_toggle"
+		))
+		v.add_child(_sw_row(
+			"Control Gyros",
+			bool(detail.get("control_gyros", true)),
+			"Вкл",
+			"Выкл",
+			"seat.control_gyros_toggle"
 		))
 	for param_variant: Variant in ids:
 		var row := _sp_row_from(str(param_variant), detail)
@@ -2645,8 +2753,8 @@ func _submit_action_slot(index: int, payload: Dictionary) -> void:
 		"source": _player,
 		"target": {
 			"valid": true,
-			"target_kind": &"element",
-			"metadata": {"element_id": _host_element_id},
+			"target_kind": InteractionHit.KIND_SIMULATION_ELEMENT,
+			"element_id": _host_element_id,
 		},
 		"parameters": {
 			"host_element_id": _host_element_id,

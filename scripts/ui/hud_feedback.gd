@@ -27,6 +27,12 @@ func setup(ctx: Dictionary) -> void:
 		_tools.connect_rejected.connect(_on_connect_rejected)
 
 
+func _aim_keys(hit: InteractionHit) -> Dictionary:
+	if _gateway == null:
+		return {}
+	return hit.card_keys(_gateway.get_world())
+
+
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -75,7 +81,7 @@ func _prompt_for(hit: InteractionHit) -> String:
 	if hit.valid and hit.distance <= 4.0:
 		if hit.target_kind == InteractionHit.KIND_WORLD_LOOT:
 			return "E — собрать %s" % HudTokens.resource_label(
-				str(hit.metadata.get("resource_id", ""))
+				hit.loot_resource_id
 			)
 		if _is_terminal_target(hit):
 			return "E — открыть инвентарь"
@@ -91,8 +97,8 @@ func _prompt_for(hit: InteractionHit) -> String:
 		and hit.distance <= 4.0
 		and hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
 		and (
-			hit.metadata.has("wheel_element_id")
-			or hit.metadata.has("suspension_element_id")
+			_aim_keys(hit).has("wheel_element_id")
+			or _aim_keys(hit).has("suspension_element_id")
 		)
 	):
 		return "E — настройки модуля"
@@ -137,7 +143,7 @@ func _prompt_for(hit: InteractionHit) -> String:
 		hit.valid
 		and hit.distance <= 4.0
 		and hit.target_kind == InteractionHit.KIND_SIMULATION_ELEMENT
-		and str(hit.metadata.get("archetype_id", "")) == "power_distributor"
+		and str(_aim_keys(hit).get("archetype_id", "")) == "power_distributor"
 	):
 		return "Удерживай / — радиус питания"
 	if not hit.valid:
@@ -148,7 +154,7 @@ func _prompt_for(hit: InteractionHit) -> String:
 			and hit.distance <= 4.0
 		):
 			var status := StringName(
-				hit.metadata.get("status_reason", &"element_incomplete")
+				_aim_keys(hit).get("status_reason", &"element_incomplete")
 			)
 			if status == &"element_incomplete":
 				return "Удерживать ЛКМ — наращивание целостности"

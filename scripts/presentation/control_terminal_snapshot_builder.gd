@@ -4,6 +4,8 @@ extends RefCounted
 ## По образцу VehiclePowerSnapshotBuilder: ничего не мутирует, отдаёт простой
 ## Dictionary. Данные без chrome — подписи/теги/иконки собирает панель
 ## (HudTokens), чтобы билдер оставался UI-агностичным.
+## Invariant: no world.list_joints(); driven joints via driven_joint_for_element
+## / InteractionIndex. See docs/cheatsheets/interaction-read-model.md.
 
 const SEV_OK := "ok"
 const SEV_WARN := "warn"
@@ -119,34 +121,55 @@ static func failure(reason: StringName = &"invalid_assembly") -> Dictionary:
 	}
 
 
-## host_hint — уже известный ControlSeat-хост (сидим/только что открыли
-## именно его). Валиден только если реально несёт роль и принадлежит этой
-## сборке; иначе — скан сборки (первый попавшийся ControlSeat, детерминированно
-## по element_id, единственный на большинстве сборок сегодня).
+## While the terminal is open, prefer the pinned host over look-away aim.
+## pinned_host <= 0 → fall through to aimed / active-seat hint.
+static func host_hint_for_refresh(pinned_host: int, fallthrough_hint: int) -> int:
+	return pinned_host if pinned_host > 0 else fallthrough_hint
+
+
+## host_hint — explicit ControlSeat (active seat / aimed / pinned host) wins.
+## Non-seat hint on the same assembly (K / look-at-frame) → deterministic
+## ControlSeat in that assembly so the action bar still has a host. No silent
+## lowest-seat pick when hint is missing or outside the assembly.
 static func _resolve_control_seat_host(
 	world: SimulationWorld,
 	assembly: SimulationAssembly,
 	host_hint_element_id: int
 ) -> int:
-	if host_hint_element_id > 0 and assembly.element_ids.has(host_hint_element_id):
-		var hinted := world.get_element(host_hint_element_id)
-		if (
-			hinted != null
-			and hinted.get_archetype() != null
-			and hinted.get_archetype().roles.has("ControlSeat")
-		):
-			return host_hint_element_id
-	var candidate_ids := assembly.element_ids.duplicate()
-	candidate_ids.sort()
-	for element_id: int in candidate_ids:
+	if host_hint_element_id <= 0 or not assembly.element_ids.has(
+		host_hint_element_id
+	):
+		return 0
+	var hinted := world.get_element(host_hint_element_id)
+	if hinted == null:
+		return 0
+	if _element_is_control_seat(hinted):
+		return host_hint_element_id
+	# Aimed / opened from a non-seat element on this rover — pick one seat.
+	return _deterministic_control_seat_host(world, assembly)
+
+
+static func _element_is_control_seat(element: SimulationElement) -> bool:
+	return (
+		element != null
+		and element.get_archetype() != null
+		and element.get_archetype().roles.has("ControlSeat")
+	)
+
+
+## Lowest element_id among ControlSeat roles on the assembly (stable order).
+static func _deterministic_control_seat_host(
+	world: SimulationWorld,
+	assembly: SimulationAssembly
+) -> int:
+	var best_id := 0
+	for element_id: int in assembly.element_ids:
 		var element := world.get_element(element_id)
-		if (
-			element != null
-			and element.get_archetype() != null
-			and element.get_archetype().roles.has("ControlSeat")
-		):
-			return element_id
-	return 0
+		if not _element_is_control_seat(element):
+			continue
+		if best_id <= 0 or element_id < best_id:
+			best_id = element_id
+	return best_id
 
 
 ## Просмотр не создаёт запись (has_ вместо ensure_): открыть окно/сидеть в
@@ -225,6 +248,13 @@ static func _build_node(
 			node["kind"] = "suspension"
 			node["category"] = "actuator"
 			node["detail"] = _suspension_detail(world, element)
+		elif (
+			element.get_archetype() != null
+			and element.get_archetype().roles.has("ControlSeat")
+		):
+			node["kind"] = "control_seat"
+			node["category"] = "control"
+			node["detail"] = _control_seat_detail(world, element)
 		if node["category"] == "power" and IndustryElectricProfile.is_battery(element):
 			var max_kwh := IndustryElectricProfile.battery_max_kwh(element)
 			if max_kwh > 0.000001:
@@ -325,11 +355,26 @@ static func _actuator_kind(joint_kind: SimulationJoint.Kind) -> String:
 	return "other"
 
 
+static func _control_seat_detail(
+	world: SimulationWorld,
+	element: SimulationElement
+) -> Dictionary:
+	## Read-only shared ref / defaults — do not ensure a persistent row.
+	var policy := world.get_seat_control_state_ref(element.element_id)
+	return {
+		"control_wheels": policy.control_wheels,
+		"control_thrusters": policy.control_thrusters,
+		"control_gyros": policy.control_gyros,
+	}
+
+
 static func _category_for(element: SimulationElement) -> String:
 	var archetype := element.get_archetype()
 	if archetype == null:
 		return "other"
 	var roles := archetype.roles
+	if "ControlSeat" in roles:
+		return "control"
 	if "Processor" in roles or "Fabricator" in roles or "Tool" in roles:
 		return "machine"
 	if "Source" in roles or "Tank" in roles:

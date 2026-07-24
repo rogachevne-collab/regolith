@@ -64,9 +64,14 @@ overlay-панели (inventory, palette). Логики симуляции не 
   сигнал `hit_updated`;
 - `Reticle` — центральный прицел; меняет форму/цвет по `target_kind`
   (voxel / simulation_element / control_seat) и допустимости текущего действия;
-- `TargetInfo` для `KIND_SIMULATION_ELEMENT` показывает из `current_hit.metadata`:
-  `archetype_id`, `build_progress`, `integrity`, `status_reason`
+- `TargetInfo` для `KIND_SIMULATION_ELEMENT` показывает из
+  `current_hit.card_keys(world)` (InteractionCard): `archetype_id`,
+  `build_progress`, `integrity`, `status_reason`
   (frame / operational / damaged / broken → цвет из палитры состояний);
+- для **OxygenModule** (`docs/specs/OXYGEN-SURVIVAL-V0.md`): литры
+  `current_l / capacity_l`, electric status (`enabled`, `no_power`),
+  operational reason; aim на модуль + hold `interact` (E) — ручное пополнение
+  (interaction range, без cargo graph); короткий tap — no-op;
 - отображаемое имя archetype берётся через
   `WorldCommandGateway.archetype_display_name()`.
 
@@ -96,7 +101,9 @@ overlay-панели (inventory, palette). Логики симуляции не 
 
 - источник: **`SuitState`** (см. ниже), сигнал изменения;
 - три бара: `health` (hp), `oxygen` (O₂), `hydrogen` (H₂);
-- каждый бар рисуется по нормализованной доле (`value / max`); цвет по палитре:
+- O₂: authoritative **литры** (`current_l / capacity_l`), см.
+  `OXYGEN-SURVIVAL-V0.md`; H₂/health — `current / max`;
+- каждый бар рисуется по нормализованной доле; цвет по палитре:
   steel-blue при норме, amber при предупреждении, red при критическом уровне;
 - **ambient-режим:** норма — состояние по умолчанию почти всю сессию, поэтому
   при `> 0.5` числа уходят в `COL_DIM`, и только просевший канал зажигается
@@ -104,7 +111,10 @@ overlay-панели (inventory, palette). Логики симуляции не 
 - **без рамки:** ни фона, ни бордера, ни `make_panel_overlay` — кластер не
   спорит с миром; читаемость поверх освещённого реголита даёт обводка текста,
   а не подложка. Единственный chrome — 1px вертикальная линия слева;
-- Vitals **только читает** `SuitState` и никогда его не меняет.
+- Vitals **только читает** `SuitState` и никогда его не меняет;
+- **low O₂ warning** (presentation): vignette/tint + rate-limited audio при
+  низкой доле O₂; пороги — fixture; не дублирует simulation tick
+  (`OXYGEN-SURVIVAL-V0.md`).
 
 ### VehiclePower (кабина транспорта)
 
@@ -186,8 +196,10 @@ Per R1 контракт вводится **до кода**. `SuitState` — ми
 authoritative состояние выживания игрока (не presentation):
 
 - `health` — `current` + `max`, нормализованная доля `current / max`;
-- `oxygen` — `current` + `max`, нормализованная доля;
-- `hydrogen` — `current` + `max`, нормализованная доля;
+- `oxygen` — `current_l` + `capacity_l` (литры; drain/refill —
+  `OXYGEN-SURVIVAL-V0.md`);
+- `hydrogen` — `current` + `max`, нормализованная доля (H₂ survival — вне
+  OXYGEN-SURVIVAL-V0);
 - сигнал изменения (`changed`), по которому обновляется Vitals.
 
 **Обновление (COOP-HOST-V0).** Само состояние переехало в `SimulationWorld`
@@ -198,11 +210,11 @@ authoritative состояние выживания игрока (не presentat
 не изменился — виджет по-прежнему получает `suit` через ctx и только читает.
 
 `SuitState` — источник истины для трёх баров Vitals; HUD его только читает. Это
-**маленькое survival-состояние**, а не полная система атмосфер / жизнеобеспечения:
-герметичные объёмы, давление, утечки (`volume_leaking`), газообмен и
-пресуализация из scope slice **исключены** (см. «Не входит» slice и данного
-документа). SuitState не моделирует источники расхода — только текущие значения и
-их пределы; логика расхода/пополнения появится отдельной доменной системой позже.
+**маленькое survival-состояние**, а не герметичные объёмы, давление, утечки
+(`volume_leaking`) и gas Flow — они **исключены** (см. «Не входит»). Расход O₂,
+гипоксия, пополнение из **OxygenModule** и `oxygen_saturation` планеты —
+`docs/specs/OXYGEN-SURVIVAL-V0.md`. Пополнение **модуля** из bulk cargo —
+deferred в v0.
 
 Пара-строка контракта добавлена в `docs/PHYSICAL-LANGUAGE.md` рядом с разделом
 состояния/диагностируемости.
@@ -324,8 +336,8 @@ HUD переиспользует язык цветов состояний из `
   состояние принадлежит конкретному игроку рядом с `InteractionQuery`/
   `ToolController`/`Drill`). Три канала `health`/`oxygen`/`hydrogen` (`current` +
   `max` + доля `*_fraction()`), сигнал `changed`, плюс минимальный tunable
-  drain/regen-стаб (`tick()`), явно помеченный как заглушка до доменной системы
-  баланса. Виджет `Vitals` (`scripts/ui/hud_vitals.gd`) — компактный кластер
+  drain/regen-стаб (`tick()`), явно помеченный как заглушка; целевой контракт O₂
+  (литры, drain, hypoxia, OxygenModule) — `OXYGEN-SURVIVAL-V0.md`. Виджет `Vitals` (`scripts/ui/hud_vitals.gd`) — компактный кластер
   слева-снизу: три бара на шейдере `hud_bar` + `HudTokens`, подписи
   `ЗДР` (health), `О₂` (oxygen), `Н₂` (hydrogen). Цвет по доле: steel-blue при
   норме (`> 0.5`), amber при предупреждении (`≤ 0.5`), red при критическом уровне
@@ -401,8 +413,9 @@ HUD переиспользует язык цветов состояний из `
   создаёт только store `player`). StoreView переиспользуемый и готов, но per-machine
   хранилища не фабрикуются, пока не появится backing-состояние;
 - симуляция `condition` (долговременный износ);
-- атмосферы, герметичные объёмы, давление и жизнеобеспечение сверх минимального
-  `SuitState`;
+- sealed volumes, давление, gas pipes (O₂ survival — только
+  `OXYGEN-SURVIVAL-V0.md`: suit liters + OxygenModule, без герметичности);
+- пополнение OxygenModule из bulk `oxygen` / cargo auto-transfer;
 - кооператив и сетевой replication UI;
 - финальные значения Theme-токенов (заморозка — отдельный style-proof шаг);
 - меню/настройки/экраны вне игрового HUD.

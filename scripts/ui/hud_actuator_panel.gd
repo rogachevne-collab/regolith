@@ -42,6 +42,12 @@ func setup(ctx: Dictionary) -> void:
 		_gateway.command_completed.connect(_on_command_completed)
 
 
+func _aim_keys(hit: InteractionHit) -> Dictionary:
+	if _gateway == null:
+		return {}
+	return hit.card_keys(_gateway.get_world())
+
+
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -60,7 +66,7 @@ func blocks_world_interact() -> bool:
 func try_open_on_target(hit: InteractionHit) -> bool:
 	if _open or hit == null or not hit.valid:
 		return false
-	if not HudActuatorTuneUtil.is_actuator_meta(hit.metadata):
+	if not HudActuatorTuneUtil.is_actuator_meta(_aim_keys(hit)):
 		return false
 	if not UIWindowStack.push(self, Callable(self, "close")):
 		return false
@@ -96,11 +102,13 @@ func _current_hit() -> InteractionHit:
 	if _query == null:
 		return _target_hit
 	var hit := _query.current_hit
+	var live_keys := _aim_keys(hit)
+	var target_keys := _aim_keys(_target_hit)
 	if (
 		hit.valid
-		and HudActuatorTuneUtil.is_actuator_meta(hit.metadata)
-		and HudActuatorTuneUtil.joint_id(hit.metadata)
-		== HudActuatorTuneUtil.joint_id(_target_hit.metadata)
+		and HudActuatorTuneUtil.is_actuator_meta(live_keys)
+		and HudActuatorTuneUtil.joint_id(live_keys)
+		== HudActuatorTuneUtil.joint_id(target_keys)
 	):
 		return hit
 	return _target_hit
@@ -277,7 +285,7 @@ func _build_tune_row(parent_node: Node, key: String, field: String) -> void:
 func _refresh_from_hit(hit: InteractionHit) -> void:
 	if hit == null or not hit.valid:
 		return
-	var meta := hit.metadata
+	var meta := _aim_keys(hit)
 	_configure_for_meta(meta)
 	var actuator_status := StringName(meta.get("actuator_status", &"idle"))
 	_status_val.text = HudTokens.status_label(actuator_status)
@@ -341,13 +349,13 @@ func _on_chain_toggle_pressed() -> void:
 	if _tools == null:
 		return
 	_tools.actuator_chain_sync = not _tools.actuator_chain_sync
-	_refresh_control_buttons(_current_hit().metadata)
+	_refresh_control_buttons(_aim_keys(_current_hit()))
 
 
 func _on_tune_pressed(field: String, direction: int) -> void:
 	if _gateway == null or not _target_hit.valid:
 		return
-	var meta := _current_hit().metadata
+	var meta := _aim_keys(_current_hit())
 	var new_value := HudActuatorTuneUtil.next_value(meta, field, direction)
 	if is_nan(new_value):
 		return
