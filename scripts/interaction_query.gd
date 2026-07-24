@@ -1,6 +1,9 @@
 class_name InteractionQuery
 extends Node3D
 
+## Aim hot path: no world.list_joints(); sim keys on InteractionCard only.
+## Hit carries geometry + ids; HUD/commands call get_interaction_card(element_id).
+
 signal hit_updated(hit: InteractionHit)
 
 @export var player_path: NodePath = NodePath("..")
@@ -72,8 +75,6 @@ func _effective_max_distance() -> float:
 		return max_distance
 	if _tools.active_tool == &"build":
 		return build_max_distance
-	# Second end of a rope is thrown: the aim ray has to reach as far as the
-	# throw does, or you could never anchor to the rock you are driving past.
 	if _tools.active_tool == &"connect" and _tools.rope_routing_active():
 		return maxf(max_distance, _tools.rope_click_range())
 	return max_distance
@@ -102,10 +103,10 @@ func _query_physics(
 			return InteractionHit.empty()
 
 		var collider: Object = raw["collider"]
-		var metadata := _target_metadata(collider, raw)
-		if metadata.has("loot_pile_id") and _should_skip_loot_for_drill():
+		var bypass := _collider_bypass(collider, raw)
+		if bypass.get("loot_pile_id", 0) > 0 and _should_skip_loot_for_drill():
 			return InteractionHit.empty()
-		var kind := _target_kind(collider, metadata)
+		var kind := _target_kind(collider, bypass)
 		if (
 			kind == InteractionHit.KIND_ELECTRIC_CABLE
 			and _should_skip_cable_for_build()
@@ -121,10 +122,11 @@ func _query_physics(
 			exclude.append((collider as CollisionObject3D).get_rid())
 			skips_left -= 1
 			continue
-		metadata["aim_direction"] = direction
+		bypass["aim_direction"] = direction
 		var stable_target_id := (
-			StringName(str(metadata["element_id"]))
+			StringName(str(bypass.get("element_id", 0)))
 			if kind == InteractionHit.KIND_SIMULATION_ELEMENT
+			or kind == InteractionHit.KIND_CONTROL_SEAT
 			else StringName(str(collider.get_instance_id()))
 		)
 		var hit_point: Vector3 = raw["position"]
@@ -138,7 +140,7 @@ func _query_physics(
 			kind,
 			collider,
 			stable_target_id,
-			metadata
+			bypass
 		)
 	return InteractionHit.empty()
 
@@ -178,13 +180,6 @@ func _query_voxel(
 	)
 
 
-## Loose material in front of whatever the ray found.
-##
-## It has no collider on purpose — it is a medium, not a surface, which is what
-## stopped it blocking the drill and lifting the player — so the only way to aim
-## at it is to ask the field along the same ray. Nearer than the rock wins: if
-## there is spoil between the bit and the stone, the spoil is what is being
-## worked.
 func _prefer_dust(
 	origin: Vector3,
 	direction: Vector3,
@@ -212,9 +207,6 @@ func _prefer_dust(
 	)
 
 
-## The volumetric loose-material world, when a scene has one. Checked by method:
-## the parked height-field implementation answers to the same group and has no
-## field to march a ray through.
 func _granular_world_node() -> Node:
 	if _granular_world != null and is_instance_valid(_granular_world):
 		return _granular_world
@@ -227,17 +219,17 @@ func _granular_world_node() -> Node:
 
 func _target_kind(
 	collider: Object,
-	metadata: Dictionary = {}
+	bypass: Dictionary = {}
 ) -> StringName:
 	if collider.has_method("interaction_target_kind"):
 		return collider.call("interaction_target_kind")
-	if metadata.has("control_seat"):
+	if bypass.get("control_seat", false):
 		return InteractionHit.KIND_CONTROL_SEAT
-	if metadata.has("element_id"):
+	if int(bypass.get("element_id", 0)) > 0:
 		return InteractionHit.KIND_SIMULATION_ELEMENT
-	if metadata.has("loot_pile_id"):
+	if bypass.get("loot_pile_id", 0) > 0:
 		return InteractionHit.KIND_WORLD_LOOT
-	if metadata.has("electric_link_id"):
+	if bypass.get("electric_link_id", 0) > 0:
 		return InteractionHit.KIND_ELECTRIC_CABLE
 	if (
 		collider is Node
@@ -251,7 +243,7 @@ func _target_kind(
 	return InteractionHit.KIND_BODY
 
 
-func _target_metadata(
+func _collider_bypass(
 	collider: Object,
 	raw_hit: Dictionary = {}
 ) -> Dictionary:
@@ -261,11 +253,11 @@ func _target_metadata(
 		return Dictionary(
 			collider.get_meta("interaction_metadata")
 		).duplicate(true)
-	var metadata: Dictionary = {}
+	var bypass: Dictionary = {}
 	if collider is CollisionObject3D:
 		var collision_object := collider as CollisionObject3D
 		if collision_object.has_meta("assembly_id"):
-			metadata["assembly_id"] = int(
+			bypass["assembly_id"] = int(
 				collision_object.get_meta("assembly_id")
 			)
 		var shape_index := int(raw_hit.get("shape", -1))
@@ -274,24 +266,20 @@ func _target_metadata(
 			if owner_id >= 0:
 				var shape_owner: Object = collision_object.shape_owner_get_owner(owner_id)
 				if shape_owner is Node and shape_owner.has_meta("element_id"):
-					metadata["element_id"] = int(shape_owner.get_meta("element_id"))
-					metadata["shape_index"] = shape_index
-					metadata["collider_index"] = int(
-						shape_owner.get_meta("collider_index", -1)
-					)
-					metadata["collider_local_cell"] = shape_owner.get_meta(
-						"collider_local_cell",
-						Vector3i.ZERO
-					)
-	if metadata.has("element_id") and _session != null:
-		# Hit geometry (shape_index / collider_*) stays from ray meta above.
-		# Card is the sole sim-element writer — no enrich / list_joints / cargo.
-		var card := _session.world.get_interaction_card(
-			int(metadata["element_id"])
-		)
-		if card != null:
-			card.write_into(metadata)
-	return metadata
+					bypass["element_id"] = int(shape_owner.get_meta("element_id"))
+					# Only stamp when meta exists — authored cell ZERO is valid.
+					if shape_owner.has_meta("collider_local_cell"):
+						bypass["collider_local_cell"] = shape_owner.get_meta(
+							"collider_local_cell"
+						)
+	if bypass.has("element_id") and _session != null:
+		# Enter prompt only for operational ControlSeat (card contract).
+		if InteractionCard.is_enterable_control_seat(
+			_session.world,
+			int(bypass["element_id"])
+		):
+			bypass["control_seat"] = true
+	return bypass
 
 
 func _should_skip_loot_for_drill() -> bool:

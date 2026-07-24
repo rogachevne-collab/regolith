@@ -2,11 +2,11 @@ class_name InteractionCard
 extends RefCounted
 ## Aim/HUD presentable view for one element (Interaction Read-Model).
 ## Structure comes from InteractionIndex; live fields refresh in-place O(1).
-## Flatten via write_into() — single aim writer; Drop keys are never written.
+## In-place card keys for aim/HUD readers; no flatten into InteractionHit.
 
 var element_id := 0
 var structure: InteractionStructure = null
-## Stable scratch used by write_into / tests; mutated in-place on refresh.
+## Stable scratch for card readers / tests; mutated in-place on refresh.
 var keys: Dictionary = {}
 
 
@@ -25,7 +25,7 @@ func refresh(world: SimulationWorld, entry: InteractionStructure) -> bool:
 	_write_live_base(world, element)
 	_write_driven_actuator(world, entry)
 	_write_wheel_or_suspension(world, entry, element)
-	_write_control_seat(entry, element)
+	_write_control_seat(world, entry, element)
 	_write_recipe_machine_o1(world, element)
 	return true
 
@@ -36,10 +36,19 @@ func clear() -> void:
 	keys.clear()
 
 
-## Merge card keys into an existing hit metadata dict (keeps geometry keys).
-func write_into(metadata: Dictionary) -> void:
-	for key: Variant in keys.keys():
-		metadata[key] = keys[key]
+## KIND_CONTROL_SEAT / enter prompt: structural ControlSeat role AND operational.
+## Incomplete or broken seats stay ordinary simulation elements.
+static func is_enterable_control_seat(
+	world: SimulationWorld,
+	element_id: int
+) -> bool:
+	if world == null or element_id <= 0:
+		return false
+	var structure := world.get_interaction_structure(element_id)
+	if structure == null or not structure.control_seat:
+		return false
+	var element := world.get_element(element_id)
+	return element != null and element.is_operational()
 
 
 func _write_structural(entry: InteractionStructure) -> void:
@@ -239,12 +248,21 @@ func _write_suspension(
 
 
 func _write_control_seat(
+	world: SimulationWorld,
 	entry: InteractionStructure,
 	element: SimulationElement
 ) -> void:
 	## Drop: seat_offset / locomotive / flight / mobile — gateway recomputes.
-	if entry.control_seat and element.is_operational():
+	if is_enterable_control_seat(world, element.element_id):
 		keys["control_seat"] = true
+	if not entry.control_seat:
+		return
+	## Routing flags via card keys — UI must not read seat side-table directly.
+	## Shared ref / defaults — no alloc, no ensure (same as action bar has_).
+	var policy := world.get_seat_control_state_ref(element.element_id)
+	keys["control_wheels"] = policy.control_wheels
+	keys["control_thrusters"] = policy.control_thrusters
+	keys["control_gyros"] = policy.control_gyros
 
 
 func _write_recipe_machine_o1(

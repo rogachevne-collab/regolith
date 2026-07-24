@@ -156,7 +156,7 @@ func _test_command_target_for_store() -> bool:
 	var machine_target: Dictionary = HudInventoryTransferUtil.command_target_for_store("buffer:22")
 	if not bool(machine_target.get("valid", false)):
 		return _fail("machine command target must be valid")
-	if int(machine_target.get("metadata", {}).get("element_id", 0)) != 22:
+	if InteractionHit.element_id_from(machine_target) != 22:
 		return _fail("machine command target element_id mismatch")
 
 	var player_target: Dictionary = HudInventoryTransferUtil.command_target_for_store(

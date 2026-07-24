@@ -108,16 +108,15 @@ Step solver использует motion tests `up → forward → down`; camera 
 
 ## Camera contract
 
-- body владеет yaw, head target — pitch, camera visual rig не владеет gameplay
-  transform;
-- physics target обновляется в `_physics_process`;
-- top-level camera в `_process` следует за target transform **одним
-  источником** (position + basis из одного transform): yaw
-  применяется сразу в input, а смешение interpolated position с raw basis
-  давало rotation jitter на неровном voxel ground; пешком у игрока
-  `physics_interpolation_mode = OFF` → `global_transform`; в `ControlSeat`
-  (child of locomotive `RigidBody3D`) interpolation **ON** и камера берёт
-  `get_global_transform_interpolated()`, иначе judder на частоте физики;
+- look yaw/pitch копятся на camera в input; body yaw синкается из look
+  только в `_physics_process` (`sync_body_yaw`) — rotate body в input ломает
+  physics interpolation (дока Godot) и даёт judder на частоте physics tick;
+- physics target (позиция) обновляется в `_physics_process`;
+- top-level camera в `_process`: **origin** из
+  `get_global_transform_interpolated()`, **look basis** из immediate
+  yaw/pitch (не raw body basis). Смешение interpolated origin с raw body
+  basis давало rotation jitter на неровном voxel ground; пешком и в
+  `ControlSeat` у игрока `physics_interpolation_mode = ON`;
 - mouse delta применяется без зависимости от render FPS;
 - pitch ограничен, roll отсутствует без отдельного эффекта;
 - в `ControlSeat` допустим toggle FP ↔ free orbit 3P (`toggle_vehicle_camera`,
@@ -138,16 +137,16 @@ Step solver использует motion tests `up → forward → down`; camera 
 
 ```text
 InteractionHit {
-  valid
-  point
-  normal
-  distance
-  target_kind
-  collider
-  target_id
-  metadata   # for KIND_SIMULATION_ELEMENT: filled from Interaction Read-Model
+  valid, point, normal, distance, target_kind, collider, target_id
+  # typed geometry / bypass (not sim card keys):
+  element_id, assembly_id, aim_direction, collider_local_cell
+  snap_cell, snap_dir, locked_*   # construction preview only
+  electric_link_id, loot_*, placed_block_cell, granular, control_seat
 }
 ```
+
+Sim structural/live keys — только на `InteractionCard` через
+`get_interaction_card(element_id)`; Hit их не копирует.
 
 Правила:
 
@@ -161,26 +160,31 @@ InteractionHit {
   build place обязан использовать тот же reach, что и `build_max_distance`;
 - пустой результат представлен явно, не `null`-словарём;
 - presentation может читать hit, но не менять его;
-- для `KIND_SIMULATION_ELEMENT` Query **не** строит карточку цели сам:
-  берёт `element_id` из shape meta, читает
-  `SimulationWorld.get_interaction_card(element_id)` (см. § Interaction
-  Read-Model), склеивает с hit geometry. Aim path не вызывает
-  `list_joints()`, enrich-сканы placement util и cargo graph walks.
+- для `KIND_SIMULATION_ELEMENT` Query кладёт на Hit только `element_id` и
+  ray geometry; HUD/commands читают
+  `SimulationWorld.get_interaction_card(element_id).keys` (см. § Interaction
+  Read-Model). Aim path не вызывает `list_joints()`, enrich и cargo graph walks.
 
 Минимальные `target_kind`: `none`, `voxel`, `body`, `placed_block`,
 `control_seat`, `simulation_element`, `electric_cable`, `world_loot`,
 `granular`, `terrain_debris`.
 
 Player-built ровер расширяет `control_seat` на simulation element с ролью
-`ControlSeat` (кокпит): наведение даёт enter/exit vehicle и WASD-управление,
+`ControlSeat` (кокпит): наведение даёт enter/exit vehicle и WASD-управление
+только пока сиденье operational; incomplete/broken — обычный
+`simulation_element` без enter prompt.
 `configure_wheel`/`configure_suspension` открываются на `drive_wheel` и
 `wheel_suspension`. Полный контракт — `specs/ROVER-MODULES-V1.md`.
 
+Hit geometry optionals: `collider_local_cell` и attach-lock (`locked_*`) несут
+явный presence-маркер (`has_collider_local_cell` / `has_locked_attach`);
+`Vector3i.ZERO` — валидная клетка/порт, не «поле отсутствует».
+
 ## Interaction Read-Model
 
-Статус: контракт внедрения. Phase 1–3 в коде (index, thin Query/card,
+Статус: **внедрён / closed** (Phases 0–4). Index, thin Query/`InteractionCard`,
 industry `display_*`, actuator DisplayPose push+Hz, HUD/terminal
-dirty-signature). Phase 4 — cleanup/docs. Этот раздел — единственный
+dirty-signature; мёртвый aim enrich удалён. Этот раздел — единственный
 источник правды по ownership и bans.
 
 ### Зачем

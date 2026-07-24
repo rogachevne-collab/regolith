@@ -25,6 +25,7 @@ func _run_tests() -> void:
 		_test_interaction_card_frame_and_piston,
 		_test_actuator_display_pose_push,
 		_test_industry_display_on_card,
+		_test_broken_seat_not_enterable,
 	]
 	for test: Callable in tests:
 		if not bool(test.call()):
@@ -334,6 +335,73 @@ func _test_industry_display_on_card() -> bool:
 	if not card.keys.has("missing_input_resource_id"):
 		world.free()
 		return _fail("card missing missing_input_resource_id from display_*")
+	world.free()
+	return true
+
+
+func _test_broken_seat_not_enterable() -> bool:
+	## Incomplete / broken ControlSeat keeps structural role but must not mark
+	## enterable (Query KIND_CONTROL_SEAT / enter prompt).
+	var world := _world_with_stock()
+	world.get_archetype_registry().register(Slice01Archetypes.control_terminal())
+	var foundation := _spawn(
+		world,
+		_single_blueprint(Slice01Archetypes.foundation()),
+		GridTransform.identity()
+	)
+	if not foundation.is_ok():
+		world.free()
+		return _fail("broken-seat foundation spawn failed")
+	var assembly_id := int(foundation.data["assembly_id"])
+	var place := PlaceElementCommand.new()
+	place.assembly_id = assembly_id
+	place.expected_assembly_revision = int(foundation.data["topology_revision"])
+	place.archetype = Slice01Archetypes.control_terminal()
+	place.origin_cell = Vector3i(4, 0, 0)
+	place.store_id = PlayerIdentity.store_id("player")
+	var placed := world.apply_structural_command_now(place)
+	if not placed.is_ok():
+		world.free()
+		return _fail("control_terminal place failed: %s" % placed.reason)
+	var host_id := int(placed.data["element_id"])
+	var host := world.get_element(host_id)
+	if host == null or host.is_operational():
+		world.free()
+		return _fail("unwelded terminal must be non-operational")
+	var structure := world.get_interaction_structure(host_id)
+	if structure == null or not structure.control_seat:
+		world.free()
+		return _fail("structure must still mark ControlSeat role")
+	if InteractionCard.is_enterable_control_seat(world, host_id):
+		world.free()
+		return _fail("incomplete seat must not be enterable")
+	var card := world.get_interaction_card(host_id)
+	if card != null and bool(card.keys.get("control_seat", false)):
+		world.free()
+		return _fail("incomplete seat card must omit control_seat key")
+	# Break an operational seat — same contract.
+	var weld := WeldElementCommand.new()
+	weld.element_id = host_id
+	weld.expected_state_revision = host.state_revision
+	weld.max_material_amount = 100.0
+	weld.store_id = PlayerIdentity.store_id("player")
+	world.apply_structural_command_now(weld)
+	host = world.get_element(host_id)
+	if host == null or not host.is_operational():
+		world.free()
+		return _fail("welded terminal should be operational")
+	if not InteractionCard.is_enterable_control_seat(world, host_id):
+		world.free()
+		return _fail("operational seat must be enterable")
+	host.integrity = 0.0
+	host.sync_build_progress_from_integrity()
+	if InteractionCard.is_enterable_control_seat(world, host_id):
+		world.free()
+		return _fail("broken seat must not be enterable")
+	var broken_card := world.get_interaction_card(host_id)
+	if broken_card != null and bool(broken_card.keys.get("control_seat", false)):
+		world.free()
+		return _fail("broken seat card must omit control_seat key")
 	world.free()
 	return true
 

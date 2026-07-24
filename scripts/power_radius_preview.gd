@@ -103,7 +103,7 @@ func _aimed_distributor_id() -> int:
 		or hit.distance > AIM_MAX_DISTANCE
 	):
 		return 0
-	var element_id := int(hit.metadata.get("element_id", 0))
+	var element_id := hit.element_id
 	if element_id <= 0:
 		return 0
 	var element := _session.world.get_element(element_id)

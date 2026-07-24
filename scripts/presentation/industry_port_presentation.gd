@@ -115,7 +115,7 @@ func _hovered_element_id() -> int:
 		or hit.distance > 4.0
 	):
 		return 0
-	return int(hit.metadata.get("element_id", 0))
+	return hit.element_id
 
 
 func _snap_target_element_id() -> int:
@@ -129,7 +129,7 @@ func _snap_target_element_id() -> int:
 		!= InteractionHit.KIND_SIMULATION_ELEMENT
 	):
 		return 0
-	return int(target.get("metadata", {}).get("element_id", 0))
+	return InteractionHit.element_id_from(target)
 
 
 func _append_compatible_ports(

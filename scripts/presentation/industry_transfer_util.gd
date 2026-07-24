@@ -31,7 +31,7 @@ static func terminal_store_id_for_hit(
 	) as SimulationSession
 	if session == null:
 		return ""
-	var element := session.world.get_element(int(hit.metadata.get("element_id", 0)))
+	var element := session.world.get_element(hit.element_id)
 	if not is_transfer_target(element):
 		return ""
 	return element_store_id(element)

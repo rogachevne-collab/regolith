@@ -92,7 +92,7 @@ static func command_target_for_store(store_id: String) -> Dictionary:
 		"target_kind": InteractionHit.KIND_NONE,
 		"collider": null,
 		"target_id": &"",
-		"metadata": {},
+		"element_id": 0,
 	}
 
 
