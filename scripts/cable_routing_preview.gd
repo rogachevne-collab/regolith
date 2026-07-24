@@ -73,7 +73,7 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	if _mesh_instance == null or _tools == null or _query == null:
 		return
-	if _tools.active_tool != &"connect" or not _tools.rope_routing_active():
+	if not _tools.is_rope_tool_active() or not _tools.rope_routing_active():
 		_mesh_instance.visible = false
 		# Drop the mesh along with the state: the rebuild is gated on "a solver
 		# step ran OR there is no mesh yet", and a kept mesh would flash the

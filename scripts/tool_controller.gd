@@ -192,6 +192,7 @@ const TOOLBAR_PAGES: Array = [
 		{"type": &"block", "archetype_id": "power_distributor_small"},
 		{"type": &"block", "archetype_id": "frame"},
 		{"type": &"connect"},
+		{"type": &"rope"},
 	],
 	[
 		{"type": &"block", "archetype_id": "frame"},
@@ -201,6 +202,7 @@ const TOOLBAR_PAGES: Array = [
 		{"type": &"block", "archetype_id": "power_battery_small"},
 		{"type": &"block", "archetype_id": "power_distributor_small"},
 		{"type": &"connect"},
+		{"type": &"rope"},
 	],
 ]
 
@@ -328,9 +330,9 @@ func _physics_process(delta: float) -> void:
 	if not in_vehicle:
 		_update_toolbar_input()
 	_update_debug_spoil_input(delta)
-	if active_tool == &"connect":
+	if _is_rope_tool(active_tool):
 		if Input.is_action_just_pressed(&"tool_primary"):
-			_handle_connect_click(_query.current_hit)
+			_handle_rope_click(_query.current_hit, active_tool == &"rope")
 		if Input.is_action_just_pressed(&"tool_secondary"):
 			_cancel_rope_routing()
 		# `interact` (E) also means "roll right" while piloting a flight-capable
@@ -693,6 +695,7 @@ func _pressed_action() -> StringName:
 				and active_tool != &"build"
 				and active_tool != &"weld"
 				and active_tool != &"connect"
+				and active_tool != &"rope"
 				and active_tool != &"scoop"
 			):
 				continue
@@ -1179,7 +1182,7 @@ func _grinder_damage_per_tick() -> float:
 ## whatever is under the cursor — any block, or a point on terrain — and the
 ## rope then trails the cursor live. The second click ties the far end and the
 ## rope is built. ПКМ отменяет только текущую протяжку. Колесо — слабина.
-func _handle_connect_click(hit: InteractionHit) -> void:
+func _handle_rope_click(hit: InteractionHit, mechanical: bool) -> void:
 	if hit == null or not hit.valid or hit.distance > rope_click_range():
 		return
 	var element_id := _rope_target_element_id(hit)
@@ -1203,6 +1206,7 @@ func _handle_connect_click(hit: InteractionHit) -> void:
 		"target": hit.snapshot(),
 		"parameters": {
 			"rope": true,
+			"mechanical": mechanical,
 			"element_a_id": _rope_anchor_element_id,
 			"attach_a": anchor_world,
 			"element_b_id": element_id,
@@ -1263,6 +1267,18 @@ func rope_routing_active() -> bool:
 	return _rope_pending
 
 
+## &connect (electric, conducts, pins) and &rope (ROPE-CHAIN-V0: mechanical,
+## never conducts, mass-couples) share the same click-to-click chaining, slack
+## wheel, throw range and preview -- everywhere that shared routing state
+## (_rope_pending and friends) gates behaviour, both tools must gate together.
+func _is_rope_tool(tool: StringName) -> bool:
+	return tool == &"connect" or tool == &"rope"
+
+
+func is_rope_tool_active() -> bool:
+	return _is_rope_tool(active_tool)
+
+
 ## How far the current click reaches: arm's length for the first end, a throw
 ## for the second. InteractionQuery stretches the aim ray to match.
 func rope_click_range() -> float:
@@ -1283,7 +1299,7 @@ func report_rope_routed_m(routed_m: float) -> void:
 ## Wheel while a rope is being pulled: tight ↔ loose. Nothing else in gameplay
 ## uses the wheel, so it needs no modifier.
 func _unhandled_input(event: InputEvent) -> void:
-	if not _rope_pending or active_tool != &"connect":
+	if not _rope_pending or not _is_rope_tool(active_tool):
 		return
 	var button := event as InputEventMouseButton
 	if button == null or not button.pressed:
@@ -1414,17 +1430,17 @@ func _is_recipe_machine_hit(hit: InteractionHit) -> bool:
 func _try_emit_context_interaction(hit: InteractionHit) -> bool:
 	if _try_collect_world_loot(hit):
 		return true
-	if active_tool != &"connect" and _try_open_wheel_panel(hit):
+	if not _is_rope_tool(active_tool) and _try_open_wheel_panel(hit):
 		return true
-	if active_tool != &"connect" and _try_open_actuator_panel(hit):
+	if not _is_rope_tool(active_tool) and _try_open_actuator_panel(hit):
 		return true
-	if active_tool != &"connect" and _try_open_terminal(hit):
+	if not _is_rope_tool(active_tool) and _try_open_terminal(hit):
 		return true
 	# Перед toggle_control_seat: control_terminal несёт роль ControlSeat (тот
 	# же тег, что кокпит), но не садит — стоя открывает окно. Если это не
 	# перехватить здесь, E на пульте дойдёт до toggle_control_seat и попробует
 	# посадить игрока в стационарную консоль (CONTROL-ACTIONS-V0 «Хосты бара»).
-	if active_tool != &"connect" and _try_open_control_terminal(hit):
+	if not _is_rope_tool(active_tool) and _try_open_control_terminal(hit):
 		return true
 	return false
 
@@ -1719,7 +1735,7 @@ func _active_slot_resolved() -> Dictionary:
 
 func _active_tool_is_equipped() -> bool:
 	match active_tool:
-		&"drill", &"weld", &"grinder", &"connect":
+		&"drill", &"weld", &"grinder", &"connect", &"rope":
 			var resolved := _active_slot_resolved()
 			if StringName(resolved.get("kind", &"")) != &"tool_instance":
 				return false

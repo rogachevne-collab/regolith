@@ -122,7 +122,7 @@ func _prompt_for(hit: InteractionHit) -> String:
 		return "совок %s · ЛКМ — черпать · ПКМ — высыпать" % load_text
 	if _tools.active_tool == &"drill":
 		return ""
-	if _tools.active_tool == &"connect":
+	if _tools.is_rope_tool_active():
 		if _tools.rope_routing_active():
 			return (
 				"ЛКМ — бросить конец (%d м) · колесо — натяг %.0f%% (Shift — грубо) · ПКМ — отмена"
@@ -131,6 +131,8 @@ func _prompt_for(hit: InteractionHit) -> String:
 					(1.0 - _tools.rope_slack()) * 100.0,
 				]
 			)
+		if _tools.active_tool == &"rope":
+			return "ЛКМ — тянуть трос от чего угодно к чему угодно · тянет и держит, ток не проводит"
 		return "ЛКМ — тянуть провод от чего угодно к чему угодно"
 	if _tools.active_tool == &"grinder":
 		if (

@@ -8,6 +8,7 @@ const LEGACY_TOOL_TYPES: Dictionary = {
 	&"weld": "tool_welder",
 	&"grinder": "tool_grinder",
 	&"connect": "tool_connector",
+	&"rope": "tool_rope",
 }
 
 ## Tools that are not inventory instances: they resolve straight from the slot
@@ -23,6 +24,7 @@ const ITEM_TO_ACTIVE_TOOL: Dictionary = {
 	"tool_welder": &"weld",
 	"tool_grinder": &"grinder",
 	"tool_connector": &"connect",
+	"tool_rope": &"rope",
 }
 
 
@@ -144,6 +146,8 @@ static func slot_label(entry: Dictionary, registry: PlayerInventoryRegistry) -> 
 					return "болгарка"
 				&"connect":
 					return "соединение"
+				&"rope":
+					return "трос"
 				_:
 					var tool := StringName(resolved.get("active_tool", &""))
 					return str(BUILTIN_TOOL_TYPES.get(tool, "—"))

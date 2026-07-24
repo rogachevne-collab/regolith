@@ -75,6 +75,12 @@
       "volume_per_unit_l": 4.0,
       "unit": "discrete"
     },
+    "tool_rope": {
+      "category": "tool",
+      "mass_per_unit_kg": 3.0,
+      "volume_per_unit_l": 6.0,
+      "unit": "discrete"
+    },
     "ore_mare_regolith": {
       "category": "ore",
       "mass_per_unit_kg": 2.0,

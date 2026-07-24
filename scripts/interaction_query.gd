@@ -75,7 +75,7 @@ func _effective_max_distance() -> float:
 		return max_distance
 	if _tools.active_tool == &"build":
 		return build_max_distance
-	if _tools.active_tool == &"connect" and _tools.rope_routing_active():
+	if _tools.is_rope_tool_active() and _tools.rope_routing_active():
 		return maxf(max_distance, _tools.rope_click_range())
 	return max_distance
 

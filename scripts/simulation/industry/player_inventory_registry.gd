@@ -13,6 +13,7 @@ const STARTER_INSTANCES: Dictionary = {
 	"starter_tool_welder": "tool_welder",
 	"starter_tool_grinder": "tool_grinder",
 	"starter_tool_connector": "tool_connector",
+	"starter_tool_rope": "tool_rope",
 }
 
 const DEFAULT_HOTBAR_REFS: Dictionary = {
@@ -20,6 +21,10 @@ const DEFAULT_HOTBAR_REFS: Dictionary = {
 	"0:1": "starter_tool_welder",
 	"0:2": "starter_tool_grinder",
 	"0:8": "starter_tool_connector",
+	# Wheel-rover page (ROPE-CHAIN-V0): towing/lifting is a wheeled-rover job
+	# first, so the starter rope pre-equips there rather than needing a manual
+	# palette drag like the extra &connect slots on pages 4/5.
+	"5:7": "starter_tool_rope",
 }
 
 var _instances: Dictionary = {}
