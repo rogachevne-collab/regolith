@@ -128,7 +128,9 @@ func _snap_target_element_id() -> int:
 		StringName(target.get("target_kind", &""))
 		!= InteractionHit.KIND_SIMULATION_ELEMENT
 	):
-		return 0
+		# Ghost may resolve to ground/terrain while the aim still sits on a
+		# module — keep cargo/electric markers visible from the hover hit.
+		return _hovered_element_id()
 	return InteractionHit.element_id_from(target)
 
 
