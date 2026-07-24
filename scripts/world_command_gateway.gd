@@ -2006,7 +2006,22 @@ func _exit_remote_rover_seat() -> Dictionary:
 	})
 
 
-## Mouse attitude follows Control Gyros seat policy, not thruster presence.
+## Occupied ControlSeat: only the seated player's commands may edit bar/seat
+## routing. UI nodes (terminal, compact bar) submit through gateway with
+## actor_uid — not command.source (spec: same occupant check as seat enter).
+func _seat_host_command_allowed(seat_element_id: int) -> bool:
+	if _session == null or seat_element_id <= 0:
+		return true
+	if not _session.world.is_seat_occupied(seat_element_id):
+		return true
+	return (
+		_session.world.get_player_seat_element_id(actor_uid)
+		== seat_element_id
+	)
+
+
+## Mouse attitude follows Control Gyros only when the assembly has gyros to
+## consume look — wheel rovers keep FP freelook (CONTROL-AXES-V0).
 func _sync_seat_mouse_attitude(player: Node3D, seat_element_id: int) -> void:
 	if player == null or not player.has_method("set_vehicle_flight_controls"):
 		return
@@ -2021,7 +2036,17 @@ func _sync_seat_mouse_attitude(player: Node3D, seat_element_id: int) -> void:
 		)
 		else _session.world.get_seat_control_state_ref(seat_element_id)
 	)
-	player.call("set_vehicle_flight_controls", policy.control_gyros)
+	var enable_flight := false
+	if policy.control_gyros:
+		var seat := _session.world.get_element(seat_element_id)
+		if seat != null and seat.assembly_id > 0:
+			enable_flight = (
+				not ThrusterSimulationService.list_gyro_elements(
+					_session.world,
+					seat.assembly_id
+				).is_empty()
+			)
+	player.call("set_vehicle_flight_controls", enable_flight)
 
 
 func preview_construction(
@@ -2935,11 +2960,7 @@ func _configure_action_slot(
 	configure.index = int(parameters.get("index", 0))
 	var payload_variant: Variant = parameters.get("payload", {})
 	configure.payload = payload_variant if payload_variant is Dictionary else {}
-	if (
-		_rover_seat_element_id > 0
-		and _rover_seat_element_id == configure.host_element_id
-		and command.get("source") != _rover_seat_player
-	):
+	if not _seat_host_command_allowed(configure.host_element_id):
 		return _result(&"blocked")
 	var result := _session.apply_configure_action_slot(configure)
 	return _result(
@@ -2972,12 +2993,7 @@ func _configure_seat_controls(
 		configure.control_thrusters = bool(parameters.get("control_thrusters"))
 	if parameters.has("control_gyros"):
 		configure.control_gyros = bool(parameters.get("control_gyros"))
-	# Same occupant/coop gate as configure_action_slot.
-	if (
-		_rover_seat_element_id > 0
-		and _rover_seat_element_id == configure.seat_element_id
-		and command.get("source") != _rover_seat_player
-	):
+	if not _seat_host_command_allowed(configure.seat_element_id):
 		return _result(&"blocked")
 	var result := _session.apply_configure_seat_controls(configure)
 	if StringName(result.get("reason", &"")) == &"ok":
