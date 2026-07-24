@@ -22,6 +22,18 @@ const CABLE_ROPE_COLLISION_BUDGET := 320
 ## has ground, and how much ground has to disappear before it tears loose.
 const CABLE_ANCHOR_PROBE_INTERVAL_S := 0.33
 const CABLE_ANCHOR_PROBE_RADIUS := 0.3
+## A cable counts as still below this particle speed, m/s. Speed and not
+## displacement: a cable that is creeping has not settled, it is creeping.
+const CABLE_FREEZE_SPEED_M_S := 0.02
+## Consecutive still ticks before a same-body cable freezes. Long enough that a
+## cable dropped into place gets to hang itself first.
+const CABLE_FREEZE_TICKS := 30
+## Cosine of the largest tilt of the body relative to gravity a frozen shape
+## survives. ~8 degrees: past that the sag hangs somewhere else.
+const CABLE_FREEZE_UP_DOT := 0.99
+## Total movement of both ends in the body's own frame that wakes a frozen
+## cable, metres.
+const CABLE_FREEZE_ANCHOR_EPS_M := 0.02
 ## How much further a rope has to run out before it thaws a parked endpoint,
 ## measured against the slackest that rope has been since it last woke anything.
 ## Accumulating instead of comparing tick to tick matters: a slow winch adds
@@ -113,6 +125,23 @@ func rebuild_all() -> void:
 	for assembly: SimulationAssembly in _world.list_assemblies():
 		if not assembly.tombstoned:
 			_project_assembly(assembly.assembly_id, null)
+
+## All live rigid bodies for an assembly (root or multibody groups). Used by
+## visual projection to find a removed element's mesh after element_records
+## were cleared on incremental physics remove.
+func list_assembly_physics_bodies(assembly_id: int) -> Array[PhysicsBody3D]:
+	var out: Array[PhysicsBody3D] = []
+	var groups: Variant = _assembly_group_bodies.get(assembly_id)
+	if groups is Dictionary:
+		for body_variant: Variant in (groups as Dictionary).values():
+			if body_variant is PhysicsBody3D and is_instance_valid(body_variant):
+				out.append(body_variant as PhysicsBody3D)
+		return out
+	var body := get_physics_body(assembly_id)
+	if body != null and is_instance_valid(body):
+		out.append(body)
+	return out
+
 
 func get_physics_body(assembly_id: int) -> PhysicsBody3D:
 	return _bodies.get(assembly_id) as PhysicsBody3D
@@ -241,6 +270,9 @@ func _physics_process(delta: float) -> void:
 	for assembly_id: int in _sorted_int_keys(_bodies):
 		var assembly: SimulationAssembly = _world.get_assembly_raw(assembly_id)
 		if assembly == null or assembly.tombstoned:
+			continue
+		# Parked settle-freeze: pose is static — skip per-frame motion capture.
+		if _is_assembly_frozen(assembly_id):
 			continue
 		var group_bodies: Variant = _assembly_group_bodies.get(assembly_id)
 		if group_bodies is Dictionary and not (group_bodies as Dictionary).is_empty():
@@ -511,14 +543,31 @@ func _append_element_to_carriage_records(
 			carriage.append(element_id)
 			record["carriage_element_ids"] = carriage
 
+
+func _remove_element_from_carriage_records(
+	assembly_id: int,
+	element_id: int
+) -> void:
+	for record_variant: Variant in _piston_constraints.get(assembly_id, []):
+		if not record_variant is Dictionary:
+			continue
+		var record: Dictionary = record_variant
+		var carriage: Array = record.get("carriage_element_ids", [])
+		if carriage.has(element_id):
+			carriage.erase(element_id)
+			record["carriage_element_ids"] = carriage
+
+
 func _try_remove_projected_element(
 	assembly_id: int,
 	element_id: int
 ) -> bool:
 	if _world == null or element_id <= 0:
 		return false
-	if _assembly_group_bodies.has(assembly_id) or _mounted_bodies.has(assembly_id):
+	if _mounted_bodies.has(assembly_id):
 		return false
+	if _assembly_group_bodies.has(assembly_id):
+		return _try_remove_multibody_element(assembly_id, element_id)
 	var assembly := _world.get_assembly_raw(assembly_id)
 	var body := get_physics_body(assembly_id)
 	if (
@@ -538,17 +587,64 @@ func _try_remove_projected_element(
 	var record: Variant = _element_records.get(element_id)
 	if not record is Dictionary:
 		return false
-	var colliders: Array = (record as Dictionary).get("colliders", [])
-	for collider_variant: Variant in colliders:
-		if collider_variant is CollisionShape3D and is_instance_valid(collider_variant):
-			var collider := collider_variant as CollisionShape3D
-			collider.disabled = true
-			collider.queue_free()
+	_free_element_colliders(record as Dictionary)
 	_element_records.erase(element_id)
 	_refresh_single_body_mass_com(assembly_id, body as RigidBody3D, assembly)
 	_sync_wheel_loco_body_physics(assembly_id, body as RigidBody3D)
 	_projected_revision[assembly_id] = assembly.topology_revision
 	return true
+
+
+## Inverse of _try_append_multibody_element: drop colliders from one group body
+## when group/joint topology is otherwise unchanged (typical frame dismantle on
+## a parked wheeled rover). Wheel/actuator endpoint removes fail the topology
+## match and fall back to full reproject.
+func _try_remove_multibody_element(
+	assembly_id: int,
+	element_id: int
+) -> bool:
+	var assembly: SimulationAssembly = _world.get_assembly_raw(assembly_id)
+	if assembly == null or assembly.tombstoned:
+		return false
+	var record_variant: Variant = _element_records.get(element_id)
+	if not record_variant is Dictionary:
+		return false
+	var record: Dictionary = record_variant
+	var body: PhysicsBody3D = record.get("body") as PhysicsBody3D
+	if body == null or not is_instance_valid(body):
+		return false
+	var compiled := _compile_assembly_groups(assembly)
+	if not bool(compiled.get("valid", false)):
+		return false
+	if not _multibody_topology_matches(assembly_id, compiled):
+		return false
+	var groups_map: Dictionary = _assembly_group_bodies.get(assembly_id, {})
+	var group_id := 0
+	for group_id_variant: Variant in groups_map.keys():
+		if groups_map[group_id_variant] == body:
+			group_id = int(group_id_variant)
+			break
+	if group_id <= 0:
+		return false
+	_free_element_colliders(record)
+	_element_records.erase(element_id)
+	_refresh_group_body_mass_com(
+		assembly,
+		body,
+		(compiled.get("groups", {}) as Dictionary).get(group_id, [])
+	)
+	_remove_element_from_carriage_records(assembly_id, element_id)
+	_projected_revision[assembly_id] = assembly.topology_revision
+	return true
+
+
+func _free_element_colliders(record: Dictionary) -> void:
+	var colliders: Array = record.get("colliders", [])
+	for collider_variant: Variant in colliders:
+		if collider_variant is CollisionShape3D and is_instance_valid(collider_variant):
+			var collider := collider_variant as CollisionShape3D
+			collider.disabled = true
+			collider.queue_free()
 
 func _refresh_single_body_mass_com(
 	assembly_id: int,
@@ -1421,8 +1517,16 @@ func _project_assembly_multibody(
 				[]
 			),
 		})
-	_piston_constraints[assembly_id] = piston_records
-	_rotor_constraints[assembly_id] = rotor_records
+	# Only keep assemblies that actually have driven constraints — empty keys
+	# made parked wheel rovers look like "piston_asms == loco_total".
+	if piston_records.is_empty():
+		_piston_constraints.erase(assembly_id)
+	else:
+		_piston_constraints[assembly_id] = piston_records
+	if rotor_records.is_empty():
+		_rotor_constraints.erase(assembly_id)
+	else:
+		_rotor_constraints[assembly_id] = rotor_records
 	_wheel_constraints[assembly_id] = _build_wheel_constraints(
 		assembly_id,
 		wheel_groups,
@@ -2143,10 +2247,14 @@ func _tick_thrusters(delta: float) -> void:
 	if _world == null or delta <= 0.0:
 		return
 	for assembly_id: int in _sorted_int_keys(_bodies):
-		if not ThrusterSimulationService.is_flight_assembly(_world, assembly_id):
-			continue
+		# Activated first: parked wheel rovers must not pay is_flight_assembly
+		# (full element walk) every physics tick.
 		var locomotion := _world.get_locomotion_controller(assembly_id)
-		if not locomotion.is_activated():
+		if locomotion == null or not locomotion.is_activated():
+			continue
+		if _is_assembly_frozen(assembly_id):
+			continue
+		if not ThrusterSimulationService.is_flight_assembly(_world, assembly_id):
 			continue
 		var thrusters := ThrusterSimulationService.list_thruster_elements(
 			_world,
@@ -2168,6 +2276,10 @@ func _tick_thrusters(delta: float) -> void:
 ## reactions and break checks; verlet path leaves forces to _tick_cable_tension.
 func _tick_cable_ropes(delta: float) -> void:
 	if _world == null or delta <= 0.0:
+		return
+	# Avoid list_links().duplicate() every tick when the yard has no ropes.
+	if _world.get_industry_network().rope_link_count() <= 0:
+		_rope_states = {}
 		return
 	var ropes: Array[IndustryElectricLink] = []
 	for link: IndustryElectricLink in _world.get_industry_network().list_links():
@@ -2290,6 +2402,24 @@ func _tick_one_xpbd_rope(
 	var body_b := _rope_endpoint_body(link.element_b)
 	if body_a == null and body_b == null:
 		return collision_budget
+	# A cable with both ends on ONE body cannot change shape by being driven
+	# around: in that body's own frame nothing is moving. Once it has settled
+	# it is frozen — the solved shape is kept in body-local space and simply
+	# rides along, costing nothing per tick. This is the battery-to-distributor
+	# case, eight of which on a rover were paying full XPBD to hang perfectly
+	# still. A lifting cable or one crossing an actuator has its ends on
+	# DIFFERENT bodies and never reaches this path, which is the whole reason
+	# the condition is "same body" rather than a decorative/utility flag
+	# somebody has to author.
+	var shared_body: RigidBody3D = (
+		body_a if body_a != null and body_a == body_b else null
+	)
+	if shared_body != null and state is Dictionary:
+		if _cable_frozen_holds(
+			state, link, shared_body, gravity, anchor_a, anchor_b
+		):
+			live[link.link_id] = state
+			return collision_budget
 	if not state is Dictionary:
 		state = XpbdCableRopeSolverScript.create_state(
 			anchor_a,
@@ -2331,6 +2461,8 @@ func _tick_one_xpbd_rope(
 		snapped.append(link.link_id)
 		return collision_budget
 	live[link.link_id] = state
+	if shared_body != null:
+		_cable_try_freeze(state, link, shared_body, gravity, anchor_a, anchor_b)
 	_wake_roped_bodies(
 		link.link_id,
 		body_a,
@@ -2339,11 +2471,120 @@ func _tick_one_xpbd_rope(
 	)
 	return collision_budget
 
+
+# --- frozen cables -----------------------------------------------------------
+
+
+## Freeze once the cable has stopped moving on its own. Not a timer and not
+## "some ticks after placement": the rope answers the question itself, and its
+## answer does not depend on length, slack or where the machine happens to be
+## standing. The counter RESETS on any tick above the threshold rather than
+## accumulating, or a cable would ripen into frozen in the middle of a shake.
+##
+## Speed, not displacement. A cable still creeping has not settled, it is
+## creeping — that distinction is the one the old verlet ropes got wrong, where
+## a "settled" test passed on a rope that was still travelling 0.3 m every five
+## seconds.
+func _cable_try_freeze(
+	state: Dictionary,
+	link: IndustryElectricLink,
+	body: RigidBody3D,
+	gravity: Vector3,
+	anchor_a: Vector3,
+	anchor_b: Vector3
+) -> void:
+	var sim = state.get("sim")
+	if sim == null:
+		return
+	if sim.max_speed() > CABLE_FREEZE_SPEED_M_S:
+		state["_still_ticks"] = 0
+		return
+	var still := int(state.get("_still_ticks", 0)) + 1
+	state["_still_ticks"] = still
+	if still < CABLE_FREEZE_TICKS:
+		return
+	var to_local := body.global_transform.affine_inverse()
+	var path_local := PackedVector3Array()
+	for point: Vector3 in sim.positions:
+		path_local.append(to_local * point)
+	# Everything the frozen shape is only true FOR is recorded next to it, so
+	# waking is a comparison rather than a guess.
+	state["_frozen"] = {
+		"body": body,
+		"path_local": path_local,
+		"up_local": (to_local.basis * -gravity).normalized(),
+		"rest_m": link.rest_length_m,
+		"anchor_a_local": to_local * anchor_a,
+		"anchor_b_local": to_local * anchor_b,
+	}
+
+
+## Whether a frozen shape is still the truth. Anything that could have bent the
+## cable wakes it: the body tipped relative to gravity so the sag hangs
+## elsewhere, the winch paid rope out, an end moved because a block was built or
+## destroyed, or the two ends stopped sharing a body.
+func _cable_frozen_holds(
+	state: Dictionary,
+	link: IndustryElectricLink,
+	body: RigidBody3D,
+	gravity: Vector3,
+	anchor_a: Vector3,
+	anchor_b: Vector3
+) -> bool:
+	var frozen: Dictionary = state.get("_frozen", {})
+	if frozen.is_empty():
+		return false
+	var frozen_body: RigidBody3D = frozen.get("body")
+	if frozen_body == null or not is_instance_valid(frozen_body) or frozen_body != body:
+		state.erase("_frozen")
+		return false
+	if not is_equal_approx(float(frozen.get("rest_m", -1.0)), link.rest_length_m):
+		state.erase("_frozen")
+		return false
+	var to_local := body.global_transform.affine_inverse()
+	var up_local: Vector3 = frozen.get("up_local", Vector3.UP)
+	if (to_local.basis * -gravity).normalized().dot(up_local) < CABLE_FREEZE_UP_DOT:
+		state.erase("_frozen")
+		return false
+	# An end that moved in the body's own frame means the machine changed under
+	# the cable — a block welded on, a block ground off — not that it drove.
+	var moved := (
+		(to_local * anchor_a).distance_to(frozen.get("anchor_a_local", Vector3.ZERO))
+		+ (to_local * anchor_b).distance_to(frozen.get("anchor_b_local", Vector3.ZERO))
+	)
+	if moved > CABLE_FREEZE_ANCHOR_EPS_M:
+		state.erase("_frozen")
+		return false
+	return true
+
 ## Solved rope path in world space for presentation. Empty when the rope has
 ## not been stepped yet — the caller falls back to the analytic curve.
+## Whether this cable is currently frozen — solved once and riding its body
+## since. Diagnostic: presentation tints frozen cables so "why is nothing being
+## simulated" is answerable by looking instead of by instrumenting.
+func is_rope_frozen(link_id: int) -> bool:
+	var state: Variant = _rope_states.get(link_id)
+	if not state is Dictionary:
+		return false
+	return not (state as Dictionary).get("_frozen", {}).is_empty()
+
+
 func rope_path(link_id: int) -> PackedVector3Array:
 	var state: Variant = _rope_states.get(link_id)
 	if state is Dictionary:
+		# A frozen cable is not solved at all, so its live positions are stale
+		# by however long it has been frozen. The shape it froze in is kept in
+		# its body's frame; putting it back into the world is the only work a
+		# frozen cable ever does, and only when something asks to draw it.
+		var frozen: Dictionary = state.get("_frozen", {})
+		if not frozen.is_empty():
+			var body: RigidBody3D = frozen.get("body")
+			if body != null and is_instance_valid(body):
+				var xf := body.global_transform
+				var out := PackedVector3Array()
+				for point: Vector3 in (frozen.get("path_local") as PackedVector3Array):
+					out.append(xf * point)
+				return out
 		if use_xpbd_cable_rope:
 			return XpbdCableRopeSolverScript.path(state)
 		return CableRopeSolver.path(state)
@@ -2496,35 +2737,75 @@ func _tick_cable_anchors(delta: float) -> void:
 	_cable_anchor_probe_cooldown -= delta
 	if _cable_anchor_probe_cooldown > 0.0:
 		return
+	if _world.get_industry_network().rope_link_count() <= 0:
+		_cable_anchor_probe_cooldown = CABLE_ANCHOR_PROBE_INTERVAL_S
+		return
 	_cable_anchor_probe_cooldown = CABLE_ANCHOR_PROBE_INTERVAL_S
 	var space_state := get_world_3d().direct_space_state
 	if space_state == null:
 		return
+	# Dig the ground out from under a cable's ground anchor and the cable tears
+	# loose. The anchor is a stake now rather than a bare world point
+	# ([CableStakeUtil]), so the question moved with it: it is the stake that
+	# loses its footing, and the cables hanging off it go when it does.
 	var torn: Array[int] = []
+	var undermined: Array[int] = []
 	for link: IndustryElectricLink in _world.get_industry_network().list_links():
-		if not link.is_rope() or not link.has_world_endpoint():
+		if not link.is_rope():
 			continue
-		# Judge the anchor only while the machine end is live physics. Frozen or
-		# unprojected means the player is elsewhere, and terrain collision that
-		# far out is simply not streamed in — an unloaded chunk is not a hole.
-		var machine_element_id := (
-			link.element_a if link.element_a > 0 else link.element_b
-		)
-		var machine_body := _rope_endpoint_body(machine_element_id)
-		if machine_body == null or machine_body.freeze:
-			continue
-		var anchor := (
-			link.attach_b if link.element_b <= 0 else link.attach_a
-		)
-		if TerrainAnchorProbe.point_has_ground_support(
-			space_state,
-			anchor,
-			CABLE_ANCHOR_PROBE_RADIUS
-		):
-			continue
-		torn.append(link.link_id)
+		for endpoint_id: int in [link.element_a, link.element_b]:
+			if not _is_cable_stake(endpoint_id):
+				continue
+			# Judge a stake only while it is actually projected. Unprojected
+			# means the player is elsewhere and terrain collision that far out
+			# is simply not streamed in — an unloaded chunk is not a hole.
+			if get_element_projection(endpoint_id).is_empty():
+				continue
+			# Probe the ground the stake was driven into, which is the point
+			# the player clicked: the tie sits most of a metre up the stake and
+			# would never find ground under it, and the assembly's own origin
+			# is offset by the grid pose and buried by the sink depth. Walking
+			# back down from the tie — through the very helper that positions
+			# the rope end — is the one reconstruction that cannot disagree
+			# with where the rope actually hangs.
+			var attach: Vector3 = (
+				link.attach_a if endpoint_id == link.element_a else link.attach_b
+			)
+			var tie := CableAnchorUtil.endpoint_world_position(
+				_world, endpoint_id, "", attach
+			)
+			var stake_up := _world.element_group_transform(endpoint_id).basis.y
+			if stake_up.length_squared() < 1e-6:
+				continue
+			var surface := tie - stake_up.normalized() * CableStakeUtil.TIE_HEIGHT_M
+			if TerrainAnchorProbe.point_has_ground_support(
+				space_state,
+				surface,
+				CABLE_ANCHOR_PROBE_RADIUS
+			):
+				continue
+			if not torn.has(link.link_id):
+				torn.append(link.link_id)
+			if not undermined.has(endpoint_id):
+				undermined.append(endpoint_id)
 	for link_id: int in torn:
 		_world.disconnect_network(0, "", 0, "", link_id)
+	for element_id: int in undermined:
+		var stake := _world.get_element(element_id)
+		if stake != null:
+			# No refund and no store: nobody bought the stake, so nobody is
+			# owed anything back when the ground takes it.
+			_world._remove_element_from_topology(stake, 0, 0.0, null)
+
+
+func _is_cable_stake(element_id: int) -> bool:
+	if element_id <= 0:
+		return false
+	var element := _world.get_element(element_id)
+	return (
+		element != null
+		and element.archetype_id == CableStakeUtil.STAKE_ARCHETYPE.archetype_id
+	)
 
 func _rope_endpoint_body(element_id: int) -> RigidBody3D:
 	if element_id <= 0:
@@ -2667,6 +2948,8 @@ func _tick_rotor_actuators(delta: float) -> void:
 		var assembly: SimulationAssembly = _world.get_assembly_raw(assembly_id)
 		if assembly == null or assembly.tombstoned:
 			continue
+		if _is_assembly_frozen(assembly_id):
+			continue
 		for record_variant: Variant in _rotor_constraints[assembly_id]:
 			if not record_variant is Dictionary:
 				continue
@@ -2784,10 +3067,17 @@ func _tick_rotor_actuators(delta: float) -> void:
 func _tick_piston_actuators(delta: float) -> void:
 	if _world == null or delta <= 0.0:
 		return
+	var any_live_piston := false
 	for assembly_id: int in _sorted_int_keys(_piston_constraints):
 		var assembly: SimulationAssembly = _world.get_assembly_raw(assembly_id)
 		if assembly == null or assembly.tombstoned:
 			continue
+		if _is_assembly_frozen(assembly_id):
+			continue
+		var records: Variant = _piston_constraints[assembly_id]
+		if records is Array and (records as Array).is_empty():
+			continue
+		any_live_piston = true
 		for record_variant: Variant in _piston_constraints[assembly_id]:
 			if not record_variant is Dictionary:
 				continue
@@ -2909,7 +3199,27 @@ func _tick_piston_actuators(delta: float) -> void:
 					relative_velocity_mps,
 					delta
 				)
-	_world.tick_actuators(delta)
+	# Kernel motor integrate while any projected piston/rotor assembly is live.
+	# Wheel-only yards (empty actuator maps) must not walk joints each tick.
+	if any_live_piston or _has_live_actuator_assembly(_rotor_constraints):
+		_world.tick_actuators(delta)
+
+
+func _is_assembly_frozen(assembly_id: int) -> bool:
+	var body := get_physics_body(assembly_id)
+	return body is RigidBody3D and (body as RigidBody3D).freeze
+
+
+func _has_live_actuator_assembly(constraints: Dictionary) -> bool:
+	if _world == null or constraints.is_empty():
+		return false
+	for assembly_id: int in _sorted_int_keys(constraints):
+		var assembly: SimulationAssembly = _world.get_assembly_raw(assembly_id)
+		if assembly == null or assembly.tombstoned:
+			continue
+		if not _is_assembly_frozen(assembly_id):
+			return true
+	return false
 
 
 ## Full joint reconfiguration only on state transitions (operational / flex /

@@ -1,6 +1,15 @@
 class_name GridPoseUtil
 extends RefCounted
 
+## (archetype_id|orientation|snap_dir) -> Vector3i origin offset from target cell.
+## Centering score is translation-invariant, so the expensive surface-descriptor
+## walk runs once per (archetype, orientation, snap_dir), not per aim face.
+static var _snap_origin_offset_cache: Dictionary = {}
+
+
+static func clear_snap_origin_cache() -> void:
+	_snap_origin_offset_cache.clear()
+
 
 static func grid_frame_to_transform(frame: GridTransform) -> Transform3D:
 	var basis: Basis = OrientationUtil.orientation_basis(
@@ -365,21 +374,49 @@ static func snap_origin_for_target_cell(
 	snap_dir: Vector3i,
 	orientation_index: int
 ) -> Vector3i:
-	var candidates := snap_origin_candidates(
+	return target_port_cell + snap_origin_offset_for_dir(
 		archetype,
-		target_port_cell,
 		snap_dir,
 		orientation_index
 	)
-	if candidates.is_empty():
-		return target_port_cell + snap_dir
-	return best_centered_snap_origin(
-		archetype,
-		target_port_cell,
-		snap_dir,
+
+
+## Origin − target_port_cell for the centered snap. Cached: descriptor walk is
+## independent of the absolute target cell.
+static func snap_origin_offset_for_dir(
+	archetype: ElementArchetype,
+	snap_dir: Vector3i,
+	orientation_index: int
+) -> Vector3i:
+	if archetype == null:
+		return snap_dir
+	var cache_key := "%s|%d|%d,%d,%d" % [
+		archetype.archetype_id,
 		orientation_index,
-		candidates
+		snap_dir.x,
+		snap_dir.y,
+		snap_dir.z,
+	]
+	if _snap_origin_offset_cache.has(cache_key):
+		return _snap_origin_offset_cache[cache_key]
+	var zero := Vector3i.ZERO
+	var candidates := snap_origin_candidates(
+		archetype,
+		zero,
+		snap_dir,
+		orientation_index
 	)
+	var origin := snap_dir
+	if not candidates.is_empty():
+		origin = best_centered_snap_origin(
+			archetype,
+			zero,
+			snap_dir,
+			orientation_index,
+			candidates
+		)
+	_snap_origin_offset_cache[cache_key] = origin
+	return origin
 
 
 static func best_centered_snap_origin(

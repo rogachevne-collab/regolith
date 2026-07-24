@@ -123,7 +123,8 @@ func _on_structural_event(event: Dictionary) -> void:
 				removed_element_id > 0
 				and _try_remove_projected_element(
 					changed_assembly_id,
-					removed_element_id
+					removed_element_id,
+					event.get("removed_occupied_cells", [])
 				)
 			):
 				pass
@@ -229,13 +230,67 @@ func _try_append_placed_element(
 	return true
 
 
+## Inverse of _try_append_placed_element: drop one element's meshes and refresh
+## connected neighbours that shared a face with its footprint.
 func _try_remove_projected_element(
-	_assembly_id: int,
-	_element_id: int
+	assembly_id: int,
+	element_id: int,
+	removed_cells_variant: Variant = null
 ) -> bool:
-	# Dismantle needs neighbour face-mask refresh after the element is gone;
-	# fall back to full rebuild until the event carries footprint/neighbours.
-	return false
+	if _world == null or _physics_projection == null or element_id <= 0:
+		return false
+	var root_body := _physics_projection.get_physics_body(assembly_id)
+	var known: Variant = _known_bodies.get(assembly_id)
+	if (
+		root_body == null
+		or not is_instance_valid(known)
+		or known != root_body
+	):
+		return false
+	var assembly := _world.get_assembly_raw(assembly_id)
+	if assembly == null or assembly.tombstoned:
+		return false
+	var body := _find_body_with_element_visual(assembly_id, element_id)
+	if body != null:
+		_clear_element_visuals(body, element_id)
+	var connected_index := CONNECTED_BLOCK_VISUAL_SCRIPT.build_occupancy(
+		_world,
+		assembly
+	)
+	var occupancy_cells: Dictionary = connected_index.get("cells", {})
+	var archetype_by_element: Dictionary = connected_index.get(
+		"archetypes",
+		{}
+	)
+	var removed_cells: Array[Vector3i] = []
+	if removed_cells_variant is Array:
+		for cell_variant: Variant in removed_cells_variant:
+			if cell_variant is Vector3i:
+				removed_cells.append(cell_variant as Vector3i)
+	_refresh_connected_neighbours_from_cells(
+		assembly_id,
+		removed_cells,
+		occupancy_cells,
+		archetype_by_element
+	)
+	return true
+
+
+func _find_body_with_element_visual(
+	assembly_id: int,
+	element_id: int
+) -> PhysicsBody3D:
+	var record := _physics_projection.get_element_projection(element_id)
+	if not record.is_empty():
+		var recorded := record.get("body") as PhysicsBody3D
+		if recorded != null and is_instance_valid(recorded):
+			return recorded
+	for body: PhysicsBody3D in (
+		_physics_projection.list_assembly_physics_bodies(assembly_id)
+	):
+		if _element_has_visual(body, element_id):
+			return body
+	return null
 
 
 func _rebuild_assembly(assembly_id: int) -> void:
@@ -377,6 +432,8 @@ func _attach_scene_visual(
 	root.set_meta("element_visual", true)
 	root.set_meta("assembly_id", assembly_id)
 	body.add_child(root)
+	if _uses_rover_matte(element):
+		_paint_mesh_tree(root, _material_for(element))
 	return true
 
 
@@ -506,11 +563,30 @@ func _refresh_connected_neighbours(
 	var archetype := placed.get_archetype()
 	if archetype == null:
 		return
+	_refresh_connected_neighbours_from_cells(
+		assembly_id,
+		archetype.get_occupied_cells(
+			placed.origin_cell,
+			placed.orientation_index
+		),
+		occupancy_cells,
+		archetype_by_element,
+		placed.element_id
+	)
+
+
+func _refresh_connected_neighbours_from_cells(
+	assembly_id: int,
+	cells: Array,
+	occupancy_cells: Dictionary,
+	archetype_by_element: Dictionary,
+	skip_element_id: int = 0
+) -> void:
 	var neighbour_ids: Dictionary = {}
-	for cell: Vector3i in archetype.get_occupied_cells(
-		placed.origin_cell,
-		placed.orientation_index
-	):
+	for cell_variant: Variant in cells:
+		if not cell_variant is Vector3i:
+			continue
+		var cell: Vector3i = cell_variant
 		for face: OrientationUtil.Face in CONNECTED_BLOCK_VISUAL_SCRIPT.FACE_ORDER:
 			var neighbour_id: Variant = occupancy_cells.get(
 				cell + OrientationUtil.face_to_vector(face)
@@ -518,7 +594,7 @@ func _refresh_connected_neighbours(
 			if neighbour_id == null:
 				continue
 			var nid := int(neighbour_id)
-			if nid == placed.element_id:
+			if nid == skip_element_id:
 				continue
 			if not CONNECTED_BLOCK_VISUAL_SCRIPT.is_connected_archetype(
 				String(archetype_by_element.get(nid, ""))
@@ -594,7 +670,14 @@ func _add_rover_module_visual(
 	assembly_id: int,
 	element: SimulationElement
 ) -> void:
-	ROVER_MODULE_VISUAL_SCRIPT.attach_runtime(body, assembly_id, element)
+	var record: Dictionary = ROVER_MODULE_VISUAL_SCRIPT.attach_runtime(
+		body,
+		assembly_id,
+		element
+	)
+	var root: Node = record.get("root") as Node
+	if root != null and _uses_rover_matte(element):
+		_paint_mesh_tree(root, _material_for(element))
 
 func _add_stationary_drill_visual(
 	body: PhysicsBody3D,
@@ -660,43 +743,62 @@ func _clear_assembly_visuals(assembly_id: int) -> void:
 		_clear_visuals(body, assembly_id)
 		cleared[body_id] = true
 
-func _material_for(element: SimulationElement) -> StandardMaterial3D:
+func _uses_rover_matte(element: SimulationElement) -> bool:
+	if element == null:
+		return false
 	var archetype := element.get_archetype()
-	if (
-		archetype != null
-		and (
-			archetype.resource_path.begins_with(
-				"res://resources/archetypes/slice01/"
-			)
-			and (
-				element.archetype_id.begins_with("rover_")
-				or element.archetype_id == "cockpit"
-			)
-		)
-	):
-		return _materials["rover"]
+	if archetype == null:
+		return false
+	# Lamp visual owns housing + emissive lens materials.
+	if element.archetype_id == "frame_lamp":
+		return false
+	if archetype.roles.has("Frame"):
+		return true
+	if archetype.is_wheel() or archetype.is_suspension():
+		return true
+	match element.archetype_id:
+		"cockpit", "control_terminal", "power_battery_small", "power_distributor_small", "cargo_pipe":
+			return true
+	return false
+
+
+func _paint_mesh_tree(node: Node, material: Material) -> void:
+	if node is MeshInstance3D:
+		var mesh_name := (node as MeshInstance3D).name.to_lower()
+		if mesh_name != "lamp":
+			(node as MeshInstance3D).material_override = material
+	for child: Node in node.get_children():
+		_paint_mesh_tree(child, material)
+
+
+func _material_for(element: SimulationElement) -> StandardMaterial3D:
 	var reason := element.status_reason()
 	if reason == &"element_broken":
 		return _materials["broken"]
-	if reason == &"element_incomplete":
-		return _materials["frame"]
 	if reason == &"damaged":
 		return _materials["damaged"]
+	var archetype := element.get_archetype()
+	if archetype != null and archetype.is_wheel():
+		return _materials["polystyrene_wheel"]
+	if _uses_rover_matte(element):
+		return _materials["polystyrene"]
+	if reason == &"element_incomplete":
+		return _materials["frame"]
 	return _materials["operational"]
 
 func _rim_material_for(element: SimulationElement) -> StandardMaterial3D:
-	if (
-		element.archetype_id.begins_with("rover_")
-		or element.archetype_id == "cockpit"
-	):
-		return _materials["rim_rover"]
 	var reason := element.status_reason()
 	if reason == &"element_broken":
 		return _materials["rim_broken"]
-	if reason == &"element_incomplete":
-		return _materials["rim_frame"]
 	if reason == &"damaged":
 		return _materials["rim_damaged"]
+	var archetype := element.get_archetype()
+	if archetype != null and archetype.is_wheel():
+		return _materials["polystyrene_wheel"]
+	if _uses_rover_matte(element):
+		return _materials["polystyrene"]
+	if reason == &"element_incomplete":
+		return _materials["rim_frame"]
 	return _materials["rim_operational"]
 
 func _create_materials() -> void:
@@ -728,6 +830,23 @@ func _create_materials() -> void:
 		0.55,
 		false,
 		0.78
+	)
+	## Rough polystyrene PBR (mustard / dark-wheel tints).
+	var poly := (
+		load("res://resources/materials/part_polystyrene.tres")
+		as StandardMaterial3D
+	)
+	var poly_wheel := (
+		load("res://resources/materials/part_polystyrene_wheel.tres")
+		as StandardMaterial3D
+	)
+	_materials["polystyrene"] = (
+		poly if poly != null
+		else _material(Color(0.82, 0.64, 0.2, 1.0), 0.0, false, 0.88)
+	)
+	_materials["polystyrene_wheel"] = (
+		poly_wheel if poly_wheel != null
+		else _material(Color(0.18, 0.18, 0.2, 1.0), 0.0, false, 0.9)
 	)
 	_materials["rim_frame"] = _rim_material(
 		Color(0.28, 0.16, 0.06, 1.0),

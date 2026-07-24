@@ -50,8 +50,13 @@ func _on_structural_event(event: Dictionary) -> void:
 	match StringName(event.get("kind", &"")):
 		&"world_restored":
 			call_deferred("rebuild_all")
-		&"assembly_spawned", &"assembly_changed":
+		&"assembly_spawned":
 			call_deferred("_rebuild_assembly", int(event["assembly_id"]))
+		&"assembly_changed":
+			# Frame place/dismantle on a rover must not tear down every piston
+			# visual — only rebuild when a piston half or joint is involved.
+			if _event_touches_piston_visuals(event):
+				call_deferred("_rebuild_assembly", int(event["assembly_id"]))
 		&"assembly_removed":
 			_clear_assembly(int(event["assembly_id"]))
 		&"assembly_split":
@@ -65,6 +70,54 @@ func _on_structural_event(event: Dictionary) -> void:
 		&"assembly_merged":
 			_clear_assembly(int(event["loser_assembly_id"]))
 			call_deferred("_rebuild_assembly", int(event["survivor_assembly_id"]))
+
+
+func _event_touches_piston_visuals(event: Dictionary) -> bool:
+	if _world == null:
+		return true
+	var assembly_id := int(event.get("assembly_id", 0))
+	var placed_element_id := int(event.get("placed_element_id", 0))
+	var removed_element_id := int(event.get("removed_element_id", 0))
+	if placed_element_id > 0:
+		var placed := _world.get_element(placed_element_id)
+		if (
+			placed != null
+			and PistonVisualScript.is_piston_element(placed.archetype_id)
+		):
+			return true
+		return false
+	if removed_element_id > 0:
+		return _records_reference_element(assembly_id, removed_element_id)
+	return true
+
+
+func _records_reference_element(assembly_id: int, element_id: int) -> bool:
+	var records_variant: Variant = _records_by_assembly.get(assembly_id, [])
+	if not records_variant is Array:
+		return false
+	for record_variant: Variant in records_variant:
+		if not record_variant is Dictionary:
+			continue
+		var record: Dictionary = record_variant
+		if int(record.get("element_id", 0)) == element_id:
+			return true
+		var sim_joint: SimulationJoint = record.get("sim_joint")
+		if (
+			sim_joint != null
+			and (
+				sim_joint.element_a_id == element_id
+				or sim_joint.element_b_id == element_id
+			)
+		):
+			return true
+		var base_root: Node = record.get("base_root") as Node
+		if (
+			base_root != null
+			and is_instance_valid(base_root)
+			and int(base_root.get_meta("element_id", 0)) == element_id
+		):
+			return true
+	return false
 
 
 func _rebuild_assembly(assembly_id: int) -> void:

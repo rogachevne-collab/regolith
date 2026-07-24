@@ -23,7 +23,7 @@ const QUERY_MARGIN_M := 1.0
 ## mesh rebuilt as it is dug, so it never reaches the analytic collider set —
 ## it arrives as one contact plane per particle per tick instead (ADR 0006
 ## slice 2). Also the cable's speed limit against terrain.
-const TERRAIN_PROBE_MARGIN_M := 0.3
+const TERRAIN_PROBE_MARGIN_M := 0.5
 const PIN_REACTION_RELAXATION := 0.55
 const MAX_LEVER_ARM_M := 120.0
 const LIFT_SKIN_M := 0.004
@@ -116,6 +116,14 @@ static func step(
 	var pin_vel_b := _pin_velocity(body_b, anchor_b)
 	sim.move_pin(0, anchor_a, pin_vel_a)
 	sim.move_pin(sim.segment_count(), anchor_b, pin_vel_b)
+	if space_state != null:
+		# Terrain every tick, whatever the budget says. The budget is there to
+		# ration the analytic gather, and rationing the GROUND is what makes a
+		# slack cable sink: it sags a little on each tick it is skipped, and
+		# once it is deeper than the probe reaches, nothing ever finds it
+		# again — the cable is simply inside the moon from then on. Shapes can
+		# wait their turn; the crust cannot.
+		_sample_terrain(sim, space_state)
 	if collide_shapes and space_state != null:
 		var prev_cache: Dictionary = state.get("_collider_prev", {})
 		var gathered := RopeColliders.gather_from_space(
@@ -123,10 +131,16 @@ static func step(
 		)
 		state["_collider_prev"] = gathered.cache
 		sim.colliders = gathered.colliders
-		_sample_terrain(sim, space_state)
 	elif not collide_shapes:
 		sim.colliders = []
-		sim.local_planes = PackedVector4Array()
+		# The terrain planes are deliberately NOT cleared. Collision is
+		# round-robin on a budget, so a cable goes several ticks between turns
+		# — and a cable lying on the ground needs the ground on every one of
+		# them. Clear them and it sinks through the crust while it waits, then
+		# gets slammed back out when its turn comes: a tension spike out of
+		# nowhere, which the player sees as a cable that snapped for no reason.
+		# The moon does not move. A plane sampled two ticks ago is still where
+		# the ground is, and the particles have travelled centimetres.
 	sim.step(delta)
 	result.overshoot_m = CableTensionUtil.effective_overshoot_m(
 		routed_length_m(state), rest_length_m
