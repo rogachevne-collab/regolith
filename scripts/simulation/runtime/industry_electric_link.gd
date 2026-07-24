@@ -26,6 +26,12 @@ var rest_length_m: float = 0.0
 ## A force, not an impulse: per-tick impulse scales with the frame time, so an
 ## impulse threshold would mean a different rope at every frame rate.
 var break_force_n: float = 0.0
+## Baked rope shape in the host body's local frame, once a same-body cable has
+## settled and frozen (SimulationPhysicsProjection cable freezing). Persisted so
+## a reloaded cable comes back already baked — static from frame one, no re-sim
+## spike on load. Empty = not baked; cleared the moment the machine changes
+## under the cable, so a stale shape is never restored.
+var baked_path_local: PackedVector3Array = PackedVector3Array()
 ## Player-routed cable path (скобы) between the two port anchors, in order from
 ## element_a to element_b. Empty = straight cable.
 ## A скоба is either nailed to the world or clipped onto a block, decided per
@@ -172,6 +178,10 @@ func to_dict(for_snapshot := false) -> Dictionary:
 		),
 		"rest_length_m": rest_length_m,
 		"break_force_n": break_force_n,
+		"baked_path_local": (
+			_CODEC.packed_vector3_array_to_array(baked_path_local)
+			if for_snapshot else baked_path_local.duplicate()
+		),
 	}
 
 
@@ -195,4 +205,7 @@ static func from_dict(data: Dictionary) -> IndustryElectricLink:
 	link.attach_b = _CODEC.vector3_from_variant(data.get("attach_b", Vector3.ZERO))
 	link.rest_length_m = maxf(float(data.get("rest_length_m", 0.0)), 0.0)
 	link.break_force_n = maxf(float(data.get("break_force_n", 0.0)), 0.0)
+	link.baked_path_local = _CODEC.packed_vector3_array_from_variant(
+		data.get("baked_path_local", PackedVector3Array())
+	)
 	return link

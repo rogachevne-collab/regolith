@@ -50,6 +50,11 @@ Properties:
   gravity, or set your own for a gravity zone, another planet or zero-g
 - `stretch_compliance: float` — m/N; 0 = as stiff as the budget allows
 - `end_mass: float` — lumped mass in kg on the free B end (hook, weight)
+- `lift_coupling: float` — 0..1, how strongly a mass-coupled `RigidBody3D`
+  anchor's velocity ALONG the rope is matched to the rope end each tick. An
+  inextensible rope makes those equal; enforcing it removes the along-rope
+  bounce a heavy hung load bobs in, while leaving the perpendicular swing
+  (the pendulum) free. 1.0 = full match; 0 = reaction impulse only
 - `damping: float` — 1/s, internal fiber friction: decays the relative
   velocity of neighboring particles, so it resists stretching, bending and
   vibration but can never slow a rope that falls or flies as a whole
@@ -110,19 +115,26 @@ Methods:
 
 ## Open problems
 
-A mass-coupled body does not hang steadily, it hangs in catches. Measured on
-`demos/gate5_lift.tscn` (300 kg rover, 5 m rope, 0.6 kg/m, 60 Hz): the rover
-holds its height to about ±5 cm and the tension readout swings between ~170 N
-and ~2400 N rather than sitting at the rover's 2940 N weight. Budget buys
-stretch, not steadiness — going from 16 substeps / 4 iterations to 32 / 8 cut
-the rope's stretch under load from 1.0% to 0.2% and left the bob unchanged.
-It looks like a load being caught and dropped each cycle rather than carried,
-so read `get_segment_tension` as a spiky signal, and do not use a single
-sample of it for a break check yet.
+Two "open problems" were once listed here — a ±5 cm "catch and drop" bob and
+an under-reporting tension — and both were mis-diagnoses off one bench.
+`demos/gate5_lift.tscn` lifts a 300 kg rover by a single OFF-CENTRE hook, so
+the load swings and tilts, and that swing confounded both readings. Measured
+clean instead (`tests/test_hang_tension.gd`, `tests/test_regimes.gd`):
 
-A very compliant rope carrying a heavy weight does not settle: at
-`stretch_compliance` 0.005 m/N with 10 kg the peak-velocity envelope holds a
-limit cycle instead of decaying, and the stretch keeps growing (358% at 8 s,
+- Tension is exact. A settled hung load reports its own weight to 0.02%, for
+  a lumped mass and for a proxy alike, and the profile down the rope is right.
+  A swinging or being-lifted load has genuinely spiky tension — below mg at the
+  swing extremes, above it at the bottom — so smooth `get_segment_tension` over
+  a few frames for a break check, not because the reading is wrong but because
+  a swinging rope's tension really does spike.
+- The vertical bob is ~3-4 cm. The large motion an off-centre lift shows is a
+  pendulum — correct undamped physics in vacuum; set `drag` > 0 to settle it.
+  `lift_coupling` (below) removed the along-rope half: 65 cm → ~24 cm total,
+  4.1 → 3.3 cm vertical.
+
+One real open problem remains. A very compliant rope carrying a heavy weight
+does not settle: at `stretch_compliance` 0.005 m/N with 10 kg the peak-velocity
+envelope holds a limit cycle instead of decaying, and the stretch keeps growing (358% at 8 s,
 526% at 15 s under Earth gravity). Stiff ropes at the same load decay
 normally, so this is specific to the soft-constraint regime. Unexplained;
 do not treat high-compliance ropes as trustworthy yet.

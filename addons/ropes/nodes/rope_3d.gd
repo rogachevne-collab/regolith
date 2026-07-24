@@ -32,6 +32,14 @@ const PIN_REACTION_RELAXATION := 0.55
 ## would mean a rope that lifts 55% of a rover and drops the rest.
 const PROXY_REACTION_RELAXATION := 1.0
 
+## How strongly a mass-coupled body's velocity ALONG the rope is matched to the
+## rope end's solved velocity each tick, 0..1. An inextensible rope makes those
+## two velocities equal; enforcing it removes the bounce a heavy hung load
+## otherwise sits in (the reaction impulse alone is a lagged catch that
+## overshoots). 1.0 = match exactly along the rope; the perpendicular swing is
+## never touched, so a lifted load still swings like a pendulum. Hot.
+@export_range(0.0, 1.0, 0.05) var lift_coupling: float = 1.0
+
 ## Floor on a coupled body's mass, kg. A zero-mass anchor would make its proxy
 ## massless and the rope would snap to it as if to a pin — silently, which is
 ## the worst way for a rope to stop lifting things.
@@ -527,13 +535,37 @@ func _settle_end(index: int, node: Node3D, at: Vector3) -> void:
 	var impulse := _sim.proxy_momentum(index) * PROXY_REACTION_RELAXATION
 	# Back on the hook for rendering, whatever the solver did to the stand-in.
 	_sim.reseat_proxy(index, at)
-	if impulse.length_squared() <= 1e-12:
-		return
-	body.sleeping = false
 	var offset := at - body.global_position
 	if offset.length() > MAX_LEVER_ARM_M:
 		offset = Vector3.ZERO
-	body.apply_impulse(impulse, offset)
+	if impulse.length_squared() > 1e-12:
+		body.sleeping = false
+		body.apply_impulse(impulse, offset)
+	# Along-rope velocity matching. An inextensible rope forces both ends to
+	# share their velocity component along the rope; the reaction impulse alone
+	# is a one-tick-lagged catch that overshoots on a heavy load, so the load
+	# bobs. Pulling the body's along-rope velocity toward the rope end's solved
+	# velocity removes exactly the bounce energy and leaves the perpendicular
+	# component — the pendulum swing — untouched. Read AFTER the reaction so the
+	# two do not fight.
+	if lift_coupling > 0.0:
+		var dir := _end_rope_dir(index)
+		if dir != Vector3.ZERO:
+			var v_body := _point_velocity(body, at)
+			var v_end: Vector3 = _sim.velocities[index]
+			var dv_along := dir * (dir.dot(v_end - v_body) * lift_coupling)
+			if dv_along.length_squared() > 1e-12:
+				body.sleeping = false
+				body.apply_impulse(dv_along * body.mass, offset)
+
+
+## Unit direction of the segment at a coupled end — the axis tension acts along.
+func _end_rope_dir(index: int) -> Vector3:
+	var neighbour := index - 1 if index >= _sim.segment_count() else index + 1
+	if neighbour < 0 or neighbour >= _sim.positions.size():
+		return Vector3.ZERO
+	var d: Vector3 = _sim.positions[neighbour] - _sim.positions[index]
+	return d.normalized() if d.length_squared() > 1e-12 else Vector3.ZERO
 
 
 ## Velocity of a body's surface AT the anchor point: the tip of a swinging

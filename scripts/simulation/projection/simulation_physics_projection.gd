@@ -29,9 +29,14 @@ const CABLE_ANCHOR_PROBE_RADIUS := 0.3
 ## enough that a driving one does not.
 const CABLE_FREEZE_BODY_LIN_M_S := 0.05
 const CABLE_FREEZE_BODY_ANG_R_S := 0.05
-## Consecutive at-rest ticks before a same-body cable freezes. Long enough that
-## a cable dropped into place gets to hang itself first.
+## Consecutive at-rest ticks before a same-body cable freezes — the clean path,
+## a settled snapshot. Long enough that a cable dropped into place gets to hang
+## itself first.
 const CABLE_FREEZE_TICKS := 30
+## Ticks a same-body cable may stay unfrozen before it freezes regardless of
+## whether its host ever reads at rest — the guaranteed path for a rover chassis
+## on suspension that never sleeps. ~3 s at 60 Hz.
+const CABLE_FREEZE_TIMEOUT_TICKS := 180
 ## How much further a rope has to run out before it thaws a parked endpoint,
 ## measured against the slackest that rope has been since it last woke anything.
 ## Accumulating instead of comparing tick to tick matters: a slow winch adds
@@ -53,6 +58,12 @@ const XpbdCableRopeSolverScript := preload(
 ## When on, placed cables use the Ropes! XPBD core with gate-4 pin reactions
 ## inside [XpbdCableRopeSolver] — [method _tick_cable_tension] is skipped.
 @export var use_xpbd_cable_rope := true
+## TEMP / experimental (Rope-lift step 0): let a rope with one end on a movable
+## RigidBody and the other end anchored LIFT that body via mass coupling — the
+## proof-of-feel before the real Rope/Chain entity exists. Off restores pure
+## electric-cable behaviour (pinned ends). Draw a taut rope from an anchored
+## high point (base, wall, stake) down to a loose block/rover to see it pull up.
+@export var debug_cable_lift := false
 
 const ASSEMBLY_BOUNCE := 0.32
 const ASSEMBLY_FRICTION := 0.42
@@ -2074,8 +2085,13 @@ func _tick_wheel_record(
 	var drive_command := 0.0
 	var brake_command := 0.0
 	var steering_command := 0.0
+	# Assembly-wide PB latch always holds (SE safety), even when Control Wheels
+	# is OFF. Pilot drive/steer/service-brake only when wheels_route_enabled.
 	var parking_hold := locomotion != null and locomotion.is_parking_brake()
-	if locomotion != null:
+	var wheels_route := (
+		locomotion != null and locomotion.is_wheels_route_enabled()
+	)
+	if locomotion != null and wheels_route:
 		drive_command = locomotion.drive_command
 		brake_command = locomotion.brake_command
 		steering_command = locomotion.steering_command
@@ -2266,30 +2282,41 @@ func _tick_thrusters(delta: float) -> void:
 	if _world == null or delta <= 0.0:
 		return
 	for assembly_id: int in _sorted_int_keys(_bodies):
-		# Activated first: parked wheel rovers must not pay is_flight_assembly
-		# (full element walk) every physics tick.
+		# Activated first: avoid element walks for parked / inactive assemblies.
+		# Thruster and gyro consumers are independent — gyro must tick without
+		# thruster presence (CONTROL-AXES-V0 / semantic seat routing).
 		var locomotion := _world.get_locomotion_controller(assembly_id)
 		if locomotion == null or not locomotion.is_activated():
 			continue
 		if _is_assembly_frozen(assembly_id):
 			continue
-		if not ThrusterSimulationService.is_flight_assembly(_world, assembly_id):
+		var need_thrust := locomotion.is_thrusters_route_enabled()
+		var need_gyro := locomotion.is_gyros_route_enabled()
+		if not need_thrust and not need_gyro:
 			continue
-		var thrusters := ThrusterSimulationService.list_thruster_elements(
-			_world,
-			assembly_id
-		)
-		for thruster: SimulationElement in thrusters:
-			_apply_thruster_force(thruster, locomotion)
-		var gyros := ThrusterSimulationService.list_gyro_elements(
-			_world,
-			assembly_id
-		)
+		var thrusters: Array[SimulationElement] = []
+		var gyros: Array[SimulationElement] = []
+		if need_thrust or need_gyro:
+			var assembly := _world.get_assembly_raw(assembly_id)
+			if assembly == null:
+				continue
+			for element_id: int in assembly.element_ids:
+				var element := _world.get_element(element_id)
+				if need_thrust and ThrusterSimulationService.is_thruster_element(
+					element
+				):
+					thrusters.append(element)
+				if need_gyro and ThrusterSimulationService.is_gyro_element(
+					element
+				):
+					gyros.append(element)
+		if need_thrust:
+			for thruster: SimulationElement in thrusters:
+				_apply_thruster_force(thruster, locomotion)
 		var gyro_count := gyros.size()
-		if gyro_count <= 0:
-			continue
-		for gyro: SimulationElement in gyros:
-			_apply_gyro_torque(gyro, locomotion, gyro_count)
+		if need_gyro and gyro_count > 0:
+			for gyro: SimulationElement in gyros:
+				_apply_gyro_torque(gyro, locomotion, gyro_count)
 
 ## Rope shape: one solver step per rope. XPBD path also applies gate-4 pin
 ## reactions and break checks; verlet path leaves forces to _tick_cable_tension.
@@ -2317,6 +2344,14 @@ func _tick_cable_ropes(delta: float) -> void:
 			(offset + _rope_collision_cursor) % ropes.size()
 		]
 		var state: Variant = _rope_states.get(link.link_id)
+		# A cable that was baked before a save comes back baked: seed the frozen
+		# state straight from the persisted shape, so it is static from frame one
+		# and never pays the settle spike again. Only when it has no runtime state
+		# yet (fresh load) — after that the normal fast path owns it.
+		if not (state is Dictionary) and not link.baked_path_local.is_empty():
+			state = _seed_frozen_from_bake(link)
+			if state != null:
+				_rope_states[link.link_id] = state
 		# Frozen fast path, before anything is computed. A frozen cable is a
 		# solved shape riding its body; the only work it can need is to notice
 		# the machine changed under it. We do not re-derive that from geometry
@@ -2477,6 +2512,19 @@ func _tick_one_xpbd_rope(
 	var collides := collide_world and space_state != null and collision_budget >= particles
 	if collides:
 		collision_budget -= particles
+	# Step-0 lift proof: mass-couple the movable end when the other end is
+	# anchored, so a taut rope pulls the load up to the fixed point. Only when
+	# debug_cable_lift is on and the ends are on different bodies; a same-body
+	# utility cable (shared_body) still freezes, an electric cable still pins.
+	var couple_a := 0.0
+	var couple_b := 0.0
+	if debug_cable_lift and shared_body == null:
+		var a_movable := body_a != null and not body_a.freeze
+		var b_movable := body_b != null and not body_b.freeze
+		if a_movable and not b_movable:
+			couple_a = maxf(body_a.mass, 0.001)
+		elif b_movable and not a_movable:
+			couple_b = maxf(body_b.mass, 0.001)
 	var result: Dictionary = XpbdCableRopeSolverScript.step(
 		state,
 		anchor_a,
@@ -2491,7 +2539,9 @@ func _tick_one_xpbd_rope(
 		_rope_endpoint_backing(body_a),
 		_rope_endpoint_backing(body_b),
 		link.break_force_n,
-		collide_world
+		collide_world,
+		couple_a,
+		couple_b
 	)
 	if bool(result.get("snapped", false)):
 		snapped.append(link.link_id)
@@ -2534,15 +2584,17 @@ func _cable_try_freeze(
 	var assembly := _world.get_assembly_raw(element.assembly_id)
 	if assembly == null:
 		return
-	# Read the HOST BODY's rest, not the cable's. This was the whole bug behind
-	# "the tint never shows": a machine body is never perfectly still — it
-	# micro-rotates on its suspension a fraction of a degree a tick — and the
-	# cable's middle particles LAG that rotation, so in the body's own frame the
-	# cable always appears to be moving, however dead-still it looks. Any
-	# threshold on the cable's own residual therefore never accumulates on a
-	# real rover. The body's velocity has no such lag: a parked or idle machine
-	# reads near-zero, a driving one does not. That is the honest "is the
-	# machine at rest" signal, and it cannot be fooled by the cable lagging.
+	# Two ways to freeze, whichever comes first. The clean one: the host is at
+	# rest (parked or asleep), so the cable has hung itself and we snapshot a
+	# settled shape — this is the common yard case. The guaranteed one: the
+	# cable has simply been alive long enough. That fallback exists because a
+	# rover chassis on 6DOF wheel joints often NEVER reads at rest — the
+	# suspension keeps it micro-jittering above any honest velocity floor — so
+	# a rest-only gate meant its cables never froze and never tinted, which is
+	# exactly the report. A cable bolted between two points on one frame is the
+	# same shape whether that frame is parked or bouncing, so freezing it on age
+	# is safe; the worst case is a snapshot a few millimetres off, invisible on
+	# a taut utility cable and re-taken on the next structural change anyway.
 	var at_rest := (
 		body.freeze
 		or body.sleeping
@@ -2551,17 +2603,14 @@ func _cable_try_freeze(
 			and body.angular_velocity.length() < CABLE_FREEZE_BODY_ANG_R_S
 		)
 	)
-	if not at_rest:
-		state["_still_ticks"] = 0
-		return
-	var still := int(state.get("_still_ticks", 0)) + 1
+	var still := (int(state.get("_still_ticks", 0)) + 1) if at_rest else 0
 	state["_still_ticks"] = still
-	if still < CABLE_FREEZE_TICKS:
+	var age := int(state.get("_age_ticks", 0)) + 1
+	state["_age_ticks"] = age
+	if still < CABLE_FREEZE_TICKS and age < CABLE_FREEZE_TIMEOUT_TICKS:
 		return
 	# Everything the frozen shape is only true FOR is recorded next to it, so
-	# waking is a comparison rather than a guess. The shape is captured in the
-	# body's frame after CABLE_FREEZE_TICKS at rest, by which point the cable
-	# has hung itself under gravity — the host stopped moving well before then.
+	# waking is a comparison rather than a guess.
 	var to_local := body.global_transform.affine_inverse()
 	var path_local := PackedVector3Array()
 	for point: Vector3 in sim.positions:
@@ -2575,6 +2624,11 @@ func _cable_try_freeze(
 		"revision": assembly.topology_revision,
 		"rest_m": link.rest_length_m,
 	}
+	# Persist the baked shape onto the link so it survives a save (see
+	# IndustryElectricLink.baked_path_local). The link is body-local, so it is
+	# valid for the machine exactly as it stands; _thaw clears it the instant the
+	# machine changes.
+	link.baked_path_local = path_local
 
 
 ## The tick-loop fast path: is this a frozen cable whose machine has not changed
@@ -2597,34 +2651,89 @@ func _cable_frozen_current(link: IndustryElectricLink, state: Variant) -> bool:
 	if frozen.is_empty():
 		return false
 	if not is_equal_approx(float(frozen.get("rest_m", -1.0)), link.rest_length_m):
-		_thaw(state as Dictionary)
+		_thaw(state as Dictionary, link)
 		return false
 	var assembly := _world.get_assembly_raw(int(frozen.get("assembly_id", 0)))
 	if assembly == null or assembly.topology_revision != int(frozen.get("revision", -1)):
-		_thaw(state as Dictionary)
+		_thaw(state as Dictionary, link)
 		return false
 	return true
 
 
-## Drop a cable's frozen shape AND its at-rest counter. The counter matters:
-## the machine just changed under the cable, so it must get the full settle
-## window to re-hang against the new geometry before it can freeze again —
-## without the reset a still machine re-freezes the very next tick, snapshotting
-## the stale shape it had before the change.
-func _thaw(state: Dictionary) -> void:
+## Seed a frozen state directly from a link's persisted bake — a cable that was
+## baked before a save, coming back static without a single simulation tick. The
+## shape is body-local, so it needs the current host body and the assembly's
+## revision now; if the endpoints no longer share a live body the bake is stale
+## (the machine was rebuilt in a way saves cannot carry) and is dropped.
+func _seed_frozen_from_bake(link: IndustryElectricLink) -> Variant:
+	var element := _world.get_element(link.element_a)
+	if element == null:
+		link.baked_path_local = PackedVector3Array()
+		return null
+	var assembly := _world.get_assembly_raw(element.assembly_id)
+	var body := _rope_endpoint_body(link.element_a)
+	if assembly == null or body == null or body != _rope_endpoint_body(link.element_b):
+		link.baked_path_local = PackedVector3Array()
+		return null
+	return {"_frozen": {
+		"body": body,
+		"path_local": link.baked_path_local,
+		"assembly_id": assembly.assembly_id,
+		"revision": assembly.topology_revision,
+		"rest_m": link.rest_length_m,
+	}}
+
+
+## Drop a cable's frozen shape AND its at-rest counter, and the persisted bake
+## with it. The counter matters: the machine just changed under the cable, so it
+## must get the full settle window to re-hang against the new geometry before it
+## can freeze again — without the reset a still machine re-freezes the very next
+## tick, snapshotting the stale shape it had before the change. Clearing the
+## link's bake matters too, or a save taken mid-thaw would restore the old shape.
+func _thaw(state: Dictionary, link: IndustryElectricLink) -> void:
 	state.erase("_frozen")
 	state["_still_ticks"] = 0
+	state["_age_ticks"] = 0
+	if link != null:
+		link.baked_path_local = PackedVector3Array()
 
-## Solved rope path in world space for presentation. Empty when the rope has
-## not been stepped yet — the caller falls back to the analytic curve.
-## Whether this cable is currently frozen — solved once and riding its body
-## since. Diagnostic: presentation tints frozen cables so "why is nothing being
-## simulated" is answerable by looking instead of by instrumenting.
+## Whether this cable is not being simulated, so presentation can tint it.
+## Two ways to be still: a same-body cable that settled and froze (a solved
+## shape riding its body), or a cable strung between two points on an ANCHORED
+## structure — which projects as a StaticBody3D, has no RigidBody for the rope
+## tick to hang on, and so is drawn as a static curve and never simulated at
+## all. The second case was reading as "live" and staying dark even though it
+## is the most frozen thing in the world: bolted to a base that cannot move.
 func is_rope_frozen(link_id: int) -> bool:
 	var state: Variant = _rope_states.get(link_id)
-	if not state is Dictionary:
+	if state is Dictionary:
+		# A cable with sim state is being simulated, so it is dynamic by
+		# definition: frozen only if it settled. The static-structure check
+		# below would always be false here, so skip it — this runs per link per
+		# frame from _material_for (R9).
+		return not (state as Dictionary).get("_frozen", {}).is_empty()
+	# No state = the rope tick never ran for it = both ends on bodies it cannot
+	# hang on. The only such case that should exist is a cable on an anchored
+	# static structure, which is frozen by construction.
+	return _cable_on_shared_static(link_id)
+
+
+## Both ends of the cable on one assembly whose physics body is not a RigidBody
+## — an anchored base or wall. Such a cable never enters the rope solver (both
+## endpoint bodies resolve to null there), so it has no frozen state to check;
+## it is frozen by construction.
+func _cable_on_shared_static(link_id: int) -> bool:
+	var link := _world.get_industry_network().get_link(link_id)
+	if link == null or not link.is_rope():
 		return false
-	return not (state as Dictionary).get("_frozen", {}).is_empty()
+	var element_a := _world.get_element(link.element_a)
+	var element_b := _world.get_element(link.element_b)
+	if element_a == null or element_b == null:
+		return false
+	if element_a.assembly_id != element_b.assembly_id:
+		return false
+	var body := get_physics_body(element_a.assembly_id)
+	return body != null and not (body is RigidBody3D)
 
 
 func rope_path(link_id: int) -> PackedVector3Array:

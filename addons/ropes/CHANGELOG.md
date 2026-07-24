@@ -2,6 +2,44 @@
 
 ## 0.1.0-dev (unreleased)
 
+- `test_hang_tension.gd` and a corrected README: the "tension under-reports a
+  heavy load" open problem was a mis-diagnosis, the third off the same bench.
+  Measured clean, a settled hung load reports its own weight to 0.02% — lumped
+  mass and proxy alike — and the tension profile down the rope is right (an end
+  load makes tension nearly uniform, not falling; falling-to-zero is the
+  distributed self-weight case, which is `test_catenary`). The gate5 numbers
+  were low and spiky because that bench lifts by an off-centre hook, so the
+  load swings, and a swinging load's tension genuinely ranges below and above
+  mg. Nothing in the core to fix; the test pins the correct behaviour so the
+  mis-diagnosis cannot return. Advice for break checks changed from "do not
+  trust the reading" to "smooth it over a few frames, because a swinging rope
+  really does spike."
+
+- `test_regimes.gd`: the three regimes a universal rope must survive, each
+  asserting only what that regime is about, since a single scenario run three
+  times would prove nothing three times. (1) 9.8 + air — a disturbed rope
+  SETTLES: its kinetic energy bleeds to <10% under drag. (2) 9.8 vacuum — the
+  same nudge is CONSERVED: kinetic energy stays and does not grow, the honest
+  stability check with no drag to hide instability. (3) 0 g vacuum — a straight
+  rope stays straight and stationary and nothing NaNs on the degenerate
+  `up = -gravity` direction. Fills a real coverage gap: every other test ran
+  at 9.8 in vacuum only, so "does air settle it" and "does 0 g break it" were
+  untested. The metric is total kinetic energy, not peak speed — a whipping
+  free end has tiny mass so it barely counts, and the bulk swing dominates.
+
+- `lift_coupling` (default 1.0): a mass-coupled anchor's velocity along the
+  rope is matched to the rope end's solved velocity each tick, on top of the
+  reaction impulse. An inextensible rope forces both ends to share their
+  along-rope velocity, and the reaction impulse alone was a one-tick-lagged
+  catch that overshot on a heavy load. Measured on `demos/gate5_lift.tscn`
+  (300 kg / 5 m): total lift motion 65 cm → ~24 cm, pure vertical bob
+  4.1 → 3.3 cm; the perpendicular swing is untouched so the load still swings
+  like a pendulum. Also corrected the README's "open problem": the old ±5 cm
+  "catch and drop" diagnosis was wrong — the vertical bob was always ~4 cm and
+  the big number was an off-centre pendulum (correct undamped physics in
+  vacuum). The real remaining issue is the tension readout under-reporting a
+  heavy load, now stated on its own.
+
 - A rope no longer cuts through the block it is tied to. `Rope3D` used to
   exclude its anchor bodies from collision entirely, so a swinging load passed
   straight through its own cable. The exemption was on the wrong object: it

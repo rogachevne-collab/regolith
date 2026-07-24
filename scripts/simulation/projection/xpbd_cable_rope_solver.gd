@@ -42,6 +42,11 @@ const QUERY_MARGIN_M := 1.0
 ## slice 2). Also the cable's speed limit against terrain.
 const TERRAIN_PROBE_MARGIN_M := 0.5
 const PIN_REACTION_RELAXATION := 0.55
+## Along-rope velocity matching for a mass-coupled end (see Rope3D.lift_coupling):
+## an inextensible rope forces both ends to share their along-rope velocity, and
+## enforcing it removes the bounce a heavy hung load otherwise sits in. 1.0 =
+## full match; the perpendicular swing is left free.
+const LIFT_COUPLING := 1.0
 const MAX_LEVER_ARM_M := 120.0
 const LIFT_SKIN_M := 0.004
 const SEED_LIFT_ATTEMPTS := 3
@@ -108,7 +113,9 @@ static func step(
 	backing_a: Dictionary = {},
 	backing_b: Dictionary = {},
 	break_force_n: float = 0.0,
-	collide_world: bool = true
+	collide_world: bool = true,
+	couple_mass_a: float = 0.0,
+	couple_mass_b: float = 0.0
 ) -> Dictionary:
 	var result := {
 		"tension_n": 0.0,
@@ -131,10 +138,12 @@ static func step(
 		# (the re-seed above only happens when the particle count itself moves).
 		sim.set_rest_length(rest_length_m)
 	sim.gravity = gravity
-	var pin_vel_a := _pin_velocity(body_a, anchor_a)
-	var pin_vel_b := _pin_velocity(body_b, anchor_b)
-	sim.move_pin(0, anchor_a, pin_vel_a)
-	sim.move_pin(sim.segment_count(), anchor_b, pin_vel_b)
+	var seg := sim.segment_count()
+	# A coupled end (couple_mass > 0) is a mass-carrying proxy that the rope can
+	# LIFT — the physical rope/chain case. A zero mass is a kinematic pin, which
+	# only tugs back via a reaction impulse — the electric cable case, unchanged.
+	_drive_end(sim, 0, anchor_a, body_a, couple_mass_a)
+	_drive_end(sim, seg, anchor_b, body_b, couple_mass_b)
 	if not collide_world:
 		# A cable with both ends on one body is strapped to that body, and its
 		# only collider worth fighting is that same body — which jitters on its
@@ -187,9 +196,76 @@ static func step(
 	# intra-assembly policy (or CableTensionUtil-style soft catch).
 	if body_a != null and body_a == body_b:
 		return result
-	_apply_pin_reaction(sim, 0, anchor_a, body_a, backing_a, delta)
-	_apply_pin_reaction(sim, sim.segment_count(), anchor_b, body_b, backing_b, delta)
+	_settle_end(sim, 0, anchor_a, body_a, backing_a, couple_mass_a, delta)
+	_settle_end(sim, seg, anchor_b, body_b, backing_b, couple_mass_b, delta)
 	return result
+
+
+# --- mass-coupled ends -------------------------------------------------------
+#
+# A pin only lets the rope report a tension and tug the body back with a
+# reaction impulse; it can never make the body FOLLOW the rope, so a pinned end
+# cannot be lifted. A proxy is the same particle made dynamic and given the
+# body's mass, so the rope's constraints have to hold the body up and the
+# momentum they spend is handed straight back — that is what makes a rope tow
+# and lift. couple_mass == 0 keeps the pin behaviour byte for byte.
+
+
+static func _drive_end(
+	sim: XPBDRope, index: int, anchor: Vector3, body: RigidBody3D, couple_mass: float
+) -> void:
+	var vel := _pin_velocity(body, anchor)
+	if couple_mass > 0.0 and body != null and not body.freeze:
+		if not sim.is_proxy(index):
+			sim.attach_proxy(index, maxf(couple_mass, 0.001))
+		sim.seat_proxy(index, anchor, vel)
+	else:
+		if sim.is_proxy(index):
+			sim.pin(index)
+		sim.move_pin(index, anchor, vel)
+
+
+static func _settle_end(
+	sim: XPBDRope, index: int, anchor: Vector3,
+	body: RigidBody3D, backing: Dictionary, couple_mass: float, delta: float
+) -> void:
+	if couple_mass > 0.0 and body != null and not body.freeze:
+		_apply_proxy_reaction(sim, index, anchor, body, delta)
+	else:
+		_apply_pin_reaction(sim, index, anchor, body, backing, delta)
+
+
+static func _apply_proxy_reaction(
+	sim: XPBDRope, index: int, anchor: Vector3, body: RigidBody3D, delta: float
+) -> void:
+	if body == null or body.freeze or delta <= 0.0:
+		return
+	body.sleeping = false
+	var offset := anchor - body.global_position
+	if offset.length() > MAX_LEVER_ARM_M:
+		offset = Vector3.ZERO
+	var impulse := sim.proxy_momentum(index)
+	if impulse.length_squared() > 1e-12:
+		body.apply_impulse(impulse, offset)
+	# Along-rope velocity matching: kill the along-rope bounce, keep the swing.
+	var dir := _end_dir(sim, index)
+	if dir != Vector3.ZERO:
+		var v_body := _pin_velocity(body, anchor)
+		var v_end: Vector3 = sim.velocities[index]
+		var dv := dir * (dir.dot(v_end - v_body) * LIFT_COUPLING)
+		if dv.length_squared() > 1e-12:
+			body.apply_impulse(dv * body.mass, offset)
+	# Rendered end back on the hook, whatever the stand-in did while solving.
+	sim.reseat_proxy(index, anchor)
+
+
+## Unit direction of the segment at an end — the axis tension acts along.
+static func _end_dir(sim: XPBDRope, index: int) -> Vector3:
+	var neighbour := index - 1 if index >= sim.segment_count() else index + 1
+	if neighbour < 0 or neighbour >= sim.positions.size():
+		return Vector3.ZERO
+	var d: Vector3 = sim.positions[neighbour] - sim.positions[index]
+	return d.normalized() if d.length_squared() > 1e-12 else Vector3.ZERO
 
 
 static func path(state: Dictionary) -> PackedVector3Array:

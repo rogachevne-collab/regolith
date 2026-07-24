@@ -43,6 +43,8 @@ TESTS=(
 	addons/ropes/tests/test_drape.gd
 	addons/ropes/tests/test_length_guard.gd
 	addons/ropes/tests/test_pin_reaction.gd
+	addons/ropes/tests/test_regimes.gd
+	addons/ropes/tests/test_hang_tension.gd
 )
 
 pass=0
