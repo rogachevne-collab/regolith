@@ -211,26 +211,26 @@ func _resample() -> void:
 	_submerged = 0.0
 	_wet_points.clear()
 	var world := _world()
-	if world == null:
+	# Duck-typed: production `GranularVoxelWorld` or a headless harness that
+	# exposes the same probe/mould surface (bench_granular_rover_heap).
+	if world == null or not world.has_method(&"dust_probe_many"):
 		return
 	var frame := _body.global_transform
 	_up = GravityField.resolve_up(self, _body.global_position)
 	var wet := 0
 	var sum := Vector3.ZERO
-	var granular := world as GranularVoxelWorld
-	if granular == null:
-		return
 	# Stage 4: skip 27 probes when the body box is clear of every spoil AABB.
 	if (
 		_sample_aabb_local.size.length_squared() > 0.0
-		and not granular.has_material_near(frame * _sample_aabb_local)
+		and world.has_method(&"has_material_near")
+		and not world.has_material_near(frame * _sample_aabb_local)
 	):
 		return
 	var n := _samples.size()
 	_probe_points.resize(n)
 	for i in n:
 		_probe_points[i] = frame * _samples[i]
-	granular.dust_probe_many(_probe_points, _probe_out)
+	world.dust_probe_many(_probe_points, _probe_out)
 	for i in n:
 		var probe: Vector4 = _probe_out[i]
 		if probe.w <= 0.0:
@@ -267,8 +267,12 @@ func _resample() -> void:
 ## occupies its space, so material inside it is not compacted, it is *gone*. The
 ## wheels keep the bedding floor, because a wheel really does compact.
 func _shove() -> void:
-	var world := _world() as GranularVoxelWorld
-	if world == null or _wet_points.is_empty():
+	var world := _world()
+	if (
+		world == null
+		or _wet_points.is_empty()
+		or not world.has_method(&"mould_at")
+	):
 		return
 	var travel := _body.linear_velocity
 	var lead := Vector3.ZERO
@@ -296,6 +300,7 @@ func _build_samples() -> void:
 	var box := _local_bounds()
 	if box.size.length_squared() <= 0.0:
 		return
+	_samples.clear()
 	_extent = maxf(box.size.length() * 0.25, 0.1)
 	# Displaced volume comes from here, so support tracks the size of the thing
 	# rather than a guess: a crate and a rover differ by their box and nothing
@@ -324,8 +329,9 @@ func _build_samples() -> void:
 
 
 ## Union of the body's collision shapes, in the body's own frame. Built once —
-## `get_debug_mesh` is far too slow to do per frame, and a body's shapes do not
-## move under it.
+## shapes do not move under the body. Prefer parametric AABB over
+## `get_debug_mesh()`: the mesh path is heavier and can return null headless,
+## which left GranularBody with zero samples and no coupling at all.
 func _local_bounds() -> AABB:
 	var box := AABB()
 	var started := false
@@ -333,19 +339,56 @@ func _local_bounds() -> AABB:
 		var shape_node := child as CollisionShape3D
 		if shape_node == null or shape_node.shape == null or shape_node.disabled:
 			continue
-		var mesh := shape_node.shape.get_debug_mesh()
-		if mesh == null:
+		var shape_aabb := _shape_aabb(shape_node.shape)
+		if shape_aabb.size.length_squared() <= 0.0:
 			continue
 		var local := _body.global_transform.affine_inverse() * (
 			shape_node.global_transform
 		)
-		var shape_box := local * mesh.get_aabb()
+		var shape_box := local * shape_aabb
 		if started:
 			box = box.merge(shape_box)
 		else:
 			box = shape_box
 			started = true
 	return box
+
+
+func _shape_aabb(shape: Shape3D) -> AABB:
+	if shape is BoxShape3D:
+		var size := (shape as BoxShape3D).size
+		return AABB(-size * 0.5, size)
+	if shape is SphereShape3D:
+		var radius := (shape as SphereShape3D).radius
+		return AABB(Vector3(-radius, -radius, -radius), Vector3.ONE * radius * 2.0)
+	if shape is CapsuleShape3D:
+		var capsule := shape as CapsuleShape3D
+		var radius := capsule.radius
+		var height := capsule.height
+		return AABB(
+			Vector3(-radius, -height * 0.5, -radius),
+			Vector3(radius * 2.0, height, radius * 2.0)
+		)
+	if shape is CylinderShape3D:
+		var cylinder := shape as CylinderShape3D
+		var radius := cylinder.radius
+		var height := cylinder.height
+		return AABB(
+			Vector3(-radius, -height * 0.5, -radius),
+			Vector3(radius * 2.0, height, radius * 2.0)
+		)
+	if shape is ConvexPolygonShape3D:
+		var points := (shape as ConvexPolygonShape3D).points
+		if points.is_empty():
+			return AABB()
+		var box := AABB(points[0], Vector3.ZERO)
+		for point: Vector3 in points:
+			box = box.expand(point)
+		return box
+	var mesh := shape.get_debug_mesh()
+	if mesh != null:
+		return mesh.get_aabb()
+	return AABB()
 
 
 func _find_body() -> RigidBody3D:
