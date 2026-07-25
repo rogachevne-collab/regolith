@@ -531,18 +531,15 @@ func _on_gateway_command_completed(
 
 
 func toolbar_page_count() -> int:
-	return TOOLBAR_PAGES.size()
+	return ToolToolbarService.toolbar_page_count(self)
 
 
 func toolbar_slot_label(page: int, slot: int) -> String:
-	var entry := _toolbar_entry(page, slot)
-	return PlayerHotbarBridge.slot_label(entry, _player_inventory())
+	return ToolToolbarService.toolbar_slot_label(self, page, slot)
 
 
 func _player_inventory() -> PlayerInventoryRegistry:
-	if _gateway == null:
-		return null
-	return _gateway.player_inventory()
+	return ToolToolbarService._player_inventory(self)
 
 
 func _emit_command_for_action(
@@ -774,16 +771,7 @@ func _update_toolbar_input() -> void:
 
 
 func _change_toolbar_page(delta: int) -> void:
-	var page_count := toolbar_page_count()
-	if page_count <= 0:
-		return
-	_toolbar_slot_by_page[toolbar_page] = toolbar_slot
-	var next_page := wrapi(toolbar_page + delta, 0, page_count)
-	if next_page == toolbar_page:
-		return
-	toolbar_page = next_page
-	var saved_slot: int = _toolbar_slot_by_page[toolbar_page]
-	_apply_toolbar_slot_or_first_nonempty(toolbar_page, saved_slot, false)
+	ToolToolbarService._change_toolbar_page(self, delta)
 
 
 func _apply_toolbar_slot(
@@ -791,39 +779,7 @@ func _apply_toolbar_slot(
 	slot: int,
 	emit_tool_change: bool = true
 ) -> void:
-	var entry := _toolbar_entry(page, slot)
-	if entry.is_empty():
-		return
-	toolbar_page = page
-	toolbar_slot = slot
-	_toolbar_slot_by_page[page] = slot
-	var resolved := PlayerHotbarBridge.resolve_slot_entry(
-		_player_inventory(),
-		entry
-	)
-	if resolved.is_empty():
-		return
-	var previous_tool := active_tool
-	# Picking any slot — another tool or another build block — drops the rope
-	# currently being pulled. Built ropes are untouched.
-	_reset_connect_route()
-	match StringName(resolved.get("kind", &"")):
-		&"tool_instance":
-			active_tool = StringName(resolved.get("active_tool", &""))
-		&"block":
-			active_tool = &"build"
-			var next_archetype_id := str(resolved.get("archetype_id", "frame"))
-			if next_archetype_id != selected_archetype_id:
-				selected_orientation_index = _default_orientation_for(
-					next_archetype_id
-				)
-			selected_archetype_id = next_archetype_id
-			construction_selection_changed.emit(
-				selected_archetype_id,
-				selected_orientation_index
-			)
-	if emit_tool_change and previous_tool != active_tool:
-		active_tool_changed.emit(active_tool)
+	ToolToolbarService._apply_toolbar_slot(self, page, slot, emit_tool_change)
 
 
 func _apply_toolbar_slot_or_first_nonempty(
@@ -831,172 +787,75 @@ func _apply_toolbar_slot_or_first_nonempty(
 	preferred_slot: int,
 	emit_tool_change: bool = true
 ) -> void:
-	var slot := clampi(preferred_slot, 0, TOOLBAR_SLOTS_PER_PAGE - 1)
-	if not _toolbar_entry(page, slot).is_empty():
-		_apply_toolbar_slot(page, slot, emit_tool_change)
-		return
-	for index: int in range(TOOLBAR_SLOTS_PER_PAGE):
-		if not _toolbar_entry(page, index).is_empty():
-			_apply_toolbar_slot(page, index, emit_tool_change)
-			return
+	ToolToolbarService._apply_toolbar_slot_or_first_nonempty(
+		self,
+		page,
+		preferred_slot,
+		emit_tool_change
+	)
 
 
 func _toolbar_entry(page: int, slot: int) -> Dictionary:
-	_ensure_runtime_state()
-	if page < 0 or page >= _toolbar_layout.size():
-		return {}
-	var slots: Array = _toolbar_layout[page]
-	if slot < 0 or slot >= slots.size():
-		return {}
-	var entry: Variant = slots[slot]
-	return entry if entry is Dictionary else {}
+	return ToolToolbarService._toolbar_entry(self, page, slot)
 
 
 func _canonical_toolbar_entry(page: int, slot: int) -> Dictionary:
-	if page < 0 or page >= TOOLBAR_PAGES.size():
-		return {}
-	var slots: Array = TOOLBAR_PAGES[page]
-	if slot < 0 or slot >= slots.size():
-		return {}
-	var entry: Variant = slots[slot]
-	return entry if entry is Dictionary else {}
+	return ToolToolbarService._canonical_toolbar_entry(self, page, slot)
 
 
-## Lazily builds the mutable runtime layout (a deep copy of TOOLBAR_PAGES) and
-## the per-page selected-slot memory. Safe to call repeatedly; idempotent.
 func _ensure_runtime_state() -> void:
-	if _toolbar_layout.is_empty():
-		for page: Array in TOOLBAR_PAGES:
-			var page_copy: Array = []
-			for entry: Variant in page:
-				page_copy.append(
-					(entry as Dictionary).duplicate(true)
-					if entry is Dictionary
-					else {}
-				)
-			_toolbar_layout.append(page_copy)
-		_resolve_rover_pair_slots()
-		_sync_toolbar_from_inventory()
-	if _toolbar_slot_by_page.size() != _toolbar_layout.size():
-		_toolbar_slot_by_page.resize(_toolbar_layout.size())
-		for page_index: int in range(_toolbar_slot_by_page.size()):
-			_toolbar_slot_by_page[page_index] = 0
+	ToolToolbarService._ensure_runtime_state(self)
 
 
-## Подставить в слоты-заглушки пару, испечённую визардом. Пары нет — слоты
-## остаются пустыми: лучше дырка в палитре, чем ссылка на несуществующую деталь.
 func _resolve_rover_pair_slots() -> void:
-	var pair := Slice01Archetypes.authored_wheel_pair()
-	var resolved := {
-		SUSPENSION_SLOT: str(pair.get("suspension", "")),
-		WHEEL_SLOT: str(pair.get("wheel", "")),
-	}
-	for page: Array in _toolbar_layout:
-		for slot_index: int in range(page.size()):
-			var entry: Variant = page[slot_index]
-			if not entry is Dictionary:
-				continue
-			var archetype_id := str((entry as Dictionary).get("archetype_id", ""))
-			if not resolved.has(archetype_id):
-				continue
-			var replacement := str(resolved[archetype_id])
-			if replacement.is_empty():
-				page[slot_index] = {}
-			else:
-				(entry as Dictionary)["archetype_id"] = replacement
+	ToolToolbarService._resolve_rover_pair_slots(self)
 
 
-## Latin/archetype id shown by a slot: "drill" / "weld" / archetype_id / "" for
-## empty. Reads the runtime layout so presentation reflects live remaps.
 func toolbar_slot_archetype_id(page: int, slot: int) -> String:
-	var entry := _toolbar_entry(page, slot)
-	return PlayerHotbarBridge.slot_archetype_id(entry, _player_inventory())
+	return ToolToolbarService.toolbar_slot_archetype_id(self, page, slot)
 
 
-## Whether a slot may be reassigned to a construction archetype. Empty and
-## block slots accept a remap; the drill/weld/grinder tool slots stay fixed.
 func toolbar_slot_accepts_block(page: int, slot: int) -> bool:
-	if page < 0 or slot < 0 or slot >= TOOLBAR_SLOTS_PER_PAGE:
-		return false
-	var canonical := _canonical_toolbar_entry(page, slot)
-	if canonical.is_empty():
-		return true
-	return StringName(canonical.get("type", &"")) == &"block"
+	return ToolToolbarService.toolbar_slot_accepts_block(self, page, slot)
 
 
-## Fixed tool slots accept only an instance of their original tool type. This
-## retains the existing toolbar roles while binding each slot to an owned item.
 func toolbar_slot_accepts_tool_instance(
 	page: int,
 	slot: int,
 	instance_id: String
 ) -> bool:
-	var registry := _player_inventory()
-	if registry == null or not registry.has_instance(instance_id):
-		return false
-	var canonical := _canonical_toolbar_entry(page, slot)
-	var expected_type := StringName(canonical.get("type", &""))
-	if not PlayerHotbarBridge.LEGACY_TOOL_TYPES.has(expected_type):
-		return false
-	return (
-		PlayerHotbarBridge.active_tool_for_instance(registry, instance_id)
-		== expected_type
+	return ToolToolbarService.toolbar_slot_accepts_tool_instance(
+		self,
+		page,
+		slot,
+		instance_id
 	)
 
 
-## Binds an owned tool instance to its matching fixed toolbar slot. Submits a
-## host-authoritative command; toolbar layout refreshes when inventory revision
-## advances (local flush or coop store/inventory sync).
 func assign_slot_tool_instance(
 	page: int,
 	slot: int,
 	instance_id: String
 ) -> bool:
-	if (
-		_gateway == null
-		or not toolbar_slot_accepts_tool_instance(page, slot, instance_id)
-	):
-		return false
-	_gateway.assign_player_hotbar_instance(page, slot, instance_id)
-	return true
+	return ToolToolbarService.assign_slot_tool_instance(
+		self,
+		page,
+		slot,
+		instance_id
+	)
 
 
-## Runtime slot remap (BlockPalette drag-drop target). Reassigns page/slot to a
-## construction archetype in the mutable layout copy. Refuses to overwrite the
-## fixed tool slots and unknown archetypes, so paging and the three tool slots
-## stay intact. Emits toolbar_layout_changed and, when the reassigned slot
-## is the currently selected one, re-drives selection through the SAME path used
-## by keyboard slot selection — the construction command path is unchanged.
 func assign_slot_archetype(page: int, slot: int, archetype_id: String) -> bool:
-	_ensure_runtime_state()
-	if page < 0 or page >= _toolbar_layout.size():
-		return false
-	var slots: Array = _toolbar_layout[page]
-	if slot < 0 or slot >= slots.size():
-		return false
-	if not construction_archetype_ids().has(archetype_id):
-		return false
-	if not toolbar_slot_accepts_block(page, slot):
-		return false
-	slots[slot] = {"type": &"block", "archetype_id": archetype_id}
-	toolbar_layout_revision += 1
-	toolbar_layout_changed.emit(page, slot, archetype_id)
-	if page == toolbar_page and slot == toolbar_slot:
-		_apply_toolbar_slot(page, slot, true)
-	return true
+	return ToolToolbarService.assign_slot_archetype(
+		self,
+		page,
+		slot,
+		archetype_id
+	)
 
 
 func _default_orientation_for(archetype_id: String) -> int:
-	if _gateway == null:
-		return 0
-	var archetype := _gateway.construction_archetype(archetype_id)
-	if archetype == null:
-		return 0
-	return clampi(
-		archetype.default_orientation_index,
-		0,
-		OrientationUtil.ORIENTATION_COUNT - 1
-	)
+	return ToolToolbarService._default_orientation_for(self, archetype_id)
 
 
 func _rotate_orientation(local_axis: Vector3) -> void:
@@ -1343,9 +1202,7 @@ func _simulation_world() -> SimulationWorld:
 
 
 func _aim_keys(hit: InteractionHit) -> Dictionary:
-	if hit == null:
-		return {}
-	return hit.card_keys(_simulation_world())
+	return ToolContextInteractionService._aim_keys(self, hit)
 
 
 ## The block the pending rope starts on, 0 when it starts on terrain (or when
@@ -1355,263 +1212,112 @@ func connect_pending_element_id() -> int:
 
 
 func selected_recipe_for_element(element_id: int, archetype_id: String) -> String:
-	if element_id <= 0 or archetype_id.is_empty():
-		return ""
-	var recipe_ids := RecipeCatalog.recipe_ids_for_machine(archetype_id)
-	if recipe_ids.is_empty():
-		return ""
-	_ensure_recipe_cursor(element_id, archetype_id)
-	var cursor := int(_recipe_cursor_by_element.get(element_id, 0))
-	return recipe_ids[wrapi(cursor, 0, recipe_ids.size())]
-
-
-func next_recipe_for_target(hit: InteractionHit) -> String:
-	if not _is_recipe_machine_hit(hit):
-		return ""
-	var archetype_id := str(_aim_keys(hit).get("archetype_id", ""))
-	var element_id := hit.element_id
-	var recipe_ids := RecipeCatalog.recipe_ids_for_machine(archetype_id)
-	if recipe_ids.is_empty():
-		return ""
-	_ensure_recipe_cursor(element_id, archetype_id)
-	var cursor := int(_recipe_cursor_by_element.get(element_id, 0))
-	return recipe_ids[wrapi(cursor, 0, recipe_ids.size())]
-
-
-func recipe_ids_for_target(hit: InteractionHit) -> PackedStringArray:
-	if not _is_recipe_machine_hit(hit):
-		return PackedStringArray()
-	return RecipeCatalog.recipe_ids_for_machine(
-		str(_aim_keys(hit).get("archetype_id", ""))
+	return ToolContextInteractionService.selected_recipe_for_element(
+		self,
+		element_id,
+		archetype_id
 	)
 
 
+func next_recipe_for_target(hit: InteractionHit) -> String:
+	return ToolContextInteractionService.next_recipe_for_target(self, hit)
+
+
+func recipe_ids_for_target(hit: InteractionHit) -> PackedStringArray:
+	return ToolContextInteractionService.recipe_ids_for_target(self, hit)
+
+
 func _ensure_recipe_cursor(element_id: int, archetype_id: String) -> void:
-	if _recipe_cursor_by_element.has(element_id):
-		return
-	var recipe_ids := RecipeCatalog.recipe_ids_for_machine(archetype_id)
-	if recipe_ids.is_empty():
-		return
-	var default_id := RecipeCatalog.default_recipe_for_machine(archetype_id)
-	var default_index := recipe_ids.find(default_id)
-	_recipe_cursor_by_element[element_id] = (
-		default_index if default_index >= 0 else 0
+	ToolContextInteractionService._ensure_recipe_cursor(
+		self,
+		element_id,
+		archetype_id
 	)
 
 
 func _cycle_target_recipe(hit: InteractionHit, delta: int) -> bool:
-	if not _is_recipe_machine_hit(hit) or delta == 0:
-		return false
-	var archetype_id := str(_aim_keys(hit).get("archetype_id", ""))
-	var element_id := hit.element_id
-	var recipe_ids := RecipeCatalog.recipe_ids_for_machine(archetype_id)
-	if recipe_ids.is_empty():
-		return false
-	_ensure_recipe_cursor(element_id, archetype_id)
-	var cursor := int(_recipe_cursor_by_element.get(element_id, 0))
-	_recipe_cursor_by_element[element_id] = wrapi(
-		cursor + delta,
-		0,
-		recipe_ids.size()
-	)
-	return true
+	return ToolContextInteractionService._cycle_target_recipe(self, hit, delta)
 
 
 func _is_recipe_machine_hit(hit: InteractionHit) -> bool:
-	if (
-		hit == null
-		or not hit.valid
-		or hit.target_kind != InteractionHit.KIND_SIMULATION_ELEMENT
-		or hit.distance > 4.0
-	):
-		return false
-	return str(_aim_keys(hit).get("archetype_id", "")) in ["processor", "fabricator"]
+	return ToolContextInteractionService._is_recipe_machine_hit(self, hit)
 
 
 func _try_emit_context_interaction(hit: InteractionHit) -> bool:
-	if _try_collect_world_loot(hit):
-		return true
-	if not _is_rope_tool(active_tool) and _try_open_wheel_panel(hit):
-		return true
-	if not _is_rope_tool(active_tool) and _try_open_actuator_panel(hit):
-		return true
-	if not _is_rope_tool(active_tool) and _try_open_terminal(hit):
-		return true
-	# Перед toggle_control_seat: control_terminal несёт роль ControlSeat (тот
-	# же тег, что кокпит), но не садит — стоя открывает окно. Если это не
-	# перехватить здесь, E на пульте дойдёт до toggle_control_seat и попробует
-	# посадить игрока в стационарную консоль (CONTROL-ACTIONS-V0 «Хосты бара»).
-	if not _is_rope_tool(active_tool) and _try_open_control_terminal(hit):
-		return true
-	return false
+	return ToolContextInteractionService._try_emit_context_interaction(
+		self,
+		hit
+	)
 
 
 func _ui_modal_blocks_world_interact() -> bool:
-	return UIWindowStack.any_open()
+	return ToolContextInteractionService._ui_modal_blocks_world_interact(self)
 
 
 func _try_open_actuator_panel(hit: InteractionHit) -> bool:
-	if _actuator_panel == null or not _actuator_panel.has_method("try_open_on_target"):
-		return false
-	if _ui_modal_blocks_world_interact():
-		return false
-	return bool(_actuator_panel.call("try_open_on_target", hit))
+	return ToolContextInteractionService._try_open_actuator_panel(self, hit)
 
 
 func _try_open_wheel_panel(hit: InteractionHit) -> bool:
-	if _wheel_panel == null or not _wheel_panel.has_method("try_open_on_target"):
-		return false
-	if _ui_modal_blocks_world_interact():
-		return false
-	return bool(_wheel_panel.call("try_open_on_target", hit))
+	return ToolContextInteractionService._try_open_wheel_panel(self, hit)
 
 
 func _try_open_terminal(hit: InteractionHit) -> bool:
-	if _terminal == null or not _terminal.has_method("try_open_on_target"):
-		return false
-	if _ui_modal_blocks_world_interact():
-		return false
-	return bool(_terminal.call("try_open_on_target", hit))
+	return ToolContextInteractionService._try_open_terminal(self, hit)
 
 
 func _try_open_control_terminal(hit: InteractionHit) -> bool:
-	if (
-		_control_terminal == null
-		or not _control_terminal.has_method("try_open_on_target")
-	):
-		return false
-	if _ui_modal_blocks_world_interact():
-		return false
-	return bool(_control_terminal.call("try_open_on_target", hit))
+	return ToolContextInteractionService._try_open_control_terminal(self, hit)
 
 
 func _is_terminal_target_hit(hit: InteractionHit) -> bool:
-	return not IndustryTransferUtil.terminal_store_id_for_hit(hit, _gateway).is_empty()
+	return ToolContextInteractionService._is_terminal_target_hit(self, hit)
 
 
 func _try_collect_world_loot(hit: InteractionHit) -> bool:
-	if (
-		hit == null
-		or not hit.valid
-		or hit.target_kind != InteractionHit.KIND_WORLD_LOOT
-		or hit.distance > 4.0
-	):
-		return false
-	var pile_id := hit.loot_pile_id
-	if pile_id <= 0:
-		return false
-	command_requested.emit({
-		"kind": &"collect_world_loot",
-		"source": get_parent(),
-		"target": hit.snapshot(),
-		"parameters": {
-			"pile_id": pile_id,
-			"to_store_id": PlayerIdentity.local_store_id(),
-		},
-	})
-	return true
+	return ToolContextInteractionService._try_collect_world_loot(self, hit)
 
 
 func _try_enqueue_target_recipe(hit: InteractionHit) -> bool:
-	if not _is_recipe_machine_hit(hit):
-		return false
-	if Input.is_key_pressed(KEY_SHIFT):
-		return _try_dequeue_target_recipe(hit)
-	var recipe_id := next_recipe_for_target(hit)
-	if recipe_id.is_empty():
-		return false
-	var element_id := hit.element_id
-	command_requested.emit({
-		"kind": &"enqueue_recipe",
-		"source": get_parent(),
-		"target": hit.snapshot(),
-		"parameters": {
-			"element_id": element_id,
-			"recipe_id": recipe_id,
-		},
-	})
-	return true
+	return ToolContextInteractionService._try_enqueue_target_recipe(self, hit)
 
 
 func _try_dequeue_target_recipe(hit: InteractionHit) -> bool:
-	if not _is_recipe_machine_hit(hit):
-		return false
-	var element_id := hit.element_id
-	command_requested.emit({
-		"kind": &"dequeue_recipe",
-		"source": get_parent(),
-		"target": hit.snapshot(),
-		"parameters": {
-			"element_id": element_id,
-		},
-	})
-	return true
+	return ToolContextInteractionService._try_dequeue_target_recipe(self, hit)
 
 
 func _is_actuator_target_hit(hit: InteractionHit) -> bool:
-	if (
-		hit == null
-		or not hit.valid
-		or hit.target_kind != InteractionHit.KIND_SIMULATION_ELEMENT
-		or hit.distance > 4.5
-	):
-		return false
-	var keys := _aim_keys(hit)
-	return (
-		keys.has("piston_joint_id")
-		or keys.has("rotor_joint_id")
-		or keys.has("hinge_joint_id")
-	)
+	return ToolContextInteractionService._is_actuator_target_hit(self, hit)
 
 
 func _actuator_hit_joint_id(hit: InteractionHit) -> int:
-	var keys := _aim_keys(hit)
-	return HudActuatorTuneUtil.joint_id(keys)
+	return ToolContextInteractionService._actuator_hit_joint_id(self, hit)
 
 
 func _actuator_hit_forward_velocity(hit: InteractionHit) -> float:
-	var keys := _aim_keys(hit)
-	if keys.has("rotor_joint_id"):
-		return float(keys.get("rotor_forward_velocity_rad_s", 0.5))
-	if keys.has("hinge_joint_id"):
-		return float(keys.get("hinge_forward_velocity_rad_s", 0.5))
-	return float(keys.get("piston_extend_velocity_mps", 0.25))
+	return ToolContextInteractionService._actuator_hit_forward_velocity(
+		self,
+		hit
+	)
 
 
 func _actuator_hit_reverse_velocity(hit: InteractionHit) -> float:
-	var keys := _aim_keys(hit)
-	if keys.has("rotor_joint_id"):
-		return float(keys.get("rotor_reverse_velocity_rad_s", 0.5))
-	if keys.has("hinge_joint_id"):
-		return float(keys.get("hinge_reverse_velocity_rad_s", 0.5))
-	return float(keys.get("piston_retract_velocity_mps", 0.25))
+	return ToolContextInteractionService._actuator_hit_reverse_velocity(
+		self,
+		hit
+	)
 
 
 func _try_actuator_extend(hit: InteractionHit) -> bool:
-	return _emit_actuator_target(
-		hit,
-		SimulationMotorState.ControlMode.VELOCITY,
-		_actuator_hit_forward_velocity(hit),
-		true
-	)
+	return ToolContextInteractionService._try_actuator_extend(self, hit)
 
 
 func _try_actuator_retract(hit: InteractionHit) -> bool:
-	return _emit_actuator_target(
-		hit,
-		SimulationMotorState.ControlMode.VELOCITY,
-		-_actuator_hit_reverse_velocity(hit),
-		true
-	)
+	return ToolContextInteractionService._try_actuator_retract(self, hit)
 
 
 func _try_actuator_stop(hit: InteractionHit) -> bool:
-	return _emit_actuator_target(
-		hit,
-		SimulationMotorState.ControlMode.STOP,
-		0.0,
-		true
-	)
+	return ToolContextInteractionService._try_actuator_stop(self, hit)
 
 
 func _emit_actuator_target(
@@ -1620,63 +1326,17 @@ func _emit_actuator_target(
 	target_velocity_mps: float,
 	enabled: bool
 ) -> bool:
-	if not _is_actuator_target_hit(hit):
-		return false
-	var joint_id := _actuator_hit_joint_id(hit)
-	if joint_id <= 0:
-		return false
-	var keys := _aim_keys(hit)
-	var joint_ids: Array[int] = [joint_id]
-	if (
-		actuator_chain_sync
-		and keys.has("piston_joint_id")
-		and not keys.has("rotor_joint_id")
-		and not keys.has("hinge_joint_id")
-	):
-		var assembly_id := hit.assembly_id
-		var world := _simulation_world()
-		if world != null and assembly_id > 0:
-			joint_ids = PistonPlacementUtil.piston_joint_ids_in_assembly(
-				world,
-				assembly_id
-			)
-			if joint_ids.is_empty():
-				joint_ids = [joint_id]
-	for target_joint_id: int in joint_ids:
-		command_requested.emit({
-			"kind": &"set_actuator_target",
-			"source": get_parent(),
-			"target": hit.snapshot(),
-			"parameters": {
-				"joint_id": target_joint_id,
-				"mode": mode,
-				"target_velocity_mps": target_velocity_mps,
-				"enabled": enabled,
-			},
-		})
-	return true
+	return ToolContextInteractionService._emit_actuator_target(
+		self,
+		hit,
+		mode,
+		target_velocity_mps,
+		enabled
+	)
 
 
 func toggle_actuator_motor(hit: InteractionHit) -> bool:
-	if not _is_actuator_target_hit(hit):
-		return false
-	var joint_id := _actuator_hit_joint_id(hit)
-	if joint_id <= 0:
-		return false
-	var keys := _aim_keys(hit)
-	var enabled_now := true
-	if keys.has("piston_joint_id"):
-		enabled_now = bool(keys.get("piston_motor_enabled", true))
-	elif keys.has("rotor_joint_id"):
-		enabled_now = bool(keys.get("rotor_motor_enabled", true))
-	elif keys.has("hinge_joint_id"):
-		enabled_now = bool(keys.get("hinge_motor_enabled", true))
-	return _emit_actuator_target(
-		hit,
-		SimulationMotorState.ControlMode.STOP,
-		0.0,
-		not enabled_now
-	)
+	return ToolContextInteractionService.toggle_actuator_motor(self, hit)
 
 
 func _target_for_action(action: StringName) -> InteractionHit:
@@ -1724,62 +1384,19 @@ func _target_for_action(action: StringName) -> InteractionHit:
 
 
 func _sync_inventory_toolbar_if_needed() -> void:
-	if _gateway == null:
-		return
-	var revision := _gateway.player_inventory_revision()
-	if revision == _inventory_revision:
-		return
-	_inventory_revision = revision
-	_sync_toolbar_from_inventory()
-	toolbar_layout_revision += 1
-	_apply_toolbar_slot_or_first_nonempty(
-		toolbar_page,
-		toolbar_slot,
-		true
-	)
+	ToolToolbarService._sync_inventory_toolbar_if_needed(self)
 
 
 func _sync_toolbar_from_inventory() -> void:
-	_ensure_runtime_state()
-	var registry := _player_inventory()
-	if registry == null:
-		return
-	PlayerHotbarBridge.apply_registry_to_layout(
-		registry,
-		_toolbar_layout,
-		TOOLBAR_PAGES
-	)
+	ToolToolbarService._sync_toolbar_from_inventory(self)
 
 
 func _active_slot_resolved() -> Dictionary:
-	return PlayerHotbarBridge.resolve_slot_entry(
-		_player_inventory(),
-		_toolbar_entry(toolbar_page, toolbar_slot)
-	)
+	return ToolToolbarService._active_slot_resolved(self)
 
 
 func _active_tool_is_equipped() -> bool:
-	match active_tool:
-		&"drill", &"weld", &"grinder", &"connect", &"rope":
-			var resolved := _active_slot_resolved()
-			if StringName(resolved.get("kind", &"")) != &"tool_instance":
-				return false
-			var instance_id := str(resolved.get("instance_id", ""))
-			if instance_id.is_empty():
-				return bool(resolved.get("legacy", false))
-			var registry := _player_inventory()
-			return (
-				registry != null
-				and registry.has_instance(instance_id)
-				and PlayerHotbarBridge.slot_owns_instance(
-					registry,
-					toolbar_page,
-					toolbar_slot,
-					instance_id
-				)
-			)
-		_:
-			return true
+	return ToolToolbarService._active_tool_is_equipped(self)
 
 
 func _transition(next_state: ActionState) -> void:
