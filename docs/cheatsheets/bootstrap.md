@@ -75,8 +75,8 @@ auto_accept_quit / save_path / loading UI
 
 | Файл | строк |
 |---|---:|
-| `bootstrap.gd` | TBD |
-| `bootstrap_persistence_service.gd` | TBD |
-| `bootstrap_terrain_setup_service.gd` | TBD |
-| `bootstrap_demo_spawn_service.gd` | TBD |
-| `bootstrap_spawn_settle_service.gd` | TBD |
+| `bootstrap.gd` | 805 |
+| `bootstrap_persistence_service.gd` | 245 |
+| `bootstrap_terrain_setup_service.gd` | 306 |
+| `bootstrap_demo_spawn_service.gd` | 327 |
+| `bootstrap_spawn_settle_service.gd` | 569 |
