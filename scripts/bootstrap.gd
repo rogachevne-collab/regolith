@@ -273,7 +273,7 @@ func _ready() -> void:
 		## Equirectangular heightmap fallback: keep spawn off the ±Y pole
 		## singularity where all longitude texels converge into a pinch/star.
 		## The analytic generator has no poles — spawn anywhere.
-		_player_spawn_hint = _away_from_pole(_player_spawn_hint).normalized()
+		_player_spawn_hint = BootstrapTerrainSetupService.away_from_pole(_player_spawn_hint).normalized()
 	## Point VoxelViewer at the saved spot from frame 0 so stream isn't at
 	## the default spawn while we still intend to load.
 	var early_saved := _peek_saved_player_position()
@@ -311,8 +311,8 @@ func _physics_process(_delta: float) -> void:
 
 
 func _process(delta: float) -> void:
-	_update_streaming_budget()
-	_update_far_impostor()
+	BootstrapTerrainSetupService.update_streaming_budget(self)
+	BootstrapTerrainSetupService.update_far_impostor(self)
 	if _world_ready:
 		_autosave_accum += delta
 		if _autosave_accum >= AUTOSAVE_INTERVAL_S:
@@ -484,112 +484,19 @@ func _exit_tree() -> void:
 
 
 func _configure_terrain() -> void:
-	if not TerrainCompat.is_terrain(_terrain):
-		push_error("Moon experiment terrain node is not VoxelTerrain/VoxelLodTerrain")
-		return
-	if _terrain is VoxelLodTerrain:
-		var lod := _terrain as VoxelLodTerrain
-		## Docs Generators→Planet: graph resource and/or knobs (see exports).
-		lod.generator = _make_planet_generator()
-		## Clipbox, not the default legacy octree. The octree system supports
-		## exactly ONE viewer: `VoxelLodTerrain::get_local_viewer_pos` walks every
-		## registered viewer and keeps whichever comes last ("TODO Support for
-		## multiple viewers, this is a placeholder implementation"). At the time
-		## this bit, `GranularVoxelRegionView` created a VoxelViewer per loose
-		## material region (it meshes natively now and needs none), so the moon's
-		## LODs followed a coin flip: settle around the sand, and LOD0 under the
-		## player never gets requested at all (stats stayed blocked=0, io=0 while
-		## digs returned `terrain_unavailable` and LOD1/2 colliders carried the
-		## player). Clipbox pairs viewers individually, which is what it was added
-		## upstream to do — and it stays: nothing guarantees the player's viewer
-		## remains the only one.
-		lod.streaming_system = VoxelLodTerrain.STREAMING_SYSTEM_CLIPBOX
-		## ORDER MATTERS. `set_voxel_bounds` snaps the box to the octree size
-		## (`mesh_block_size << (lod_count - 1)`) as it is at assignment time.
-		## `set_mesh_block_size` re-snaps, but returns early when the value is
-		## already the default (16), and `set_lod_count` never re-snaps at all.
-		## Assigned first, the bounds get snapped against the *default* octree
-		## size and keep it: ±11888 instead of a multiple of 8192. That, not the
-		## arithmetic, is what made `32 + lod_count 10` cut the moon into cubes.
-		lod.mesh_block_size = MoonGeometry.DEFAULT_MESH_BLOCK_SIZE
-		lod.lod_count = MoonGeometry.DEFAULT_LOD_COUNT
-		lod.voxel_bounds = MoonGeometry.voxel_bounds_aabb()
-		lod.view_distance = MoonGeometry.DEFAULT_VIEW_DISTANCE_VOXELS
-		lod.generate_collisions = true
-		lod.collision_lod_count = SPAWN_COLLISION_LOD_COUNT
-		lod.lod_distance = MoonGeometry.DEFAULT_LOD_DISTANCE
-		## Clipbox splits what octree took from one knob: `lod_distance` is LOD0
-		## reach (and, streaming on, how far edits are allowed), this one is
-		## every LOD above it.
-		lod.secondary_lod_distance = MoonGeometry.DEFAULT_SECONDARY_LOD_DISTANCE
-		lod.lod_fade_duration = TERRAIN_LOD_FADE_DURATION_S
-		## Detail normalmaps need generator series generation, which script
-		## generators don't support (VT asserts per tile). Graph fallback keeps
-		## them; native path relies on real far-LOD geometry for now.
-		lod.normalmap_enabled = not _generator_is_native
-		lod.normalmap_begin_lod_index = TERRAIN_NORMALMAP_BEGIN_LOD
-		lod.normalmap_tile_resolution_min = 4
-		lod.normalmap_tile_resolution_max = 16
-		lod.cache_generated_blocks = true
-		lod.threaded_update_enabled = true
-		## Trimesh cooking is the expensive half of a ring update, and every dig
-		## re-cooks the blocks it touched. Default 0 re-cooks immediately, one
-		## edit at a time; a delay coalesces a burst (drill held down, dozer
-		## blade pushing) into fewer cooks. Cost is colliders lagging the visual
-		## mesh by that long — keep it under a frame or two of gameplay.
-		lod.collision_update_delay = TERRAIN_COLLISION_UPDATE_DELAY_MS
-		_apply_terrain_debug_draw(lod)
-	if _terrain.material != null:
-		var mat: Material = (_terrain.material as Material).duplicate()
-		_terrain.material = mat
-		if mat is ShaderMaterial:
-			var shader_mat := mat as ShaderMaterial
-			_apply_planet_terrain_shader_params(shader_mat)
-	_terrain.scale = Vector3.ONE * MoonGeometry.VOXEL_SCALE
-	_ensure_player_viewer_for_planet()
+	BootstrapTerrainSetupService.configure_terrain(self)
 
 
-## The four flags that answer "why is there no LOD0 here": which viewer the
-## streamer is actually serving, and where mesh and collision each exist. The
-## other eight flags stay off — they draw per-block boxes across the whole
-## Ø19 km shell and bury the ones worth reading.
 func _apply_terrain_debug_draw(lod: VoxelLodTerrain) -> void:
-	if not debug_terrain_draw:
-		return
-	lod.debug_draw_enabled = true
-	lod.debug_draw_viewer_clipboxes = true
-	lod.debug_draw_loaded_visual_and_collision_blocks = true
-	lod.debug_draw_volume_bounds = true
-	lod.debug_draw_edit_boxes = true
-	print("MoonExperiment: terrain debug draw on (clipboxes, blocks, bounds, edits)")
+	BootstrapTerrainSetupService.apply_terrain_debug_draw(self, lod)
 
 
 func _apply_planet_terrain_shader_params(shader_mat: ShaderMaterial) -> void:
-	shader_mat.set_shader_parameter("u_radial_up", 1.0)
-	shader_mat.set_shader_parameter("u_planet_radius", MoonGeometry.active_surface_radius_m())
-	## Biome/macro are meter-periodic on dir*R inside the shader — do not shrink
-	## u_biome_scale / u_large_scale with diameter (that flattened tri-biome into
-	## one soup on Ø19 km). u_detail_scale stays world-triplanar metres.
-	print(
-		"MoonExperiment: terrain shader radial R=%.0f m"
-		% MoonGeometry.active_surface_radius_m()
-	)
-	_apply_brightness_map(shader_mat)
+	BootstrapTerrainSetupService.apply_planet_terrain_shader_params(self, shader_mat)
 
 
-## Display-only albedo brightness (dark maria + fresh-crater ray systems)
-## baked natively (~1 s MT at startup); SDF untouched — no GENERATOR_VERSION.
 func _apply_brightness_map(shader_mat: ShaderMaterial) -> void:
-	if _native_generator == null or not _native_generator.has_method("bake_brightness_map"):
-		return
-	var img: Image = _native_generator.bake_brightness_map(1024, 512)
-	if img == null:
-		push_warning("MoonExperiment: brightness map bake failed")
-		return
-	var tex := ImageTexture.create_from_image(img)
-	shader_mat.set_shader_parameter("u_moon_brightness", tex)
-	shader_mat.set_shader_parameter("u_moon_brightness_on", 1.0)
-	print("MoonExperiment: albedo brightness map applied (maria + rays)")
+	BootstrapTerrainSetupService.apply_brightness_map(self, shader_mat)
 
 
 func _make_planet_generator() -> VoxelGenerator:
@@ -599,7 +506,7 @@ func _make_planet_generator() -> VoxelGenerator:
 			_generator_is_native = true
 			_native_generator = native
 			print("MoonExperiment: native SDF generator — %s" % native.describe())
-			_print_nearest_cave_entrances(native)
+			BootstrapTerrainSetupService.print_nearest_cave_entrances(self, native)
 			return native
 		push_warning(
 			"MoonExperiment: native SDF generator unavailable; falling back"
@@ -634,59 +541,15 @@ func _make_planet_generator() -> VoxelGenerator:
 
 
 func _schedule_map_heightmap_bake() -> void:
-	## Only when the native generator owns terrain: the heightmap fallback
-	## already baked a full-res EXR synchronously (don't race its file).
-	if not _generator_is_native or _map_heightmap_scheduled:
-		return
-	_map_heightmap_scheduled = true
-	if FileAccess.file_exists(MoonHeightmapUtil.heightmap_path()):
-		return
-	WorkerThreadPool.add_task(
-		func() -> void:
-			MoonHeightmapUtil.ensure_heightmap(
-				MAP_HEIGHTMAP_SIZE.x, MAP_HEIGHTMAP_SIZE.y
-			),
-		false,
-		"Moon map heightmap bake"
-	)
+	BootstrapTerrainSetupService.schedule_map_heightmap_bake(self)
 
 
 func _away_from_pole(dir: Vector3) -> Vector3:
-	## Tilt near-pole spawn directions down to ~37° latitude, same longitude.
-	var n := dir.normalized()
-	if absf(n.y) <= 0.7:
-		return n
-	var horiz := Vector2(n.x, n.z)
-	if horiz.length() < 0.001:
-		horiz = Vector2(1.0, 0.0)
-	horiz = horiz.normalized()
-	const LAT_Y := 0.6  # sin(~37°)
-	var ring := sqrt(maxf(0.0, 1.0 - LAT_Y * LAT_Y))
-	return Vector3(horiz.x * ring, signf(n.y) * LAT_Y, horiz.y * ring).normalized()
+	return BootstrapTerrainSetupService.away_from_pole(dir)
 
 
-## Debug aid: caves cover ~0.1% of the surface — without coordinates nobody
-## finds one. Prints the three skylights nearest the current player position.
 func _print_nearest_cave_entrances(native: Object) -> void:
-	if not native.has_method("cave_entrances"):
-		return
-	var entrances: PackedVector3Array = native.cave_entrances()
-	if entrances.is_empty():
-		return
-	var origin := Vector3.UP * MoonGeometry.radius_voxels()
-	if _player != null:
-		origin = _player.global_position
-	var by_dist: Array = []
-	for p in entrances:
-		by_dist.append([origin.distance_to(p), p])
-	by_dist.sort_custom(func(a, b): return a[0] < b[0])
-	print("MoonExperiment: %d caves generated" % entrances.size())
-	for i in mini(3, by_dist.size()):
-		var entry: Array = by_dist[i]
-		print(
-			"MoonExperiment: cave skylight %d — %.0f m away at %v"
-			% [i + 1, entry[0], entry[1]]
-		)
+	BootstrapTerrainSetupService.print_nearest_cave_entrances(self, native)
 
 
 func _configure_dig_stream() -> void:
@@ -1291,124 +1154,27 @@ func _place_when_ground_exists() -> void:
 
 
 func _ensure_player_viewer_for_planet() -> void:
-	var viewer := _find_voxel_viewer()
-	if viewer == null:
-		return
-	viewer.requires_collisions = true
-	viewer.requires_visuals = true
-	## Effective range is min(terrain, viewer) — keep both at planet budget.
-	viewer.view_distance = MoonGeometry.DEFAULT_VIEW_DISTANCE_VOXELS
-	_player_camera = _player.get_node_or_null("Camera") as Camera3D
-	_applied_view_distance = MoonGeometry.DEFAULT_VIEW_DISTANCE_VOXELS
+	BootstrapTerrainSetupService.ensure_player_viewer_for_planet(self)
 
 
 func _set_spawn_streaming_focus(enabled: bool) -> void:
-	## Tight VD during spawn: local mesh/collider first. Full shell after ready.
-	if not (_terrain is VoxelLodTerrain):
-		return
-	var lod := _terrain as VoxelLodTerrain
-	var viewer := _find_voxel_viewer()
-	var vd := (
-		SPAWN_FOCUS_VIEW_DISTANCE_VOXELS
-		if enabled
-		else MoonGeometry.DEFAULT_VIEW_DISTANCE_VOXELS
-	)
-	lod.view_distance = vd
-	if viewer != null:
-		viewer.view_distance = vd
-	_applied_view_distance = vd
-	if enabled:
-		print(
-			"MoonExperiment: spawn streaming focus vd=%d collision_lod=%d"
-			% [vd, SPAWN_COLLISION_LOD_COUNT]
-		)
+	BootstrapTerrainSetupService.set_spawn_streaming_focus(self, enabled)
 
 
 func _find_voxel_viewer() -> VoxelViewer:
-	## On foot: child of player. In a vehicle: reparented to the world root.
-	if _player != null:
-		var under_player := _player.get_node_or_null("VoxelViewer") as VoxelViewer
-		if under_player != null:
-			return under_player
-	return get_node_or_null("VoxelViewer") as VoxelViewer
+	return BootstrapTerrainSetupService.find_voxel_viewer(self)
 
 
 func _update_streaming_budget() -> void:
-	## Surface: keep the near-field shell small enough that LOD0 under the
-	## viewer can finish. Altitude: blend toward |cam|+R so the planet LODs
-	## instead of unloading. On Ø19 km, raw |cam|+R on foot was ~22k voxels —
-	## the streamer never completed LOD0 outside the spawn-focus bake, so
-	## collision_lod_count>1 was the only thing holding the player up.
-	if not _world_ready:
-		return
-	if not (_terrain is VoxelLodTerrain):
-		return
-	if _player_camera == null:
-		if _player != null:
-			_player_camera = _player.get_node_or_null("Camera") as Camera3D
-		if _player_camera == null:
-			return
-	var vd := MoonGeometry.view_distance_voxels_for_camera_distance(
-		_player_camera.global_position.length()
-	)
-	if vd == _applied_view_distance:
-		return
-	_applied_view_distance = vd
-	(_terrain as VoxelLodTerrain).view_distance = vd
-	var viewer := _find_voxel_viewer()
-	if viewer != null:
-		viewer.view_distance = vd
+	BootstrapTerrainSetupService.update_streaming_budget(self)
 
 
 func _configure_far_impostor() -> void:
-	## Cheap sphere kept inside Camera.far, scaled to the real angular size.
-	## Extreme Camera.far is not an option — breaks directional light culling.
-	_far_impostor = MeshInstance3D.new()
-	_far_impostor.name = "MoonFarImpostor"
-	var sphere := SphereMesh.new()
-	sphere.radius = MoonGeometry.active_surface_radius_m()
-	sphere.height = MoonGeometry.active_surface_radius_m() * 2.0
-	sphere.radial_segments = 48
-	sphere.rings = 24
-	_far_impostor.mesh = sphere
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.55, 0.55, 0.52)
-	mat.roughness = 0.96
-	mat.metallic = 0.0
-	_far_impostor.material_override = mat
-	_far_impostor.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	_far_impostor.visible = false
-	add_child(_far_impostor)
-	if _player_camera == null and _player != null:
-		_player_camera = _player.get_node_or_null("Camera") as Camera3D
+	BootstrapTerrainSetupService.configure_far_impostor(self)
 
 
 func _update_far_impostor() -> void:
-	if _far_impostor == null:
-		return
-	if _player_camera == null:
-		if _player != null:
-			_player_camera = _player.get_node_or_null("Camera") as Camera3D
-		if _player_camera == null:
-			_far_impostor.visible = false
-			return
-	var cam_pos := _player_camera.global_position
-	var real_dist := cam_pos.length()
-	if real_dist < MoonGeometry.FAR_IMPOSTOR_START_M or real_dist < 1.0:
-		_far_impostor.visible = false
-		return
-	var visual_dist: float = minf(
-		MoonGeometry.FAR_IMPOSTOR_VISUAL_DIST_M,
-		_player_camera.far * 0.45,
-	)
-	if visual_dist < 1.0:
-		_far_impostor.visible = false
-		return
-	## Angular size match: R_vis / d_vis = R_real / d_real → scale = d_vis / d_real.
-	var toward_planet := -cam_pos / real_dist
-	_far_impostor.global_position = cam_pos + toward_planet * visual_dist
-	_far_impostor.scale = Vector3.ONE * (visual_dist / real_dist)
-	_far_impostor.visible = true
+	BootstrapTerrainSetupService.update_far_impostor(self)
 
 
 func _peek_saved_player_position() -> Vector3:
