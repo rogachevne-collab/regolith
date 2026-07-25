@@ -22,8 +22,7 @@
 - Убирать билинейную интерполяцию в `dust_column_at` (она против «лестницы»,
   см. комментарий в коде).
 - Трогать `physics_interpolation` (уже сделано в `b9e0b73`).
-- Трогать `scripts/shield_drive.gd`, `docs/plans/SHIELD-SPIKE-1.md`,
-  `scripts/bench_*oracle*` — там работает другой агент.
+- Трогать `scripts/bench_*oracle*` — там работает другой агент.
 - `git stash` / `git stash pop` / `reset --hard` / `checkout .` / `restore .`
   / `clean`. Коммитить — только если человек явно попросил.
 
