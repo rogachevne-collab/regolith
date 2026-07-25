@@ -14,6 +14,10 @@ static var impact_service: ImpactResolverService
 ## needs no knowledge of archetypes and costs nothing where there is no
 ## material to stand in.
 func _ready() -> void:
+	## Awake assembly + physics_interpolation ON is the unpark FPS cliff:
+	## diagnosis bench — driving 34 FPS → 94 FPS with tree interp disabled,
+	## while script/Jolt stay ~flat. Inherit OFF for the whole rigid subtree.
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	for child in get_children():
 		if child is GranularBody:
 			return

@@ -379,7 +379,7 @@ control_terminal_toggle={
 
 3d/physics_engine="Jolt Physics"
 3d/default_gravity=1.62
-common/physics_interpolation=true
+common/physics_interpolation=false
 
 [rendering]
 
