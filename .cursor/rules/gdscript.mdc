@@ -3,7 +3,7 @@ description: Правила для GDScript геймплея
 globs: ["scripts/**/*.gd"]
 ---
 Домен: индекс терминов в начале docs/PHYSICAL-LANGUAGE.md — целиком не читать.
-Spawn: SDF + physics raycast + settle (bootstrap.gd). Lunar gravity 1.62 — не gravity_scale.
+Spawn: SDF + physics raycast + settle — `docs/cheatsheets/bootstrap.md` (R5). Lunar gravity 1.62 — не gravity_scale.
 Верификация: логика ядра — ./tests/run_one.sh test_*; геймплей/HUD — в запущенной игре (AGENTS.md).
 Минимальный diff, без over-engineering. VFX: docs/cheatsheets/vfx-authoring.md, без скриптов в scenes/vfx/.
 Перф (AGENTS.md R9): в _process/_physics_process — не опрос каждый тик (сигналы), производное кэшируй+инвалидируй по ревизии, UI трогает свой объект, не пересчёт по миру. Но сначала замерь — холодный код не оптимизируй.

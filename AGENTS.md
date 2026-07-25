@@ -23,15 +23,30 @@ Rule 1 - отвечай коротко, по делу и понятным язы
 Задачи на kernel/runtime/`SimulationWorld`: сначала
 `docs/cheatsheets/simulation-world.md` — не читать монолит целиком.
 
+Задачи на строительные команды (place/weld/dismantle/terrain attach): сначала
+`docs/cheatsheets/construction-service.md`.
+
+Задачи на `WorldCommandGateway` / игровые команды: сначала
+`docs/cheatsheets/world-command-gateway.md`.
+
+Задачи на physics projection / Jolt bodies / wheels / actuators / канаты: сначала
+`docs/cheatsheets/physics-projection.md`.
+
+Задачи на K-пульт / control terminal UI: сначала
+`docs/cheatsheets/control-terminal.md`.
+
+Задачи на `ToolController` / toolbar / context E: сначала
+`docs/cheatsheets/tool-controller.md`.
+
 Баланс (стоимость/масса блоков, items, recipes, буры, актуаторы, electric):
 `resources/balance/game_balance.json` + `docs/cheatsheets/game-balance.md` —
 не размазывать числа по GDScript-константам.
 
 Операция анти-godobject (механическая нарезка монолитов): контракт заморозки —
-`docs/plans/ANTIGOD-CONTRACT-FREEZE.md`. Cheatsheet'ы волны —
+`docs/plans/ANTIGOD-CONTRACT-FREEZE.md`. Cheatsheet'ы extract'ов —
 `docs/cheatsheets/world-command-gateway.md`, `physics-projection.md`,
-`control-terminal.md`, `bootstrap.md` (появятся по мере extract'ов).
-Поведение не менять.
+`control-terminal.md`, `construction-service.md`, `tool-controller.md`,
+`bootstrap.md`. Поведение не менять.
 
 Задачи на bootstrap / spawn / terrain streaming / coop persistence: сначала
 `docs/cheatsheets/bootstrap.md` — не читать монолит целиком.
@@ -49,7 +64,8 @@ Rule 1 - отвечай коротко, по делу и понятным язы
 - **R4** — VFX-композиции декларативные (`.tscn` без логики в `scenes/vfx/`).
   Шпаргалки: `docs/cheatsheets/vfx-design.md`, `vfx-authoring.md`.
 - **R5** — spawn на voxel terrain: SDF + physics collider + settle (см.
-  `bootstrap.gd`); не телепортировать игрока на y=0 до готовности коллизии.
+  `docs/cheatsheets/bootstrap.md`); не телепортировать игрока на y=0 до
+  готовности коллизии.
 - **R6** — внешние зависимости: Voxel Tools (MIT) и Ropes! (см. R10); macOS
   binaries в git, остальные платформы — bootstrap из README.
 - **R10** — `addons/ropes/` — **чужой код, заходить нельзя.** Плагин Ropes!
@@ -66,9 +82,10 @@ Rule 1 - отвечай коротко, по делу и понятным язы
   плагина (Zylann). Не выводить API координат из кода проекта; верифицировать
   aim/spawn/бур в запущенной игре.
 - **R8** — задачи с физикой / Jolt / `RigidBody3D` / joints / constraints /
-  physics projection / simulation boundary: сначала `docs/PHYSICAL-LANGUAGE.md`
-  («Граница владения») и релевантная PoC-спека (`docs/specs/`), затем
-  **официальная дока Godot** ([Using Jolt Physics](https://docs.godotengine.org/en/stable/tutorials/physics/using_jolt_physics.html),
+  physics projection / simulation boundary: сначала
+  `docs/cheatsheets/physics-projection.md`, затем
+  `docs/PHYSICAL-LANGUAGE.md` («Граница владения») и релевантная PoC-спека
+  (`docs/specs/`), затем **официальная дока Godot** ([Using Jolt Physics](https://docs.godotengine.org/en/stable/tutorials/physics/using_jolt_physics.html),
   [Physics introduction](https://docs.godotengine.org/en/stable/tutorials/physics/physics_introduction.html))
   и **веб-поиск** по конкретному поведению (встроенный Jolt 5.6 в Godot 4.8,
   не legacy extension `godot-jolt`; при необходимости — [JoltPhysics](https://jrouwe.github.io/JoltPhysics/),
@@ -114,7 +131,7 @@ Rule 1 - отвечай коротко, по делу и понятным язы
 | правка `.gdshader` | `./run.sh --headless res://scenes/main.tscn` без ошибок компиляции |
 | правка VFX `.tscn` | проверка в игре + соответствие `docs/cheatsheets/vfx-*.md` |
 | voxel terrain / SDF / raycast / scale | `docs/cheatsheets/voxel-tools.md` + сверка с докой плагина; проверка в игре (spawn, aim, drill) |
-| физика / Jolt / projection / constraints | `PHYSICAL-LANGUAGE.md` («Граница владения») + релевантная спека; сверка с [докой Godot Jolt](https://docs.godotengine.org/en/stable/tutorials/physics/using_jolt_physics.html) и веб-поиском |
+| физика / Jolt / projection / constraints | `docs/cheatsheets/physics-projection.md` + `PHYSICAL-LANGUAGE.md` («Граница владения») + релевантная спека; сверка с [докой Godot Jolt](https://docs.godotengine.org/en/stable/tutorials/physics/using_jolt_physics.html) и веб-поиском |
 | новая GDExtension-зависимость | строка в README (bootstrap) + лицензия |
 | поведение верёвок/кабелей изменилось со стороны плагина | правка и её проверка — в репозитории `Y:\ropes` (`bash addons/ropes/tests/run_tests.sh`); здесь — сверить фасад по `docs/cheatsheets/ropes-seam.md` и посмотреть кабель в игре |
 | перед «готово»/коммитом | полный `./tests/run_tests.sh` — только если трогали ядро (см. «Верификация»); иначе по типу изменения выше |

@@ -72,6 +72,6 @@
  `tool.toolbar_layout_changed`. Подписки (`command_requested.connect`,
  `command_completed.connect`) остаются в `_ready` узла.
 - Внешние вызывающие, которые ломать нельзя: `construction_archetype_ids()` —
- `world_command_gateway.gd`, `terrain_anchor_probe.gd`, `hud_palette.gd`;
+ `scripts/world_command_gateway.gd`, `terrain_anchor_probe.gd`, `hud_palette.gd`;
  `TOOLBAR_SLOTS_PER_PAGE` — `hud_toolbar.gd`; `TOOLBAR_PAGES[0][3]` —
  `test_construction_toolbar_remap.gd`.

@@ -4,6 +4,7 @@ globs:
   - "scripts/**/voxel*.gd"
   - "scripts/**/terrain*.gd"
   - "scripts/bootstrap.gd"
+  - "scripts/bootstrap/**"
   - "scripts/interaction_query.gd"
   - "scripts/bench_voxel_scale.gd"
   - "scenes/main.tscn"
@@ -15,8 +16,9 @@ alwaysApply: false
 Перед правками terrain / SDF / `VoxelTool` / scale / collider / streaming:
 
 1. **`docs/cheatsheets/voxel-tools.md`** — проектный контракт + ссылки.
-2. **`docs/specs/INDUSTRY-V1.md`** § *Voxel scale (v1)* — зафиксированное поведение.
-3. **Официальная дока** и **GitHub issues** `zylann/godot_voxel` для API и scale —
+2. **Spawn/settle (R5)** — **`docs/cheatsheets/bootstrap.md`** (логика в `scripts/bootstrap/*`).
+3. **`docs/specs/INDUSTRY-V1.md`** § *Voxel scale (v1)* — зафиксированное поведение.
+4. **Официальная дока** и **GitHub issues** `zylann/godot_voxel` для API и scale —
    не выводи контракт координат из кода проекта или интуиции Godot.
 
 Ключевое: `VoxelTool.raycast` — **world space**; SDF edits — **local** через

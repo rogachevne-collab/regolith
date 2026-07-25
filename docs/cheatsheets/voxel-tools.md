@@ -95,8 +95,9 @@ terminator — it is not the LOD-swap fix.
     ещё нет.
 - **`generate_collisions = true`** на `VoxelTerrain` в `main.tscn` — обязателен для
   physics aim и ground anchor.
-- **Spawn:** SDF gate для streaming + physics/settle (`bootstrap.gd`); не ждать
-  полной готовности collider секундами — `begin_spawn_settle` находит пол.
+- **Spawn:** SDF gate для streaming + physics/settle
+  ([`bootstrap.md`](bootstrap.md) → `scripts/bootstrap/bootstrap_spawn_settle_service.gd`);
+  не ждать полной готовности collider секундами — `begin_spawn_settle` находит пол.
 
 ## Известные грабли (issues / опыт)
 
@@ -113,12 +114,12 @@ terminator — it is not the LOD-swap fix.
 | Область | Файлы |
 |---------|--------|
 | Координаты / raycast | `voxel_space_util.gd` |
-| Spawn / settle | `bootstrap.gd` |
+| Spawn / settle | [`bootstrap.md`](bootstrap.md) → `scripts/bootstrap/*` |
 | Прицел / drill hit | `interaction_query.gd` |
 | Вырезка SDF | `terrain_excavation_service.gd`, `terrain_impact_carver.gd` |
 | Floating debris | `terrain_floating_debris_service.gd` ← gateway post-dig |
 | Yield по материалу | `terrain_material_source.gd` → канон `TERRAIN-MATERIALS-V1.md` |
-| Ground seat строительства | `world_command_gateway.gd` |
+| Ground seat строительства | [`world-command-gateway.md`](world-command-gateway.md) → `GatewayConstructionService` |
 | Bench scale | `bench_voxel_scale.gd`, `scenes/bench_voxel_scale.tscn` |
 
 ## Анти-паттерны

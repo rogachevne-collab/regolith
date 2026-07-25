@@ -1,18 +1,18 @@
 # Construction service — куда смотреть
 
-`ConstructionCommandService` — фасад строительных команд мира. Владелец
-состояния — `SimulationWorld`, приходит первым аргументом `world`. Все функции
-`static`, тип `RefCounted`.
+`ConstructionCommandService` — фасад строительных команд мира. Контекст authority:
+[`simulation-world.md`](simulation-world.md). Владелец состояния — `SimulationWorld`,
+приходит первым аргументом `world`. Все функции `static`, тип `RefCounted`.
 
 ## Куда идти
 
 | Задача | Файл / `class_name` |
 |---|---|
-| фасад: `place_element`, `place_driven_element`, `preview_place_element` + обёртки | `construction_command_service.gd` / `ConstructionCommandService` |
-| проверки постановки (обычный блок, колесо, piston/rotor/hinge), кэш валидации архетипа, «driven path at home» | `construction_place_validation_service.gd` / `ConstructionPlaceValidationService` |
-| `weld` / `damage` / `repair` / `dismantle` элемента | `construction_element_lifecycle_service.gd` / `ConstructionElementLifecycleService` |
-| terrain-контакт и якоря: reconcile, probe, `construction_attach_allowed` | `construction_terrain_anchor_service.gd` / `ConstructionTerrainAnchorService` |
-| occupancy index, соседние клетки, joint∈component | `construction_occupancy_util.gd` |
+| фасад: `place_element`, `place_driven_element`, `preview_place_element` + обёртки | `scripts/simulation/runtime/construction_command_service.gd` / `ConstructionCommandService` |
+| проверки постановки (обычный блок, колесо, piston/rotor/hinge), кэш валидации архетипа, «driven path at home» | `scripts/simulation/runtime/construction_place_validation_service.gd` / `ConstructionPlaceValidationService` |
+| `weld` / `damage` / `repair` / `dismantle` элемента | `scripts/simulation/runtime/construction_element_lifecycle_service.gd` / `ConstructionElementLifecycleService` |
+| terrain-контакт и якоря: reconcile, probe, `construction_attach_allowed` | `scripts/simulation/runtime/construction_terrain_anchor_service.gd` / `ConstructionTerrainAnchorService` |
+| occupancy index, соседние клетки, joint∈component | `scripts/simulation/runtime/construction_occupancy_util.gd` |
 | где тормозит строительство (прицел → постановка → снос) | `docs/cheatsheets/construction-perf.md` |
 
 ## Граф вызовов (односторонний)

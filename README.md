@@ -139,7 +139,7 @@ Windows: нужен VS 2022 Build Tools (MSVC x64) + Python + SCons.
 |------|------------|
 | `scenes/main.tscn` | planetoid Ø1 km: LodTerrain, radial gravity, dig persistence |
 | `scenes/flat_moon.tscn` | legacy flat yard (infinite noise terrain) |
-| `scripts/bootstrap.gd` | planetoid spawn gate (SDF + physics collider + settle) |
+| `scripts/bootstrap.gd` + `scripts/bootstrap/` | planetoid spawn gate (SDF + physics collider + settle); шпаргалка: `docs/cheatsheets/bootstrap.md` |
 | `scripts/flat_moon_bootstrap.gd` | legacy flat yard bootstrap |
 | `scripts/drill.gd` | SDF `MODE_REMOVE do_sphere()` |
 | `addons/zylann.voxel/` | Voxel Tools GDExtension (macOS in git) |

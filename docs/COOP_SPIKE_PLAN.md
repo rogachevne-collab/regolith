@@ -31,15 +31,16 @@
 
 ## Карта кода (прочитать перед любым этапом)
 
-| Файл | Что это |
-|---|---|
-| `scripts/coop/coop_session.gd` | ВЕСЬ сетевой транспорт. Один узел `CoopSession` в `main.tscn`, одинаковый NodePath у всех пиров — иначе @rpc не резолвится. Ничто другое в игре не трогает `multiplayer`. |
-| `scripts/coop/coop_command_codec.gd` | Чистая сериализация: `sanitize_command` (вырезает живые Object, `target.collider`, `placement_plan`), `BLOCKED_KINDS`, handshake/join payload. Покрыт `scripts/test_coop_codec.gd`. |
-| `scripts/coop/remote_player.gd` | Аватар чужого игрока. Без физтела. Визуал строится В КОДЕ (`_build_visuals`), сцена `scenes/remote_player.tscn` — голый Node3D. Интерполяция 120 мс по кольцу семплов. |
-| `scripts/coop/coop_peer_registry.gd` | host-only реестр peer_id → uid/nick/avatar. |
-| `scripts/world_command_gateway.gd` | Все игровые действия — команды через него. `set_network_submit(hook)` — клиентский перехват, `submit_as(uid, cmd, avatar)` — хост исполняет от имени пира, `complete_remote(local_id, result)` — вернуть результат клиенту. |
-| `scripts/tool_controller.gd` | Активный инструмент/хотбар локального игрока. |
-| `scripts/drill.gd` | Бур (first-person визуал — источник меша для third-person префаба). |
+| Файл | Что это | Шпаргалка |
+|---|---|---|
+| `scripts/coop/coop_session.gd` | ВЕСЬ сетевой транспорт. Один узел `CoopSession` в `main.tscn`, одинаковый NodePath у всех пиров — иначе @rpc не резолвится. Ничто другое в игре не трогает `multiplayer`. | — |
+| `scripts/coop/coop_command_codec.gd` | Чистая сериализация: `sanitize_command` (вырезает живые Object, `target.collider`, `placement_plan`), `BLOCKED_KINDS`, handshake/join payload. Покрыт `scripts/test_coop_codec.gd`. | — |
+| `scripts/coop/remote_player.gd` | Аватар чужого игрока. Без физтела. Визуал строится В КОДЕ (`_build_visuals`), сцена `scenes/remote_player.tscn` — голый Node3D. Интерполяция 120 мс по кольцу семплов. | — |
+| `scripts/coop/coop_peer_registry.gd` | host-only реестр peer_id → uid/nick/avatar. | — |
+| `scripts/world_command_gateway.gd` | Все игровые действия — команды через него. `set_network_submit(hook)` — клиентский перехват, `submit_as(uid, cmd, avatar)` — хост исполняет от имени пира, `complete_remote(local_id, result)` — вернуть результат клиенту. | `docs/cheatsheets/world-command-gateway.md` |
+| `scripts/tool_controller.gd` | Активный инструмент/хотбар локального игрока. | `docs/cheatsheets/tool-controller.md` |
+| `scripts/bootstrap.gd` | Spawn/settle (R5), terrain streaming, coop terrain bulk, persistence. | `docs/cheatsheets/bootstrap.md` |
+| `scripts/drill.gd` | Бур (first-person визуал — источник меша для third-person префаба). | — |
 
 Ключевые константы транспорта (`coop_session.gd`):
 - Каналы: `CH_MAIN=0` (reliable: команды/результаты/peer up-down),
@@ -132,7 +133,8 @@ loopback-мьютекс). Во втором окне взять бур, води
 
 1. **Разобраться, кто исполняет dig-кинды.** Найти обработчики
    `voxel_remove`, `dig_terrain_debris`, `scoop_spoil`, `dump_scoop` — идти от
-   `world_command_gateway.gd` вниз в `scripts/simulation/runtime/*`. Выписать:
+   `world_command_gateway.gd` → `scripts/gateway/gateway_terrain_dig_service.gd`
+   (шпаргалка: `docs/cheatsheets/world-command-gateway.md`). Выписать:
    какие поля команды реально нужны исполнителю и что из них вырезает
    `sanitize_command` (он удаляет `target.collider`!). Это главный вопрос
    этапа: комментарий в кодеке прямо говорит `dig_terrain_debris — needs live
@@ -216,11 +218,12 @@ loopback-мьютекс). Во втором окне взять бур, води
 1. **Прочитать спеки** `docs/specs/ROVER-MODULES-V1.md` и
    `docs/specs/CONTROL-ACTIONS-V0.md` — как устроены кресло, управление и
    команды управления. Ключевые файлы дальше:
-   `scripts/simulation/projection/simulation_physics_projection.gd` (тела ↔
-   сим), `scripts/simulation/runtime/wheel_simulation_service.gd` (колёса),
-   `scripts/simulation/projection/element_visual_projection.gd` (визуалы),
-   `scripts/ui/hud_control_terminal.gd` (место, где `toggle_control_seat`
-   уходит в gateway).
+   `docs/cheatsheets/physics-projection.md` →
+   `simulation_physics_projection.gd` (тела ↔ сим),
+   `scripts/simulation/runtime/wheel_simulation_service.gd` (колёса),
+   `element_visual_projection.gd` (визуалы),
+   `docs/cheatsheets/world-command-gateway.md` → `GatewaySeatLocomotionService`
+   (`toggle_control_seat` уходит в gateway).
 2. **Посадка гостя.** Находка разведки 2026-07-24: коллайдер — НЕ главная
    проблема (`_toggle_control_seat` и так резолвит по
    `InteractionHit.element_id_from(target)`, id в санитайзнутой команде

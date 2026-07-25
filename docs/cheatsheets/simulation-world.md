@@ -8,7 +8,7 @@ structural commands, kinematic sync). Логика разнесена по се�
 
 | Задача | Файл |
 |---|---|
-| place / validate / weld / damage / repair / dismantle, terrain attach | `scripts/simulation/runtime/construction_command_service.gd` |
+| place / validate / weld / damage / repair / dismantle, terrain attach | `docs/cheatsheets/construction-service.md` → `scripts/simulation/runtime/construction_command_service.gd` |
 | карта кода строительства и где тормозит (прицел → постановка → снос) | `docs/cheatsheets/construction-perf.md` |
 | occupancy index, cell neighbours, joint∈component | `scripts/simulation/runtime/construction_occupancy_util.gd` |
 | remove element, break rigid joint, merge assemblies | `scripts/simulation/runtime/topology_mutation_service.gd` |

@@ -81,7 +81,8 @@
 
 ### R5 (spawn)
 
-SDF → physics collider → settle → телепорт игрока. См. **R5** в `AGENTS.md` / `bootstrap.gd`.
+SDF → physics collider → settle → телепорт игрока. См. **R5** в `AGENTS.md` /
+[`docs/cheatsheets/bootstrap.md`](../cheatsheets/bootstrap.md).
 
 ### Coop
 
@@ -128,15 +129,30 @@ Override-хуки для bench/test extends — **instance-методы узла
 | Монолит | одноимённые тонкие обёртки → публичные сигнатуры не меняются |
 | Cross-service | мутации только через обёртки владельца; **не** service→service (циклы `class_name`) |
 
-## 4. Владение файлами — волна 1
+## 4. Владение файлами
 
-Три агента, наборы **не пересекаются**.
+Extract'ы — по волнам; внутри волны полосы **не пересекаются**.
+
+### Волна 1
 
 | Полоса | Файлы / каталоги |
 |---|---|
-| **G** | `scripts/world_command_gateway.gd` + новый `scripts/gateway/` + `docs/cheatsheets/world-command-gateway.md` |
-| **P** | `scripts/simulation/projection/simulation_physics_projection.gd` + новые файлы в той же папке + `docs/cheatsheets/physics-projection.md` |
-| **U** | `scripts/ui/hud_control_terminal.gd` + новый `scripts/ui/control_terminal/` + `docs/cheatsheets/control-terminal.md` |
+| **G** | `scripts/world_command_gateway.gd` + `scripts/gateway/` + `docs/cheatsheets/world-command-gateway.md` |
+| **P** | `scripts/simulation/projection/simulation_physics_projection.gd` + координаторы/утилиты в той же папке + `docs/cheatsheets/physics-projection.md` |
+| **U** | `scripts/ui/hud_control_terminal.gd` + `scripts/ui/control_terminal/` + `docs/cheatsheets/control-terminal.md` |
+
+### Волна 2 — Construction
+
+| Полоса | Файлы / каталоги |
+|---|---|
+| **C** | `scripts/simulation/runtime/construction_command_service.gd` + `construction_*_service.gd` / `construction_occupancy_util.gd` в той же папке + `docs/cheatsheets/construction-service.md` |
+
+### Волна 3 — ToolController + Bootstrap
+
+| Полоса | Файлы / каталоги |
+|---|---|
+| **T** | `scripts/tool_controller.gd` + `scripts/tool_control/` + `docs/cheatsheets/tool-controller.md` |
+| **B** | `scripts/bootstrap.gd` + `scripts/bootstrap/` + `docs/cheatsheets/bootstrap.md` (perf overlay ~120 строк остаётся в монолите) |
 
 **ToolController:** extract'ы **не** класть в `scripts/tools/` — там уже dev-скрипты (`environment_tuner.gd`, `bake_moon_boulder_assets.gd`).
 
