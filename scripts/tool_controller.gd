@@ -92,6 +92,7 @@ const CONSTRUCTION_ARCHETYPES: PackedStringArray = [
 	"rotor_base_large",
 	"hinge_base",
 	"cockpit",
+	"passenger_seat",
 	"control_terminal",
 	"power_battery_small",
 	"power_distributor_small",
@@ -173,14 +174,15 @@ const TOOLBAR_PAGES: Array = [
 		{"type": &"block", "archetype_id": SUSPENSION_SLOT},
 		{"type": &"block", "archetype_id": WHEEL_SLOT},
 		{"type": &"block", "archetype_id": "cockpit"},
+		{"type": &"block", "archetype_id": "passenger_seat"},
 		{"type": &"block", "archetype_id": "power_battery_small"},
 		{"type": &"block", "archetype_id": "power_distributor_small"},
 		{"type": &"block", "archetype_id": "rotor_base"},
-		{"type": &"block", "archetype_id": "rotor_base_large"},
 	],
 	[
 		{"type": &"block", "archetype_id": "hinge_base"},
 		{"type": &"block", "archetype_id": "piston_base_large"},
+		{"type": &"block", "archetype_id": "rotor_base_large"},
 		{"type": &"block", "archetype_id": "o2_module"},
 	],
 	[
@@ -188,9 +190,9 @@ const TOOLBAR_PAGES: Array = [
 		{"type": &"block", "archetype_id": "gyro"},
 		{"type": &"block", "archetype_id": "landing_leg"},
 		{"type": &"block", "archetype_id": "cockpit"},
+		{"type": &"block", "archetype_id": "passenger_seat"},
 		{"type": &"block", "archetype_id": "power_battery_small"},
 		{"type": &"block", "archetype_id": "power_distributor_small"},
-		{"type": &"block", "archetype_id": "frame"},
 		{"type": &"connect"},
 		{"type": &"rope"},
 	],
@@ -199,6 +201,7 @@ const TOOLBAR_PAGES: Array = [
 		{"type": &"block", "archetype_id": SUSPENSION_SLOT},
 		{"type": &"block", "archetype_id": WHEEL_SLOT},
 		{"type": &"block", "archetype_id": "cockpit"},
+		{"type": &"block", "archetype_id": "passenger_seat"},
 		{"type": &"block", "archetype_id": "power_battery_small"},
 		{"type": &"block", "archetype_id": "power_distributor_small"},
 		{"type": &"connect"},
@@ -569,6 +572,8 @@ func _emit_command_for_action(
 		# Cargo/machines use the terminal, not toggle_control_seat.
 		if _is_terminal_target_hit(hit):
 			return
+		if str(_aim_keys(hit).get("archetype_id", "")) == "passenger_seat":
+			parameters["passenger"] = true
 	# Ahead of the build-preview block: the scoop has nothing to do with
 	# placement, and must not pick up a `placement_plan` on its way out.
 	if active_tool == &"scoop" and (

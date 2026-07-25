@@ -448,6 +448,7 @@ func _test_compose_demo_phrase_cockpit_full_integrity() -> bool:
 		world.free()
 		return _fail("demo phrase: missing assembly")
 	var cockpit: SimulationElement = null
+	var passenger: SimulationElement = null
 	var incomplete := 0
 	for element_id: int in assembly.element_ids:
 		var element := world.get_element(element_id)
@@ -457,20 +458,17 @@ func _test_compose_demo_phrase_cockpit_full_integrity() -> bool:
 			incomplete += 1
 		if element.archetype_id == "cockpit":
 			cockpit = element
+		if element.archetype_id == "passenger_seat":
+			passenger = element
 	if cockpit == null:
 		world.free()
 		return _fail("demo phrase: missing cockpit")
+	if passenger == null:
+		world.free()
+		return _fail("demo phrase: missing passenger_seat (width=%d)" % (
+			RoverIntent.from_phrase(phrase).width_cells()
+		))
 	var max_integrity := cockpit.get_archetype().max_integrity
-	# Pre-seat (= post-compose). Locomotive assemblies ignore terrain impact
-	# damage, so seating/settle cannot drop this to placement's 1%.
-	print(
-		"ROVER-COMPOSE cockpit BEFORE_SEAT integrity=%s max=%s frac=%s"
-		% [cockpit.integrity, max_integrity, cockpit.structural_fraction()]
-	)
-	print(
-		"ROVER-COMPOSE cockpit AFTER_SEAT integrity=%s max=%s frac=%s"
-		% [cockpit.integrity, max_integrity, cockpit.structural_fraction()]
-	)
 	if incomplete > 0:
 		world.free()
 		return _fail("demo phrase: %d incomplete elements" % incomplete)

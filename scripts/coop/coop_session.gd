@@ -73,6 +73,9 @@ const DIG_OP_KINDS := {
 	&"scoop_spoil": true,
 	&"dump_scoop": true,
 }
+## Ring cap for host session dig log (join catch-up + live relay). Drop-oldest
+## beyond this — late joiners miss terrain carved before the window.
+const MAX_DIG_OPS := 8192
 
 enum Mode { OFFLINE, HOST, CLIENT }
 
@@ -119,6 +122,8 @@ var _assembly_streams: Dictionary = {}
 var _snapshot_dirty := false
 var _snapshot_debounce := 0.0
 var _last_broadcast_ms := 0
+## Host-only log of confirmed dig ops since `host` — replayed to late joiners.
+var _dig_ops: Array = []
 var _host_hooks_connected := false
 ## Held for the process lifetime by the primary instance (see INSTANCE_LOCK_PORT).
 var _instance_lock: PacketPeerUDP
@@ -338,6 +343,7 @@ func _cmd_host(port: int = PORT_DEFAULT) -> void:
 	_mode = Mode.HOST
 	_registry = CoopPeerRegistry.new()
 	_pending_results.clear()
+	_dig_ops.clear()
 	_connect_host_hooks()
 	_info("hosting on port %d as '%s' — share your Tailscale IP" % [port, _local_nick])
 
@@ -450,7 +456,8 @@ func _srv_hello(hello: Dictionary) -> void:
 		_local_uid,
 		_local_nick,
 		_local_pose(),
-		peer
+		peer,
+		_dig_ops
 	)
 	rpc_id(peer, "_cli_join_payload", payload)
 	for other: int in _registry.peer_ids():
@@ -522,6 +529,21 @@ func _apply_join(payload: Dictionary) -> void:
 	var world := _world()
 	world.authoritative = false
 	world.restore_snapshot(payload["snapshot"])
+	var dig_ok := 0
+	var dig_fail := 0
+	for op_variant: Variant in payload.get("dig_ops", []):
+		if op_variant is Dictionary:
+			if _gateway.replay_remote_dig(op_variant):
+				dig_ok += 1
+			else:
+				dig_fail += 1
+		else:
+			dig_fail += 1
+	if dig_fail > 0:
+		push_warning(
+			"join dig replay: %d ok, %d failed (terrain may be partially synced)"
+			% [dig_ok, dig_fail]
+		)
 
 	if _meteorites != null:
 		_meteorites.set("enabled", false)
@@ -633,7 +655,8 @@ func _cli_result(local_id: int, result: Dictionary) -> void:
 			_gateway.apply_local_seat_attach(
 				_player,
 				int(data.get("element_id", 0)),
-				int(data.get("assembly_id", 0))
+				int(data.get("assembly_id", 0)),
+				bool(data.get("passenger", false))
 			)
 		else:
 			_gateway.release_local_seat_attach()
@@ -663,20 +686,12 @@ func _on_host_command_executed(command: Dictionary, result: Dictionary) -> void:
 		return
 	if StringName(result.get("status", &"")) != &"ok":
 		return
+	var op := CoopCommandCodec.build_dig_op(command, result)
+	_dig_ops.append(op)
+	while _dig_ops.size() > MAX_DIG_OPS:
+		_dig_ops.pop_front()
 	if _registry.peer_ids().is_empty():
 		return
-	var op := CoopCommandCodec.sanitize_command(command)
-	# Scoop/dump amounts depend on the field state at the bite, which drifts
-	# between peers. Stamp the volume the host actually confirmed, so every
-	# replica moves exactly that much instead of re-deciding locally.
-	var data: Dictionary = result.get("data", {})
-	var parameters: Dictionary = op.get("parameters", {})
-	match kind:
-		&"scoop_spoil":
-			parameters["max_volume_m3"] = float(data.get("scooped_volume_m3", 0.0))
-		&"dump_scoop":
-			parameters["volume_m3"] = float(data.get("dumped_volume_m3", 0.0))
-	op["parameters"] = parameters
 	rpc("_cli_dig_op", op)
 
 
@@ -970,20 +985,31 @@ func _local_pose() -> Dictionary:
 ## seated and relay raw+edges to the host at 20 Hz on CH_INPUT (own sequence —
 ## sharing CH_STREAM with large pose packets can drop ordered control frames).
 func _tick_client_control_input(delta: float) -> void:
-	if _gateway == null or _gateway.get_local_seat_element_id() <= 0:
+	if _gateway == null:
+		_control_input_accum = 0.0
+		_seat_edge_dampeners = false
+		_seat_edge_parking_brake = false
+		return
+	var seat_id := _gateway.get_local_seat_element_id()
+	if seat_id <= 0:
 		_control_input_accum = 0.0
 		_seat_edge_dampeners = false
 		_seat_edge_parking_brake = false
 		return
 	# Cheap while-seated fallback: seat element or body gone → detach locally
 	# (covers a lost force-release RPC after the host destroyed the cockpit).
-	if not _client_seat_replica_ok(_gateway.get_local_seat_element_id()):
+	if not _client_seat_replica_ok(seat_id):
 		_gateway.release_local_seat_attach()
 		_control_input_accum = 0.0
 		_seat_edge_dampeners = false
 		_seat_edge_parking_brake = false
 		return
 	_gateway.ensure_local_seat_binding()
+	if not _gateway.is_local_seat_driver():
+		_control_input_accum = 0.0
+		_seat_edge_dampeners = false
+		_seat_edge_parking_brake = false
+		return
 	var modal_blocks := (
 		_player != null
 		and _player.has_method("is_gameplay_input_enabled")
@@ -1136,6 +1162,7 @@ func _teardown_host() -> void:
 		_despawn_avatar(uid)
 	_registry = CoopPeerRegistry.new()
 	_pending_results.clear()
+	_dig_ops.clear()
 	_mode = Mode.OFFLINE
 	_info("stopped hosting")
 

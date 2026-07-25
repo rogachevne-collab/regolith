@@ -1,0 +1,28 @@
+[gd_resource type="Resource" script_class="ElementArchetype" format=3]
+
+[ext_resource type="Script" path="res://scripts/simulation/resources/build_requirement.gd" id="1_req"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/collider_definition.gd" id="2_col"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/element_archetype.gd" id="3_arch"]
+
+[sub_resource type="Resource" id="Requirement"]
+script = ExtResource("1_req")
+resource_id = "plate_metal"
+amount = 2.0
+
+[sub_resource type="Resource" id="Collider"]
+script = ExtResource("2_col")
+size = Vector3(0.5, 0.5, 0.5)
+offset_in_cell = Vector3(0.25, 0.25, 0.25)
+
+[resource]
+script = ExtResource("3_arch")
+archetype_id = "passenger_seat"
+display_name = "Passenger Seat"
+roles = PackedStringArray("ControlSeat", "Frame")
+mass_kg = 25.0
+footprint_cells = Array[Vector3i]([Vector3i(0, 0, 0)])
+structural_surface_policy = 1
+colliders = Array[ExtResource("2_col")]([SubResource("Collider")])
+build_requirements = Array[ExtResource("1_req")]([SubResource("Requirement")])
+visual_scene_path = "res://scenes/presentation/base_block_05m_visual.tscn"
+visual_offset = Vector3(0.25, 0.25, 0.25)

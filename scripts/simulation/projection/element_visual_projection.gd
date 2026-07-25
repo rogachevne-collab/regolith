@@ -758,7 +758,7 @@ func _uses_rover_matte(element: SimulationElement) -> bool:
 	if archetype.is_wheel() or archetype.is_suspension():
 		return true
 	match element.archetype_id:
-		"cockpit", "control_terminal", "power_battery_small", "power_distributor_small", "cargo_pipe":
+		"cockpit", "passenger_seat", "control_terminal", "power_battery_small", "power_distributor_small", "cargo_pipe":
 			return true
 	return false
 

@@ -26,6 +26,15 @@ func _run() -> void:
 	if not _test_join_payload_roundtrip():
 		_abort()
 		return
+	if not _test_join_payload_dig_ops():
+		_abort()
+		return
+	if not _test_build_dig_op():
+		_abort()
+		return
+	if not _test_sanitize_preserves_seat_target():
+		_abort()
+		return
 	if not _test_sync_suit_state():
 		_abort()
 		return
@@ -173,6 +182,146 @@ func _test_join_payload_roundtrip() -> bool:
 	replica.free()
 	if not same:
 		return _fail("join snapshot did not round-trip into a replica")
+	return true
+
+
+func _test_join_payload_dig_ops() -> bool:
+	var world := _build_world()
+	if world == null:
+		return _fail("world build failed")
+	var snapshot := world.capture_snapshot()
+	world.free()
+	var host_command := {
+		"kind": &"voxel_remove",
+		"source": Node.new(),
+		"actor_uid": "ignored",
+		"target": {
+			"valid": true,
+			"point": Vector3(1, 2, 3),
+			"target_kind": InteractionHit.KIND_VOXEL,
+			"collider": RefCounted.new(),
+		},
+		"parameters": {"radius": 0.5, "discard_yield": false},
+	}
+	var host_result := {
+		"status": &"ok",
+		"data": {"removed_volume_m3": 0.12, "point": Vector3(1, 2, 3)},
+	}
+	var dig_ops: Array = [CoopCommandCodec.build_dig_op(host_command, host_result)]
+	var payload := CoopCommandCodec.make_join_payload(
+		snapshot, {}, "player", "Host", {"p": Vector3.ZERO}, 7, dig_ops
+	)
+	if not (payload.get("dig_ops") is Array):
+		return _fail("dig_ops missing from join payload")
+	if (payload["dig_ops"] as Array).size() != 1:
+		return _fail("dig_ops count mismatch")
+	var op: Dictionary = (payload["dig_ops"] as Array)[0]
+	if StringName(op.get("kind", &"")) != &"voxel_remove":
+		return _fail("join dig_op kind lost")
+	if not is_equal_approx(
+		float((op.get("parameters", {}) as Dictionary).get("radius", 0.0)),
+		0.5
+	):
+		return _fail("join dig_op radius lost")
+	if bool((op.get("parameters", {}) as Dictionary).get("discard_yield", true)):
+		return _fail("join dig_op must preserve host discard_yield=false")
+	if _has_object(op):
+		return _fail("join dig_op must be wire-safe")
+	# Optional field — old payloads without dig_ops still validate.
+	var legacy := payload.duplicate(true)
+	legacy.erase("dig_ops")
+	if CoopCommandCodec.validate_join_payload(legacy) != &"ok":
+		return _fail("join payload without dig_ops should still validate")
+	return true
+
+
+func _test_build_dig_op() -> bool:
+	var node := Node.new()
+	var command := {
+		"kind": &"voxel_remove",
+		"source": node,
+		"actor_uid": "guest",
+		"target": {
+			"valid": true,
+			"point": Vector3(4, 5, 6),
+			"target_kind": InteractionHit.KIND_VOXEL,
+			"collider": node,
+		},
+		"parameters": {"radius": 0.35, "discard_yield": false},
+	}
+	var result := {
+		"status": &"ok",
+		"data": {"removed_volume_m3": 0.08},
+	}
+	var op := CoopCommandCodec.build_dig_op(command, result)
+	node.free()
+	if _has_object(op):
+		return _fail("build_dig_op left an Object on the wire")
+	if StringName(op.get("kind", &"")) != &"voxel_remove":
+		return _fail("build_dig_op kind mismatch")
+	var params: Dictionary = op.get("parameters", {})
+	if not is_equal_approx(float(params.get("radius", 0.0)), 0.35):
+		return _fail("build_dig_op radius lost")
+	if bool(params.get("discard_yield", true)):
+		return _fail("build_dig_op must preserve discard_yield=false")
+
+	var scoop_cmd := {
+		"kind": &"scoop_spoil",
+		"target": {"valid": true, "point": Vector3.ZERO},
+		"parameters": {},
+	}
+	var scoop_op := CoopCommandCodec.build_dig_op(
+		scoop_cmd,
+		{"data": {"scooped_volume_m3": 1.25}}
+	)
+	var scoop_params: Dictionary = scoop_op.get("parameters", {})
+	if not is_equal_approx(float(scoop_params.get("max_volume_m3", 0.0)), 1.25):
+		return _fail("build_dig_op scoop max_volume_m3 not stamped")
+
+	var dump_op := CoopCommandCodec.build_dig_op(
+		{
+			"kind": &"dump_scoop",
+			"target": {"valid": true, "point": Vector3.ONE},
+			"parameters": {},
+		},
+		{"data": {"dumped_volume_m3": 0.75}}
+	)
+	var dump_params: Dictionary = dump_op.get("parameters", {})
+	if not is_equal_approx(float(dump_params.get("volume_m3", 0.0)), 0.75):
+		return _fail("build_dig_op dump volume_m3 not stamped")
+	return true
+
+
+func _test_sanitize_preserves_seat_target() -> bool:
+	var node := Node.new()
+	var command := {
+		"kind": &"toggle_control_seat",
+		"source": node,
+		"actor_uid": "guest",
+		"target": {
+			"valid": true,
+			"point": Vector3(1, 2, 3),
+			"target_kind": InteractionHit.KIND_CONTROL_SEAT,
+			"element_id": 42,
+			"assembly_id": 7,
+			"control_seat": true,
+			"collider": node,
+		},
+		"parameters": {"passenger": true},
+	}
+	var clean := CoopCommandCodec.sanitize_command(command)
+	node.free()
+	var target: Dictionary = clean.get("target", {})
+	if int(target.get("element_id", 0)) != 42:
+		return _fail("seat element_id stripped by sanitize")
+	if int(target.get("assembly_id", 0)) != 7:
+		return _fail("seat assembly_id stripped by sanitize")
+	if not bool(target.get("control_seat", false)):
+		return _fail("seat control_seat flag lost")
+	if not bool((clean.get("parameters", {}) as Dictionary).get("passenger", false)):
+		return _fail("seat passenger parameter lost")
+	if target.has("collider"):
+		return _fail("seat collider survived sanitize")
 	return true
 
 

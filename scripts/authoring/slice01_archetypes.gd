@@ -7,6 +7,7 @@ const ARCHETYPE_DIR := "res://resources/archetypes/slice01/"
 const AUTHORED_DIR := "res://resources/archetypes/authored/"
 const ROVER_IDS: PackedStringArray = [
 	"cockpit",
+	"passenger_seat",
 	"control_terminal",
 	"power_battery_small",
 	"power_distributor_small",
@@ -298,6 +299,10 @@ static func rover_wheel_clearance_m() -> float:
 
 static func cockpit() -> ElementArchetype:
 	return load_required("cockpit")
+
+
+static func passenger_seat() -> ElementArchetype:
+	return load_required("passenger_seat")
 
 
 static func control_terminal() -> ElementArchetype:

@@ -63,6 +63,7 @@ const TOOL_CODES := {
 	"rotor_base_large": "RTL",
 	"hinge_base": "HNG",
 	"cockpit": "CPT",
+	"passenger_seat": "PAX",
 	"control_terminal": "TRM",
 	"power_battery_small": "BAT",
 	"power_distributor_small": "DST",
@@ -98,6 +99,7 @@ const ARCHETYPE_LABELS := {
 	"hinge_base": "ШАРНИР",
 	"hinge_top": "ПЛАТФОРМА ШАРНИРА",
 	"cockpit": "КОКПИТ",
+	"passenger_seat": "ПАССАЖИР",
 	"power_battery_small": "БАТАРЕЯ М",
 	"power_distributor_small": "РАСПРЕД М",
 	"thruster": "ДВИГАТЕЛЬ",
@@ -108,6 +110,7 @@ const ARCHETYPE_LABELS := {
 ## Short orientation hints shown in build mode for rover modules.
 const ROVER_ORIENTATION_HINTS := {
 	"cockpit": "↔ стекло = перед",
+	"passenger_seat": "E — сесть пассажиром",
 }
 
 const STORE_LABELS := {

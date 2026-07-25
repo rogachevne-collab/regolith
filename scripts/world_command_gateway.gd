@@ -40,6 +40,7 @@ const MAP_STRUCTURE_ARCHETYPES := {
 	"fabricator": true,
 	"foundation": true,
 	"cockpit": true,
+	"passenger_seat": true,
 }
 
 @export var terrain_path: NodePath = NodePath("../VoxelTerrain")
@@ -96,6 +97,8 @@ var actor_uid := PlayerIdentity.local_uid()
 var _rover_seat_player: Node3D
 var _rover_seat_assembly_id := 0
 var _rover_seat_element_id := 0
+## True while the local player is in a passenger (non-driver) ControlSeat.
+var _rover_seat_passenger := false
 ## Shared SeatControlState ref for the occupied seat (R9 — no per-tick dup).
 ## Updated on enter / configure; cleared on exit. Do not free.
 var _rover_seat_policy: SeatControlState = null
@@ -369,11 +372,12 @@ var _replaying_remote_dig := false
 ## it is the host's already-validated verdict arriving over the reliable op
 ## channel. For scoop/dump the coop layer stamps the host-confirmed volumes
 ## into parameters, so the replay moves exactly what the host moved.
-func replay_remote_dig(command: Dictionary) -> void:
+func replay_remote_dig(command: Dictionary) -> bool:
 	var target: Variant = command.get("target")
 	if not (target is Dictionary) or not bool((target as Dictionary).get("valid", false)):
-		return
+		return false
 	var replay := command.duplicate(true)
+	var result: Dictionary
 	match StringName(command.get("kind", &"")):
 		&"voxel_remove":
 			var parameters: Dictionary = replay.get("parameters", {})
@@ -383,12 +387,15 @@ func replay_remote_dig(command: Dictionary) -> void:
 			parameters["discard_yield"] = true
 			replay["parameters"] = parameters
 			_replaying_remote_dig = true
-			_remove_voxel(replay, replay["target"])
+			result = _remove_voxel(replay, replay["target"])
 			_replaying_remote_dig = false
 		&"scoop_spoil":
-			_scoop_spoil(replay, replay["target"])
+			result = _scoop_spoil(replay, replay["target"])
 		&"dump_scoop":
-			_dump_scoop(replay, replay["target"])
+			result = _dump_scoop(replay, replay["target"])
+		_:
+			return false
+	return StringName(result.get("status", &"")) == &"ok"
 
 
 func _remove_voxel(
@@ -1304,7 +1311,8 @@ func _toggle_control_seat(
 				cockpit_source,
 				InteractionHit.element_id_from(target),
 				InteractionHit.assembly_id_from(target),
-				is_local_actor
+				is_local_actor,
+				false
 			)
 		return _result(&"invalid_target")
 	var seat_source: Node3D = command.get("source")
@@ -1334,11 +1342,13 @@ func _toggle_control_seat(
 		):
 			return _exit_remote_rover_seat()
 	if element_id > 0:
+		var passenger := _resolve_passenger_seat(command, element_id)
 		return _enter_rover_seat(
 			seat_source,
 			element_id,
 			InteractionHit.assembly_id_from(target),
-			is_local_actor
+			is_local_actor,
+			passenger
 		)
 	# Legacy collider path / remote synthetic exit with no element id.
 	if not is_local_actor:
@@ -1368,6 +1378,14 @@ func get_local_seat_element_id() -> int:
 	return _rover_seat_element_id
 
 
+func is_local_seat_driver() -> bool:
+	return _rover_seat_element_id > 0 and not _rover_seat_passenger
+
+
+static func is_passenger_seat_archetype(archetype_id: String) -> bool:
+	return archetype_id == "passenger_seat"
+
+
 ## Enter-vs-exit for a remote actor must use occupancy, not the avatar node:
 ## RemotePlayer has no is_in_vehicle, so a node check would always enter.
 ## Local also treats gateway seat id / live attach as seated so a pruned
@@ -1391,7 +1409,7 @@ func _actor_wants_seat_exit(player: Node3D, is_local_actor: bool) -> bool:
 
 
 func tick_rover_locomotion_input() -> void:
-	if _session == null:
+	if _session == null or _rover_seat_passenger:
 		return
 	var assembly_id := _resolve_active_rover_assembly_id()
 	if assembly_id <= 0:
@@ -1491,6 +1509,8 @@ func apply_remote_driver_input(
 	var seat := _session.world.get_element(seat_element_id)
 	if seat == null:
 		return
+	if is_passenger_seat_archetype(seat.archetype_id):
+		return
 	var assembly_id := seat.assembly_id
 	if assembly_id <= 0:
 		return
@@ -1534,7 +1554,8 @@ func clear_remote_driver_input(remote_uid: String) -> void:
 func apply_local_seat_attach(
 	player: Node3D,
 	element_id: int,
-	assembly_id: int
+	assembly_id: int,
+	passenger: bool = false
 ) -> void:
 	if _session == null or _session.projection == null:
 		return
@@ -1563,8 +1584,14 @@ func apply_local_seat_attach(
 	_rover_seat_player = player
 	_rover_seat_assembly_id = assembly_id
 	_rover_seat_element_id = element_id
-	_rover_seat_policy = _session.world.get_seat_control_state_ref(element_id)
-	_sync_seat_mouse_attitude(player, element_id)
+	_rover_seat_passenger = passenger
+	if passenger:
+		_rover_seat_policy = null
+		if player.has_method("set_vehicle_flight_controls"):
+			player.call("set_vehicle_flight_controls", false)
+	else:
+		_rover_seat_policy = _session.world.get_seat_control_state_ref(element_id)
+		_sync_seat_mouse_attitude(player, element_id)
 
 
 ## Client: re-bind to the seat body if a snapshot recreate orphaned the Player
@@ -1599,7 +1626,11 @@ func ensure_local_seat_binding() -> bool:
 		player.call("enter_vehicle", body, seat_offset)
 	player.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	player.reset_physics_interpolation()
-	_sync_seat_mouse_attitude(player, _rover_seat_element_id)
+	if _rover_seat_passenger:
+		if player.has_method("set_vehicle_flight_controls"):
+			player.call("set_vehicle_flight_controls", false)
+	else:
+		_sync_seat_mouse_attitude(player, _rover_seat_element_id)
 	return (
 		player.has_method("is_in_vehicle")
 		and bool(player.call("is_in_vehicle"))
@@ -1615,6 +1646,7 @@ func release_local_seat_attach() -> void:
 		_rover_seat_player = null
 		_rover_seat_assembly_id = 0
 		_rover_seat_element_id = 0
+		_rover_seat_passenger = false
 		_rover_seat_policy = null
 		return
 	var exit_position := player.global_position
@@ -1648,6 +1680,7 @@ func release_local_seat_attach() -> void:
 	_rover_seat_player = null
 	_rover_seat_assembly_id = 0
 	_rover_seat_element_id = 0
+	_rover_seat_passenger = false
 	_rover_seat_policy = null
 
 
@@ -1716,11 +1749,21 @@ func _is_rover_seated(player: Node3D) -> bool:
 	)
 
 
+func _resolve_passenger_seat(command: Dictionary, element_id: int) -> bool:
+	if bool(command.get("parameters", {}).get("passenger", false)):
+		return true
+	if element_id <= 0 or _session == null or _session.world == null:
+		return false
+	var element := _session.world.get_element(element_id)
+	return element != null and is_passenger_seat_archetype(element.archetype_id)
+
+
 func _enter_rover_seat(
 	player: Node3D,
 	element_id: int,
 	assembly_id: int,
-	is_local_actor: bool = true
+	is_local_actor: bool = true,
+	passenger: bool = false
 ) -> Dictionary:
 	if _session == null or _session.projection == null:
 		return _result(&"not_ready")
@@ -1751,17 +1794,17 @@ func _enter_rover_seat(
 		and _session.world.get_player_seat_element_id(actor_uid) != element_id
 	):
 		return _result(&"blocked", {"detail": &"occupied"})
-	# Remote guest: claim occupancy + arm locomotion only. Do not touch the
-	# host's single-seat machine (_rover_seat_*) or reparent the RemotePlayer
-	# avatar — the client attaches its own Player to its replica on ok.
+	# Remote guest: claim occupancy; arm locomotion only for driver seats.
 	if not is_local_actor:
 		if not _session.world.register_player_seat_context(actor_uid, element_id):
 			return _result(&"blocked", {"detail": &"seat_context_rejected"})
-		_prepare_rover_for_drive(assembly_id)
+		if not passenger:
+			_prepare_rover_for_drive(assembly_id)
 		return _result(&"ok", {
 			"seated": true,
 			"assembly_id": assembly_id,
 			"element_id": element_id,
+			"passenger": passenger,
 		})
 	var body := (
 		_session.projection.get_element_projection(element_id).get("body")
@@ -1772,14 +1815,15 @@ func _enter_rover_seat(
 	var seat_offset: Vector3 = WheelPlacementUtil.seat_offset_local(element)
 	if not _session.world.register_player_seat_context(actor_uid, element_id):
 		return _result(&"blocked", {"detail": &"seat_context_rejected"})
-	_prepare_rover_for_drive(assembly_id)
-	body = (
-		_session.projection.get_element_projection(element_id).get("body")
-		as PhysicsBody3D
-	)
-	if body == null or not is_instance_valid(body):
-		_session.world.clear_player_seat_context(actor_uid)
-		return _result(&"not_ready")
+	if not passenger:
+		_prepare_rover_for_drive(assembly_id)
+		body = (
+			_session.projection.get_element_projection(element_id).get("body")
+			as PhysicsBody3D
+		)
+		if body == null or not is_instance_valid(body):
+			_session.world.clear_player_seat_context(actor_uid)
+			return _result(&"not_ready")
 	# Survives chassis reproject: physics projection evacuates/restores the
 	# driver by this meta when StaticBody→RigidBody frees the old body.
 	player.set_meta("control_seat_element_id", element_id)
@@ -1788,14 +1832,21 @@ func _enter_rover_seat(
 	_rover_seat_player = player
 	_rover_seat_assembly_id = assembly_id
 	_rover_seat_element_id = element_id
-	_rover_seat_policy = _session.world.get_seat_control_state_ref(element_id)
-	_sync_seat_mouse_attitude(player, element_id)
+	_rover_seat_passenger = passenger
+	if passenger:
+		_rover_seat_policy = null
+		if player.has_method("set_vehicle_flight_controls"):
+			player.call("set_vehicle_flight_controls", false)
+	else:
+		_rover_seat_policy = _session.world.get_seat_control_state_ref(element_id)
+		_sync_seat_mouse_attitude(player, element_id)
 	# Activate may replace StaticBody→RigidBody and free mesh children;
 	# rebuild visuals onto the live body (wheels need module meshes first).
-	if _session.visuals != null:
-		_session.visuals.rebuild_assembly(assembly_id)
-	if _session.piston_visuals != null:
-		_session.piston_visuals.rebuild_assembly(assembly_id)
+	if not passenger:
+		if _session.visuals != null:
+			_session.visuals.rebuild_assembly(assembly_id)
+		if _session.piston_visuals != null:
+			_session.piston_visuals.rebuild_assembly(assembly_id)
 	# Rebind if activate/rebuild swapped the body under the driver this frame.
 	body = (
 		_session.projection.get_element_projection(element_id).get("body")
@@ -1813,6 +1864,7 @@ func _enter_rover_seat(
 		"seated": true,
 		"assembly_id": assembly_id,
 		"element_id": element_id,
+		"passenger": passenger,
 	})
 
 
@@ -1926,6 +1978,7 @@ func _exit_rover_seat(
 		return _result(&"not_ready")
 	var assembly_id := _rover_seat_assembly_id
 	var element_id := _rover_seat_element_id
+	var was_passenger := _rover_seat_passenger
 	var body: PhysicsBody3D = null
 	if element_id > 0 and _session.projection != null:
 		body = (
@@ -1960,7 +2013,7 @@ func _exit_rover_seat(
 		player.remove_meta("coop_replica_seat")
 	if player != null and player.has_method("set_gameplay_input_enabled"):
 		player.call("set_gameplay_input_enabled", true)
-	if assembly_id > 0:
+	if assembly_id > 0 and not was_passenger:
 		var locomotion := _session.world.get_locomotion_controller(assembly_id)
 		locomotion.clear_driver_input()
 		if locomotion.is_parking_brake():
@@ -1973,6 +2026,7 @@ func _exit_rover_seat(
 	_rover_seat_player = null
 	_rover_seat_assembly_id = 0
 	_rover_seat_element_id = 0
+	_rover_seat_passenger = false
 	_rover_seat_policy = null
 	return _result(&"ok", {
 		"seated": false,

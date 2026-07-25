@@ -610,6 +610,14 @@ static func _place_modules(helper: AssemblyBuildHelper, intent: RoverIntent) -> 
 		"cockpit"
 	):
 		return false
+	# Coop playtest: starboard bench beside cockpit when the deck is wide enough.
+	if width >= 4:
+		helper.place(
+			Slice01Archetypes.passenger_seat(),
+			Vector3i(3, module_y, cockpit_z),
+			0,
+			"passenger_seat"
+		)
 	# Center distributor on long sausages so wheels stay in supply_radius_m.
 	var distributor_z := clampi(
 		int(length / 2.0), cockpit_z + 2, rear_z - battery_rows * 2

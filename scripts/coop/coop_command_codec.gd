@@ -106,7 +106,8 @@ static func make_join_payload(
 	host_uid: String,
 	host_nick: String,
 	host_pose: Dictionary,
-	you_peer_id: int
+	you_peer_id: int,
+	dig_ops: Array = []
 ) -> Dictionary:
 	return {
 		"protocol": PROTOCOL_VERSION,
@@ -114,10 +115,27 @@ static func make_join_payload(
 		"generator_version": MoonTerrainParams.GENERATOR_VERSION,
 		"seed": MoonTerrainParams.SEED,
 		"snapshot": snapshot,
+		"dig_ops": dig_ops,
 		"peers": peers,
 		"host": {"uid": host_uid, "nick": host_nick, "pose": host_pose},
 		"you": you_peer_id,
 	}
+
+
+## Sanitized dig command + host-confirmed volumes for coop replay (live channel
+## and join catch-up share the same shape).
+static func build_dig_op(command: Dictionary, result: Dictionary) -> Dictionary:
+	var kind := StringName(command.get("kind", &""))
+	var op := sanitize_command(command)
+	var data: Dictionary = result.get("data", {})
+	var parameters: Dictionary = op.get("parameters", {})
+	match kind:
+		&"scoop_spoil":
+			parameters["max_volume_m3"] = float(data.get("scooped_volume_m3", 0.0))
+		&"dump_scoop":
+			parameters["volume_m3"] = float(data.get("dumped_volume_m3", 0.0))
+	op["parameters"] = parameters
+	return op
 
 
 ## Protocol / build-precision / generator compatibility. Shared by the host's
