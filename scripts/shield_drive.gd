@@ -35,10 +35,25 @@ extends Node3D
 ## rock clears both. Do not step `_rock` — it has no solid in it and the whole
 ## hill would fall.
 ##
+## The view is a section, and that is not decoration either. Driving a shield is
+## driving something you cannot see out of: the chase camera in the tube shows a
+## wall of sand and nothing else — not the trajectory, not the depth, not where
+## the ground changes. The default view is an orthographic section cut through
+## the machine's own axis, with a drawn lid on the plane of the cut, the track
+## behind, the arc ahead and the arcs the minimum radius allows, a plan inset of
+## the whole trace, and a ground column beside it. Chase and free are still on
+## `C`; nothing in them changed.
+##
 ## Debug stand: raw physical keys, no project input actions.
 ##
 ## Headless self-check:
 ##   godot --headless res://scenes/shield_drive.tscn -- --ticks=400
+##
+## Also: `--view=chase|free` starts in the old views (and measures what the
+## section costs), `--ring-solid=N` walks the un-pinning path, `--dive` makes
+## the autopilot climb and dive so the cut plane has to follow, and
+## `--shot=<abs path>.png` saves the last frame — the only way to check a view
+## without sitting at it.
 
 ## The project's one grid. Not a knob: step 0 decided it, and construction,
 ## granular material and this all share it.
@@ -84,6 +99,75 @@ const TRAIL_STEP_M := 0.25
 ## machine advances), so this is only the head start the cutterhead has on the
 ## shield skin.
 const CUT_LEAD_M := 0.2
+
+## How many cap chunks are rebuilt per mesh flush. The cap is the lid drawn on
+## the plane of the cut; it is rebuilt in the same chunks and on the same clock
+## as the surface, so what the lid says and what the mesh shows can never be a
+## frame apart in different places.
+const CAP_CHUNKS_PER_FLUSH := 10
+## How far the cut may sit from where it wants to be before it is moved, in
+## cells. Moving it rebuilds the whole lid, and a plane that chases the machine
+## cell by cell would rebuild it several times a second for no gain.
+const CUT_HYSTERESIS_CELLS := 2
+
+## The lid's palette. Warm for sand, cool for rock, so the one boundary the
+## drive is about is a change of hue and not only of brightness — a shading
+## gradient can be mistaken for light, a hue step cannot.
+const CAP_LINING := Color(0.92, 0.88, 0.80)
+## Rock standing in the plane, shaded by how much more of it is stacked above:
+## the buried hill drawn as a contour map, so its shape is legible before the
+## face reaches it.
+const CAP_ROCK_THIN := Color(0.46, 0.53, 0.64)
+const CAP_ROCK_DEEP := Color(0.17, 0.21, 0.29)
+## Sand in the plane, shaded by how far under it the rock starts. Same rule in
+## both ramps — darker is more rock — so the two read as one map.
+const CAP_SAND_NEAR := Color(0.40, 0.35, 0.27)
+const CAP_SAND_FAR := Color(0.86, 0.78, 0.60)
+
+## Overlay colours: where you have been, where you are going, and the two arcs
+## you could not go outside of even at full lock. The shadows are dark rather
+## than pale because they are drawn on a lid the colour of dry sand.
+const TRAIL_COLOUR := Color(0.98, 0.72, 0.28)
+const TRAIL_SHADOW := Color(0.42, 0.26, 0.03, 0.70)
+const COURSE_COLOUR := Color(0.45, 0.92, 1.0)
+const COURSE_SHADOW := Color(0.07, 0.30, 0.42, 0.70)
+const ENVELOPE_COLOUR := Color(0.35, 0.62, 0.78, 0.55)
+const PLUMB_COLOUR := Color(1.0, 1.0, 1.0, 0.55)
+
+enum View { ISO, CHASE, FREE }
+
+## The surface shader, and the whole of the depth cut.
+##
+## World height without `MODEL_MATRIX` and without anything derived from the
+## camera: the chunk instances carry a pure scale by the cell size and no
+## translation at all (see `_mesh_chunk`), so a vertex's own Y — the mesher
+## emits vertices in cell units — is the world height over the cell size. This
+## build's camera-relative world transforms make `CAMERA_POSITION_WORLD` and
+## everything like it unreliable; none of that is touched here.
+const SECTION_SHADER_CODE := """
+shader_type spatial;
+render_mode cull_back;
+
+uniform float cell_size = 0.5;
+uniform float cut_y = 1.0e9;
+uniform vec4 albedo : source_color = vec4(0.6, 0.5, 0.4, 1.0);
+uniform float rough : hint_range(0.0, 1.0) = 1.0;
+
+varying float world_y;
+
+void vertex() {
+	world_y = VERTEX.y * cell_size;
+}
+
+void fragment() {
+	if (world_y > cut_y) {
+		discard;
+	}
+	ALBEDO = albedo.rgb;
+	ROUGHNESS = rough;
+	METALLIC = 0.0;
+}
+"""
 
 # --- the knobs ---------------------------------------------------------------
 
@@ -160,7 +244,46 @@ const CUT_LEAD_M := 0.2
 @export var ring_period_m := 2.0
 @export var ring_solid_m := 2.0
 
+@export_group("Section")
+## Where the cut plane sits relative to the machine's own axis. Low enough to
+## slice the bore open is the whole reason the tunnel reads as a trench from
+## above rather than as a buried pipe. Raise it and the tunnel roofs over; drop
+## it and the trench narrows. The mouse wheel drives this at run time.
+@export var cut_above_axis_m := 0.5
+## What one notch of the wheel is worth.
+@export var cut_step_m := 0.5
+## Depth over which buried rock still tints the lid. Ten metres because the
+## bore is six across: rock that close is rock the driver has to decide about.
+@export var cap_probe_m := 10.0
+## Number of tint steps between "rock right under the plane" and "no rock in
+## reach". Steps rather than a gradient on purpose — hard edges read as contour
+## lines on a map, a smooth ramp reads as lighting.
+@export var cap_bands := 5
+
 @export_group("Camera")
+## Which view comes up first. The isometric section is the one the drive is
+## meant to be read from; the other two are kept for debugging.
+@export var start_view: View = View.ISO
+## The isometric view: where it stands, how far it can see across, and how fast
+## it closes on the machine.
+@export var iso_pitch_deg := -35.0
+@export var iso_yaw_deg := 45.0
+@export var iso_size_m := 38.0
+@export var iso_zoom_min_m := 16.0
+@export var iso_zoom_max_m := 140.0
+@export var iso_distance_m := 260.0
+@export var iso_follow_rate := 6.0
+## How far ahead the projected course is drawn. Sixty metres is a little over
+## three times the minimum turning radius, which is the span over which a
+## steering decision actually shows.
+@export var course_preview_m := 60.0
+## Widths of the drawn ribbons, metres.
+@export var trail_width_m := 0.9
+@export var course_width_m := 0.5
+## The plan inset: on by default, and its size in pixels. The aspect is the
+## trace's own, so the whole box fits with nothing cropped.
+@export var plan_inset := true
+@export var plan_inset_px := Vector2i(400, 160)
 ## How far back along the tunnel the chase camera rides, and how far off the
 ## axis. Back far enough to see the machine, close enough to stay in the lit
 ## part of the bore.
@@ -185,9 +308,35 @@ var _rock_pending: Dictionary = {}
 var _sand_material: Material
 var _rock_material: Material
 
+var _section_shader: Shader
+var _clipped: Array[ShaderMaterial] = []
+var _cap_view: Node3D
+var _cap_chunks: Dictionary = {}
+var _cap_pending: Dictionary = {}
+var _cap_material: StandardMaterial3D
+## Highest cell holding rock in each column, or -1. Seeded from the geology and
+## kept honest by the cutter, so the lid's tint is the rock that is there now
+## and not the rock the trace was built with.
+var _rock_top := PackedInt32Array()
+var _cut_cell := -9999
+var _cut_y := 1.0e9
+
 var _machine: Node3D
 var _chase: Camera3D
 var _fly: Camera3D
+var _iso: Camera3D
+var _iso_target := Vector3.ZERO
+var _iso_yaw := 45.0
+var _sun: DirectionalLight3D
+var _overlay: MeshInstance3D
+var _overlay_mesh: ImmediateMesh
+var _overlay_material: StandardMaterial3D
+var _plan_viewport: SubViewport
+var _plan_camera: Camera3D
+var _plan_frame: Control
+var _ruler: Control
+var _environment: Environment
+var _view := View.ISO
 var _legend: Label
 var _status: Label
 
@@ -228,8 +377,9 @@ var _stamp_gen := 0
 
 var _sweep_debt := 0.0
 var _flush_debt := 0.0
-var _fly_mode := false
 var _autopilot_ticks := 0
+var _autopilot_dives := false
+var _shot_path := ""
 var _tick := 0
 var _prof_cut_ms := 0.0
 var _prof_sim_ms := 0.0
@@ -251,11 +401,29 @@ func _ready() -> void:
 			# So the headless check can walk the un-pinning path, which is off
 			# at its default setting.
 			ring_solid_m = float(arg.substr(13))
+		elif arg == "--view=chase":
+			# The old view, for measuring what the section costs and for proving
+			# it still works.
+			start_view = View.CHASE
+		elif arg == "--view=free":
+			start_view = View.FREE
+		elif arg == "--dive":
+			# The cut plane rides the machine, and a machine that never leaves
+			# its own axis never moves it. This is the only way the headless
+			# check walks that path.
+			_autopilot_dives = true
+		elif arg.begins_with("--shot="):
+			# The whole point of this scene is what it looks like, and the
+			# autopilot's verdict cannot see. One frame to a PNG at the end of
+			# the run, so a change to the section can be checked without a
+			# person having to sit down at it.
+			_shot_path = arg.substr(7)
 	var started := Time.get_ticks_usec()
 	_build_shapes()
 	_build_fields()
 	_build_views()
 	_build_machine()
+	_build_overlay()
 	_build_hud()
 	_pos = Vector3(start_x_m, bore_axis_y_m, float(BOX.z) * CELL * 0.5)
 	_push_trail()
@@ -265,7 +433,14 @@ func _ready() -> void:
 	_bore_out(launch)
 	_stamp_shell(-SHELL_LEAD_M, launch)
 	_remesh_all()
+	_iso_target = _pos
+	_iso_yaw = iso_yaw_deg
+	var world := get_node_or_null("WorldEnvironment") as WorldEnvironment
+	if world != null:
+		_environment = world.environment
+	_set_view(start_view)
 	_update_camera(1.0)
+	_update_overlay()
 	print(
 		"SHIELD: trace %.0f x %.0f x %.0f m, %d cells x2, ready in %.0f ms"
 		% [
@@ -313,6 +488,7 @@ func _build_fields() -> void:
 	_field.lateral_rate *= STEP_FINENESS
 	_stamp.resize(BOX.x * BOX.y * BOX.z)
 	_stamp.fill(-1)
+	_rock_top.resize(BOX.x * BOX.z)
 
 	var cell_volume := _field.cell_volume_m3()
 	var sand_top_cell := int(floor(sand_top_m / CELL))
@@ -322,6 +498,7 @@ func _build_fields() -> void:
 			var z_m := (float(z) + 0.5) * CELL
 			var rock_cells := int(round(_rock_top_m(x_m, z_m) / CELL))
 			rock_cells = clampi(rock_cells, 0, BOX.y)
+			_rock_top[z * BOX.x + x] = rock_cells - 1
 			for y in rock_cells:
 				# Solid in the simulated field: it holds sand up and never
 				# flows. Mass in the drawn field: it is the only reason a bore
@@ -355,14 +532,38 @@ func _rock_top_m(x_m: float, z_m: float) -> float:
 
 
 func _build_views() -> void:
-	_sand_material = _make_material(Color(0.60, 0.52, 0.39), 1.0)
-	_rock_material = _make_material(Color(0.30, 0.31, 0.34), 0.85)
+	_section_shader = Shader.new()
+	_section_shader.code = SECTION_SHADER_CODE
+	_sand_material = _make_section_material(Color(0.60, 0.52, 0.39), 1.0)
+	_rock_material = _make_section_material(Color(0.30, 0.31, 0.34), 0.85)
 	_sand_view = Node3D.new()
 	_sand_view.name = "SandSurface"
 	add_child(_sand_view)
 	_rock_view = Node3D.new()
 	_rock_view.name = "RockSurface"
 	add_child(_rock_view)
+	# The lid. Unshaded on purpose: the cut face is a diagram, not a surface,
+	# and a diagram that changes colour when a lamp swings past it stops being
+	# readable. Everything below the cut is lit and shaded, so the flat lid also
+	# separates "ground I am looking through" from "ground I am looking at".
+	_cap_material = StandardMaterial3D.new()
+	_cap_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_cap_material.vertex_color_use_as_albedo = true
+	_cap_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_cap_view = Node3D.new()
+	_cap_view.name = "SectionCap"
+	add_child(_cap_view)
+
+
+func _make_section_material(albedo: Color, roughness: float) -> ShaderMaterial:
+	var material := ShaderMaterial.new()
+	material.shader = _section_shader
+	material.set_shader_parameter("cell_size", CELL)
+	material.set_shader_parameter("cut_y", 1.0e9)
+	material.set_shader_parameter("albedo", albedo)
+	material.set_shader_parameter("rough", roughness)
+	_clipped.append(material)
+	return material
 
 
 static func _make_material(albedo: Color, roughness: float) -> Material:
@@ -442,27 +643,159 @@ func _build_machine() -> void:
 	_chase.fov = 78.0
 	_chase.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	add_child(_chase)
-	_chase.current = true
 	_fly = Camera3D.new()
 	_fly.far = 600.0
 	_fly.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	_fly.set_script(load("res://addons/ropes/demos/fly_camera.gd"))
 	add_child(_fly)
+	# Orthographic, so a metre is a metre wherever it is on the screen and the
+	# same turn drawn twice is the same shape twice. Standing well back with a
+	# generous far plane: an ortho frustum is a box, and a box that starts at
+	# the machine clips away everything between the machine and the eye.
+	_iso = Camera3D.new()
+	_iso.projection = Camera3D.PROJECTION_ORTHOGONAL
+	_iso.size = iso_size_m
+	_iso.near = 0.5
+	_iso.far = iso_distance_m * 2.5
+	_iso.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+	add_child(_iso)
+	# The trench is a hole in the ground and the machine's own lamps only reach
+	# the few metres around it. Off in the chase view, which is lit exactly as
+	# it was before this camera existed.
+	_sun = DirectionalLight3D.new()
+	_sun.name = "SectionLight"
+	_sun.rotation = Vector3(deg_to_rad(-52.0), deg_to_rad(28.0), 0.0)
+	_sun.light_energy = 0.85
+	_sun.light_color = Color(1.0, 0.97, 0.92)
+	_sun.shadow_enabled = false
+	add_child(_sun)
+	# A fill from behind, because a trench lit from one side is a black slot:
+	# the wall the camera can see is the wall the key light cannot reach.
+	var fill := DirectionalLight3D.new()
+	fill.name = "SectionFill"
+	fill.light_energy = 0.55
+	fill.light_color = Color(0.86, 0.90, 1.0)
+	fill.shadow_enabled = false
+	# Parented to the key so one `visible` puts both out; aimed in world terms,
+	# because a rotation inherited from the key is not the direction it reads as.
+	_sun.add_child(fill)
+	fill.global_rotation = Vector3(deg_to_rad(-34.0), deg_to_rad(-146.0), 0.0)
+	_build_plan_view()
+
+
+## A second ortho camera looking straight down on the whole trace, rendered into
+## a corner inset. The isometric view answers "what is around me"; nothing in it
+## answers "where am I on the run", which is the question a drive with an
+## eighteen-metre turning radius is actually made of.
+func _build_plan_view() -> void:
+	_plan_viewport = SubViewport.new()
+	_plan_viewport.size = plan_inset_px
+	_plan_viewport.transparent_bg = false
+	# No `own_world_3d`: the inset draws this same world, so the lid, the trail
+	# and the projected course cannot disagree between the two views.
+	_plan_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	add_child(_plan_viewport)
+	_plan_camera = Camera3D.new()
+	_plan_camera.projection = Camera3D.PROJECTION_ORTHOGONAL
+	# Height first: the inset's aspect is the trace's, so fixing the cross-trace
+	# extent fits the length as well.
+	_plan_camera.keep_aspect = Camera3D.KEEP_HEIGHT
+	_plan_camera.size = float(BOX.z) * CELL * 1.04
+	_plan_camera.near = 1.0
+	_plan_camera.far = 400.0
+	_plan_camera.position = Vector3(
+		float(BOX.x) * CELL * 0.5, 200.0, float(BOX.z) * CELL * 0.5
+	)
+	_plan_camera.rotation = Vector3(-PI * 0.5, 0.0, 0.0)
+	_plan_camera.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+	_plan_viewport.add_child(_plan_camera)
+
+
+## Where the machine has been and where it is going, as flat ribbons laid in the
+## world. Drawn with the depth test off: the whole point of them is to be read
+## through ground the camera cannot see into, and a course line that disappears
+## the moment it enters the sand is a course line for nothing.
+func _build_overlay() -> void:
+	_overlay_material = StandardMaterial3D.new()
+	_overlay_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_overlay_material.vertex_color_use_as_albedo = true
+	_overlay_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_overlay_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_overlay_material.no_depth_test = true
+	_overlay_material.render_priority = 2
+	_overlay_mesh = ImmediateMesh.new()
+	_overlay = MeshInstance3D.new()
+	_overlay.name = "Overlay"
+	_overlay.mesh = _overlay_mesh
+	# Ribbons are rebuilt around the machine every frame, so the engine's own
+	# culling box goes stale a frame at a time; ortho or not, a stale box is a
+	# vanishing overlay.
+	_overlay.custom_aabb = AABB(Vector3.ZERO, Vector3(BOX) * CELL)
+	_overlay.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+	add_child(_overlay)
+
+
+## White text on a lid the colour of dry sand is white text on white. An outline
+## costs nothing and the readout stops depending on where the machine happens to
+## be standing.
+static func _outline(label: Label) -> void:
+	label.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 0.9))
+	label.add_theme_constant_override("outline_size", 5)
 
 
 func _build_hud() -> void:
 	var layer := CanvasLayer.new()
 	add_child(layer)
 	_legend = Label.new()
+	_outline(_legend)
 	_legend.position = Vector2(16.0, 12.0)
 	_legend.text = "\n".join([
 		"W / S — thrust      A / D — course      Q / E — pitch",
-		"C — chase / free camera (free: hold RMB + WASD)      R — restart",
+		"wheel — cut depth      [ / ] — zoom      Z / X — turn the view      V — plan inset",
+		"C — view: section / chase / free (free: hold RMB + WASD)      R — restart",
 	])
 	layer.add_child(_legend)
 	_status = Label.new()
-	_status.position = Vector2(16.0, 66.0)
+	_outline(_status)
+	_status.position = Vector2(16.0, 86.0)
 	layer.add_child(_status)
+
+	_plan_frame = Control.new()
+	_plan_frame.position = Vector2(16.0, 236.0)
+	_plan_frame.size = Vector2(plan_inset_px) + Vector2(4.0, 4.0)
+	_plan_frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(_plan_frame)
+	var backing := ColorRect.new()
+	backing.color = Color(0.06, 0.06, 0.08, 0.9)
+	backing.size = _plan_frame.size
+	backing.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_plan_frame.add_child(backing)
+	var plan_image := TextureRect.new()
+	plan_image.texture = _plan_viewport.get_texture()
+	plan_image.position = Vector2(2.0, 2.0)
+	plan_image.size = Vector2(plan_inset_px)
+	plan_image.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_plan_frame.add_child(plan_image)
+	var plan_label := Label.new()
+	_outline(plan_label)
+	plan_label.text = "plan — the whole trace"
+	plan_label.position = Vector2(4.0, -20.0)
+	_plan_frame.add_child(plan_label)
+
+	# The ruler is a section of its own: the column of ground the machine is
+	# standing in, and the same column twenty metres ahead. Two columns rather
+	# than one because the question underground is never "what am I in" but
+	# "what am I about to be in".
+	_ruler = Control.new()
+	_ruler.anchor_left = 1.0
+	_ruler.anchor_right = 1.0
+	_ruler.offset_left = -176.0
+	_ruler.offset_right = -16.0
+	_ruler.offset_top = 16.0
+	_ruler.offset_bottom = 372.0
+	_ruler.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_ruler.draw.connect(_draw_ruler)
+	layer.add_child(_ruler)
 
 
 # --- driving -----------------------------------------------------------------
@@ -495,11 +828,13 @@ func _physics_process(delta: float) -> void:
 		# tunnel standing in sand that has simply not been swept yet.
 		_field.step(0)
 	var t2 := Time.get_ticks_usec()
+	_update_cut(false)
 	_flush_debt += MESH_FLUSH_HZ * delta
 	if _flush_debt >= 1.0:
 		_flush_debt -= 1.0
 		_flush(_field, _sand_view, _sand_chunks, _sand_pending, _sand_material)
 		_flush(_rock, _rock_view, _rock_chunks, _rock_pending, _rock_material)
+		_flush_cap()
 	var t3 := Time.get_ticks_usec()
 	# Smoothed, because the shell is stamped and the mesh is flushed on their
 	# own clocks: an instantaneous number is a different measurement every
@@ -518,9 +853,9 @@ func _read_controls(delta: float) -> void:
 		# the trail, the lining and both grounds without a hand on the keys.
 		_throttle = 1.0
 		_steer = sin(float(_tick) / 90.0)
-		_elevator = 0.0
+		_elevator = sin(float(_tick) / 140.0) if _autopilot_dives else 0.0
 		return
-	if _fly_mode:
+	if _view == View.FREE:
 		# The free camera owns WASDQE while it is up; driving with it would
 		# mean both at once.
 		return
@@ -678,6 +1013,7 @@ func _cut(advance: float) -> float:
 				# too, or the bore through rock would be a hole nothing can
 				# fall into.
 				_field.set_solid(c.x, c.y, c.z, false)
+				_lower_rock_top(c)
 			else:
 				taken += _field.take(c.x, c.y, c.z)
 		if depth >= reach:
@@ -716,9 +1052,23 @@ func _bore_out(back_m: float) -> void:
 			_stamp[index] = _stamp_gen
 			if _rock.take(c.x, c.y, c.z) > 0.0:
 				_field.set_solid(c.x, c.y, c.z, false)
+				_lower_rock_top(c)
 			else:
 				_field.take(c.x, c.y, c.z)
 		depth += CELL * 0.5
+
+
+## Keep the rock-top map true after the cutter has been through a column. Only a
+## cell that *was* the top can move the top, so this costs nothing on the
+## thousands of cells a bore through rock takes out from underneath it.
+func _lower_rock_top(c: Vector3i) -> void:
+	var column := c.z * BOX.x + c.x
+	if _rock_top[column] != c.y:
+		return
+	var top := c.y - 1
+	while top >= 0 and _rock.mass_at(c.x, top, c.z) <= 0.5:
+		top -= 1
+	_rock_top[column] = top
 
 
 ## Set the spoil down on the bore floor behind the shield. Returns what was
@@ -871,9 +1221,25 @@ func _flush(
 ) -> void:
 	var prep: Dictionary = field.take_dirty_prep(FLUSH_CHUNK, 0)
 	var chunks: PackedInt32Array = prep["chunks"]
+	@warning_ignore("integer_division")
+	var cut_chunk_y := _cut_cell / FLUSH_CHUNK
 	var k := 0
 	while k < chunks.size():
-		pending[Vector3i(chunks[k], chunks[k + 1], chunks[k + 2])] = true
+		var chunk := Vector3i(chunks[k], chunks[k + 1], chunks[k + 2])
+		pending[chunk] = true
+		# The lid is derived from the same cells the mesher just heard about, so
+		# it is marked from the same report. A lid drawn from a stale read is a
+		# picture of a tunnel that is not there.
+		#
+		# Against the record's own box of moved cells, not against the chunk: a
+		# chunk is eight metres tall and the plane is one cell thick, and
+		# rebuilding the lid for every collapse anywhere in that band cost more
+		# than the whole of the rest of the section.
+		if (
+			chunk.y == cut_chunk_y
+			and chunks[k + 4] <= _cut_cell and chunks[k + 7] >= _cut_cell
+		):
+			_cap_pending[Vector2i(chunk.x, chunk.z)] = true
 		k += 9
 	if pending.is_empty():
 		return
@@ -914,13 +1280,224 @@ func _mesh_chunk(
 		instance = MeshInstance3D.new()
 		instance.mesh = ArrayMesh.new()
 		instance.material_override = material
-		# Vertices come out in cell units, so the scale is the whole transform.
+		# Vertices come out in cell units, so the scale is the whole transform —
+		# no rotation and no translation. The section shader depends on that: it
+		# reads world height straight off the vertex.
 		instance.scale = Vector3.ONE * CELL
+		instance.visible = _chunk_below_cut(chunk)
 		view.add_child(instance)
 		meshes[chunk] = instance
 	var mesh := instance.mesh as ArrayMesh
 	mesh.clear_surfaces()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+
+
+# --- the depth cut -----------------------------------------------------------
+#
+# Three things have to agree or the section lies, and a lying section is worse
+# than no section at all:
+#
+#   * the surface, which stops at the plane because the shader throws away every
+#     fragment above it — nothing is drawn above the cut by any route;
+#   * the lid, which is built from the cells *in* the plane and so is a reading
+#     of the field rather than a decoration on it;
+#   * the machine, which is never above the plane, because the plane is placed
+#     off the machine's own axis and follows it.
+#
+# The simulation above the cut is untouched and keeps running. That is not a
+# discrepancy: the material up there is really there, it is simply not drawn,
+# and the moment any of it falls into the bore it is below the plane and drawn.
+
+
+func _chunk_below_cut(chunk: Vector3i) -> bool:
+	if _view != View.ISO:
+		return true
+	return float(chunk.y * FLUSH_CHUNK) * CELL < _cut_y
+
+
+## Where the plane wants to be: off the machine's axis, snapped to a cell so the
+## lid is a layer of cells and not a slab sawn through the middle of one.
+func _wanted_cut_cell() -> int:
+	return clampi(int(floor((_pos.y + cut_above_axis_m) / CELL)), 0, BOX.y - 1)
+
+
+func _update_cut(force: bool) -> void:
+	var wanted := _wanted_cut_cell()
+	if not force and absi(wanted - _cut_cell) < CUT_HYSTERESIS_CELLS:
+		return
+	_cut_cell = wanted
+	# The lid sits on the top face of the layer it draws, a centimetre clear of
+	# it so the two never fight for the same depth.
+	_cut_y = float(_cut_cell + 1) * CELL
+	_cap_view.position = Vector3(0.0, _cut_y + 0.01, 0.0)
+	var plane := _cut_y if _view == View.ISO else 1.0e9
+	for material in _clipped:
+		material.set_shader_parameter("cut_y", plane)
+	_apply_chunk_visibility()
+	_cap_pending.clear()
+	for cx in range(0, BOX.x, FLUSH_CHUNK):
+		for cz in range(0, BOX.z, FLUSH_CHUNK):
+			@warning_ignore("integer_division")
+			_cap_pending[Vector2i(cx / FLUSH_CHUNK, cz / FLUSH_CHUNK)] = true
+	if force:
+		_flush_cap(_cap_pending.size())
+
+
+func _apply_chunk_visibility() -> void:
+	for chunk: Vector3i in _sand_chunks:
+		(_sand_chunks[chunk] as MeshInstance3D).visible = _chunk_below_cut(chunk)
+	for chunk: Vector3i in _rock_chunks:
+		(_rock_chunks[chunk] as MeshInstance3D).visible = _chunk_below_cut(chunk)
+	_cap_view.visible = _view == View.ISO
+
+
+func _flush_cap(budget := CAP_CHUNKS_PER_FLUSH) -> void:
+	# Nothing is rebuilt while the lid is not being looked at. Every route back
+	# into the section view goes through `_set_view`, which marks all of it
+	# dirty again, so it can never come back stale.
+	if _view != View.ISO or _cap_pending.is_empty():
+		return
+	var done := 0
+	var drawn: Array[Vector2i] = []
+	for chunk: Vector2i in _cap_pending:
+		if done >= budget:
+			break
+		_build_cap_chunk(chunk)
+		drawn.append(chunk)
+		done += 1
+	for chunk in drawn:
+		_cap_pending.erase(chunk)
+
+
+## What one cell of the plane is, as a code: -1 nothing, 0 lining, and from 2
+## upwards sand and then rock, each banded by where the rock is.
+##
+## This is where the section stops being a hole and becomes a drawing. A plane
+## cut through sand produces no geometry at all — an isosurface only exists
+## where the fill crosses it, and the inside of a dune crosses nothing — so
+## without the lid the driver looks straight through the ground into the
+## backfaces of the bore and sees an empty black box. With it, the plane reads
+## as ground: the tunnel is the gap in it, the lining is the rim of the gap, and
+## rock that reaches the plane is a different colour than the sand beside it.
+func _cap_code(
+	sand: PackedFloat32Array,
+	rock: PackedFloat32Array,
+	solid: PackedByteArray,
+	i: int,
+	column: int
+) -> int:
+	var step := maxf(cap_probe_m / float(cap_bands), 0.01)
+	if rock[i] > 0.5:
+		# Rock in the plane, banded by how much of it stands above the plane.
+		# Saturating at the bore's own radius rather than at the sand probe:
+		# rock a bore-radius over the plane is already rock the machine cannot
+		# climb over, and everything past that is the same news.
+		var over := float(_rock_top[column] - _cut_cell) * CELL
+		var over_step := maxf(bore_diameter_m * 0.5 / float(cap_bands), 0.01)
+		return 2 + cap_bands + clampi(int(over / over_step), 0, cap_bands - 1)
+	if solid[i] != 0:
+		return 0
+	if sand[i] <= RENDER_MIN_FILL:
+		return -1
+	# Sand at the plane, tinted by the rock underneath it. This is the layering:
+	# a horizontal cut through a layer cake shows one layer, so the other layer
+	# has to be reported rather than shown, and the honest way to report it is
+	# how far down it starts.
+	var depth := float(_cut_cell - _rock_top[column]) * CELL
+	return 2 + clampi(int(depth / step), 0, cap_bands - 1)
+
+
+func _cap_colour(code: int) -> Color:
+	if code == 0:
+		return CAP_LINING
+	var span := maxf(float(cap_bands - 1), 1.0)
+	if code >= 2 + cap_bands:
+		return CAP_ROCK_THIN.lerp(
+			CAP_ROCK_DEEP, float(code - 2 - cap_bands) / span
+		)
+	return CAP_SAND_NEAR.lerp(CAP_SAND_FAR, float(code - 2) / span)
+
+
+func _build_cap_chunk(chunk: Vector2i) -> void:
+	var x0 := chunk.x * FLUSH_CHUNK
+	var z0 := chunk.y * FLUSH_CHUNK
+	var w := mini(FLUSH_CHUNK, BOX.x - x0)
+	var d := mini(FLUSH_CHUNK, BOX.z - z0)
+	var instance: MeshInstance3D = _cap_chunks.get(chunk)
+	if w <= 0 or d <= 0:
+		return
+	var lo := Vector3i(x0, _cut_cell, z0)
+	var extent := Vector3i(w, 1, d)
+	# Three reads of a one-cell-thick slab instead of a quarter of a million
+	# bound calls: the cost of the lid is the reason it can be rebuilt whenever
+	# the tunnel changes shape.
+	var sand := _field.copy_mass_box(lo, extent)
+	var rock := _rock.copy_mass_box(lo, extent)
+	var solid := _field.copy_solid_box(lo, extent)
+	var verts := PackedVector3Array()
+	var colours := PackedColorArray()
+	for iz in d:
+		# Runs of one colour become one quad. With the tint in steps rather than
+		# a ramp, a row of the lid is a handful of runs and not sixteen quads.
+		var run_code := -1
+		var run_from := 0
+		for ix in range(w + 1):
+			var code := -1
+			if ix < w:
+				code = _cap_code(
+					sand, rock, solid, iz * w + ix, (z0 + iz) * BOX.x + x0 + ix
+				)
+			if code == run_code:
+				continue
+			if run_code >= 0:
+				_cap_quad(
+					verts, colours,
+					x0 + run_from, x0 + ix, z0 + iz, _cap_colour(run_code)
+				)
+			run_code = code
+			run_from = ix
+	if verts.is_empty():
+		if instance != null:
+			_cap_chunks.erase(chunk)
+			instance.queue_free()
+		return
+	if instance == null:
+		instance = MeshInstance3D.new()
+		instance.mesh = ArrayMesh.new()
+		instance.material_override = _cap_material
+		_cap_view.add_child(instance)
+		_cap_chunks[chunk] = instance
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_COLOR] = colours
+	var mesh := instance.mesh as ArrayMesh
+	mesh.clear_surfaces()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+
+
+func _cap_quad(
+	verts: PackedVector3Array,
+	colours: PackedColorArray,
+	xa: int,
+	xb: int,
+	z: int,
+	colour: Color
+) -> void:
+	var x_lo := float(xa) * CELL
+	var x_hi := float(xb) * CELL
+	var z_lo := float(z) * CELL
+	var z_hi := float(z + 1) * CELL
+	# Two triangles, wound either way: the lid's material has culling off, so a
+	# lid that ends up facing down is still a lid.
+	verts.append(Vector3(x_lo, 0.0, z_lo))
+	verts.append(Vector3(x_hi, 0.0, z_lo))
+	verts.append(Vector3(x_hi, 0.0, z_hi))
+	verts.append(Vector3(x_lo, 0.0, z_lo))
+	verts.append(Vector3(x_hi, 0.0, z_hi))
+	verts.append(Vector3(x_lo, 0.0, z_hi))
+	for _k in 6:
+		colours.append(colour)
 
 
 # --- camera and HUD ----------------------------------------------------------
@@ -930,7 +1507,9 @@ func _process(delta: float) -> void:
 	if _field == null:
 		return
 	_update_camera(delta)
+	_update_overlay()
 	_update_hud()
+	_ruler.queue_redraw()
 
 
 ## Where the machine was `back_m` ago, as `[position, forward]`. Along the
@@ -968,7 +1547,10 @@ func _update_camera(delta: float) -> void:
 	basis.y = right_up[1]
 	basis.z = -fwd
 	_machine.transform = Transform3D(basis, _pos)
-	if _fly_mode:
+	if _view == View.ISO:
+		_update_iso_camera(delta)
+		return
+	if _view == View.FREE:
 		return
 	var at := _trail_at(_travelled - camera_back_m)
 	var wanted: Vector3 = at[0] + Vector3.UP * camera_up_m
@@ -981,6 +1563,285 @@ func _update_camera(delta: float) -> void:
 	var target := _pos + fwd * camera_look_ahead_m
 	if here.distance_to(target) > 0.2:
 		_chase.look_at(target, Vector3.UP)
+
+
+## The section view. World-aligned and turned only in eighth-turn steps by hand:
+## a camera that swung with the machine's own course would hide the one thing
+## the view exists to show, which is that the course is changing.
+func _update_iso_camera(delta: float) -> void:
+	var rate := clampf(iso_follow_rate * delta, 0.0, 1.0)
+	if delta >= 1.0:
+		_iso_target = _pos
+	else:
+		_iso_target = _iso_target.lerp(_pos, rate)
+	_iso_yaw = lerpf(_iso_yaw, iso_yaw_deg, clampf(6.0 * delta, 0.0, 1.0))
+	var yaw := deg_to_rad(_iso_yaw)
+	var pitch := deg_to_rad(-iso_pitch_deg)
+	var offset := Vector3(
+		cos(pitch) * sin(yaw), sin(pitch), cos(pitch) * cos(yaw)
+	) * iso_distance_m
+	_iso.size = iso_size_m
+	_iso.global_position = _iso_target + offset
+	_iso.look_at(_iso_target, Vector3.UP)
+
+
+# --- what the driver is actually reading -------------------------------------
+
+
+## Every metre of the drive that is not the ground itself: the track behind, the
+## arc ahead at the current wheel, the two arcs that bound it at full lock, and
+## the mast from the machine up to daylight.
+func _update_overlay() -> void:
+	_overlay_mesh.clear_surfaces()
+	if _view == View.CHASE:
+		return
+	# One point per metre. The trail is recorded four times finer than that
+	# because the lining rides it; a ribbon does not need it.
+	var trail := PackedVector3Array()
+	var stride := maxi(1, int(round(1.0 / TRAIL_STEP_M)))
+	var i := 0
+	while i < _trail_pos.size():
+		trail.append(_trail_pos[i])
+		i += stride
+	trail.append(_pos)
+	_ribbon(trail, trail_width_m, TRAIL_COLOUR)
+	_ribbon(_flatten(trail), trail_width_m * 0.5, TRAIL_SHADOW)
+
+	var reach := course_preview_m
+	var limit := 1.0 / maxf(min_turn_radius_m, 0.1)
+	# The envelope first, so the live course draws over it.
+	_ribbon(_course_points(limit, reach), course_width_m * 0.6, ENVELOPE_COLOUR)
+	_ribbon(_course_points(-limit, reach), course_width_m * 0.6, ENVELOPE_COLOUR)
+	var course := _course_points(_steer * limit, reach)
+	_ribbon(course, course_width_m, COURSE_COLOUR)
+	_ribbon(_flatten(course), course_width_m, COURSE_SHADOW)
+	# Where it ends up, marked on the plane of the cut.
+	var finish: Vector3 = course[course.size() - 1]
+	_plumb(finish, _cut_y, COURSE_COLOUR)
+	_cross(Vector3(finish.x, _cut_y, finish.z), 1.4, COURSE_COLOUR)
+	# From the machine to the top of the ground, straight through the plane of
+	# the cut. Under an orthographic camera the length of that mast is the one
+	# thing on the screen that says how much ground is overhead — the rest of
+	# the cover was clipped away to make the tunnel visible in the first place.
+	_plumb(_pos, sand_top_m, PLUMB_COLOUR)
+	_cross(Vector3(_pos.x, sand_top_m, _pos.z), 2.5, PLUMB_COLOUR)
+
+
+## Same track, laid on the plane of the cut. Under an orthographic camera a line
+## and its shadow are two parallel lines a fixed distance apart, and that
+## distance is the depth — the one depth cue ortho does not destroy.
+func _flatten(points: PackedVector3Array) -> PackedVector3Array:
+	var out := PackedVector3Array()
+	out.resize(points.size())
+	for i in points.size():
+		out[i] = Vector3(points[i].x, _cut_y + 0.03, points[i].z)
+	return out
+
+
+## The path the machine takes from here if the wheel is not touched. Curvature,
+## not turn rate: how sharply the course bends per metre travelled depends only
+## on the wheel, which is why the drawing is the same whether the driver is at
+## full thrust or stopped.
+func _course_points(curvature: float, length: float) -> PackedVector3Array:
+	var out := PackedVector3Array()
+	var point := _pos
+	var yaw := _yaw
+	var steps := 40
+	# Sixty metres at full lock is a hundred and ninety degrees of arc, and an
+	# arc that comes back past the machine says nothing about where the machine
+	# is going — it just fills the screen. Cut every arc at a hundred degrees;
+	# past that the shape of the decision is already on the screen.
+	if absf(curvature) > 0.0001:
+		length = minf(length, 1.75 / absf(curvature))
+	var span := length / float(steps)
+	out.append(point)
+	for _k in steps:
+		yaw += curvature * span
+		point += Vector3(
+			cos(_pitch) * cos(yaw), sin(_pitch), cos(_pitch) * sin(yaw)
+		) * span
+		out.append(point)
+	return out
+
+
+func _ribbon(points: PackedVector3Array, width: float, colour: Color) -> void:
+	if points.size() < 2:
+		return
+	_overlay_mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLE_STRIP, _overlay_material)
+	_overlay_mesh.surface_set_color(colour)
+	var half := width * 0.5
+	for i in points.size():
+		var direction: Vector3
+		if i == 0:
+			direction = points[1] - points[0]
+		elif i == points.size() - 1:
+			direction = points[i] - points[i - 1]
+		else:
+			direction = points[i + 1] - points[i - 1]
+		direction.y = 0.0
+		if direction.length_squared() < 1e-8:
+			direction = Vector3.RIGHT
+		var side := direction.normalized().cross(Vector3.UP) * half
+		_overlay_mesh.surface_add_vertex(points[i] - side)
+		_overlay_mesh.surface_add_vertex(points[i] + side)
+	_overlay_mesh.surface_end()
+
+
+## A vertical mast from a point up to a height, as two crossed blades so it is
+## there from any of the eight view angles.
+func _plumb(at: Vector3, top_y: float, colour: Color) -> void:
+	var top := maxf(top_y, at.y + 0.5)
+	for axis: Vector3 in [Vector3.RIGHT * 0.12, Vector3.FORWARD * 0.12]:
+		_overlay_mesh.surface_begin(
+			Mesh.PRIMITIVE_TRIANGLE_STRIP, _overlay_material
+		)
+		_overlay_mesh.surface_set_color(colour)
+		_overlay_mesh.surface_add_vertex(at - axis)
+		_overlay_mesh.surface_add_vertex(at + axis)
+		_overlay_mesh.surface_add_vertex(Vector3(at.x, top, at.z) - axis)
+		_overlay_mesh.surface_add_vertex(Vector3(at.x, top, at.z) + axis)
+		_overlay_mesh.surface_end()
+
+
+## A flat cross at a point, so the top of a mast is a place and not a line that
+## happens to stop.
+func _cross(at: Vector3, size: float, colour: Color) -> void:
+	for across: bool in [true, false]:
+		var long := (Vector3.RIGHT if across else Vector3.FORWARD) * size * 0.5
+		var wide := (Vector3.FORWARD if across else Vector3.RIGHT) * 0.09
+		_overlay_mesh.surface_begin(
+			Mesh.PRIMITIVE_TRIANGLE_STRIP, _overlay_material
+		)
+		_overlay_mesh.surface_set_color(colour)
+		_overlay_mesh.surface_add_vertex(at - long - wide)
+		_overlay_mesh.surface_add_vertex(at - long + wide)
+		_overlay_mesh.surface_add_vertex(at + long - wide)
+		_overlay_mesh.surface_add_vertex(at + long + wide)
+		_overlay_mesh.surface_end()
+
+
+## Top of the rock in a column, in metres, read from the map the cutter keeps.
+func _rock_surface_m(x_m: float, z_m: float) -> float:
+	var x := clampi(int(floor(x_m / CELL)), 0, BOX.x - 1)
+	var z := clampi(int(floor(z_m / CELL)), 0, BOX.z - 1)
+	return float(_rock_top[z * BOX.x + x] + 1) * CELL
+
+
+## Two ground columns, drawn to scale: where the machine is standing and what it
+## will be standing in twenty metres from now. The one number a tunnel driver
+## never has — how much ground is over the crown — is on it, and so is the
+## boundary the whole trace is about.
+func _draw_ruler() -> void:
+	_ruler.draw_rect(Rect2(Vector2.ZERO, _ruler.size), Color(0.05, 0.05, 0.07, 0.82))
+	var font := _ruler.get_theme_default_font()
+	var font_size := 12
+	var box := _ruler.size
+	var top := 22.0
+	var height := box.y - top - 18.0
+	var world_top := sand_top_m + 2.0
+	var radius := bore_diameter_m * 0.5
+	var ahead := _pos + _forward() * 20.0
+	var columns := [
+		["here", _pos.x, _pos.z, 8.0],
+		["+20 m", ahead.x, ahead.z, 84.0],
+	]
+	for entry in columns:
+		var label: String = entry[0]
+		var rock_m := _rock_surface_m(entry[1], entry[2])
+		var left: float = entry[3]
+		var width := 60.0
+		var sand_px := top + height * (1.0 - clampf(sand_top_m / world_top, 0.0, 1.0))
+		var rock_px := top + height * (1.0 - clampf(rock_m / world_top, 0.0, 1.0))
+		var base_px := top + height
+		_ruler.draw_rect(
+			Rect2(left, sand_px, width, base_px - sand_px), CAP_SAND_FAR
+		)
+		_ruler.draw_rect(
+			Rect2(left, rock_px, width, base_px - rock_px), CAP_ROCK_DEEP
+		)
+		_ruler.draw_string(
+			font, Vector2(left, top - 8.0), label,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.85, 0.85, 0.9)
+		)
+		# The bore, to scale, at the machine's own axis: the gap between the top
+		# of that box and the rock band is the cover, and it is a length on the
+		# screen rather than a number to be trusted.
+		var axis_y := _pos.y if label == "here" else ahead.y
+		var crown_px := top + height * (
+			1.0 - clampf((axis_y + radius) / world_top, 0.0, 1.0)
+		)
+		var invert_px := top + height * (
+			1.0 - clampf((axis_y - radius) / world_top, 0.0, 1.0)
+		)
+		_ruler.draw_rect(
+			Rect2(left + 14.0, crown_px, 32.0, invert_px - crown_px),
+			Color(0.08, 0.09, 0.11)
+		)
+		if label == "here":
+			_ruler.draw_rect(
+				Rect2(left + 14.0, crown_px, 32.0, invert_px - crown_px),
+				Color(0.95, 0.78, 0.35), false, 2.0
+			)
+	var surface_px := top + height * (1.0 - clampf(sand_top_m / world_top, 0.0, 1.0))
+	_ruler.draw_line(
+		Vector2(0.0, surface_px), Vector2(box.x, surface_px),
+		Color(0.95, 0.95, 1.0, 0.8), 1.0
+	)
+	_ruler.draw_string(
+		font, Vector2(0.0, surface_px - 4.0), "surface",
+		HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.95, 0.95, 1.0, 0.8)
+	)
+	var cut_px := top + height * (1.0 - clampf(_cut_y / world_top, 0.0, 1.0))
+	_ruler.draw_line(
+		Vector2(0.0, cut_px), Vector2(box.x, cut_px),
+		Color(0.45, 0.92, 1.0, 0.7), 1.0
+	)
+	_ruler.draw_string(
+		font, Vector2(0.0, cut_px - 4.0), "cut",
+		HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.45, 0.92, 1.0, 0.8)
+	)
+	_ruler.draw_string(
+		font, Vector2(0.0, box.y - 4.0),
+		"%.1f m deep   cover %.1f m" % [
+			sand_top_m - _pos.y,
+			maxf(sand_top_m - (_pos.y + radius), 0.0),
+		],
+		HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.85, 0.85, 0.9)
+	)
+
+
+# --- views -------------------------------------------------------------------
+
+
+func _set_view(view: View) -> void:
+	if view == View.FREE:
+		# Picked up where the last view was standing, or the free camera opens
+		# on whatever it happened to be pointing at last time.
+		_fly.global_transform = (
+			_iso.global_transform if _view == View.ISO else _chase.global_transform
+		)
+	_view = view
+	_iso.current = view == View.ISO
+	_chase.current = view == View.CHASE
+	_fly.current = view == View.FREE
+	# The fly camera answers the wheel and the right button whether or not it is
+	# the one being looked through; while it is not, it must not.
+	_fly.set_process_unhandled_input(view == View.FREE)
+	if view != View.FREE and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	_sun.visible = view != View.CHASE
+	if _environment != null:
+		# The chase view is left exactly as dark as it was: it is a view from
+		# inside a tube lit by the machine's own lamps, and that is the point of
+		# it. The section is a drawing and has to be legible.
+		_environment.ambient_light_energy = 0.12 if view == View.CHASE else 0.62
+	_overlay.visible = view != View.CHASE
+	_plan_frame.visible = view == View.ISO and plan_inset
+	_plan_viewport.render_target_update_mode = (
+		SubViewport.UPDATE_ALWAYS if _plan_frame.visible
+		else SubViewport.UPDATE_DISABLED
+	)
+	_update_cut(true)
 
 
 func _update_hud() -> void:
@@ -997,6 +1858,11 @@ func _update_hud() -> void:
 		"face: %s   cut %.0f m3   spoil %.0f m3" % [
 			_ground_name(), _cut_m3, _spoil_m3
 		],
+		"%.1f m below surface   %.1f m of ground over the crown   rock %s" % [
+			sand_top_m - _pos.y,
+			maxf(sand_top_m - (_pos.y + bore_diameter_m * 0.5), 0.0),
+			_rock_note(),
+		],
 		"%d fps   cut %.2f / sim %.2f / mesh %.2f ms" % [
 			Engine.get_frames_per_second(),
 			_prof_cut_ms, _prof_sim_ms, _prof_mesh_ms,
@@ -1004,18 +1870,71 @@ func _update_hud() -> void:
 	])
 
 
+## Where the rock is relative to the machine, in the one direction that matters:
+## a boundary above the axis is a boundary the machine has to dive under or bore
+## through, and one below it is a floor.
+func _rock_note() -> String:
+	var here := _rock_surface_m(_pos.x, _pos.z) - _pos.y
+	var ahead := _pos + _forward() * 20.0
+	var there := _rock_surface_m(ahead.x, ahead.z) - _pos.y
+	return "%+.1f m here, %+.1f m in 20 m" % [here, there]
+
+
 func _unhandled_input(event: InputEvent) -> void:
+	if _autopilot_ticks > 0:
+		# A self-check drives itself. A stray scroll over the window while one
+		# is running would move the cut and the run would report on a view
+		# nobody asked for.
+		return
+	if event is InputEventMouseButton and _view == View.ISO:
+		var button := event as InputEventMouseButton
+		if not button.pressed:
+			return
+		match button.button_index:
+			MOUSE_BUTTON_WHEEL_UP:
+				_nudge_cut(cut_step_m)
+			MOUSE_BUTTON_WHEEL_DOWN:
+				_nudge_cut(-cut_step_m)
+			_:
+				return
+		get_viewport().set_input_as_handled()
+		return
 	if not (event is InputEventKey) or not event.pressed or event.echo:
 		return
 	match (event as InputEventKey).physical_keycode:
 		KEY_C:
-			_fly_mode = not _fly_mode
-			if _fly_mode:
-				_fly.global_transform = _chase.global_transform
-			_fly.current = _fly_mode
-			_chase.current = not _fly_mode
+			if _view == View.ISO:
+				_set_view(View.CHASE)
+			elif _view == View.CHASE:
+				_set_view(View.FREE)
+			else:
+				_set_view(View.ISO)
+		KEY_V:
+			plan_inset = not plan_inset
+			_plan_frame.visible = _view == View.ISO and plan_inset
+			_plan_viewport.render_target_update_mode = (
+				SubViewport.UPDATE_ALWAYS if _plan_frame.visible
+				else SubViewport.UPDATE_DISABLED
+			)
+		KEY_Z:
+			iso_yaw_deg -= 45.0
+		KEY_X:
+			iso_yaw_deg += 45.0
+		KEY_BRACKETLEFT:
+			iso_size_m = clampf(iso_size_m * 1.25, iso_zoom_min_m, iso_zoom_max_m)
+		KEY_BRACKETRIGHT:
+			iso_size_m = clampf(iso_size_m / 1.25, iso_zoom_min_m, iso_zoom_max_m)
 		KEY_R:
 			get_tree().reload_current_scene()
+
+
+## The wheel moves the plane relative to the machine, never in the world. Tied
+## to the machine it cannot be left behind on a dive, and it cannot be driven
+## down past the invert and leave the driver looking at a lid with their own
+## shield sitting on top of it.
+func _nudge_cut(by: float) -> void:
+	cut_above_axis_m = clampf(cut_above_axis_m + by, -2.0, 12.0)
+	_update_cut(true)
 
 
 # --- headless self-check -----------------------------------------------------
@@ -1024,7 +1943,14 @@ func _unhandled_input(event: InputEvent) -> void:
 func _finish_autopilot() -> void:
 	_autopilot_ticks = 0
 	var nominal := PI * pow(bore_diameter_m * 0.5, 2.0) * _travelled
-	var expected := speed_sand_m_s * float(_tick) / 60.0 * 0.5
+	# Against the ground the run actually crossed. Measured against the sand
+	# rate, any run long enough to spend its second half in rock — which is the
+	# whole point of the trace — fails for driving correctly: at 1800 ticks the
+	# machine is asked for 24 m and rock only allows about 14.
+	var floor_speed := (
+		speed_rock_m_s if _seen_grounds.has("rock") else speed_sand_m_s
+	)
+	var expected := floor_speed * float(_tick) / 60.0 * 0.5
 	var faults := PackedStringArray()
 	if _travelled < expected:
 		faults.append(
@@ -1038,6 +1964,24 @@ func _finish_autopilot() -> void:
 		faults.append(
 			"surfaces missing (sand %d, rock %d chunks)"
 			% [_sand_chunks.size(), _rock_chunks.size()]
+		)
+	# The lid is the section. Without it the depth cut is a hole in the picture
+	# and the driver is worse off than with no cut at all, so an empty lid is a
+	# failure and not a cosmetic remark.
+	if _view == View.ISO and _cap_chunks.is_empty():
+		faults.append("section lid missing")
+	# The plane has to be where the knob says it is, within the slack the
+	# hysteresis is allowed, and it may never sink below the invert — a plane
+	# under the machine draws the machine standing on top of the ground.
+	var wanted_cut := _pos.y + cut_above_axis_m
+	if absf(_cut_y - wanted_cut) > CELL * float(CUT_HYSTERESIS_CELLS + 1):
+		faults.append(
+			"cut plane %.1f m drifted from the %.1f m it was asked for"
+			% [_cut_y, wanted_cut]
+		)
+	if _cut_y < _pos.y - bore_diameter_m * 0.5:
+		faults.append(
+			"cut plane %.1f m is under the machine at %.1f m" % [_cut_y, _pos.y]
 		)
 	print(
 		"SHIELD: %d ticks, %.1f m, %.2f m/s, face %s, grounds seen %s"
@@ -1076,9 +2020,47 @@ func _finish_autopilot() -> void:
 			_sand_chunks.size(), _rock_chunks.size(),
 		]
 	)
+	# What the section is made of: how much of the plane is the open bore, how
+	# much is lining, how much is rock, and where the plane ended up.
+	var slab := _field.copy_mass_box(
+		Vector3i(0, _cut_cell, 0), Vector3i(BOX.x, 1, BOX.z)
+	)
+	var rock_slab := _rock.copy_mass_box(
+		Vector3i(0, _cut_cell, 0), Vector3i(BOX.x, 1, BOX.z)
+	)
+	var solid_slab := _field.copy_solid_box(
+		Vector3i(0, _cut_cell, 0), Vector3i(BOX.x, 1, BOX.z)
+	)
+	var open := 0
+	var rock_cells := 0
+	var lining := 0
+	for i in slab.size():
+		if rock_slab[i] > 0.5:
+			rock_cells += 1
+		elif solid_slab[i] != 0:
+			lining += 1
+		elif slab[i] <= RENDER_MIN_FILL:
+			open += 1
+	print(
+		"SHIELD: cut plane at %.1f m (%.1f m over the axis), lid %d chunks; in the plane — %d open, %d lining, %d rock of %d cells"
+		% [
+			_cut_y, _cut_y - _pos.y, _cap_chunks.size(),
+			open, lining, rock_cells, slab.size(),
+		]
+	)
 	if faults.is_empty():
 		print("SHIELD: OK")
-		get_tree().quit(0)
+		_quit_after_shot(0)
 	else:
 		print("SHIELD: FAIL - %s" % ", ".join(faults))
-		get_tree().quit(1)
+		_quit_after_shot(1)
+
+
+func _quit_after_shot(code: int) -> void:
+	if _shot_path != "":
+		await RenderingServer.frame_post_draw
+		var image := get_viewport().get_texture().get_image()
+		if image != null:
+			image.save_png(_shot_path)
+			print("SHIELD: view saved to %s" % _shot_path)
+	get_tree().quit(code)
