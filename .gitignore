@@ -1,6 +1,14 @@
 # Agent / bootstrap scratch (cloned sources, screenshots, logs)
 .tmp/
 
+# Local test/smoke/bench output (agents redirect to repo root — do not commit)
+/_gate_*.txt
+/_launch_*.txt
+/_smoke_*.log
+/bench_diag_*.txt
+/bench_park_freeze_out.txt
+/oracle_head*.log
+
 # Godot cache (rebuilt on import)
 .godot/
 
