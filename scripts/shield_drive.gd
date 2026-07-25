@@ -44,6 +44,22 @@ extends Node3D
 ## the whole trace, and a ground column beside it. Chase and free are still on
 ## `C`; nothing in them changed.
 ##
+## The cut is **not a plane**, and that is the one thing about this view that had
+## to change. A driver who dives loses everything behind: the tunnel he dug is
+## under a horizontal plane that followed the machine up, and the harder he
+## steers the less of his own work he can see. So the cut is a *surface* that
+## rides the tunnel — a metre-resolution height map built from the recorded path
+## and flared out sideways to the base level where nothing was dug. `F` puts the
+## old flat plane back, because a plane is still the better read of *how deep*
+## something is; it is only useless as the only mode.
+##
+## Ground the machine has been through is marked and drawn as its own thing, on
+## the lid and in the volume. Without it the driver cannot tell the two halves of
+## his own tunnel apart: at a 0.4 spoil share the bore is about three-quarters
+## full of its own muck a few metres back, and muck drawn as sand is a tunnel
+## that looks like it was never dug. Three states, three readings: untouched /
+## dug and open / dug and buried. `T` turns the marking off.
+##
 ## Debug stand: raw physical keys, no project input actions.
 ##
 ## Headless self-check:
@@ -51,9 +67,10 @@ extends Node3D
 ##
 ## Also: `--view=chase|free` starts in the old views (and measures what the
 ## section costs), `--ring-solid=N` walks the un-pinning path, `--dive` makes
-## the autopilot climb and dive so the cut plane has to follow, and
-## `--shot=<abs path>.png` saves the last frame — the only way to check a view
-## without sitting at it.
+## the autopilot climb and dive so the cut has to follow, `--flat-cut` runs the
+## old plane instead of the surface, `--no-mark` runs it without the marking on
+## worked ground, and `--shot=<abs path>.png` saves the last frame — the only way
+## to check a view without sitting at it.
 
 ## The project's one grid. Not a knob: step 0 decided it, and construction,
 ## granular material and this all share it.
@@ -64,8 +81,10 @@ const CELL := 0.5
 const BOX := Vector3i(240, 48, 96)
 
 ## Mesh chunk edge, in cells — the same unit the view in the game uses, so what
-## is timed here is what the game pays.
-const FLUSH_CHUNK := 16
+## is timed here is what the game pays. A power of two so a cell can be put in
+## its chunk with a shift, which the lid does per column.
+const CHUNK_SHIFT := 4
+const FLUSH_CHUNK := 1 << CHUNK_SHIFT
 const MESH_CHUNKS_PER_FLUSH := 10
 const MESH_FLUSH_HZ := 30.0
 ## Reconstruction settings, mirrored from `GranularVoxelRegionView` so this
@@ -100,15 +119,34 @@ const TRAIL_STEP_M := 0.25
 ## shield skin.
 const CUT_LEAD_M := 0.2
 
-## How many cap chunks are rebuilt per mesh flush. The cap is the lid drawn on
-## the plane of the cut; it is rebuilt in the same chunks and on the same clock
-## as the surface, so what the lid says and what the mesh shows can never be a
-## frame apart in different places.
-const CAP_CHUNKS_PER_FLUSH := 10
+## How many cap chunks are rebuilt per mesh flush. The cap is the lid drawn at
+## the cut; it is rebuilt in the same chunks and on the same clock as the
+## surface, so what the lid says and what the mesh shows can never be a frame
+## apart in different places. Five and not ten: a lid chunk is a small terrain
+## now that the cut is a surface, and ten of them in one tick is a hitch you can
+## see. There are ninety in the whole trace, so the worst case is still under a
+## second to redraw all of it.
+const CAP_CHUNKS_PER_FLUSH := 5
 ## How far the cut may sit from where it wants to be before it is moved, in
 ## cells. Moving it rebuilds the whole lid, and a plane that chases the machine
-## cell by cell would rebuild it several times a second for no gain.
+## cell by cell would rebuild it several times a second for no gain. Flat mode
+## only: the following surface moves a metre of map at a time by construction.
 const CUT_HYSTERESIS_CELLS := 2
+
+## The cut map: one texel per two cells, so a metre. Not per cell, and the
+## reason is the cost of laying the flare down — the disc written on every step
+## is quadratic in the resolution, and a metre is already finer than the half
+## metre the cut quantises to along a dive.
+const CUT_MAP_SHIFT := 1
+const CUT_MAP_STEP := 1 << CUT_MAP_SHIFT
+const CUT_MAP_CELL := CELL * float(CUT_MAP_STEP)
+const CUT_MAP := Vector2i(BOX.x, BOX.z) / CUT_MAP_STEP
+## Map texels to one lid chunk, so a changed texel marks exactly one chunk.
+const CAP_MAP_SHIFT := 3
+## How far the machine goes between writes of the flare. Half a metre rather
+## than every trail point: the corridor is metres wide, so nothing is missed,
+## and the write is the one part of this that is not free.
+const CUT_MAP_STEP_M := 0.5
 
 ## The lid's palette. Warm for sand, cool for rock, so the one boundary the
 ## drive is about is a change of hue and not only of brightness — a shading
@@ -123,6 +161,18 @@ const CAP_ROCK_DEEP := Color(0.17, 0.21, 0.29)
 ## both ramps — darker is more rock — so the two read as one map.
 const CAP_SAND_NEAR := Color(0.40, 0.35, 0.27)
 const CAP_SAND_FAR := Color(0.86, 0.78, 0.60)
+## Ground the machine has been through and its own muck has filled again, shaded
+## by how full the cell is. A hue of its own — neither the tans of the untouched
+## sand nor the blue-greys of the rock — because this is the one thing on the lid
+## that is not geology but the driver's own doing, and it has to be told apart
+## from ground nobody has touched at a glance and not by shade.
+const CAP_SPOIL_THIN := Color(0.30, 0.15, 0.10)
+const CAP_SPOIL_FULL := Color(0.78, 0.36, 0.16)
+## The same, in the volume: everything inside the envelope the machine dug is
+## tinted towards this, so the muck heap and the bore walls in the trench read as
+## worked ground and not as the dune they are drawn out of.
+const DUG_TINT := Color(0.86, 0.42, 0.18)
+const DUG_TINT_MIX := 0.42
 
 ## Overlay colours: where you have been, where you are going, and the two arcs
 ## you could not go outside of even at full lock. The shadows are dark rather
@@ -138,32 +188,86 @@ enum View { ISO, CHASE, FREE }
 
 ## The surface shader, and the whole of the depth cut.
 ##
-## World height without `MODEL_MATRIX` and without anything derived from the
+## World position without `MODEL_MATRIX` and without anything derived from the
 ## camera: the chunk instances carry a pure scale by the cell size and no
-## translation at all (see `_mesh_chunk`), so a vertex's own Y — the mesher
-## emits vertices in cell units — is the world height over the cell size. This
-## build's camera-relative world transforms make `CAMERA_POSITION_WORLD` and
-## everything like it unreliable; none of that is touched here.
+## translation at all (see `_mesh_chunk`), so a vertex's own coordinates — the
+## mesher emits vertices in cell units — are the world position over the cell
+## size. This build's camera-relative world transforms make
+## `CAMERA_POSITION_WORLD` and everything like it unreliable; none of that is
+## touched here, and the cut map is read in world XZ for the same reason.
+##
+## The bilinear is written out by hand over `texelFetch` rather than left to the
+## sampler, and that is not fussiness. Two reasons. The lid is built out of the
+## same map on the CPU and the two have to agree to the centimetre — a lid drawn
+## a hair off the height fragments are thrown away at is a hairline gap running
+## the length of the trench — and writing the filter out is the only way to be
+## sure both are computing the same thing. And a 32-bit float texture is not
+## guaranteed to be filterable at all: `filter_linear` on it is a driver-dependent
+## black screen waiting to happen.
+##
+## The cut *has* to be interpolated and not stepped. Quantised to the cell it
+## already quantises to, the flare came out as a field of loose tiles — the slope
+## is shallow, so half the trace straddled a cell boundary and dithered between
+## two levels. That reads as breakage, not as a slope.
 const SECTION_SHADER_CODE := """
 shader_type spatial;
 render_mode cull_back;
 
 uniform float cell_size = 0.5;
-uniform float cut_y = 1.0e9;
+uniform bool cut_on = false;
+uniform bool dug_on = true;
+uniform float map_cell = 1.0;
+uniform vec2 map_dim = vec2(120.0, 48.0);
+uniform sampler2D cut_map : filter_nearest, repeat_disable, hint_default_black;
 uniform vec4 albedo : source_color = vec4(0.6, 0.5, 0.4, 1.0);
+uniform vec4 dug_tint : source_color = vec4(0.86, 0.42, 0.18, 1.0);
+uniform float dug_mix : hint_range(0.0, 1.0) = 0.42;
 uniform float rough : hint_range(0.0, 1.0) = 1.0;
 
-varying float world_y;
+varying vec3 world_pos;
+
+// The cut surface, in metres, at a point on the trace. Texel centres sit half a
+// map cell in from the corner of the box, which is what the lid assumes too.
+float cut_at(vec2 p) {
+	vec2 t = p / map_cell - vec2(0.5);
+	vec2 f = fract(t);
+	ivec2 last = ivec2(map_dim) - ivec2(1);
+	ivec2 lo = clamp(ivec2(floor(t)), ivec2(0), last);
+	ivec2 hi = clamp(ivec2(floor(t)) + ivec2(1), ivec2(0), last);
+	float h00 = texelFetch(cut_map, ivec2(lo.x, lo.y), 0).r;
+	float h10 = texelFetch(cut_map, ivec2(hi.x, lo.y), 0).r;
+	float h01 = texelFetch(cut_map, ivec2(lo.x, hi.y), 0).r;
+	float h11 = texelFetch(cut_map, ivec2(hi.x, hi.y), 0).r;
+	return mix(mix(h00, h10, f.x), mix(h01, h11, f.x), f.y);
+}
 
 void vertex() {
-	world_y = VERTEX.y * cell_size;
+	world_pos = VERTEX * cell_size;
 }
 
 void fragment() {
-	if (world_y > cut_y) {
-		discard;
+	vec3 colour = albedo.rgb;
+	if (cut_on) {
+		if (world_pos.y > cut_at(world_pos.xz)) {
+			discard;
+		}
+		if (dug_on) {
+			// g and b are the bottom and the top of the volume the machine has
+			// taken out of this column, and an empty span where it never came.
+			// Read flat, not interpolated: an envelope is a fact about one
+			// column and smearing it into its neighbours would tint ground the
+			// machine never touched.
+			ivec2 last = ivec2(map_dim) - ivec2(1);
+			ivec2 c = clamp(
+				ivec2(floor(world_pos.xz / map_cell)), ivec2(0), last
+			);
+			vec2 span = texelFetch(cut_map, c, 0).gb;
+			if (world_pos.y >= span.x && world_pos.y <= span.y) {
+				colour = mix(colour, dug_tint.rgb, dug_mix);
+			}
+		}
 	}
-	ALBEDO = albedo.rgb;
+	ALBEDO = colour;
 	ROUGHNESS = rough;
 	METALLIC = 0.0;
 }
@@ -245,13 +349,32 @@ void fragment() {
 @export var ring_solid_m := 2.0
 
 @export_group("Section")
-## Where the cut plane sits relative to the machine's own axis. Low enough to
-## slice the bore open is the whole reason the tunnel reads as a trench from
-## above rather than as a buried pipe. Raise it and the tunnel roofs over; drop
-## it and the trench narrows. The mouse wheel drives this at run time.
+## Where the cut sits relative to the machine's own axis. Low enough to slice the
+## bore open is the whole reason the tunnel reads as a trench from above rather
+## than as a buried pipe. Raise it and the tunnel roofs over; drop it and the
+## trench narrows. The mouse wheel drives this at run time.
 @export var cut_above_axis_m := 0.5
 ## What one notch of the wheel is worth.
 @export var cut_step_m := 0.5
+## Whether the cut is a surface that rides the tunnel or the old flat plane. `F`
+## at run time. Off, this is exactly the build before it: a horizontal plane at
+## `cut_above_axis_m` over the machine, which is the better read of how deep
+## something lies and a useless read of anything the driver already dug.
+@export var cut_follows_tunnel := true
+## How wide the cut stays right down on the tunnel, from the axis. Bore radius
+## plus a metre: wide enough that the bore is opened along its whole length, tight
+## enough that two passes have to be nearly on top of each other to fight over a
+## column.
+@export var cut_corridor_m := 4.0
+## How far out the cut takes to climb back to where it would be with nothing dug.
+## This is a sight line and not a taste: the section camera stands at 35 degrees,
+## so a wall rising faster than about 0.7 m per metre hides what it stands beside.
+## Fourteen metres against the seven the machine can be under the base level is a
+## slope of 0.5 — the trench stays open from every one of the eight view angles.
+@export var cut_flare_m := 14.0
+## Whether ground the machine has been through is marked and drawn apart from
+## ground nobody has touched. `T` at run time.
+@export var mark_disturbed := true
 ## Depth over which buried rock still tints the lid. Ten metres because the
 ## bore is six across: rock that close is rock the driver has to decide about.
 @export var cap_probe_m := 10.0
@@ -284,6 +407,16 @@ void fragment() {
 ## trace's own, so the whole box fits with nothing cropped.
 @export var plan_inset := true
 @export var plan_inset_px := Vector2i(400, 160)
+## The profile inset: the trace unrolled, drawn from the recorded path rather
+## than rendered. The plan inset is a second camera on the whole world every
+## frame; a second one of those for the side view would cost more than everything
+## else in this file put together, and a profile *should* be unrolled anyway —
+## a camera at the side of a tunnel that turns draws it foreshortened.
+@export var profile_inset := true
+@export var profile_inset_px := Vector2i(520, 190)
+## How often the profile re-reads the ground. It is a drawing of a hundred
+## metres of tunnel and it does not change in a frame.
+@export var profile_hz := 10.0
 ## How far back along the tunnel the chase camera rides, and how far off the
 ## axis. Back far enough to see the machine, close enough to stay in the lit
 ## part of the bore.
@@ -320,6 +453,41 @@ var _cap_material: StandardMaterial3D
 var _rock_top := PackedInt32Array()
 var _cut_cell := -9999
 var _cut_y := 1.0e9
+var _cell_volume := 0.125
+
+## The cut map. Four floats a texel because that is the one float format every
+## target samples without asking: r is the height of the cut there, g and b are
+## the bottom and the top of the volume the machine has taken out of that column,
+## a is spare.
+var _cut_pixels := PackedFloat32Array()
+## The cell layer the lid draws in each map column, derived from r.
+var _cut_map_cell := PackedInt32Array()
+## Which pass of the machine owns a column and how strongly, so the wheel can
+## move the whole surface without the path having to be walked again.
+var _cut_owner_y := PackedFloat32Array()
+var _cut_owner_w := PackedFloat32Array()
+## The flare, precomputed once: offsets and weights of every map column one pass
+## of the machine writes.
+var _cut_disc_dx := PackedInt32Array()
+var _cut_disc_dz := PackedInt32Array()
+var _cut_disc_w := PackedFloat32Array()
+var _cut_texture: ImageTexture
+var _cut_map_dirty := true
+var _cut_map_done := -1.0e9
+## Every cell the machine has taken, whether or not anything is standing in it
+## now. A mark on the *space* and not on the material: material moves and this
+## does not have to follow it, and "the bore is here and it is full again" is a
+## fact about the space.
+var _dug := PackedByteArray()
+var _dug_cells := 0
+## Per lid chunk: the top of the cut in it (what hides a mesh chunk) and the span
+## of cell layers it draws (what makes it dirty).
+var _cap_nx := 1
+var _cap_nz := 1
+var _cap_top := PackedFloat32Array()
+var _cap_lo := PackedInt32Array()
+var _cap_hi := PackedInt32Array()
+var _cap_visible_dirty := false
 
 var _machine: Node3D
 var _chase: Camera3D
@@ -335,6 +503,22 @@ var _plan_viewport: SubViewport
 var _plan_camera: Camera3D
 var _plan_frame: Control
 var _ruler: Control
+var _profile: Control
+var _profile_label: Label
+## The profile's samples, rebuilt on their own slow clock: distance along the
+## trace, the axis there, the top of the rock, how full the bore is, and where
+## the cut stands. The projected course carries its own two.
+var _pf_dist := PackedFloat32Array()
+var _pf_axis := PackedFloat32Array()
+var _pf_rock := PackedFloat32Array()
+var _pf_fill := PackedFloat32Array()
+var _pf_cut := PackedFloat32Array()
+var _pf_ahead_dist := PackedFloat32Array()
+var _pf_ahead_axis := PackedFloat32Array()
+var _pf_ahead_rock := PackedFloat32Array()
+var _pf_span := 60.0
+var _pf_mean_fill := 0.0
+var _pf_due := 0.0
 var _environment: Environment
 var _view := View.ISO
 var _legend: Label
@@ -385,6 +569,10 @@ var _prof_cut_ms := 0.0
 var _prof_sim_ms := 0.0
 var _prof_mesh_ms := 0.0
 var _prof_worst_ms := 0.0
+## Worst rather than smoothed: the flare is written twice a second and a smoothed
+## average of a spike that lands on one tick in twenty is a number that hides it.
+var _prof_map_ms := 0.0
+var _prof_cap_ms := 0.0
 ## Where the ground last changed under the machine, for the headless check:
 ## a run that never leaves the sand proves nothing about the trace.
 var _seen_grounds := {}
@@ -408,10 +596,18 @@ func _ready() -> void:
 		elif arg == "--view=free":
 			start_view = View.FREE
 		elif arg == "--dive":
-			# The cut plane rides the machine, and a machine that never leaves
-			# its own axis never moves it. This is the only way the headless
-			# check walks that path.
+			# The cut rides the machine, and a machine that never leaves its own
+			# axis never deforms it. This is the only way the headless check
+			# walks that path, and it is the path the view is for.
 			_autopilot_dives = true
+		elif arg == "--flat-cut":
+			# The old plane, for measuring what the surface costs and for proving
+			# it still works.
+			cut_follows_tunnel = false
+		elif arg == "--no-mark":
+			# The lid and the volume without the marking on worked ground, which
+			# is otherwise a path only a key press reaches.
+			mark_disturbed = false
 		elif arg.begins_with("--shot="):
 			# The whole point of this scene is what it looks like, and the
 			# autopilot's verdict cannot see. One frame to a PNG at the end of
@@ -421,6 +617,7 @@ func _ready() -> void:
 	var started := Time.get_ticks_usec()
 	_build_shapes()
 	_build_fields()
+	_build_cut_map()
 	_build_views()
 	_build_machine()
 	_build_overlay()
@@ -432,6 +629,16 @@ func _ready() -> void:
 	var launch := maxf(shield_length_m, camera_back_m) + 6.0
 	_bore_out(launch)
 	_stamp_shell(-SHELL_LEAD_M, launch)
+	# The launch chamber is dug ground like any other, so the cut has to be over
+	# it from the first frame. Walked from the far end forward, because a tie in
+	# the flare goes to whoever wrote it last and the machine's own column has to
+	# be the last word.
+	var back := launch
+	while back > 0.0:
+		_extend_cut_map(_pos - _forward() * back)
+		back -= CUT_MAP_STEP_M
+	_extend_cut_map(_pos)
+	_cut_map_done = _travelled
 	_remesh_all()
 	_iso_target = _pos
 	_iso_yaw = iso_yaw_deg
@@ -491,6 +698,7 @@ func _build_fields() -> void:
 	_rock_top.resize(BOX.x * BOX.z)
 
 	var cell_volume := _field.cell_volume_m3()
+	_cell_volume = cell_volume
 	var sand_top_cell := int(floor(sand_top_m / CELL))
 	for x in BOX.x:
 		var x_m := (float(x) + 0.5) * CELL
@@ -515,6 +723,206 @@ func _build_fields() -> void:
 	while not _field.is_settled() and guard < 60:
 		_field.step(0)
 		guard += 1
+
+
+# --- the cut map -------------------------------------------------------------
+#
+# The surface the section cuts on, as a height per square metre of the trace.
+#
+# The plane it replaces failed for a reason that has nothing to do with taste:
+# a tunnel is not horizontal and a plane is. Sitting on the machine's own axis
+# it followed the machine up on a climb, and every metre driven before the climb
+# went under it — the harder the driver steered, the less of his own work he
+# could see, which is the exact opposite of what a view exists for.
+#
+# So the cut is asked for the thing the driver actually wants: *a little above
+# whatever is dug here*. Each pass of the machine writes its own height into a
+# disc of columns around it, full weight over the bore and fading out over
+# `cut_flare_m`; a column nobody has been near keeps the base level. What comes
+# out is a trench that dives and climbs with the tunnel and opens out gently
+# where nothing was dug.
+#
+# What it cannot do: two passes stacked within the corridor of each other are one
+# column and one height, and the later pass wins. Drive directly over your own
+# tunnel and the older one goes under the cut — the alternative is losing sight
+# of the machine you are steering, which is worse.
+
+
+func _build_cut_map() -> void:
+	var count := CUT_MAP.x * CUT_MAP.y
+	_cut_pixels.resize(count * 4)
+	_cut_map_cell.resize(count)
+	_cut_owner_y.resize(count)
+	_cut_owner_w.resize(count)
+	_cut_map_cell.fill(
+		clampi(
+			int(floor((bore_axis_y_m + cut_above_axis_m) / CELL)), 0, BOX.y - 1
+		)
+	)
+	_cut_owner_y.fill(bore_axis_y_m)
+	_cut_owner_w.fill(0.0)
+	for col in count:
+		_cut_pixels[col * 4] = bore_axis_y_m + cut_above_axis_m
+		# An empty span: nothing is inside it, so nothing is tinted until the
+		# machine has actually taken something out of the column.
+		_cut_pixels[col * 4 + 1] = 1.0e9
+		_cut_pixels[col * 4 + 2] = -1.0e9
+		_cut_pixels[col * 4 + 3] = 1.0
+	_dug.resize(BOX.x * BOX.y * BOX.z)
+	_dug.fill(0)
+	_cap_nx = int(ceil(float(BOX.x) / float(FLUSH_CHUNK)))
+	_cap_nz = int(ceil(float(BOX.z) / float(FLUSH_CHUNK)))
+	_cap_top.resize(_cap_nx * _cap_nz)
+	_cap_top.fill(float(BOX.y) * CELL)
+	_cap_lo.resize(_cap_nx * _cap_nz)
+	_cap_lo.fill(0)
+	_cap_hi.resize(_cap_nx * _cap_nz)
+	_cap_hi.fill(BOX.y - 1)
+	var reach := int(ceil(cut_flare_m / CUT_MAP_CELL))
+	for iz in range(-reach, reach + 1):
+		for ix in range(-reach, reach + 1):
+			var dx := float(ix) * CUT_MAP_CELL
+			var dz := float(iz) * CUT_MAP_CELL
+			var d := sqrt(dx * dx + dz * dz)
+			if d >= cut_flare_m:
+				continue
+			var w := (
+				1.0 if d <= cut_corridor_m
+				else smoothstep(cut_flare_m, cut_corridor_m, d)
+			)
+			if w <= 0.002:
+				continue
+			_cut_disc_dx.append(ix)
+			_cut_disc_dz.append(iz)
+			_cut_disc_w.append(w)
+	_cut_texture = ImageTexture.create_from_image(_cut_map_image())
+	_cut_map_dirty = false
+
+
+func _cut_map_image() -> Image:
+	return Image.create_from_data(
+		CUT_MAP.x, CUT_MAP.y, false, Image.FORMAT_RGBAF,
+		_cut_pixels.to_byte_array()
+	)
+
+
+func _upload_cut_map() -> void:
+	if not _cut_map_dirty:
+		return
+	_cut_map_dirty = false
+	_cut_texture.update(_cut_map_image())
+
+
+## How far a map column may move before the lid over it has to be built again.
+## The lid is what this costs: every column that moves marks a chunk, and at the
+## section's zoom five centimetres is about a pixel — which is the point of a
+## slack rather than a rebuild on every write.
+const CUT_MAP_SLACK_M := 0.05
+
+
+## Where the cut wants to be over one map column, and what that does to the lid.
+func _apply_cut_column(col: int) -> void:
+	var height := _cut_y
+	if cut_follows_tunnel:
+		height = (
+			lerpf(bore_axis_y_m, _cut_owner_y[col], _cut_owner_w[col])
+			+ cut_above_axis_m
+		)
+	if absf(_cut_pixels[col * 4] - height) < CUT_MAP_SLACK_M:
+		return
+	_cut_pixels[col * 4] = height
+	_cut_map_cell[col] = clampi(int(floor(height / CELL)), 0, BOX.y - 1)
+	_cut_map_dirty = true
+	@warning_ignore("integer_division")
+	var row := col / CUT_MAP.x
+	var mx := col - row * CUT_MAP.x
+	# The neighbours too: a texel is read by the interpolation for a map cell
+	# either side of it, and that reach crosses chunk edges.
+	for cz in range(
+		maxi(row - 1, 0) >> CAP_MAP_SHIFT,
+		(mini(row + 1, CUT_MAP.y - 1) >> CAP_MAP_SHIFT) + 1
+	):
+		for cx in range(
+			maxi(mx - 1, 0) >> CAP_MAP_SHIFT,
+			(mini(mx + 1, CUT_MAP.x - 1) >> CAP_MAP_SHIFT) + 1
+		):
+			_cap_pending[Vector2i(cx, cz)] = true
+
+
+## The cut surface at a point, exactly as the shader computes it. The lid is
+## built out of this, which is the whole of why the two agree.
+func _cut_height_at(x_m: float, z_m: float) -> float:
+	var tx := x_m / CUT_MAP_CELL - 0.5
+	var tz := z_m / CUT_MAP_CELL - 0.5
+	var bx := int(floor(tx))
+	var bz := int(floor(tz))
+	var fx := tx - float(bx)
+	var fz := tz - float(bz)
+	var x0 := clampi(bx, 0, CUT_MAP.x - 1)
+	var x1 := clampi(bx + 1, 0, CUT_MAP.x - 1)
+	var z0 := clampi(bz, 0, CUT_MAP.y - 1) * CUT_MAP.x
+	var z1 := clampi(bz + 1, 0, CUT_MAP.y - 1) * CUT_MAP.x
+	return lerpf(
+		lerpf(_cut_pixels[(z0 + x0) * 4], _cut_pixels[(z0 + x1) * 4], fx),
+		lerpf(_cut_pixels[(z1 + x0) * 4], _cut_pixels[(z1 + x1) * 4], fx),
+		fz
+	)
+
+
+## One pass of the machine, written into the map.
+func _extend_cut_map(at: Vector3) -> void:
+	var mx := int(floor(at.x / CUT_MAP_CELL))
+	var mz := int(floor(at.z / CUT_MAP_CELL))
+	for k in _cut_disc_w.size():
+		var ix := mx + _cut_disc_dx[k]
+		if ix < 0 or ix >= CUT_MAP.x:
+			continue
+		var iz := mz + _cut_disc_dz[k]
+		if iz < 0 or iz >= CUT_MAP.y:
+			continue
+		var w := _cut_disc_w[k]
+		var col := iz * CUT_MAP.x + ix
+		if w < _cut_owner_w[col]:
+			continue
+		_cut_owner_w[col] = w
+		_cut_owner_y[col] = at.y
+		if cut_follows_tunnel:
+			_apply_cut_column(col)
+
+
+func _rebuild_cut_map() -> void:
+	for col in CUT_MAP.x * CUT_MAP.y:
+		_apply_cut_column(col)
+	_cut_map_dirty = true
+	_cap_pending.clear()
+	for cx in _cap_nx:
+		for cz in _cap_nz:
+			_cap_pending[Vector2i(cx, cz)] = true
+
+
+## Mark a cell as ground the machine has been through. The lid reads the mark
+## itself; the volume reads the envelope, which is all a per-column tint can
+## carry and enough to tell a bore full of muck from the dune around it.
+func _mark_dug(c: Vector3i, index: int) -> void:
+	if _dug[index] != 0:
+		return
+	_dug[index] = 1
+	_dug_cells += 1
+	var col := (c.z >> CUT_MAP_SHIFT) * CUT_MAP.x + (c.x >> CUT_MAP_SHIFT)
+	var low := float(c.y) * CELL
+	var high := low + CELL
+	if low < _cut_pixels[col * 4 + 1]:
+		_cut_pixels[col * 4 + 1] = low
+		_cut_map_dirty = true
+	if high > _cut_pixels[col * 4 + 2]:
+		_cut_pixels[col * 4 + 2] = high
+		_cut_map_dirty = true
+	# A cell that is already empty changes no mass, so the mesher's own report of
+	# what moved would never mark the lid over it.
+	if _cut_map_cell[col] == c.y:
+		_cap_pending[
+			Vector2i(c.x >> CHUNK_SHIFT, c.z >> CHUNK_SHIFT)
+		] = true
 
 
 ## Top of the rock at a point on the trace: flat, then a hill the drive has to
@@ -552,6 +960,10 @@ func _build_views() -> void:
 	_cap_material.cull_mode = BaseMaterial3D.CULL_DISABLED
 	_cap_view = Node3D.new()
 	_cap_view.name = "SectionCap"
+	# A centimetre clear of the cut, so the lid and the fragments thrown away at
+	# the same height never fight for the same depth. The height itself is on the
+	# quads now — the lid is a surface and not a slab.
+	_cap_view.position = Vector3(0.0, 0.01, 0.0)
 	add_child(_cap_view)
 
 
@@ -559,8 +971,16 @@ func _make_section_material(albedo: Color, roughness: float) -> ShaderMaterial:
 	var material := ShaderMaterial.new()
 	material.shader = _section_shader
 	material.set_shader_parameter("cell_size", CELL)
-	material.set_shader_parameter("cut_y", 1.0e9)
+	material.set_shader_parameter("cut_on", false)
+	material.set_shader_parameter("dug_on", mark_disturbed)
+	material.set_shader_parameter("map_cell", CUT_MAP_CELL)
+	material.set_shader_parameter(
+		"map_dim", Vector2(float(CUT_MAP.x), float(CUT_MAP.y))
+	)
+	material.set_shader_parameter("cut_map", _cut_texture)
 	material.set_shader_parameter("albedo", albedo)
+	material.set_shader_parameter("dug_tint", DUG_TINT)
+	material.set_shader_parameter("dug_mix", DUG_TINT_MIX)
 	material.set_shader_parameter("rough", roughness)
 	_clipped.append(material)
 	return material
@@ -750,18 +1170,19 @@ func _build_hud() -> void:
 	_outline(_legend)
 	_legend.position = Vector2(16.0, 12.0)
 	_legend.text = "\n".join([
-		"W / S — thrust      A / D — course      Q / E — pitch",
-		"wheel — cut depth      [ / ] — zoom      Z / X — turn the view      V — plan inset",
+		"W / S — thrust      A / D — course      Q / E — pitch      wheel — cut depth",
+		"F — cut: rides the tunnel / flat      T — mark the ground you have worked",
+		"V — plan inset      B — profile inset      [ / ] — zoom      Z / X — turn the view",
 		"C — view: section / chase / free (free: hold RMB + WASD)      R — restart",
 	])
 	layer.add_child(_legend)
 	_status = Label.new()
 	_outline(_status)
-	_status.position = Vector2(16.0, 86.0)
+	_status.position = Vector2(16.0, 108.0)
 	layer.add_child(_status)
 
 	_plan_frame = Control.new()
-	_plan_frame.position = Vector2(16.0, 236.0)
+	_plan_frame.position = Vector2(16.0, 300.0)
 	_plan_frame.size = Vector2(plan_inset_px) + Vector2(4.0, 4.0)
 	_plan_frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(_plan_frame)
@@ -781,6 +1202,28 @@ func _build_hud() -> void:
 	plan_label.text = "plan — the whole trace"
 	plan_label.position = Vector2(4.0, -20.0)
 	_plan_frame.add_child(plan_label)
+
+	# The trace unrolled: the one thing neither the section nor the plan can show,
+	# because both of them are looking down a tunnel that turns. Drawn from the
+	# recorded path and the rock map rather than rendered — a third camera on the
+	# world would cost more than everything else in this file, and a profile of a
+	# tunnel that turns is not a picture of it from the side anyway.
+	_profile = Control.new()
+	_profile.position = Vector2(16.0, 512.0)
+	_profile.size = Vector2(profile_inset_px)
+	# The course ahead is drawn past the right edge whenever the run is short, so
+	# that the part actually driven keeps most of the panel.
+	_profile.clip_contents = true
+	_profile.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_profile.draw.connect(_draw_profile)
+	layer.add_child(_profile)
+	# On the layer and not on the panel: the panel clips its children, which is
+	# the whole point of it, and a caption is a child.
+	_profile_label = Label.new()
+	_outline(_profile_label)
+	_profile_label.text = "profile — along the tunnel"
+	_profile_label.position = _profile.position + Vector2(4.0, -22.0)
+	layer.add_child(_profile_label)
 
 	# The ruler is a section of its own: the column of ground the machine is
 	# standing in, and the same column twenty metres ahead. Two columns rather
@@ -818,6 +1261,16 @@ func _physics_process(delta: float) -> void:
 		# Only the band the previous stamp cannot already have covered: the
 		# machine moves `TRAIL_STEP_M` between stamps, so the two overlap.
 		_stamp_shell(-SHELL_LEAD_M, CELL * 0.5)
+	# Written whether or not the cut is following it: the map is what the flat
+	# plane is toggled *back* from, and a map with a hole in it where the driver
+	# was looking at a plane would come back as a tunnel that was never dug.
+	if _travelled - _cut_map_done >= CUT_MAP_STEP_M:
+		_cut_map_done = _travelled
+		var map_started := Time.get_ticks_usec()
+		_extend_cut_map(_pos)
+		_prof_map_ms = maxf(
+			_prof_map_ms, float(Time.get_ticks_usec() - map_started) / 1000.0
+		)
 	_retire_lining()
 	var t1 := Time.get_ticks_usec()
 	_sweep_debt += SETTLE_HZ * delta
@@ -835,6 +1288,9 @@ func _physics_process(delta: float) -> void:
 		_flush(_field, _sand_view, _sand_chunks, _sand_pending, _sand_material)
 		_flush(_rock, _rock_view, _rock_chunks, _rock_pending, _rock_material)
 		_flush_cap()
+		# On the mesh's own clock, so what the shader throws away and what the
+		# lid draws can never be a frame apart.
+		_upload_cut_map()
 	var t3 := Time.get_ticks_usec()
 	# Smoothed, because the shell is stamped and the mesh is flushed on their
 	# own clocks: an instantaneous number is a different measurement every
@@ -853,7 +1309,18 @@ func _read_controls(delta: float) -> void:
 		# the trail, the lining and both grounds without a hand on the keys.
 		_throttle = 1.0
 		_steer = sin(float(_tick) / 90.0)
-		_elevator = sin(float(_tick) / 140.0) if _autopilot_dives else 0.0
+		# The elevator is held against a wanted height rather than driven open
+		# loop. Pitch is the *integral* of the stick, so a stick that swings
+		# evenly does not: past about fourteen hundred ticks the open-loop
+		# version parked itself against the ceiling of the trace and the run
+		# failed for having stopped, which says nothing about the view it was
+		# opened to test. Nothing about how the machine drives changes — this is
+		# the hand on the stick, and only when there is no hand on it.
+		if _autopilot_dives:
+			var wanted := bore_axis_y_m + sin(float(_tick) / 140.0) * 5.0
+			_elevator = clampf((wanted - _pos.y) * 0.6, -1.0, 1.0)
+		else:
+			_elevator = 0.0
 		return
 	if _view == View.FREE:
 		# The free camera owns WASDQE while it is up; driving with it would
@@ -1006,6 +1473,7 @@ func _cut(advance: float) -> float:
 			if _stamp[index] == _stamp_gen:
 				continue
 			_stamp[index] = _stamp_gen
+			_mark_dug(c, index)
 			var rock := _rock.take(c.x, c.y, c.z)
 			if rock > 0.0:
 				taken += rock
@@ -1050,6 +1518,7 @@ func _bore_out(back_m: float) -> void:
 			if _stamp[index] == _stamp_gen:
 				continue
 			_stamp[index] = _stamp_gen
+			_mark_dug(c, index)
 			if _rock.take(c.x, c.y, c.z) > 0.0:
 				_field.set_solid(c.x, c.y, c.z, false)
 				_lower_rock_top(c)
@@ -1093,12 +1562,18 @@ func _spoil(volume_m3: float) -> float:
 			for dy in 12:
 				if owed <= 0.0:
 					break
-				var accepted := _field.deposit(
-					base.x + column.x, base.y + dy, base.z + column.y, owed
+				var c := Vector3i(
+					base.x + column.x, base.y + dy, base.z + column.y
 				)
+				var accepted := _field.deposit(c.x, c.y, c.z, owed)
 				placed += accepted
 				remaining -= accepted
 				owed -= accepted
+				# Muck that ended up somewhere the cutter never was — over the
+				# crown of a bore that has already filled, mostly — is still the
+				# driver's own, and the section says so.
+				if accepted > 0.0 and _in_box(c):
+					_mark_dug(c, (c.y * BOX.z + c.z) * BOX.x + c.x)
 	return placed
 
 
@@ -1221,8 +1696,6 @@ func _flush(
 ) -> void:
 	var prep: Dictionary = field.take_dirty_prep(FLUSH_CHUNK, 0)
 	var chunks: PackedInt32Array = prep["chunks"]
-	@warning_ignore("integer_division")
-	var cut_chunk_y := _cut_cell / FLUSH_CHUNK
 	var k := 0
 	while k < chunks.size():
 		var chunk := Vector3i(chunks[k], chunks[k + 1], chunks[k + 2])
@@ -1232,12 +1705,14 @@ func _flush(
 		# picture of a tunnel that is not there.
 		#
 		# Against the record's own box of moved cells, not against the chunk: a
-		# chunk is eight metres tall and the plane is one cell thick, and
+		# chunk is eight metres tall and the cut is one cell thick, and
 		# rebuilding the lid for every collapse anywhere in that band cost more
-		# than the whole of the rest of the section.
+		# than the whole of the rest of the section. The band the cut wanders
+		# through over this square of the trace is what the lid last measured.
+		var ci := chunk.z * _cap_nx + chunk.x
 		if (
-			chunk.y == cut_chunk_y
-			and chunks[k + 4] <= _cut_cell and chunks[k + 7] >= _cut_cell
+			ci >= 0 and ci < _cap_lo.size()
+			and chunks[k + 4] <= _cap_hi[ci] and chunks[k + 7] >= _cap_lo[ci]
 		):
 			_cap_pending[Vector2i(chunk.x, chunk.z)] = true
 		k += 9
@@ -1297,53 +1772,68 @@ func _mesh_chunk(
 # Three things have to agree or the section lies, and a lying section is worse
 # than no section at all:
 #
-#   * the surface, which stops at the plane because the shader throws away every
+#   * the surface, which stops at the cut because the shader throws away every
 #     fragment above it — nothing is drawn above the cut by any route;
-#   * the lid, which is built from the cells *in* the plane and so is a reading
-#     of the field rather than a decoration on it;
-#   * the machine, which is never above the plane, because the plane is placed
-#     off the machine's own axis and follows it.
+#   * the lid, which is built from the cells *at* the cut and so is a reading of
+#     the field rather than a decoration on it;
+#   * the machine, which is never above the cut, because the cut is placed off
+#     the machine's own axis and follows it.
+#
+# All three now read the same height map (`_cut_pixels`), which is what keeps
+# them agreeing once the cut stopped being one number.
 #
 # The simulation above the cut is untouched and keeps running. That is not a
 # discrepancy: the material up there is really there, it is simply not drawn,
-# and the moment any of it falls into the bore it is below the plane and drawn.
+# and the moment any of it falls into the bore it is below the cut and drawn.
 
 
+## Whether any of a mesh chunk is under the cut, asked of the chunk's own square
+## of the map rather than of the whole trace: with the cut riding the tunnel there
+## is no one height that could answer it for the box.
 func _chunk_below_cut(chunk: Vector3i) -> bool:
 	if _view != View.ISO:
 		return true
-	return float(chunk.y * FLUSH_CHUNK) * CELL < _cut_y
+	var ci := chunk.z * _cap_nx + chunk.x
+	if ci < 0 or ci >= _cap_top.size():
+		return true
+	return float(chunk.y * FLUSH_CHUNK) * CELL < _cap_top[ci]
 
 
-## Where the plane wants to be: off the machine's axis, snapped to a cell so the
+## Where a flat cut wants to be: off the machine's axis, snapped to a cell so the
 ## lid is a layer of cells and not a slab sawn through the middle of one.
 func _wanted_cut_cell() -> int:
 	return clampi(int(floor((_pos.y + cut_above_axis_m) / CELL)), 0, BOX.y - 1)
 
 
 func _update_cut(force: bool) -> void:
-	var wanted := _wanted_cut_cell()
-	if not force and absi(wanted - _cut_cell) < CUT_HYSTERESIS_CELLS:
+	if cut_follows_tunnel:
+		if force:
+			_rebuild_cut_map()
+		# The readouts want one number, and the one that means anything is the
+		# cut over the machine itself.
+		_cut_y = _cut_height_at(_pos.x, _pos.z)
+		_cut_cell = clampi(int(floor(_cut_y / CELL)), 0, BOX.y - 1)
+	else:
+		var wanted := _wanted_cut_cell()
+		if not force and absi(wanted - _cut_cell) < CUT_HYSTERESIS_CELLS:
+			return
+		_cut_cell = wanted
+		# The lid sits on the top face of the layer it draws, a centimetre clear
+		# of it so the two never fight for the same depth.
+		_cut_y = float(_cut_cell + 1) * CELL
+		_rebuild_cut_map()
+	if not force:
 		return
-	_cut_cell = wanted
-	# The lid sits on the top face of the layer it draws, a centimetre clear of
-	# it so the two never fight for the same depth.
-	_cut_y = float(_cut_cell + 1) * CELL
-	_cap_view.position = Vector3(0.0, _cut_y + 0.01, 0.0)
-	var plane := _cut_y if _view == View.ISO else 1.0e9
 	for material in _clipped:
-		material.set_shader_parameter("cut_y", plane)
+		material.set_shader_parameter("cut_on", _view == View.ISO)
+		material.set_shader_parameter("dug_on", mark_disturbed)
+	_flush_cap(_cap_pending.size())
 	_apply_chunk_visibility()
-	_cap_pending.clear()
-	for cx in range(0, BOX.x, FLUSH_CHUNK):
-		for cz in range(0, BOX.z, FLUSH_CHUNK):
-			@warning_ignore("integer_division")
-			_cap_pending[Vector2i(cx / FLUSH_CHUNK, cz / FLUSH_CHUNK)] = true
-	if force:
-		_flush_cap(_cap_pending.size())
+	_upload_cut_map()
 
 
 func _apply_chunk_visibility() -> void:
+	_cap_visible_dirty = false
 	for chunk: Vector3i in _sand_chunks:
 		(_sand_chunks[chunk] as MeshInstance3D).visible = _chunk_below_cut(chunk)
 	for chunk: Vector3i in _rock_chunks:
@@ -1357,6 +1847,7 @@ func _flush_cap(budget := CAP_CHUNKS_PER_FLUSH) -> void:
 	# dirty again, so it can never come back stale.
 	if _view != View.ISO or _cap_pending.is_empty():
 		return
+	var started := Time.get_ticks_usec()
 	var done := 0
 	var drawn: Array[Vector2i] = []
 	for chunk: Vector2i in _cap_pending:
@@ -1367,57 +1858,105 @@ func _flush_cap(budget := CAP_CHUNKS_PER_FLUSH) -> void:
 		done += 1
 	for chunk in drawn:
 		_cap_pending.erase(chunk)
+	# A rebuilt lid is the only thing that can tell a mesh chunk it is under the
+	# cut now, because the lid is what reads the map over that square.
+	if _cap_visible_dirty:
+		_apply_chunk_visibility()
+	if done > 0:
+		_prof_cap_ms = maxf(
+			_prof_cap_ms,
+			float(Time.get_ticks_usec() - started) / 1000.0 / float(done)
+		)
 
 
-## What one cell of the plane is, as a code: -1 nothing, 0 lining, and from 2
-## upwards sand and then rock, each banded by where the rock is.
+## Bands of one kind of lid cell. The codes are laid out in blocks so a run of
+## the same colour is a run of the same integer and the lid stays a few hundred
+## quads instead of a quarter of a million.
+func _cap_first_spoil() -> int:
+	return 1
+
+
+func _cap_first_sand() -> int:
+	return 1 + cap_bands
+
+
+func _cap_first_rock() -> int:
+	return 1 + cap_bands * 2
+
+
+## What one cell at the cut is, as a code: -1 nothing, 0 lining, then muck in the
+## driver's own bore, then sand, then rock.
 ##
-## This is where the section stops being a hole and becomes a drawing. A plane
-## cut through sand produces no geometry at all — an isosurface only exists
-## where the fill crosses it, and the inside of a dune crosses nothing — so
-## without the lid the driver looks straight through the ground into the
-## backfaces of the bore and sees an empty black box. With it, the plane reads
-## as ground: the tunnel is the gap in it, the lining is the rim of the gap, and
-## rock that reaches the plane is a different colour than the sand beside it.
+## This is where the section stops being a hole and becomes a drawing. A cut
+## through sand produces no geometry at all — an isosurface only exists where the
+## fill crosses it, and the inside of a dune crosses nothing — so without the lid
+## the driver looks straight through the ground into the backfaces of the bore
+## and sees an empty black box. With it, the cut reads as ground: the open tunnel
+## is the gap in it, the lining is the rim of the gap, the part of the tunnel that
+## has filled back up is its own colour, and rock that reaches the cut is a
+## different colour than the sand beside it.
 func _cap_code(
 	sand: PackedFloat32Array,
 	rock: PackedFloat32Array,
 	solid: PackedByteArray,
+	dug: bool,
+	cell: int,
 	i: int,
 	column: int
 ) -> int:
 	var step := maxf(cap_probe_m / float(cap_bands), 0.01)
 	if rock[i] > 0.5:
-		# Rock in the plane, banded by how much of it stands above the plane.
-		# Saturating at the bore's own radius rather than at the sand probe:
-		# rock a bore-radius over the plane is already rock the machine cannot
-		# climb over, and everything past that is the same news.
-		var over := float(_rock_top[column] - _cut_cell) * CELL
+		# Rock at the cut, banded by how much of it stands above. Saturating at
+		# the bore's own radius rather than at the sand probe: rock a bore-radius
+		# over the cut is already rock the machine cannot climb over, and
+		# everything past that is the same news.
+		var over := float(_rock_top[column] - cell) * CELL
 		var over_step := maxf(bore_diameter_m * 0.5 / float(cap_bands), 0.01)
-		return 2 + cap_bands + clampi(int(over / over_step), 0, cap_bands - 1)
+		return _cap_first_rock() + clampi(
+			int(over / over_step), 0, cap_bands - 1
+		)
 	if solid[i] != 0:
 		return 0
 	if sand[i] <= RENDER_MIN_FILL:
 		return -1
-	# Sand at the plane, tinted by the rock underneath it. This is the layering:
-	# a horizontal cut through a layer cake shows one layer, so the other layer
-	# has to be reported rather than shown, and the honest way to report it is
-	# how far down it starts.
-	var depth := float(_cut_cell - _rock_top[column]) * CELL
-	return 2 + clampi(int(depth / step), 0, cap_bands - 1)
+	if dug:
+		# Ground the machine took out and its own muck has come back into,
+		# banded by how much of the cell is back. Reported apart from the sand
+		# because it is not sand any more in the only sense the driver cares
+		# about: it is his tunnel, and it is standing full.
+		var full := clampf(sand[i] / maxf(_cell_volume, 0.0001), 0.0, 1.0)
+		return _cap_first_spoil() + clampi(
+			int(full * float(cap_bands)), 0, cap_bands - 1
+		)
+	# Sand at the cut, tinted by the rock underneath it. This is the layering: a
+	# cut through a layer cake shows one layer, so the other layer has to be
+	# reported rather than shown, and the honest way to report it is how far down
+	# it starts.
+	var depth := float(cell - _rock_top[column]) * CELL
+	return _cap_first_sand() + clampi(int(depth / step), 0, cap_bands - 1)
 
 
 func _cap_colour(code: int) -> Color:
 	if code == 0:
 		return CAP_LINING
 	var span := maxf(float(cap_bands - 1), 1.0)
-	if code >= 2 + cap_bands:
+	if code >= _cap_first_rock():
 		return CAP_ROCK_THIN.lerp(
-			CAP_ROCK_DEEP, float(code - 2 - cap_bands) / span
+			CAP_ROCK_DEEP, float(code - _cap_first_rock()) / span
 		)
-	return CAP_SAND_NEAR.lerp(CAP_SAND_FAR, float(code - 2) / span)
+	if code >= _cap_first_sand():
+		return CAP_SAND_NEAR.lerp(
+			CAP_SAND_FAR, float(code - _cap_first_sand()) / span
+		)
+	return CAP_SPOIL_THIN.lerp(
+		CAP_SPOIL_FULL, float(code - _cap_first_spoil()) / span
+	)
 
 
+## One chunk of the lid, built at whatever height the map puts the cut over each
+## column. Once the cut stopped being flat this is a small terrain: horizontal
+## quads on the cells, and a face at every step between neighbours, or the trench
+## would be striped with slots looking into an unlit box.
 func _build_cap_chunk(chunk: Vector2i) -> void:
 	var x0 := chunk.x * FLUSH_CHUNK
 	var z0 := chunk.y * FLUSH_CHUNK
@@ -1426,36 +1965,96 @@ func _build_cap_chunk(chunk: Vector2i) -> void:
 	var instance: MeshInstance3D = _cap_chunks.get(chunk)
 	if w <= 0 or d <= 0:
 		return
-	var lo := Vector3i(x0, _cut_cell, z0)
-	var extent := Vector3i(w, 1, d)
-	# Three reads of a one-cell-thick slab instead of a quarter of a million
-	# bound calls: the cost of the lid is the reason it can be rebuilt whenever
-	# the tunnel changes shape.
-	var sand := _field.copy_mass_box(lo, extent)
-	var rock := _rock.copy_mass_box(lo, extent)
-	var solid := _field.copy_solid_box(lo, extent)
+	# The cut at every corner of every cell of the chunk. Corners and not centres
+	# because the lid is a surface: neighbouring quads share their corner heights,
+	# which is what makes it continuous instead of a flight of steps.
+	var corner := PackedFloat32Array()
+	corner.resize((w + 1) * (d + 1))
+	var top := -1.0e9
+	for iz in d + 1:
+		var z_m := float(z0 + iz) * CELL
+		for ix in w + 1:
+			var height := _cut_height_at(float(x0 + ix) * CELL, z_m)
+			corner[iz * (w + 1) + ix] = height
+			top = maxf(top, height)
+	var cells := PackedInt32Array()
+	cells.resize(w * d)
+	var lo := BOX.y - 1
+	var hi := 0
+	for iz in d:
+		for ix in w:
+			# The mean of the four corners of a bilinear patch is its value at
+			# the centre, so this is the cut in the middle of the cell and not an
+			# approximation of it.
+			var centre := 0.25 * (
+				corner[iz * (w + 1) + ix] + corner[iz * (w + 1) + ix + 1]
+				+ corner[(iz + 1) * (w + 1) + ix]
+				+ corner[(iz + 1) * (w + 1) + ix + 1]
+			)
+			var cell := clampi(int(floor(centre / CELL)), 0, BOX.y - 1)
+			cells[iz * w + ix] = cell
+			lo = mini(lo, cell)
+			hi = maxi(hi, cell)
+	var ci := chunk.y * _cap_nx + chunk.x
+	if not is_equal_approx(_cap_top[ci], top):
+		_cap_top[ci] = top
+		_cap_visible_dirty = true
+	_cap_lo[ci] = lo
+	_cap_hi[ci] = hi
+	# Three reads of the slab the cut wanders through instead of a quarter of a
+	# million bound calls: the cost of the lid is the reason it can be rebuilt
+	# whenever the tunnel changes shape.
+	var origin := Vector3i(x0, lo, z0)
+	var extent := Vector3i(w, hi - lo + 1, d)
+	var sand := _field.copy_mass_box(origin, extent)
+	var rock := _rock.copy_mass_box(origin, extent)
+	var solid := _field.copy_solid_box(origin, extent)
+	var codes := PackedInt32Array()
+	codes.resize(w * d)
+	for iz in d:
+		for ix in w:
+			var at := iz * w + ix
+			var cell := cells[at]
+			var dug := (
+				mark_disturbed
+				and _dug[(cell * BOX.z + z0 + iz) * BOX.x + x0 + ix] != 0
+			)
+			codes[at] = _cap_code(
+				sand, rock, solid, dug, cell,
+				((cell - lo) * d + iz) * w + ix,
+				(z0 + iz) * BOX.x + x0 + ix
+			)
 	var verts := PackedVector3Array()
 	var colours := PackedColorArray()
 	for iz in d:
-		# Runs of one colour become one quad. With the tint in steps rather than
-		# a ramp, a row of the lid is a handful of runs and not sixteen quads.
-		var run_code := -1
-		var run_from := 0
-		for ix in range(w + 1):
-			var code := -1
-			if ix < w:
-				code = _cap_code(
-					sand, rock, solid, iz * w + ix, (z0 + iz) * BOX.x + x0 + ix
-				)
-			if code == run_code:
-				continue
-			if run_code >= 0:
+		var near := iz * (w + 1)
+		var far := (iz + 1) * (w + 1)
+		# Runs of one colour at one height become one quad. Over ground nobody
+		# has dug the cut is level for tens of metres, so this is most of the lid
+		# most of the time; on the flare every corner is a different height and
+		# every cell is its own quad, which is exactly what a slope needs.
+		var ix := 0
+		while ix < w:
+			var code := codes[iz * w + ix]
+			var run_from := ix
+			var h_near := corner[near + ix]
+			var h_far := corner[far + ix]
+			ix += 1
+			while (
+				ix < w
+				and codes[iz * w + ix] == code
+				and is_equal_approx(corner[near + ix], h_near)
+				and is_equal_approx(corner[near + ix + 1], h_near)
+				and is_equal_approx(corner[far + ix], h_far)
+				and is_equal_approx(corner[far + ix + 1], h_far)
+			):
+				ix += 1
+			if code >= 0:
 				_cap_quad(
-					verts, colours,
-					x0 + run_from, x0 + ix, z0 + iz, _cap_colour(run_code)
+					verts, colours, x0 + run_from, x0 + ix, z0 + iz,
+					h_near, corner[near + ix], h_far, corner[far + ix],
+					_cap_colour(code)
 				)
-			run_code = code
-			run_from = ix
 	if verts.is_empty():
 		if instance != null:
 			_cap_chunks.erase(chunk)
@@ -1476,26 +2075,37 @@ func _build_cap_chunk(chunk: Vector2i) -> void:
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 
 
+## One quad of the lid, carrying the cut's own height at each of its four
+## corners. Neighbouring quads read the same corners out of the same array, so
+## the lid closes: no step to draw a face of, and no seam to look through.
 func _cap_quad(
 	verts: PackedVector3Array,
 	colours: PackedColorArray,
 	xa: int,
 	xb: int,
 	z: int,
+	y_near_a: float,
+	y_near_b: float,
+	y_far_a: float,
+	y_far_b: float,
 	colour: Color
 ) -> void:
 	var x_lo := float(xa) * CELL
 	var x_hi := float(xb) * CELL
 	var z_lo := float(z) * CELL
 	var z_hi := float(z + 1) * CELL
+	var a := Vector3(x_lo, y_near_a, z_lo)
+	var b := Vector3(x_hi, y_near_b, z_lo)
+	var c := Vector3(x_hi, y_far_b, z_hi)
+	var e := Vector3(x_lo, y_far_a, z_hi)
 	# Two triangles, wound either way: the lid's material has culling off, so a
 	# lid that ends up facing down is still a lid.
-	verts.append(Vector3(x_lo, 0.0, z_lo))
-	verts.append(Vector3(x_hi, 0.0, z_lo))
-	verts.append(Vector3(x_hi, 0.0, z_hi))
-	verts.append(Vector3(x_lo, 0.0, z_lo))
-	verts.append(Vector3(x_hi, 0.0, z_hi))
-	verts.append(Vector3(x_lo, 0.0, z_hi))
+	verts.append(a)
+	verts.append(b)
+	verts.append(c)
+	verts.append(a)
+	verts.append(c)
+	verts.append(e)
 	for _k in 6:
 		colours.append(colour)
 
@@ -1510,6 +2120,12 @@ func _process(delta: float) -> void:
 	_update_overlay()
 	_update_hud()
 	_ruler.queue_redraw()
+	if _profile.visible:
+		_pf_due -= delta
+		if _pf_due <= 0.0:
+			_pf_due = 1.0 / maxf(profile_hz, 1.0)
+			_sample_profile()
+		_profile.queue_redraw()
 
 
 ## Where the machine was `back_m` ago, as `[position, forward]`. Along the
@@ -1617,8 +2233,9 @@ func _update_overlay() -> void:
 	_ribbon(_flatten(course), course_width_m, COURSE_SHADOW)
 	# Where it ends up, marked on the plane of the cut.
 	var finish: Vector3 = course[course.size() - 1]
-	_plumb(finish, _cut_y, COURSE_COLOUR)
-	_cross(Vector3(finish.x, _cut_y, finish.z), 1.4, COURSE_COLOUR)
+	var datum := _datum_y()
+	_plumb(finish, datum, COURSE_COLOUR)
+	_cross(Vector3(finish.x, datum, finish.z), 1.4, COURSE_COLOUR)
 	# From the machine to the top of the ground, straight through the plane of
 	# the cut. Under an orthographic camera the length of that mast is the one
 	# thing on the screen that says how much ground is overhead — the rest of
@@ -1627,14 +2244,26 @@ func _update_overlay() -> void:
 	_cross(Vector3(_pos.x, sand_top_m, _pos.z), 2.5, PLUMB_COLOUR)
 
 
-## Same track, laid on the plane of the cut. Under an orthographic camera a line
-## and its shadow are two parallel lines a fixed distance apart, and that
-## distance is the depth — the one depth cue ortho does not destroy.
+## The one level the shadows are cast on. A cut that rides the tunnel is useless
+## as a datum — it is half a metre over the track everywhere, so a track and its
+## shadow would be two parallel lines half a metre apart whatever the machine
+## did, and the cue would say nothing. The level the cut would have without a
+## tunnel under it is a real datum and does not move.
+func _datum_y() -> float:
+	if cut_follows_tunnel:
+		return bore_axis_y_m + cut_above_axis_m
+	return _cut_y
+
+
+## Same track, laid on the datum. Under an orthographic camera a line and its
+## shadow are two parallel lines a fixed distance apart, and that distance is the
+## depth — the one depth cue ortho does not destroy.
 func _flatten(points: PackedVector3Array) -> PackedVector3Array:
 	var out := PackedVector3Array()
+	var datum := _datum_y() + 0.03
 	out.resize(points.size())
 	for i in points.size():
-		out[i] = Vector3(points[i].x, _cut_y + 0.03, points[i].z)
+		out[i] = Vector3(points[i].x, datum, points[i].z)
 	return out
 
 
@@ -1810,6 +2439,188 @@ func _draw_ruler() -> void:
 	)
 
 
+## How many samples the profile is drawn from. Sixty-four across the run and
+## whatever the course preview brings: the panel is five hundred pixels wide and
+## a sample is a column of it.
+const PROFILE_SAMPLES := 64
+
+
+## Read the trace off the record, once every tenth of a second. Everything the
+## profile draws is here, so the draw itself is arithmetic on packed arrays.
+func _sample_profile() -> void:
+	_pf_dist.clear()
+	_pf_axis.clear()
+	_pf_rock.clear()
+	_pf_fill.clear()
+	_pf_cut.clear()
+	var driven := maxf(_travelled, 0.001)
+	for i in PROFILE_SAMPLES + 1:
+		var distance := driven * float(i) / float(PROFILE_SAMPLES)
+		var at := _trail_at(distance)
+		var point: Vector3 = at[0]
+		_pf_dist.append(distance)
+		_pf_axis.append(point.y)
+		_pf_rock.append(_rock_surface_m(point.x, point.z))
+		_pf_cut.append(_cut_height_at(point.x, point.z))
+		# How much of the bore is standing full there. The same thirteen points
+		# the face is read with, which is the coarsest read that still tells a
+		# bore with a heap in the invert from a bore that has closed.
+		var frame := _frame(at[1])
+		var full := 0
+		for uv in _probe:
+			var c := _cell_of(point + frame[0] * uv.x + frame[1] * uv.y)
+			if _in_box(c) and _field.mass_at(c.x, c.y, c.z) > 0.2:
+				full += 1
+		_pf_fill.append(float(full) / float(_probe.size()))
+	_pf_ahead_dist.clear()
+	_pf_ahead_axis.clear()
+	_pf_ahead_rock.clear()
+	var course := _course_points(
+		_steer / maxf(min_turn_radius_m, 0.1), course_preview_m
+	)
+	var run := _travelled
+	for i in course.size():
+		if i > 0:
+			run += course[i].distance_to(course[i - 1])
+		_pf_ahead_dist.append(run)
+		_pf_ahead_axis.append(course[i].y)
+		_pf_ahead_rock.append(_rock_surface_m(course[i].x, course[i].z))
+	# The run, plus enough of the course ahead to see the next decision in, and
+	# never less than sixty metres — at two seconds in, a panel scaled to what has
+	# been driven is a hundred pixels to the metre and nothing in it holds still.
+	# The rest of the course runs off the right edge and is clipped.
+	_pf_span = maxf(_travelled + 25.0, 60.0)
+	var sum := 0.0
+	for value in _pf_fill:
+		sum += value
+	_pf_mean_fill = sum / float(maxi(_pf_fill.size(), 1))
+
+
+## The trace unrolled: what is over the tunnel, what is under it, how deep it is
+## lying and how much of it is standing open, against metres driven. The section
+## and the plan are both looking down a tunnel that turns; this is the only view
+## in which a dive is a line going down.
+func _draw_profile() -> void:
+	var box := _profile.size
+	_profile.draw_rect(Rect2(Vector2.ZERO, box), Color(0.05, 0.05, 0.07, 0.86))
+	if _pf_dist.size() < 2:
+		return
+	var font := _profile.get_theme_default_font()
+	var font_size := 12
+	var pad := 4.0
+	var top := 6.0
+	var height := box.y - top - 16.0
+	var world_top := sand_top_m + 2.0
+	var width := box.x - pad * 2.0
+	var to_x := width / maxf(_pf_span, 0.001)
+	var radius := bore_diameter_m * 0.5
+	var floor_px := top + height
+	var surface_px := top + height * (
+		1.0 - clampf(sand_top_m / world_top, 0.0, 1.0)
+	)
+	# Sand first, as one block: everything under the surface is sand until the
+	# rock is drawn over it.
+	_profile.draw_rect(
+		Rect2(pad, surface_px, width, floor_px - surface_px), CAP_SAND_FAR
+	)
+	var last := _pf_dist.size() - 1
+	for i in _pf_dist.size():
+		var x0 := pad + _pf_dist[i] * to_x
+		var x1 := (
+			pad + _pf_dist[mini(i + 1, last)] * to_x if i < last
+			else x0 + width / float(PROFILE_SAMPLES)
+		)
+		var w := maxf(x1 - x0, 1.0)
+		var rock_px := top + height * (
+			1.0 - clampf(_pf_rock[i] / world_top, 0.0, 1.0)
+		)
+		_profile.draw_rect(
+			Rect2(x0, rock_px, w, floor_px - rock_px), CAP_ROCK_DEEP
+		)
+		# The bore, to scale. Open is a hole; what has filled back up is drawn in
+		# the same colour the lid gives it, from the invert up, so the muck line
+		# down the tunnel is a shape and not a number.
+		var crown_px := top + height * (
+			1.0 - clampf((_pf_axis[i] + radius) / world_top, 0.0, 1.0)
+		)
+		var invert_px := top + height * (
+			1.0 - clampf((_pf_axis[i] - radius) / world_top, 0.0, 1.0)
+		)
+		_profile.draw_rect(
+			Rect2(x0, crown_px, w, invert_px - crown_px),
+			Color(0.07, 0.08, 0.10)
+		)
+		var fill := (invert_px - crown_px) * clampf(_pf_fill[i], 0.0, 1.0)
+		if fill > 0.5:
+			_profile.draw_rect(
+				Rect2(x0, invert_px - fill, w, fill), CAP_SPOIL_FULL
+			)
+	# Where the cut is standing over the tunnel: the line between what is drawn
+	# in the section and what is thrown away.
+	var cut_line := PackedVector2Array()
+	for i in _pf_dist.size():
+		cut_line.append(Vector2(
+			pad + _pf_dist[i] * to_x,
+			top + height * (1.0 - clampf(_pf_cut[i] / world_top, 0.0, 1.0))
+		))
+	_profile.draw_polyline(cut_line, Color(0.45, 0.92, 1.0, 0.55), 1.0)
+	# The ground ahead, and the course through it. Ahead is drawn as a band and
+	# not as a line because the question the driver is asking is not where the
+	# rock is but whether he is about to be in it, and a band against the bore is
+	# that question answered.
+	if _pf_ahead_dist.size() > 1:
+		var crown := PackedVector2Array()
+		var invert := PackedVector2Array()
+		var last_ahead := _pf_ahead_dist.size() - 1
+		for i in _pf_ahead_dist.size():
+			var x := pad + _pf_ahead_dist[i] * to_x
+			if i < last_ahead:
+				var next_x := pad + _pf_ahead_dist[i + 1] * to_x
+				var rock_px := top + height * (
+					1.0 - clampf(_pf_ahead_rock[i] / world_top, 0.0, 1.0)
+				)
+				# The same rock, paler: ahead is a reading of the map and not of
+				# the ground, and it should not be mistaken for ground crossed.
+				_profile.draw_rect(
+					Rect2(x, rock_px, maxf(next_x - x, 1.0), floor_px - rock_px),
+					CAP_ROCK_DEEP.lerp(CAP_ROCK_THIN, 0.75)
+				)
+			crown.append(Vector2(x, top + height * (
+				1.0 - clampf((_pf_ahead_axis[i] + radius) / world_top, 0.0, 1.0)
+			)))
+			invert.append(Vector2(x, top + height * (
+				1.0 - clampf((_pf_ahead_axis[i] - radius) / world_top, 0.0, 1.0)
+			)))
+		_profile.draw_polyline(crown, COURSE_COLOUR, 2.0)
+		_profile.draw_polyline(invert, COURSE_COLOUR, 2.0)
+	_profile.draw_line(
+		Vector2(pad, surface_px), Vector2(box.x - pad, surface_px),
+		Color(0.95, 0.95, 1.0, 0.8), 1.0
+	)
+	# The machine, and the one number a driver cannot get from anywhere else on
+	# this panel: how far along the run he is.
+	var here_x := pad + _travelled * to_x
+	_profile.draw_line(
+		Vector2(here_x, top), Vector2(here_x, floor_px),
+		Color(0.98, 0.72, 0.28, 0.9), 1.0
+	)
+	_profile.draw_string(
+		font, Vector2(pad, box.y - 3.0),
+		"0 m", HORIZONTAL_ALIGNMENT_LEFT, -1, font_size,
+		Color(0.75, 0.75, 0.82)
+	)
+	_profile.draw_string(
+		font, Vector2(box.x - 78.0, box.y - 3.0),
+		"%.0f m" % _pf_span, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size,
+		Color(0.75, 0.75, 0.82)
+	)
+	_profile.draw_string(
+		font, Vector2(pad + 30.0, box.y - 3.0),
+		"%d%% of the bore behind is full" % int(round(_pf_mean_fill * 100.0)),
+		HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, CAP_SPOIL_FULL
+	)
+
+
 # --- views -------------------------------------------------------------------
 
 
@@ -1841,6 +2652,11 @@ func _set_view(view: View) -> void:
 		SubViewport.UPDATE_ALWAYS if _plan_frame.visible
 		else SubViewport.UPDATE_DISABLED
 	)
+	# The profile is a drawing of the trace and not of the section, so it stands
+	# in every view — in the chase it is the only thing on the screen that says
+	# where the machine is on the run.
+	_profile.visible = profile_inset
+	_profile_label.visible = profile_inset
 	_update_cut(true)
 
 
@@ -1863,9 +2679,14 @@ func _update_hud() -> void:
 			maxf(sand_top_m - (_pos.y + bore_diameter_m * 0.5), 0.0),
 			_rock_note(),
 		],
-		"%d fps   cut %.2f / sim %.2f / mesh %.2f ms" % [
+		"cut: %s   worked ground: %s" % [
+			"rides the tunnel" if cut_follows_tunnel else "flat plane",
+			"marked" if mark_disturbed else "off",
+		],
+		"%d fps   cut %.2f / sim %.2f / mesh %.2f ms   map %.2f / lid %.2f ms" % [
 			Engine.get_frames_per_second(),
 			_prof_cut_ms, _prof_sim_ms, _prof_mesh_ms,
+			_prof_map_ms, _prof_cap_ms,
 		],
 	])
 
@@ -1916,6 +2737,22 @@ func _unhandled_input(event: InputEvent) -> void:
 				SubViewport.UPDATE_ALWAYS if _plan_frame.visible
 				else SubViewport.UPDATE_DISABLED
 			)
+		KEY_B:
+			profile_inset = not profile_inset
+			_profile.visible = profile_inset
+			_profile_label.visible = profile_inset
+			if profile_inset:
+				_sample_profile()
+		KEY_F:
+			# Both cuts are built out of the same map, so this is one rebuild and
+			# not a second code path: flat mode simply writes the machine's own
+			# plane into every column.
+			cut_follows_tunnel = not cut_follows_tunnel
+			_cut_cell = -9999
+			_update_cut(true)
+		KEY_T:
+			mark_disturbed = not mark_disturbed
+			_update_cut(true)
 		KEY_Z:
 			iso_yaw_deg -= 45.0
 		KEY_X:
@@ -1970,19 +2807,39 @@ func _finish_autopilot() -> void:
 	# failure and not a cosmetic remark.
 	if _view == View.ISO and _cap_chunks.is_empty():
 		faults.append("section lid missing")
-	# The plane has to be where the knob says it is, within the slack the
-	# hysteresis is allowed, and it may never sink below the invert — a plane
-	# under the machine draws the machine standing on top of the ground.
+	# The cut has to be where the knob says it is over the machine itself, within
+	# the slack the hysteresis and the map's own metre are allowed, and it may
+	# never sink below the invert — a cut under the machine draws the machine
+	# standing on top of the ground.
 	var wanted_cut := _pos.y + cut_above_axis_m
 	if absf(_cut_y - wanted_cut) > CELL * float(CUT_HYSTERESIS_CELLS + 1):
 		faults.append(
-			"cut plane %.1f m drifted from the %.1f m it was asked for"
+			"cut %.1f m drifted from the %.1f m it was asked for"
 			% [_cut_y, wanted_cut]
 		)
 	if _cut_y < _pos.y - bore_diameter_m * 0.5:
 		faults.append(
-			"cut plane %.1f m is under the machine at %.1f m" % [_cut_y, _pos.y]
+			"cut %.1f m is under the machine at %.1f m" % [_cut_y, _pos.y]
 		)
+	# The whole point of the surface. A run that climbed and dived and came out
+	# with one height everywhere is a flat plane wearing a map, and the driver
+	# would lose his tunnel behind him exactly as before.
+	var cut_low := 1.0e9
+	var cut_high := -1.0e9
+	var followed := 0
+	for col in _cut_map_cell.size():
+		var height := _cut_pixels[col * 4]
+		cut_low = minf(cut_low, height)
+		cut_high = maxf(cut_high, height)
+		if _cut_owner_w[col] > 0.0:
+			followed += 1
+	if cut_follows_tunnel and _autopilot_dives and cut_high - cut_low < 1.0:
+		faults.append(
+			"the cut never left %.1f m through a run that climbed and dived"
+			% cut_low
+		)
+	if mark_disturbed and _dug_cells <= 0:
+		faults.append("nothing was marked as ground the machine had been through")
 	print(
 		"SHIELD: %d ticks, %.1f m, %.2f m/s, face %s, grounds seen %s"
 		% [
@@ -2020,6 +2877,10 @@ func _finish_autopilot() -> void:
 			_sand_chunks.size(), _rock_chunks.size(),
 		]
 	)
+	print(
+		"SHIELD: cut map — worst write %.2f ms every %.1f m, worst lid chunk %.2f ms, %d chunks still owed"
+		% [_prof_map_ms, CUT_MAP_STEP_M, _prof_cap_ms, _cap_pending.size()]
+	)
 	# What the section is made of: how much of the plane is the open bore, how
 	# much is lining, how much is rock, and where the plane ended up.
 	var slab := _field.copy_mass_box(
@@ -2042,10 +2903,39 @@ func _finish_autopilot() -> void:
 		elif slab[i] <= RENDER_MIN_FILL:
 			open += 1
 	print(
-		"SHIELD: cut plane at %.1f m (%.1f m over the axis), lid %d chunks; in the plane — %d open, %d lining, %d rock of %d cells"
+		"SHIELD: cut over the machine at %.1f m (%.1f m over the axis), lid %d chunks; in that one layer — %d open, %d lining, %d rock of %d cells"
 		% [
 			_cut_y, _cut_y - _pos.y, _cap_chunks.size(),
 			open, lining, rock_cells, slab.size(),
+		]
+	)
+	# What the section actually shows, which is not the flat layer above: the lid
+	# reads a different cell in every column, so the three states the driver is
+	# meant to tell apart have to be counted the way he sees them.
+	var seen_open := 0
+	var seen_buried := 0
+	for col in _cut_map_cell.size():
+		var cell := _cut_map_cell[col]
+		@warning_ignore("integer_division")
+		var row := col / CUT_MAP.x
+		var x0 := (col - row * CUT_MAP.x) << CUT_MAP_SHIFT
+		var z0 := row << CUT_MAP_SHIFT
+		for dz in CUT_MAP_STEP:
+			for dx in CUT_MAP_STEP:
+				var index := (
+					(cell * BOX.z + z0 + dz) * BOX.x + x0 + dx
+				)
+				if _dug[index] == 0:
+					continue
+				if _field.mass_at(x0 + dx, cell, z0 + dz) <= RENDER_MIN_FILL:
+					seen_open += 1
+				else:
+					seen_buried += 1
+	print(
+		"SHIELD: cut surface %.1f..%.1f m over %d of %d map columns; %d cells dug, and at the cut the driver sees %d open and %d buried"
+		% [
+			cut_low, cut_high, followed, _cut_map_cell.size(),
+			_dug_cells, seen_open, seen_buried,
 		]
 	)
 	if faults.is_empty():
