@@ -243,7 +243,9 @@ static func _place_decor(helper: AssemblyBuildHelper, intent: RoverIntent) -> bo
 	var ori_r := _slope_ori(Vector3i(1, 0, 0))
 	# FBX lens already aims local −Z; keep identity so prow lamps face forward.
 	var lamp_ori := 0
-	# --- Nose cascade: 3 steps of slopes (not a flat wall). ---
+	var nose_steps := 2 if intent.decor_minimal else 3
+	var stern_steps := 2 if intent.decor_minimal else 3
+	# --- Nose cascade: slopes (not a flat wall). ---
 	for x: int in range(width):
 		if _nose_drill_blocked_x(intent, x):
 			continue
@@ -251,11 +253,12 @@ static func _place_decor(helper: AssemblyBuildHelper, intent: RoverIntent) -> bo
 			return false
 		if not helper.place(slope, Vector3i(x, 1, -1), ori_f, "nose1_%d" % x):
 			return false
-		if not helper.place(slope, Vector3i(x, 2, -1), ori_f, "nose2_%d" % x):
+		if nose_steps >= 3 and not helper.place(
+			slope, Vector3i(x, 2, -1), ori_f, "nose2_%d" % x
+		):
 			return false
-		# Deck ramp — skip when front cockpit owns z=0..1.
-		# Tall chassis already fills y=1; ramp rides on the upper deck.
-		if intent.cockpit != "front":
+		# Deck ramp — skip when front cockpit owns z=0..1 or decor is minimal.
+		if not intent.decor_minimal and intent.cockpit != "front":
 			var hood_y := 2 if intent.needs_deck_stack() else 1
 			if not helper.place(slope, Vector3i(x, hood_y, 0), ori_f, "hood_%d" % x):
 				return false
@@ -268,7 +271,7 @@ static func _place_decor(helper: AssemblyBuildHelper, intent: RoverIntent) -> bo
 		return false
 	if not helper.place(slope, Vector3i(width, 1, -1), ori_r, "fang_R1"):
 		return false
-	if width >= 4 and intent.nose_drills <= 0:
+	if not intent.decor_minimal and width >= 4 and intent.nose_drills <= 0:
 		# Sit on the nose cascade roof (slopes fill y=0..2 at z=-1).
 		if not _try_decor_place(
 			helper, lamp, Vector3i(0, 3, -1), "lamp_L", lamp_ori
@@ -280,7 +283,7 @@ static func _place_decor(helper: AssemblyBuildHelper, intent: RoverIntent) -> bo
 		):
 			if not helper.place(lamp, Vector3i(width - 1, 3, -1), 0, "lamp_R"):
 				return false
-	elif width >= 4:
+	elif not intent.decor_minimal and width >= 4:
 		# Drills own the prow corners — park lamps on the upper deck instead.
 		_try_decor_place(helper, lamp, Vector3i(0, 3, 1), "lamp_L", lamp_ori)
 		_try_decor_place(
@@ -288,7 +291,7 @@ static func _place_decor(helper: AssemblyBuildHelper, intent: RoverIntent) -> bo
 		)
 	# --- Beveled flanks: outward slopes instead of flat armor walls. ---
 	var boom_z := -1
-	if width >= 4 and length >= 6:
+	if not intent.decor_minimal and width >= 4 and length >= 6:
 		boom_z = maxi(int(length / 2.0) - 1, 2)
 		while axle_set.has(boom_z) and boom_z < length - 1:
 			boom_z += 1
@@ -320,11 +323,18 @@ static func _place_decor(helper: AssemblyBuildHelper, intent: RoverIntent) -> bo
 			if not helper.place(slope, Vector3i(width, 1, z), ori_r, "flank_R1_%d" % flank_i):
 				return false
 			# Upper shoulder bevel every other bay.
-			if z % 2 == 0:
-				if not helper.place(slope, Vector3i(-1, 2, z), ori_l, "shoulder_L_%d" % flank_i):
-					return false
-				if not helper.place(slope, Vector3i(width, 2, z), ori_r, "shoulder_R_%d" % flank_i):
-					return false
+			if (
+				not intent.decor_minimal
+				and z % 2 == 0
+				and not helper.place(slope, Vector3i(-1, 2, z), ori_l, "shoulder_L_%d" % flank_i)
+			):
+				return false
+			if (
+				not intent.decor_minimal
+				and z % 2 == 0
+				and not helper.place(slope, Vector3i(width, 2, z), ori_r, "shoulder_R_%d" % flank_i)
+			):
+				return false
 		flank_i += 1
 	# --- Sloping stern cascade (replaces box rack). ---
 	for x: int in range(width):
@@ -332,18 +342,21 @@ static func _place_decor(helper: AssemblyBuildHelper, intent: RoverIntent) -> bo
 			return false
 		if not helper.place(slope, Vector3i(x, 1, length), ori_b, "stern1_%d" % x):
 			return false
-		if not helper.place(slope, Vector3i(x, 2, length), ori_b, "stern2_%d" % x):
+		if stern_steps >= 3 and not helper.place(
+			slope, Vector3i(x, 2, length), ori_b, "stern2_%d" % x
+		):
 			return false
 		# Deck-edge ramp at the last chassis row when free.
-		_try_decor_place(
-			helper, slope, Vector3i(x, 1, length - 1), "tail_%d" % x, ori_b
-		)
+		if not intent.decor_minimal:
+			_try_decor_place(
+				helper, slope, Vector3i(x, 1, length - 1), "tail_%d" % x, ori_b
+			)
 	# Stern corner fangs.
 	if not helper.place(slope, Vector3i(-1, 0, length), ori_l, "stern_fang_L"):
 		return false
 	if not helper.place(slope, Vector3i(width, 0, length), ori_r, "stern_fang_R"):
 		return false
-	if width < 4 or length < 6:
+	if intent.decor_minimal or width < 4 or length < 6:
 		return true
 	# Antenna: prefer starboard deck; fall back to prow roof (avoid distributor bay).
 	var deck_y := 2 if intent.needs_deck_stack() else 1

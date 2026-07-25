@@ -19,6 +19,8 @@ var cockpit: String = "front"
 var power: String = "rear"
 ## Twin prow drills (0 or 2). Uses stationary_drill facing −Z.
 var nose_drills: int = 0
+## Skip lamps, boom, antenna, crates, shoulder bevels — bare silhouette only.
+var decor_minimal: bool = false
 ## Какую пару «подвеска + колесо» ставить. Дефолт — детали, испечённые
 ## визардом: сеточных колёс без точных точек крепления больше нет.
 ## Геометрию композер выводит из самих архетипов, а не из этих id.
@@ -63,6 +65,20 @@ static func from_phrase(text: String) -> RoverIntent:
 		intent.power = "side"
 	if _has_any(raw, ["бур", "drill"]):
 		intent.nose_drills = 2
+	if _has_any(
+		raw,
+		[
+			"минимальн",
+			"minimal",
+			"простой",
+			"simple",
+			"рабоч",
+			"utility",
+			"без декор",
+			"no decor",
+		]
+	):
+		intent.decor_minimal = true
 	return intent
 
 
@@ -244,6 +260,7 @@ func to_dict() -> Dictionary:
 		"cockpit": cockpit,
 		"power": power,
 		"nose_drills": nose_drills,
+		"decor_minimal": decor_minimal,
 		"suspension_archetype_id": suspension_archetype_id,
 		"wheel_archetype_id": wheel_archetype_id,
 	}
@@ -260,6 +277,7 @@ static func from_dict(data: Dictionary) -> RoverIntent:
 	intent.cockpit = str(data.get("cockpit", "front"))
 	intent.power = str(data.get("power", "rear"))
 	intent.nose_drills = int(data.get("nose_drills", 0))
+	intent.decor_minimal = bool(data.get("decor_minimal", false))
 	intent.suspension_archetype_id = str(
 		data.get("suspension_archetype_id", intent.suspension_archetype_id)
 	)

@@ -415,7 +415,7 @@ func _test_load_margin_long_vs_short() -> bool:
 	return true
 
 
-## Bootstrap U-key phrase is huge; compose must leave every part (cockpit)
+## Bootstrap demo phrase (compact 6-wheel); compose must leave every part (cockpit)
 ## at full integrity — not placement's 1% after the material budget runs out.
 ## Also: batched compose must emit structural_batch_committed (coop dirty).
 func _test_compose_demo_phrase_cockpit_full_integrity() -> bool:
@@ -426,8 +426,7 @@ func _test_compose_demo_phrase_cockpit_full_integrity() -> bool:
 			batch_events.append(StringName(event.get("kind", &"")))
 	)
 	var phrase := (
-		"огромная колбаса на 12 колёсах, широкая, высокая, "
-		+ "кокпит в центре, питание сбоку, два бура на морде"
+		"компактный ровер на 6 колёс, короткий, низкий, минимальный декор"
 	)
 	var result := RoverComposer.compose_from_phrase(world, phrase)
 	if not bool(result.get("ok", false)):

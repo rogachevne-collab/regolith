@@ -22,7 +22,7 @@ const AUTOSAVE_INTERVAL_S := 90.0
 ## Spawns a flight hopper on flat ground offset from the demo rover.
 @export var spawn_demo_hopper := true
 ## Phrase for RoverComposer (N wheels, long/short/…). Empty → hardcoded demo layout.
-@export var demo_rover_phrase := "большой широкий длинный низкий ровер-платформа с 12 колесами, кокпит в центре"
+@export var demo_rover_phrase := "компактный ровер на 6 колёс, короткий, низкий, минимальный декор"
 
 const DEMO_HOPPER_OFFSET_M := 14.0
 

@@ -81,10 +81,9 @@ const MAP_HEIGHTMAP_SIZE := Vector2i(2048, 1024)
 @export var spawn_demo_hopper := true
 ## A few omni lamp poles near spawn — local lights + RT occluders.
 @export var spawn_lamp_poles := true
-## «На новых» = пара колесо+подвеска, испечённая визардом (authored). Прежнее
-## значение — "колбаса на 12 колес, низкая".
-## Длинная база + центр масс + батареи сбоку: меньше клевка на газе и кувырка на тормозе.
-@export var demo_rover_phrase := "огромная колбаса на 12 колёсах, широкая, высокая, кокпит в центре, питание сбоку, два бура на морде"
+## «На новых» = пара колесо+подвеска, испечённая визардом (authored). Компактный
+## 6-колёсный ровер с минимальным декором — меньше масса и шум на старте.
+@export var demo_rover_phrase := "компактный ровер на 6 колёс, короткий, низкий, минимальный декор"
 @export var persist_digs := true
 ## VoxelInstancer decorative rocks (streams with terrain chunks).
 @export var enable_boulder_instancer := true
