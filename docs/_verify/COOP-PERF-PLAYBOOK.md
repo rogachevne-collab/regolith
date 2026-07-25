@@ -7,6 +7,47 @@
 (подтверждённые `PERF-H*` hot paths). Параллельный агент отдельно оценивает
 «precompute L0 коллайдера в SQLite» — здесь не дублируется.
 
+## OPEN: physics_interpolation (2026-07-25)
+
+**ФАКТ:** `bench_regression_diagnosis` — script/Jolt ~flat, driving FPS
+~34→~72 при `common/physics_interpolation=false` (+ OFF на assembly bodies,
+`b9e0b73`). Стоимость была в render-path, не в `TIME_PHYSICS_PROCESS`.
+
+**TODO (не закрыто):** зачем интерполяция была включена (игрок? камера?
+ровер?), безопасно ли держать выключенной глобально, или нужен точечный
+режим (player ON / assemblies OFF). Пока временный рычаг — не считать
+архитектурным решением. Не откатывать без замера альтернатив.
+
+## A/B: GranularBody (2026-07-25)
+
+При уже выключенной interp, kill `_physics_process` у `GranularBody`
+(временный `return`, откачен):
+
+| фаза | baseline (interp off) | GranularBody OFF |
+|---|---|---|
+| parked | ~141 | ~128 |
+| unparked idle | ~79 | **~133** |
+| driving | ~72 | **~122** |
+
+**ФАКТ:** оставшаяся park→drive просадка — это GranularBody на живых
+сборках (sample/press spoil ~30 Hz). На `freeze` он уже early-return.
+
+### Корень (не «гранулярка сломалась»)
+
+1. `26cd9ec` (22.07): `ProjectedAssemblyBody._ready` вешает `GranularBody`
+   на **каждое** projected RigidBody. Авторский контракт в самом файле:
+   *«rover is a single body»*, руты — отдельно через `GranularPressSource`.
+2. `b8e8b2d` (23.07): **WHEEL-BODY-V1** — каждое колесо = свой
+   `FragmentBody` (~13 тел на демо-ровер). Auto-attach не обновили →
+   ×N `GranularBody` на ту же кучу.
+3. Под ровером в бенче стабильно **3 region / ~1600 active cells**
+   (сейв/spoil) — `dust_at` почти никогда не идёт по «нет региона =
+   пара bounds checks». Каждый sample → `dust_column_at` → полный
+   Y-проход `_column_at` даже по пустым колонкам.
+4. Итого на живом ровере: `~13 тел × 27 sample × 30 Hz` тяжёлых
+   `dust_at`, пока раньше был ≈1 кузов. По гранулярке «раньше охуенно»
+   стыкуется с до–wheel-body моделью.
+
 Маркировка достоверности: **ФАКТ** (подтверждено чтением кода/строк в этой
 сессии), **ГИПОТЕЗА** (правдоподобно, не измерено), **[R7]**/**[R8]** (нужна
 сверка с официальной докой VT/Jolt, не выведено из кода проекта).
