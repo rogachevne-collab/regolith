@@ -910,14 +910,14 @@ func mould_at(
 		var region: GranularVoxelRegion = _regions[index]["region"]
 		if not region.covers(place):
 			continue
-		region.place_ring(place, gathered, body_radius_m, lead)
+		region.place_ring(place, gathered, body_radius_m)
 		_touch(index)
 		_prof_couple_us += Time.get_ticks_usec() - t_couple
 		return gathered
 	# Nowhere to put it: hand it back to the region it came from rather than
 	# letting the volume quietly cease to exist.
 	var origin: GranularVoxelRegion = _regions[touched]["region"]
-	origin.place_ring(centre, gathered, body_radius_m, lead)
+	origin.place_ring(centre, gathered, body_radius_m)
 	_touch(touched)
 	_prof_couple_us += Time.get_ticks_usec() - t_couple
 	return gathered

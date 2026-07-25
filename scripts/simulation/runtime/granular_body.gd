@@ -259,16 +259,9 @@ func _shove() -> void:
 	var travel := _body.linear_velocity
 	var lead := Vector3.ZERO
 	if plough_bias > 0.0 and travel.length_squared() > 0.01:
-		# Horizontal plough only — vertical velocity must not loft the windrow.
 		# Displaced ahead of the body rather than under it, so a working face
 		# builds a heap in front instead of quietly eating what it drives into.
-		var up := GravityField.resolve_up(self, _body.global_position)
-		var horizontal := travel - up * travel.dot(up)
-		if horizontal.length_squared() > 0.01:
-			lead = (
-				horizontal.normalized()
-				* (_sample_radius * 4.0 * plough_bias)
-			)
+		lead = travel.normalized() * (_sample_radius * 2.0 * plough_bias)
 	world.mould_at(
 		_wet_points,
 		_sample_radius,
