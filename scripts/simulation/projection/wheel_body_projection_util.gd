@@ -330,6 +330,10 @@ static func update_drive_motor(
 ## wheel's own speed — chasing that lets the wheel bootstrap itself to max and
 ## saw at the dirt). Keeps longitudinal slip around DRIVE_SLIP_MARGIN_MPS —
 ## near the friction peak. Textbook traction control.
+##
+## Also used for grounded service brake with commanded_rad_s = 0: without the
+## clamp, target=0 at speed demanded a full lock / huge slip and shook the
+## strut (Jolt velocity motors chase the target within the torque limit).
 static func slip_limited_target_rad_s(
 	commanded_rad_s: float,
 	ground_speed_mps: float,

@@ -121,7 +121,7 @@ input, aim raycast, HUD         SimulationWorld (авторитет)
 |---|---|---|---|---|
 | A1 | `store_id: String = "player"` — единственный глобальный инвентарь | `place_element_command.gd:13`, `weld_element_command.gd:6`, `dismantle_element_command.gd:6`, `repair_element_command.gd:6`, `construction_placement.gd`, `construction_snap_resolver.gd:71`, `industry_store_service.gd:4` | на 4 игроков один общий рюкзак | ✅ этап 1 |
 | A2 | HUD читает `world` напрямую | ~15 файлов `scripts/ui/hud_*.gd` | у клиента нет `world` | ✅ закрыто иначе, чем планировалось: клиент держит настоящую read-only реплику `world` (этап 2), HUD-файлы не тронуты вообще |
-| A3 | Один игрок захардкожен: спавн, settle, `VoxelViewer` | `bootstrap.gd` (`_player`, `_ensure_player_viewer_for_planet`, `_find_voxel_viewer`) | нужен per-peer спавн и свой `VoxelViewer` на каждого | частично: локальный игрок каждого клиента спавнится/settle'ится как раньше (`bootstrap.reseat_player_near`), удалённые игроки — лёгкие аватары без `VoxelViewer` (R-COOP-7); host-side per-peer viewer не сделан |
+| A3 | Один игрок захардкожен: спавн, settle, `VoxelViewer` | `bootstrap.gd` (`_player`, `_ensure_player_viewer_for_planet`, `_find_voxel_viewer`) | нужен per-peer спавн и свой `VoxelViewer` на каждого | частично: локальный игрок каждого клиента спавнится/settle'ится как раньше; на хосте у `RemotePlayer` — collision-only `VoxelViewer` proxy (R-COOP-7) для dig far from host |
 | A4 | `SuitState` — Node на сцене игрока, вне `SimulationWorld` | `suit_state.gd` | не реплицируется, не сохраняется per-peer. **Решено переносить в мир** — см. «Per-peer player state» | ✅ этап 1b |
 | A5 | Правки террейна применяются локально и никуда не публикуются | `terrain_excavation_service.gd`, `terrain_impact_carver.gd` | клиент не увидит выкопанное | частично: спайк B — live `_cli_dig_op` + session `_dig_ops` на join (`build_dig_op`); `dig_terrain_debris` в блок-листе (far future); pre-host SQLite bulk — later debt; форма `terrain_edits` из спеки **superseded** |
 | A6 | Позы сборок живут только в Jolt на хосте | `simulation_physics_projection.gd`, `assembly_motion_state.gd` | клиент не увидит движение | частично: спайк C — `_cli_assembly_motion` 15 Гц + kinematic interp; без interest / f64-пакета исходной спеки |
@@ -474,7 +474,7 @@ dev-файлы, поэтому `save_version` просто поднимаетс�
 | 1 | `player_uid`, `store_id` per-peer, убрать дефолты `"player"`, `is_player_store()`, поднять `save_version` (без конвертера — см. «Persistence») | ✅ (`271c9ea`) | `run_one.sh test_industry_v1`, `test_store_snapshot` зелёные, одиночная игра не сломана |
 | 1b | `SuitState` → `SimulationWorld` (см. «Per-peer player state»); обновить `PHYSICAL-LANGUAGE.md` «Состояние скафандра» и `HUD-UI-01.md` в том же коммите | ✅ (`55504c1`) | `run_one.sh test_suit_state`, `test_impact_destruction` зелёные; метеорит бьёт игрока в запущенной игре |
 | 2 | `SimulationWorld` как read-only реплика: флаг `authoritative`, отключаемый тик; snapshot apply на клиенте | ✅ (`f50df72`) | новый `test_*` на «снапшот → реплика идентична» — `test_snapshot_replica` |
-| 3 | Транспорт: ENet, host/join, `_remote_submit`, join-снапшот, спавн N игроков (`bootstrap.gd`, per-peer `VoxelViewer`) | ✅ (`db36f54`, `35c0e70`) — см. «Что уже работает»; **не** per-peer `VoxelViewer` на хосте (отложено, см. риски) | два инстанса, видим друг друга, ходим |
+| 3 | Транспорт: ENet, host/join, `_remote_submit`, join-снапшот, спавн N игроков (`bootstrap.gd`, per-peer `VoxelViewer`) | ✅ (`db36f54`, `35c0e70`) — см. «Что уже работает»; host per-peer collision-only `VoxelViewer` (R-COOP-7) | два инстанса, видим друг друга, ходим; guest dig far from host |
 | 4 | Terrain replication (session dig_ops; SQLite bulk / chunk-reapply — later) | частично (спайк B + join `dig_ops`; без SQLite bulk / debris) | копаем в сессии после Host — видно у обоих; late join видит session digs |
 | 5 | Дельты состояния мира + HUD у клиента (сейчас — полный снапшот-ребродкаст, см. «Что уже работает») | — | строим/крафтим — HUD у обоих совпадает |
 | 6 | Physics replication (позы сборок, f64) | частично (спайк C: `_cli_assembly_motion` 15 Гц, без f64-пакета спеки) | ровер едет — обоим видно гладко; цель — паритет ощущений хост ≈ гость |
@@ -517,7 +517,7 @@ A–D в коде — кооп играбелен для пробного заб
 | **R-COOP-4** Объём дельт не тянет в GDScript | средняя | мерить в этапе 5; фолбэк — бинарный кодек |
 | **R-COOP-5** Каждая новая фича теперь обязана ходить через сеть | 100% | это постоянный налог, а не риск. Инвариант C1 делает нарушение заметным |
 | **R-COOP-6** Оценка этапов 6–7 может поехать вдвое | средняя | контрольная точка после этапа 3 |
-| **R-COOP-7** Хост не стримит террейн вокруг чужих игроков (`VoxelViewer` только у локального) | низкая, пока копают рядом | Цель — roam без «держитесь рядом». **Реальная веха**, когда dig+roam: гость за пределами стрима хоста получает `terrain_unavailable`. Per-peer viewer на хосте — тогда, не раньше |
+| **R-COOP-7** Хост не стримит террейн вокруг чужих игроков (`VoxelViewer` только у локального) | снята (host proxy) | Host: `RemotePlayer.enable_host_stream_proxy` — child `VoxelViewer` с `requires_visuals=false`, `view_distance=MoonGeometry.DEFAULT_LOD_DISTANCE` (Clipbox multi-viewer). Playtest: guest dig far from host. Клиентские remote-аватары без viewer |
 
 ## Оценка
 

@@ -1182,6 +1182,10 @@ func _spawn_avatar(uid: String, nick: String) -> RemotePlayer:
 	avatar.set_seat_transform_resolver(resolve_seat_world_transform)
 	_avatars_root.add_child(avatar)
 	_avatars[uid] = avatar
+	# R-COOP-7: host must stream terrain around remote diggers (guest dig far
+	# from host player → is_area_editable). Clients keep only the local viewer.
+	if _mode == Mode.HOST:
+		avatar.enable_host_stream_proxy()
 	return avatar
 
 

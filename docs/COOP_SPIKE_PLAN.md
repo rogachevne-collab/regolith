@@ -363,8 +363,9 @@ replay dig SQLite «до host».
 - Предсказание ввода водителя, клиентская физика.
 - Сейв per-peer позиций / hotbar (hotbar важен, но после session last-pose;
   не фейкать в Persistence пока); стояние на движущихся платформах.
-- Roam без «держитесь рядом» → **R-COOP-7** (per-peer `VoxelViewer` на хосте)
-  — реальная веха, когда dig+roam; пока копают рядом — ок.
+- Roam без «держитесь рядом» → **R-COOP-7** ✅ host per-peer collision-only
+  `VoxelViewer` on `RemotePlayer` (`requires_visuals=false`, dig budget =
+  `DEFAULT_LOD_DISTANCE`); playtest guest dig far from host still required.
 
 ## Рабочие правила спайка (для всех агентов)
 

@@ -184,7 +184,7 @@ Y = ось хода (вверх, минус направление socket), Z = 
 |---|---|
 | linear Y | лимит [0, travel]; spring: stiffness/damping из SuspensionDefinition (инстанс-стейт поверх), equilibrium 0 (droop); drive force limit = max_suspension_force_n |
 | linear X/Z | замок [0,0] |
-| angular X (спин) | свободная; velocity-мотор: target = drive·max_angular_speed, torque limit = drive_torque·scale; тормоз: target 0, limit = brake; ни газа, ни тормоза: limit 0 (свободное качение) |
+| angular X (спин) | свободная; velocity-мотор: target = drive·max_angular_speed, torque limit = drive_torque·scale; service brake на грунте: target = slip-limit(0) (как drive TC), limit = brake; airborne/PB: target 0; ни газа, ни тормоза: limit 0 (свободное качение) |
 | angular Y (руль) | не steerable — лимит [0,0]; steerable — лимит выкл., PD-момент на тело колеса (ω≈40 рад/с, ζ=1, headroom×8; Jolt swing-motor на стенде не держал), цель = команда×max_steer с rate `steering_response` |
 | angular Z (развал) | замок [0,0] |
 
@@ -204,6 +204,10 @@ travel/stiffness/damping редкие — переконфигурация дж�
 (compression ≈ 0) — мягкий free-spin: цель догоняет `drive·max_angular_speed`
 с `AIRBORNE_SPIN_ACCEL_RAD_S2`, момент × `AIRBORNE_DRIVE_TORQUE_SCALE`
 (полный удар в max RPM тряс стойку «ходуном» через реакцию + гиро/руль).
+Service brake на грунте — тот же clamp к команде `0` (не жёсткий lock на
+скорости): иначе Jolt velocity-motor гонит колесо к нулю в пределах
+`brake_torque` и даёт тот же saw/shake; guest 120 ms blend его маскирует.
+Airborne service brake и latched parking brake оставляют target `0`.
 
 ### Тик и телеметрия
 

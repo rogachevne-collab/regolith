@@ -2227,6 +2227,23 @@ func _tick_wheel_record(
 			torque_limit *= WheelBodyProjectionUtil.AIRBORNE_DRIVE_TORQUE_SCALE
 	elif absf(brake_command) > 0.0001:
 		torque_limit = absf(brake_command) * brake_torque
+		# Grounded service brake used target=0 at full torque — unlimited
+		# longitudinal slip, tire saw, reaction into the strut. Same class of
+		# bug as pre-TC drive slam (WHEEL-BODY-V1). Guest ~120 ms assembly
+		# blend hides it; host feels raw Jolt. Slip-limit toward stop like
+		# drive; airborne / parking keep hard lock (target stays 0).
+		var grounded_brake := (
+			float(measured.get("compression_m", 0.0))
+			> WheelBodyProjectionUtil.GROUNDED_COMPRESSION_EPS_M
+		)
+		if grounded_brake:
+			target_forward_rad_s = (
+				WheelBodyProjectionUtil.slip_limited_target_rad_s(
+					0.0,
+					float(measured.get("ground_speed_mps", 0.0)),
+					wheel_def.radius_m
+				)
+			)
 	if (
 		target_forward_rad_s != float(record.get("motor_target_v", NAN))
 		or torque_limit != float(record.get("motor_limit_n", NAN))

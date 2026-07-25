@@ -8,6 +8,11 @@ extends Node3D
 ## Renders ~120 ms in the past and interpolates between buffered poses, so a
 ## 20 Hz pose stream looks smooth. Extrapolates briefly on a dropped packet;
 ## hard-snaps on a long gap.
+##
+## R-COOP-7 (host only): optional collision-only VoxelViewer child so the host
+## Clipbox streamer keeps LOD0/data editable around remote diggers. VT docs:
+## STREAMING_SYSTEM_CLIPBOX supports multi-viewer + collision-only
+## (requires_visuals=false). Freed with the avatar on leave.
 
 const INTERP_DELAY_MS := 120
 const MAX_EXTRAP_MS := 250
@@ -16,6 +21,10 @@ const SNAP_DIST := 20.0
 const BUFFER_LIMIT := 16
 const CAPSULE_RADIUS := 0.35
 const CAPSULE_HEIGHT := 1.8
+## Dig-relevant host stream budget (voxels ≈ metres at VOXEL_SCALE=1).
+## Matches MoonGeometry.DEFAULT_LOD_DISTANCE — LOD0 / edit reach under Clipbox.
+## Local player still uses the larger surface view_distance for visuals.
+const HOST_PEER_VIEW_DISTANCE_VOXELS := int(MoonGeometry.DEFAULT_LOD_DISTANCE)
 
 var _uid := ""
 var _body: MeshInstance3D
@@ -33,6 +42,9 @@ var _seat_transform_resolver: Callable
 ## Ring of {t:int, p:Vector3, q:Quaternion, qh:Quaternion, l:bool, v:Vector3,
 ## tool:StringName, seat:int}.
 var _samples: Array[Dictionary] = []
+## Host: create VoxelViewer after first pose (avoid streaming at origin).
+var _host_stream_wanted := false
+var _host_stream_viewer: VoxelViewer
 
 
 func _ready() -> void:
@@ -54,6 +66,14 @@ func set_nick(nick: String) -> void:
 
 func set_seat_transform_resolver(resolver: Callable) -> void:
 	_seat_transform_resolver = resolver
+
+
+## Host path only (CoopSession). Collision/data stream for remote dig
+## editability; no meshes. Viewer is a child — follows pose / seat snaps.
+func enable_host_stream_proxy() -> void:
+	_host_stream_wanted = true
+	if not _samples.is_empty():
+		_ensure_host_stream_viewer()
 
 
 ## Pose dict from the network: {p, q, qh, l, v, seat}. Stamped with local
@@ -164,6 +184,21 @@ func _apply(
 		_head.global_basis = Basis(head_q)
 	if _headlamp != null:
 		_headlamp.visible = lamp_on
+	_ensure_host_stream_viewer()
+
+
+func _ensure_host_stream_viewer() -> void:
+	if not _host_stream_wanted or _host_stream_viewer != null:
+		return
+	var viewer := VoxelViewer.new()
+	viewer.name = "HostStreamViewer"
+	# CLIPBOX collision-only: loads data/colliders for is_area_editable, skips
+	# meshes around this peer (VT: requires_visuals / STREAMING_SYSTEM_CLIPBOX).
+	viewer.requires_visuals = false
+	viewer.requires_collisions = true
+	viewer.view_distance = HOST_PEER_VIEW_DISTANCE_VOXELS
+	add_child(viewer)
+	_host_stream_viewer = viewer
 
 
 func _build_visuals() -> void:
