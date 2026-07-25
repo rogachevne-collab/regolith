@@ -1,0 +1,17 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/shield_drive.gd" id="1_shield"]
+
+[sub_resource type="Environment" id="Env_1"]
+background_mode = 1
+background_color = Color(0.015, 0.014, 0.018, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.35, 0.36, 0.42, 1)
+ambient_light_energy = 0.12
+tonemap_mode = 3
+
+[node name="ShieldDrive" type="Node3D"]
+script = ExtResource("1_shield")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Env_1")
