@@ -329,7 +329,7 @@ func _process(delta: float) -> void:
 			not _debug_rover_spawn_busy
 			and Input.is_action_just_pressed(&"spawn_debug_rover")
 		):
-			_spawn_debug_rover_near_player()
+			BootstrapDemoSpawnService.spawn_debug_rover_near_player(self)
 	if not debug_overlay:
 		return
 	var player_position: Vector3 = _player.global_position
@@ -603,33 +603,11 @@ func _configure_boulder_instancer() -> void:
 
 
 func _sync_demo_spawn_anchor() -> void:
-	if _base_spawn == null or _player == null:
-		return
-	var anchor := _player.global_position
-	if anchor.length_squared() <= 0.000001:
-		return
-	_base_spawn.global_position = anchor
+	BootstrapDemoSpawnService.sync_demo_spawn_anchor(self)
 
 
 func _demo_spawn_hint_offset(local_axis: Vector3, offset_m: float) -> Vector3:
-	var anchor := Vector3.ZERO
-	if _player != null and _player.global_position.length_squared() > 0.000001:
-		anchor = _player.global_position
-	elif _base_spawn != null:
-		anchor = _base_spawn.global_position
-	else:
-		anchor = MoonGeometry.surface_point(Vector3.UP)
-	if _gravity_field == null:
-		return anchor + local_axis * offset_m
-	var basis := _gravity_field.tangent_basis_at(anchor)
-	var world_axis := (
-		basis.x * local_axis.x
-		+ basis.y * local_axis.y
-		+ basis.z * local_axis.z
-	)
-	if world_axis.length_squared() <= 0.000001:
-		world_axis = basis.z
-	return anchor + world_axis.normalized() * offset_m
+	return BootstrapDemoSpawnService.demo_spawn_hint_offset(self, local_axis, offset_m)
 
 
 func _persist_world(force := false) -> void:
@@ -761,96 +739,31 @@ func _align_sun_day_at(world_position: Vector3) -> void:
 
 
 func _apply_playtest_cargo_if_enabled() -> void:
-	if not playtest_cargo or _session == null or _session.world == null:
-		return
-	if not IndustryStoreService.apply_playtest_cargo(
-		_session.world,
-		PlayerIdentity.local_uid()
-	):
-		push_error("Playtest cargo seed failed")
+	BootstrapDemoSpawnService.apply_playtest_cargo_if_enabled(self)
 
 
 func _spawn_lamp_poles_near_player() -> void:
-	if get_node_or_null("LampPoles") != null:
-		return
-	var root := Node3D.new()
-	root.name = "LampPoles"
-	add_child(root)
-	var space := _physics_space_state()
-	var placed := 0
-	for local_off in LAMP_POLE_OFFSETS_M:
-		var hint := _demo_spawn_hint_offset(local_off.normalized(), local_off.length())
-		var up := Vector3.UP
-		if _gravity_field != null:
-			up = _gravity_field.up_at(hint)
-		var ground := hint
-		if space != null:
-			var from := hint + up * 40.0
-			var to := hint - up * 80.0
-			var q := PhysicsRayQueryParameters3D.create(from, to)
-			var hit := space.intersect_ray(q)
-			if not hit.is_empty():
-				ground = hit["position"] as Vector3
-		var pole: Node3D = LAMP_POLE_SCENE.instantiate()
-		root.add_child(pole)
-		var basis := Basis.IDENTITY
-		if _gravity_field != null:
-			basis = _gravity_field.tangent_basis_at(ground)
-		pole.global_transform = Transform3D(basis, ground)
-		placed += 1
-	print("MoonExperiment: spawned %d lamp poles near player" % placed)
+	BootstrapDemoSpawnService.spawn_lamp_poles_near_player(self)
 
 
 func _spawn_demo_rover_near_player() -> void:
-	var hint := _demo_spawn_hint_offset(Vector3(0.0, 0.0, -1.0), DEMO_ROVER_OFFSET_M)
-	await _spawn_rover_at_hint(hint, "Demo rover")
+	await BootstrapDemoSpawnService.spawn_demo_rover_near_player(self)
 
 
 func _spawn_debug_rover_near_player() -> void:
-	if _debug_rover_spawn_busy:
-		return
-	_debug_rover_spawn_busy = true
-	print("MoonExperiment: U → spawn debug rover…")
-	_set_debug_spawn_status("U: собираю ровер перед тобой…")
-	# Seat on the aim point in front of the camera — do not wander for a
-	# "best flat" patch (that parked the rover ~20m away while compose ran).
-	var hint := _debug_rover_spawn_hint()
-	await _spawn_rover_at_hint(hint, "Debug rover (U)", true)
-	_debug_rover_spawn_busy = false
+	await BootstrapDemoSpawnService.spawn_debug_rover_near_player(self)
 
 
 func _player_flat_forward() -> Vector3:
-	if _player == null:
-		return Vector3.FORWARD
-	var forward := -_player.global_transform.basis.z
-	if _gravity_field != null:
-		var up := _gravity_field.up_at(_player.global_position)
-		forward = forward - up * forward.dot(up)
-	if forward.length_squared() <= 0.000001:
-		var basis := _gravity_field.tangent_basis_at(_player.global_position)
-		return -basis.z
-	return forward.normalized()
+	return BootstrapDemoSpawnService.player_flat_forward(self)
 
 
 func _debug_rover_spawn_hint() -> Vector3:
-	var origin := _player.global_position
-	var forward := _player_flat_forward()
-	var camera: Camera3D = _player.get_node_or_null("Camera") as Camera3D
-	if camera != null and camera.has_method("aim_transform"):
-		var aim: Transform3D = camera.call("aim_transform")
-		origin = aim.origin
-		forward = -aim.basis.z
-		if _gravity_field != null:
-			var up := _gravity_field.up_at(origin)
-			forward = (forward - up * forward.dot(up)).normalized()
-			if forward.length_squared() <= 0.000001:
-				forward = _player_flat_forward()
-	return origin + forward * DEBUG_ROVER_SPAWN_OFFSET_M
+	return BootstrapDemoSpawnService.debug_rover_spawn_hint(self)
 
 
 func _set_debug_spawn_status(text: String) -> void:
-	if _hint != null:
-		_hint.text = text
+	BootstrapDemoSpawnService.set_debug_spawn_status(self, text)
 
 
 func _spawn_rover_at_hint(
@@ -858,169 +771,13 @@ func _spawn_rover_at_hint(
 	label: String,
 	immediate_hint: bool = false
 ) -> void:
-	if _session == null:
-		push_warning("%s spawn failed: no session" % label)
-		return
-	var tool: VoxelTool = TerrainCompat.get_voxel_tool(_terrain)
-	if tool == null:
-		push_warning("%s spawn failed: no voxel tool" % label)
-		return
-	tool.channel = VoxelBuffer.CHANNEL_SDF
-	var space := _physics_space_state()
-	var ground: Vector3 = Vector3(NAN, NAN, NAN)
-	if immediate_hint:
-		# Aim point may be mid-air; seat along gravity to the crust first.
-		var surface_variant: Variant = RoverDemoSpawn._ground_point_along_field(
-			_terrain,
-			tool,
-			space,
-			hint
-		)
-		ground = surface_variant as Vector3 if surface_variant is Vector3 else hint
-	else:
-		for _attempt in 30:
-			var flat_variant: Variant = RoverDemoSpawn.find_flat_ground_near(
-				_terrain,
-				tool,
-				space,
-				hint,
-				24.0,
-				3.0,
-				false
-			)
-			if flat_variant is Vector3:
-				ground = flat_variant as Vector3
-				break
-			await get_tree().physics_frame
-		if not _is_finite_vec3(ground):
-			ground = hint
-			print("%s: no flat patch, seating at hint" % label)
-	if not _is_finite_vec3(ground):
-		push_warning("%s spawn failed: no ground near player" % label)
-		_set_debug_spawn_status("%s: нет земли под точкой спавна" % label)
-		return
-	# Wheel locomotives are raycast-supported (solid wheel colliders off).
-	# SDF seating before the voxel trimesh cooks → freefall through crust.
-	ground = await _await_physics_ground_at(ground, label)
-	if not _is_finite_vec3(ground):
-		_set_debug_spawn_status("%s: нет physics-коллизии под точкой спавна" % label)
-		return
-	var phrase := demo_rover_phrase.strip_edges()
-	var t0 := Time.get_ticks_msec()
-	var result: Dictionary
-	if phrase.is_empty():
-		# Пустая фраза = дефолтная сборка тем же композером, что и по фразе.
-		# Отдельного «демо-ровера» по зашитым клеткам больше нет.
-		result = RoverComposer.spawn_on_terrain(
-			_session,
-			ground,
-			null,
-			RoverDemoSpawn.STORE_ID,
-			_terrain,
-			tool,
-			space
-		)
-	else:
-		result = RoverComposer.spawn_on_terrain_from_phrase(
-			_session,
-			ground,
-			phrase,
-			RoverDemoSpawn.STORE_ID,
-			_terrain,
-			tool,
-			space
-		)
-	var body_pos := Vector3(NAN, NAN, NAN)
-	var assembly_id := int(result.get("assembly_id", 0))
-	if bool(result.get("ok", false)) and assembly_id > 0 and _session.projection != null:
-		var body := _session.projection.get_physics_body(assembly_id)
-		if body != null:
-			body_pos = body.global_position
-	var dist := (
-		_player.global_position.distance_to(body_pos)
-		if _is_finite_vec3(body_pos) and _player != null
-		else -1.0
+	await BootstrapDemoSpawnService.spawn_rover_at_hint(
+		self, hint, label, immediate_hint
 	)
-	if not bool(result.get("ok", false)):
-		push_warning(
-			"%s spawn failed: %s %s"
-			% [
-				label,
-				str(result.get("error", "unknown")),
-				str(result.get("failures", [])),
-			]
-		)
-		_set_debug_spawn_status(
-			"%s FAIL: %s" % [label, str(result.get("error", "unknown"))]
-		)
-	else:
-		print(
-			(
-				"MoonExperiment: %s spawned assembly_id=%d body=%s "
-				+ "dist=%.1fm compose=%dms phrase='%s'"
-			)
-			% [
-				label,
-				assembly_id,
-				str(body_pos),
-				dist,
-				Time.get_ticks_msec() - t0,
-				phrase,
-			]
-		)
-		_set_debug_spawn_status(
-			"U: ровер #%d рядом (%.0fm). Собирался %dms."
-			% [assembly_id, dist, Time.get_ticks_msec() - t0]
-		)
 
 
 func _spawn_demo_hopper_near_player() -> void:
-	if _session == null or _base_spawn == null:
-		return
-	var tool: VoxelTool = TerrainCompat.get_voxel_tool(_terrain)
-	if tool == null:
-		return
-	tool.channel = VoxelBuffer.CHANNEL_SDF
-	var hint := _demo_spawn_hint_offset(Vector3(1.0, 0.0, 0.0), DEMO_HOPPER_OFFSET_M)
-	var ground: Vector3 = Vector3(NAN, NAN, NAN)
-	for _attempt in 90:
-		var ground_variant: Variant = RoverDemoSpawn.find_flat_ground_near(
-			_terrain,
-			tool,
-			_physics_space_state(),
-			hint,
-			12.0,
-			4.0,
-			true
-		)
-		if ground_variant is Vector3:
-			ground = ground_variant as Vector3
-			break
-		await get_tree().physics_frame
-	if not _is_finite_vec3(ground):
-		push_warning("Demo hopper spawn failed: no flat ground near offset hint")
-		return
-	ground = await _await_physics_ground_at(ground, "Demo hopper")
-	if not _is_finite_vec3(ground):
-		return
-	var result := HopperDemoSpawn.spawn_on_terrain(
-		_session,
-		ground,
-		HopperDemoSpawn.STORE_ID,
-		_terrain,
-		tool,
-		_physics_space_state()
-	)
-	if not bool(result.get("ok", false)):
-		push_warning(
-			"Demo hopper spawn failed: %s"
-			% str(result.get("error", "unknown"))
-		)
-	else:
-		print(
-			"MoonExperiment: demo hopper spawned assembly_id=%d at %s"
-			% [int(result.get("assembly_id", 0)), str(ground)]
-		)
+	await BootstrapDemoSpawnService.spawn_demo_hopper_near_player(self)
 
 
 func _resync_player_camera() -> void:
