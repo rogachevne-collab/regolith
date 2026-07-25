@@ -176,7 +176,7 @@ func set_coop_persistence_inhibited(inhibited: bool) -> void:
 ## called by CoopSession the moment a join is accepted, before the host snapshot
 ## replaces the local world.
 func save_now_then_inhibit_persistence() -> void:
-	await _persist_world(true)
+	await BootstrapPersistenceService.persist_world(self, true)
 	_coop_persistence_inhibited = true
 
 
@@ -187,73 +187,22 @@ func flush_digs_for_coop_join() -> void:
 		return
 	_digs_dirty = true
 	_dig_persist_cooldown_s = 0.0
-	await _persist_digs_durable()
+	await BootstrapPersistenceService.persist_digs_durable(self)
 
 
 ## Host: bytes of moon.sqlite + live granular snapshot for join bulk.
 ## Call after flush_digs_for_coop_join. Empty sqlite when no dig stream file.
 func capture_coop_terrain_bulk() -> Dictionary:
-	var sqlite := PackedByteArray()
-	var db_path := MoonTerrainParams.stream_database_path()
-	if FileAccess.file_exists(db_path):
-		sqlite = FileAccess.get_file_as_bytes(db_path)
-	var granular := {}
-	var granular_world := get_node_or_null("GranularVoxelWorld") as GranularVoxelWorld
-	if granular_world != null and granular_world.has_method(&"capture_field_snapshot"):
-		granular = granular_world.capture_field_snapshot()
-	return {"sqlite": sqlite, "granular": granular}
+	return BootstrapPersistenceService.capture_coop_terrain_bulk(self)
 
 
 ## Client: write host dig DB to a session replica (not personal gen_vN), swap
 ## terrain.stream onto it, kick viewers so loaded shells re-read digs. Granular
 ## restore is memory-only — persistence stays inhibited.
 func apply_coop_terrain_bulk(sqlite_bytes: PackedByteArray, granular: Dictionary) -> bool:
-	if not (_terrain is VoxelLodTerrain):
-		return false
-	var applied_db := false
-	if not sqlite_bytes.is_empty():
-		var replica_dir := CoopTerrainBulk.REPLICA_DIR
-		var abs_dir := ProjectSettings.globalize_path(replica_dir)
-		if not DirAccess.dir_exists_absolute(abs_dir):
-			DirAccess.make_dir_recursive_absolute(abs_dir)
-		var replica_path := CoopTerrainBulk.replica_database_path()
-		var file := FileAccess.open(replica_path, FileAccess.WRITE)
-		if file == null:
-			push_warning(
-				"Coop: cannot write terrain bulk replica %s" % replica_path
-			)
-			return false
-		file.store_buffer(sqlite_bytes)
-		file.close()
-		var stream := VoxelStreamSQLite.new()
-		stream.database_path = replica_path
-		## Replica is host truth for this session — do not grow it with local gen.
-		stream.save_generator_output = false
-		var lod := _terrain as VoxelLodTerrain
-		lod.stream = stream
-		_voxel_stream = stream
-		_kick_voxel_viewers_for_stream_reload()
-		applied_db = true
-		print(
-			"Coop: applied host dig-stream bulk (%d bytes) → %s"
-			% [sqlite_bytes.size(), replica_path]
-		)
-	if not granular.is_empty():
-		var granular_world := get_node_or_null("GranularVoxelWorld") as GranularVoxelWorld
-		if granular_world != null and granular_world.has_method(&"restore_field_snapshot"):
-			var n: int = int(granular_world.restore_field_snapshot(granular))
-			print("Coop: restored %d granular region(s) from host bulk" % n)
-	return applied_db or not granular.is_empty()
-
-
-func _kick_voxel_viewers_for_stream_reload() -> void:
-	## Client join only needs the local viewer — host proxies are host-side.
-	var viewer := _find_voxel_viewer()
-	if viewer == null:
-		return
-	var dist := viewer.view_distance
-	viewer.view_distance = maxi(dist / 4, 8)
-	viewer.view_distance = dist
+	return BootstrapPersistenceService.apply_coop_terrain_bulk(
+		self, sqlite_bytes, granular
+	)
 
 
 ## Re-drop the local player near a world point using the existing settle
@@ -368,12 +317,12 @@ func _process(delta: float) -> void:
 		_autosave_accum += delta
 		if _autosave_accum >= AUTOSAVE_INTERVAL_S:
 			_autosave_accum = 0.0
-			_persist_world()
+			BootstrapPersistenceService.persist_world(self)
 		if _digs_dirty and not _dig_persist_in_flight:
 			if _dig_persist_cooldown_s > 0.0:
 				_dig_persist_cooldown_s -= delta
 			if _dig_persist_cooldown_s <= 0.0:
-				_persist_digs_durable()
+				BootstrapPersistenceService.persist_digs_durable(self)
 		# Poll action: _unhandled_input is often eaten by HUD/focus while
 		# mouse is captured; same pattern as gameplay move axes.
 		if (
@@ -516,14 +465,14 @@ func _toggle_perf_overlay() -> void:
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
-		_request_quit_after_persist()
+		BootstrapPersistenceService.request_quit_after_persist(self)
 	elif what == NOTIFICATION_APPLICATION_PAUSED:
-		_persist_world(true)
+		BootstrapPersistenceService.persist_world(self, true)
 
 
 func _exit_tree() -> void:
 	## Best-effort if Stop/kill skipped WM_CLOSE; no flush race here.
-	_persist_world_snapshot_only(true)
+	BootstrapPersistenceService.persist_world_snapshot_only(self, true)
 	if (
 		persist_digs
 		and _terrain is VoxelLodTerrain
@@ -741,35 +690,7 @@ func _print_nearest_cave_entrances(native: Object) -> void:
 
 
 func _configure_dig_stream() -> void:
-	if not (_terrain is VoxelLodTerrain):
-		return
-	var dir := MoonGeometry.dig_stream_directory()
-	var abs_dir := ProjectSettings.globalize_path(dir)
-	if not DirAccess.dir_exists_absolute(abs_dir):
-		DirAccess.make_dir_recursive_absolute(abs_dir)
-	## Fresh gen_v dir (no partial LOD scraps). Generator fills crust; digs persist.
-	var stream := VoxelStreamSQLite.new()
-	stream.database_path = MoonTerrainParams.stream_database_path()
-	## Persist generated crust too: Ø19 km analytic gen is heavy; relaunch should
-	## read SQLite instead of re-deriving the shell. GENERATOR_VERSION bump →
-	## fresh DB. Digs are modified blocks and persist either way.
-	##
-	## Costs ~21784 blocks / 108 MB per session, and every one of those saves
-	## goes on the same serial slot as block loads (`push_async_io_task`), so
-	## this was a suspect for LOD0 not reaching the player. It is not: measured
-	## in play, `VoxelEngine.get_stats()` showed an empty queue the whole time
-	## LOD0 was missing (the cause was the streamer following the wrong viewer —
-	## see `_configure_terrain`). Do not re-litigate this flag without a number.
-	stream.save_generator_output = true
-	_voxel_stream = stream
-	var lod := _terrain as VoxelLodTerrain
-	lod.stream = stream
-	lod.full_load_mode_enabled = false
-	lod.cache_generated_blocks = true
-	print(
-		"MoonExperiment: planet gen_v%d dig-stream=%s"
-		% [MoonTerrainParams.GENERATOR_VERSION, stream.database_path]
-	)
+	BootstrapPersistenceService.configure_dig_stream(self)
 
 
 func _configure_boulder_instancer() -> void:
@@ -849,102 +770,23 @@ func _demo_spawn_hint_offset(local_axis: Vector3, offset_m: float) -> Vector3:
 
 
 func _persist_world(force := false) -> void:
-	_persist_world_snapshot_only(force)
-	if force:
-		_digs_dirty = true
-		_dig_persist_cooldown_s = 0.0
-		await _persist_digs_durable()
-	elif _digs_dirty and not _dig_persist_in_flight:
-		_dig_persist_cooldown_s = 0.0
-		_persist_digs_durable()
+	await BootstrapPersistenceService.persist_world(self, force)
 
 
 func _persist_world_snapshot_only(force := false) -> void:
-	# Client of a coop host: never write the replicated world to the local save.
-	if _coop_persistence_inhibited:
-		return
-	if not _world_ready or _session == null:
-		return
-	if (
-		_player == null
-		or not is_instance_valid(_player)
-		or not _player.is_inside_tree()
-	):
-		return
-	var now_ms := Time.get_ticks_msec()
-	if not force and now_ms - _last_save_ms < 5000:
-		return
-	if WorldPersistence.save(
-		_session.world,
-		_player,
-		_coop_extra_player_poses_for_save()
-	):
-		_last_save_ms = now_ms
-	_persist_granular()
+	BootstrapPersistenceService.persist_world_snapshot_only(self, force)
 
 
-## Save the un-sintered loose material beside the world snapshot, on the same
-## cadence. Sintered material is already rock and saves with the terrain.
 func _persist_granular() -> void:
-	var granular := get_node_or_null("GranularVoxelWorld") as GranularVoxelWorld
-	if granular != null:
-		granular.save_field(MoonGeometry.granular_save_path())
+	BootstrapPersistenceService.persist_granular(self)
 
 
 func _request_quit_after_persist() -> void:
-	_quit_after_dig_persist = true
-	_persist_world_snapshot_only(true)
-	_digs_dirty = true
-	_dig_persist_cooldown_s = 0.0
-	if _dig_persist_in_flight:
-		return
-	_persist_digs_durable()
+	BootstrapPersistenceService.request_quit_after_persist(self)
 
 
-## save_modified_blocks (async) → wait tracker → flush once.
-## Avoids SQLite lock spam and incomplete cave walls on reload.
-## DIG-01: a caller that finds a save already in flight must not return before
-## it actually completes (waits below) — an early return here let a coop join
-## capture stale sqlite while another flush was still writing.
 func _persist_digs_durable() -> void:
-	if _dig_persist_in_flight:
-		while _dig_persist_in_flight:
-			await get_tree().process_frame
-		return
-	# Coop client: skip the SQLite dig flush too, but still honor a pending quit
-	# so leaving/closing never hangs.
-	if not persist_digs or not (_terrain is VoxelLodTerrain) or _coop_persistence_inhibited:
-		if _quit_after_dig_persist:
-			get_tree().quit()
-		return
-	_dig_persist_in_flight = true
-	var lod := _terrain as VoxelLodTerrain
-	while true:
-		_digs_dirty = false
-		var tracker: VoxelSaveCompletionTracker = lod.save_modified_blocks()
-		if tracker != null:
-			var deadline_ms := Time.get_ticks_msec() + DIG_SAVE_TIMEOUT_MS
-			while (
-				is_inside_tree()
-				and not tracker.is_complete()
-				and not tracker.is_aborted()
-			):
-				if Time.get_ticks_msec() >= deadline_ms:
-					push_warning(
-						(
-							"MoonExperiment: dig save timed out (%d tasks left)"
-							% tracker.get_remaining_tasks()
-						)
-					)
-					break
-				await get_tree().process_frame
-		if _voxel_stream != null:
-			_voxel_stream.flush()
-		if not _digs_dirty:
-			break
-	_dig_persist_in_flight = false
-	if _quit_after_dig_persist:
-		get_tree().quit()
+	await BootstrapPersistenceService.persist_digs_durable(self)
 
 
 func _on_terrain_modified(
@@ -953,19 +795,22 @@ func _on_terrain_modified(
 	_dig_radius_m: float,
 	_dig_direction: Vector3
 ) -> void:
-	_digs_dirty = true
-	_dig_persist_cooldown_s = DIG_PERSIST_DEBOUNCE_S
+	BootstrapPersistenceService.on_terrain_modified(
+		self,
+		_removed_volume_m3,
+		_dig_center,
+		_dig_radius_m,
+		_dig_direction
+	)
 
 
-## Sintered granular material wrote solid into the rock SDF. Same durability
-## path as a carve — the plugin already marked the touched blocks modified, this
-## just tells the autosave loop to flush them.
 func _on_terrain_deposited(
 	_deposit_center: Vector3,
 	_deposit_radius_m: float
 ) -> void:
-	_digs_dirty = true
-	_dig_persist_cooldown_s = DIG_PERSIST_DEBOUNCE_S
+	BootstrapPersistenceService.on_terrain_deposited(
+		self, _deposit_center, _deposit_radius_m
+	)
 
 
 func _begin_fresh_world(player_position: Vector3) -> void:
@@ -1586,13 +1431,7 @@ func _peek_saved_player_position() -> Vector3:
 
 ## Host CoopSession last-pose cache for cold `players{}` (guests). Empty offline.
 func _coop_extra_player_poses_for_save() -> Dictionary:
-	var coop := get_node_or_null("CoopSession")
-	if coop == null or not coop.has_method("export_cold_poses"):
-		return {}
-	var poses: Variant = coop.call("export_cold_poses")
-	if poses is Dictionary:
-		return poses as Dictionary
-	return {}
+	return BootstrapPersistenceService.coop_extra_player_poses_for_save(self)
 
 
 ## Wait until a cooked voxel collider exists under `hint` (SDF alone is not

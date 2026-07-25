@@ -87,6 +87,34 @@ SDF → physics collider → settle → телепорт игрока. См. **R
 
 Заморожены: `replay_remote_dig`, `submit_as`, кадры seat-input.
 
+### Bootstrap (`scripts/bootstrap.gd`)
+
+Публичный API для [`coop_session.gd`](scripts/coop/coop_session.gd) и внешних
+читателей — сигнатуры и семантика:
+
+| Метод |
+|---|
+| `is_world_ready` |
+| `set_coop_persistence_inhibited` |
+| `save_now_then_inhibit_persistence` |
+| `flush_digs_for_coop_join` |
+| `capture_coop_terrain_bulk` |
+| `apply_coop_terrain_bulk` |
+| `reseat_player_near` |
+
+Override-хуки для bench/test extends — **instance-методы узла**, не static:
+
+| Метод |
+|---|
+| `_make_planet_generator` |
+| `_configure_boulder_instancer` |
+
+**R5 spawn/settle** — порядок side-effects в `_place_when_ground_exists` и
+комментарии-инварианты (VT #677, `PHYSICS_GROUND_TIMEOUT_MS` 8000) не менять.
+
+**Orchestration `_ready`** — порядок вызовов заморожен (см.
+[`docs/cheatsheets/bootstrap.md`](../cheatsheets/bootstrap.md)).
+
 ## 3. Паттерн extract'а
 
 Эталон: `scripts/simulation/runtime/construction_command_service.gd`.
