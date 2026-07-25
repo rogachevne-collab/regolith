@@ -113,6 +113,9 @@ var _volume := 1.0
 var _sample_radius := 0.3
 ## Sample points currently below the surface, in world space.
 var _wet_points: PackedVector3Array = PackedVector3Array()
+## Reused probe batch buffers (GRANULAR-COUPLING-PERF-1 stage 3).
+var _probe_points: PackedVector3Array = PackedVector3Array()
+var _probe_out: PackedVector4Array = PackedVector4Array()
 var _sample_debt := 0.0
 var _press_debt := 0.0
 ## Last reading, held between samples and applied every frame.
@@ -206,12 +209,20 @@ func _resample() -> void:
 	_up = GravityField.resolve_up(self, _body.global_position)
 	var wet := 0
 	var sum := Vector3.ZERO
-	for local: Vector3 in _samples:
-		var point := frame * local
-		var column := Dictionary(world.call(&"dust_at", point))
-		if column.is_empty():
+	var granular := world as GranularVoxelWorld
+	if granular == null:
+		return
+	var n := _samples.size()
+	_probe_points.resize(n)
+	for i in n:
+		_probe_points[i] = frame * _samples[i]
+	granular.dust_probe_many(_probe_points, _probe_out)
+	for i in n:
+		var probe: Vector4 = _probe_out[i]
+		if probe.w <= 0.0:
 			continue
-		var surface: Vector3 = column["surface"]
+		var point: Vector3 = _probe_points[i]
+		var surface := Vector3(probe.x, probe.y, probe.z)
 		# Below the surface of the material, not merely near it. Without this a
 		# body flying over a heap would read as buried in it.
 		if (surface - point).dot(_up) <= 0.0:
@@ -223,7 +234,7 @@ func _resample() -> void:
 		_wet_points.append(point)
 	if wet == 0:
 		return
-	_submerged = float(wet) / float(_samples.size())
+	_submerged = float(wet) / float(n)
 	_centroid = sum / float(wet)
 
 
@@ -242,17 +253,23 @@ func _resample() -> void:
 ## occupies its space, so material inside it is not compacted, it is *gone*. The
 ## wheels keep the bedding floor, because a wheel really does compact.
 func _shove() -> void:
-	var world := _world()
+	var world := _world() as GranularVoxelWorld
 	if world == null or _wet_points.is_empty():
 		return
 	var travel := _body.linear_velocity
 	var lead := Vector3.ZERO
 	if plough_bias > 0.0 and travel.length_squared() > 0.01:
+		# Horizontal plough only — vertical velocity must not loft the windrow.
 		# Displaced ahead of the body rather than under it, so a working face
 		# builds a heap in front instead of quietly eating what it drives into.
-		lead = travel.normalized() * (_sample_radius * 2.0 * plough_bias)
-	world.call(
-		&"mould_at",
+		var up := GravityField.resolve_up(self, _body.global_position)
+		var horizontal := travel - up * travel.dot(up)
+		if horizontal.length_squared() > 0.01:
+			lead = (
+				horizontal.normalized()
+				* (_sample_radius * 4.0 * plough_bias)
+			)
+	world.mould_at(
 		_wet_points,
 		_sample_radius,
 		clampf(mould_share * plough, 0.0, 1.0),

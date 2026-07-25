@@ -229,9 +229,7 @@ func column_at(cell_x: int, cell_z: int) -> Vector2:
 		or cell_z < 0 or cell_z >= size.z
 	):
 		return Vector2.ZERO
-	var ci := cell_z * size.x + cell_x
-	if _column_dirty[ci] == 0:
-		return _column_cache[ci]
+	# Cache bypass — see native column_at (stale-surface / pillar regression).
 	var filled := 0.0
 	var top_cell := -1
 	var top_mass := 0.0
@@ -242,15 +240,12 @@ func column_at(cell_x: int, cell_z: int) -> Vector2:
 		filled += mass
 		top_cell = y
 		top_mass = mass
-	var result := Vector2.ZERO
-	if top_cell >= 0:
-		result = Vector2(
-			filled * cell_size,
-			(float(top_cell) + top_mass) * cell_size
-		)
-	_column_cache[ci] = result
-	_column_dirty[ci] = 0
-	return result
+	if top_cell < 0:
+		return Vector2.ZERO
+	return Vector2(
+		filled * cell_size,
+		(float(top_cell) + top_mass) * cell_size
+	)
 
 
 func _invalidate_column_at_mass_index(i: int) -> void:

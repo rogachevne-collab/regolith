@@ -704,23 +704,63 @@ func _scatter_spoil(
 	return accepted
 
 
-## Loose material standing in the column at a world point — `depth_m` and the
-## world point of its `surface`, or empty when there is none. See
-## `GranularVoxelRegion.dust_column_at`: this is how a character is carried by
-## a heap without the heap being a collider.
-##
-## Called every physics frame by anything that walks, so it stays a column walk
-## and nothing more. Most of the time no region covers the point at all and this
-## costs a handful of bounds checks.
-func dust_at(world_point: Vector3) -> Dictionary:
+## Loose material at a world point as `(surface.xyz, depth_m)`. `w <= 0` means
+## none. Hot path for GranularBody / PressSource / CharacterMotor — no
+## Dictionary, no `call()` (GRANULAR-COUPLING-PERF-1 stage 2). Region order
+## matches `dust_at` (last covering region wins).
+func dust_probe(world_point: Vector3) -> Vector4:
 	for index in range(_regions.size() - 1, -1, -1):
 		var region: GranularVoxelRegion = _regions[index]["region"]
 		if not region.covers(world_point):
 			continue
-		var column := region.dust_column_at(world_point)
-		if not column.is_empty():
-			return column
-	return {}
+		var probe := region.dust_column_probe(world_point)
+		if probe.w > 0.0:
+			return probe
+	return Vector4.ZERO
+
+
+## Dictionary twin of `dust_probe` for callers that still want keys
+## `depth_m` / `surface`. Prefer `dust_probe` on hot paths.
+func dust_at(world_point: Vector3) -> Dictionary:
+	var probe := dust_probe(world_point)
+	if probe.w <= 0.0:
+		return {}
+	return {
+		"depth_m": probe.w,
+		"surface": Vector3(probe.x, probe.y, probe.z),
+	}
+
+
+## Batch twin of `dust_probe`. Fills `out` (resized to `points.size()`).
+## Semantics match the single-point path: regions are tried last→first, and a
+## covering region with empty column falls through to earlier ones
+## (GRANULAR-COUPLING-PERF-1 stage 3). One `world_transform` + inverse per
+## region, not per point.
+func dust_probe_many(points: PackedVector3Array, out: PackedVector4Array) -> void:
+	var n := points.size()
+	out.resize(n)
+	for i in n:
+		out[i] = Vector4.ZERO
+	if n == 0 or _regions.is_empty():
+		return
+	for index in range(_regions.size() - 1, -1, -1):
+		var region: GranularVoxelRegion = _regions[index]["region"]
+		var frame := region.world_transform()
+		var inv := frame.affine_inverse()
+		var span := float(region.field.size.x) * region.field.cell_size
+		for i in n:
+			if out[i].w > 0.0:
+				continue
+			var local: Vector3 = inv * points[i]
+			if (
+				local.x < 0.0 or local.x > span
+				or local.y < 0.0 or local.y > span
+				or local.z < 0.0 or local.z > span
+			):
+				continue
+			var probe := region.dust_column_probe_local(frame, local)
+			if probe.w > 0.0:
+				out[i] = probe
 
 
 ## Point the spoil stream at where the cuttings are going and keep it alive a
@@ -870,14 +910,14 @@ func mould_at(
 		var region: GranularVoxelRegion = _regions[index]["region"]
 		if not region.covers(place):
 			continue
-		region.place_ring(place, gathered, body_radius_m)
+		region.place_ring(place, gathered, body_radius_m, lead)
 		_touch(index)
 		_prof_couple_us += Time.get_ticks_usec() - t_couple
 		return gathered
 	# Nowhere to put it: hand it back to the region it came from rather than
 	# letting the volume quietly cease to exist.
 	var origin: GranularVoxelRegion = _regions[touched]["region"]
-	origin.place_ring(centre, gathered, body_radius_m)
+	origin.place_ring(centre, gathered, body_radius_m, lead)
 	_touch(touched)
 	_prof_couple_us += Time.get_ticks_usec() - t_couple
 	return gathered

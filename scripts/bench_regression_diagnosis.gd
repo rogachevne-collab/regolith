@@ -56,10 +56,15 @@ func _run() -> void:
 	_world = _session.world
 	_projection = _session.projection
 
-	if not _find_demo_rover():
-		print("BENCH_DIAG: FAIL no demo rover assembly found")
-		get_tree().quit(2)
-		return
+	# Fresh worlds set world_ready before demo rover spawn finishes (bootstrap
+	# awaits compose after the flag). Wait briefly rather than racing it.
+	var rover_deadline := Time.get_ticks_msec() + 30000
+	while not _find_demo_rover():
+		await get_tree().physics_frame
+		if Time.get_ticks_msec() > rover_deadline:
+			print("BENCH_DIAG: FAIL no demo rover assembly found")
+			get_tree().quit(2)
+			return
 	print("BENCH_DIAG_START assembly_id=%d" % _assembly_id)
 	_report_node_counts()
 

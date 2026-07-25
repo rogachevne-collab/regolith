@@ -131,10 +131,12 @@ Vector2 GranularVoxelField::column_at(int cell_x, int cell_z) {
 	if (cell_x < 0 || cell_x >= size_.x || cell_z < 0 || cell_z >= size_.z) {
 		return Vector2(0, 0);
 	}
+	// PERF cache temporarily bypassed: stale high surfaces made GranularBody
+	// treat the chassis AABB as fully submerged and mould_at excavated a
+	// cube cavity (spoil erupted as vertical pillars). Recompute every
+	// call until invalidation is proven complete. Keep dirty-bit plumbing.
 	const int ci = cell_z * size_.x + cell_x;
-	if (column_dirty_[ci] == 0) {
-		return column_cache_[ci];
-	}
+	(void)ci;
 	double filled = 0.0;
 	int top_cell = -1;
 	double top_mass = 0.0;
@@ -155,8 +157,6 @@ Vector2 GranularVoxelField::column_at(int cell_x, int cell_z) {
 				(real_t)(filled * cell_size_),
 				(real_t)((double(top_cell) + top_mass) * cell_size_));
 	}
-	column_cache_[ci] = result;
-	column_dirty_[ci] = 0;
 	return result;
 }
 

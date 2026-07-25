@@ -183,18 +183,18 @@ func move_character(
 func _update_dust(delta: float, up: Vector3, horizontal_speed: float) -> void:
 	_dust_depth_m = 0.0
 	_dust_surface_valid = false
-	var world := _granular_world_node()
-	var column := (
-		Dictionary(world.call(&"dust_at", global_position))
-		if world != null
-		else {}
-	)
-	if column.is_empty():
+	var world := _granular_world_node() as GranularVoxelWorld
+	if world == null:
 		_dust_sink_m = 0.0
 		_dust_supported = false
 		return
-	_dust_depth_m = float(column["depth_m"])
-	_dust_surface = column["surface"]
+	var probe := world.dust_probe(global_position)
+	if probe.w <= 0.0:
+		_dust_sink_m = 0.0
+		_dust_supported = false
+		return
+	_dust_depth_m = probe.w
+	_dust_surface = Vector3(probe.x, probe.y, probe.z)
 	_dust_surface_valid = true
 	# Cannot sink further than there is material to sink into: twenty
 	# centimetres of dust leaves you standing on rock, whatever the limit says.

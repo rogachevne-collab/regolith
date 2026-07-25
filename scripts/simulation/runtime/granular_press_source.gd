@@ -60,13 +60,16 @@ func _physics_process(delta: float) -> void:
 		return
 	var up := GravityField.resolve_up(self, global_position)
 	var point := global_position - up * contact_offset_m
-	var column := Dictionary(world.call(&"dust_at", point))
-	if column.is_empty():
+	var granular := world as GranularVoxelWorld
+	if granular == null:
+		return
+	var probe := granular.dust_probe(point)
+	if probe.w <= 0.0:
 		return
 	# How far the bearing point stands *below* the surface of the material.
 	# Negative means it is clear of it — a wheel in the air over a heap, which
 	# is exactly the case a plain "is there dust here" test would get wrong.
-	var surface: Vector3 = column["surface"]
+	var surface := Vector3(probe.x, probe.y, probe.z)
 	var penetration := (surface - point).dot(up)
 	if penetration <= 0.0:
 		return
@@ -76,7 +79,7 @@ func _physics_process(delta: float) -> void:
 	var bite := clampf(penetration / radius_m, 0.0, 1.0)
 	# A wheel compacts rather than occupies, so it takes a little at a time and
 	# leaves the world's own bedding floor in place — see `press_at`.
-	world.call(&"press_at", point, radius_m, share * strength * bite)
+	granular.press_at(point, radius_m, share * strength * bite)
 
 
 ## The loose-material world, found by group so nothing here depends on it

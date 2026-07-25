@@ -346,9 +346,17 @@ func _ground_cell_below(from_cell: Vector3i, max_drop_cells: int) -> Vector3i:
 ## `depth_m` is the material compressed solid, so it answers "how far *can* I
 ## sink here" directly: twenty centimetres of dust cannot swallow more than
 ## twenty centimetres. Empty when the column holds nothing.
-func dust_column_at(world_point: Vector3) -> Dictionary:
+## `(surface.xyz, depth_m)`. `w <= 0` means no material. Hot-path twin of
+## `dust_column_at` without a Dictionary (GRANULAR-COUPLING-PERF-1 stage 2).
+func dust_column_probe(world_point: Vector3) -> Vector4:
 	var frame := world_transform()
-	var local := frame.affine_inverse() * world_point
+	return dust_column_probe_local(frame, frame.affine_inverse() * world_point)
+
+
+## Same as `dust_column_probe`, but reuses a caller-provided frame / local so a
+## batch of points pays `world_transform` + `affine_inverse` once
+## (GRANULAR-COUPLING-PERF-1 stage 3).
+func dust_column_probe_local(frame: Transform3D, local: Vector3) -> Vector4:
 	# Blended across the four columns around the point rather than read off the
 	# nearest one. Taking the nearest makes the surface a staircase with a
 	# quarter-metre step every quarter metre walked, and a body carried on it is
@@ -382,12 +390,20 @@ func dust_column_at(world_point: Vector3) -> Dictionary:
 			height += column.y * weight
 			carried += weight
 	if carried <= 0.0:
+		return Vector4.ZERO
+	# Directly above or below the point asked about, not at the corner of a
+	# cell — the caller is standing somewhere specific.
+	var surface := frame * Vector3(local.x, height / carried, local.z)
+	return Vector4(surface.x, surface.y, surface.z, depth)
+
+
+func dust_column_at(world_point: Vector3) -> Dictionary:
+	var probe := dust_column_probe(world_point)
+	if probe.w <= 0.0:
 		return {}
 	return {
-		"depth_m": depth,
-		# Directly above or below the point asked about, not at the corner of a
-		# cell — the caller is standing somewhere specific.
-		"surface": frame * Vector3(local.x, height / carried, local.z),
+		"depth_m": probe.w,
+		"surface": Vector3(probe.x, probe.y, probe.z),
 	}
 
 
@@ -504,23 +520,52 @@ func take_sphere(
 ## fights itself, and material that ends up back under the machine instead of
 ## heaped at its edges where displaced material belongs. It was also ten column
 ## deposits per sample, which is where the cost of moulding actually lived.
-func place_ring(world_point: Vector3, volume_m3: float, radius_m: float) -> float:
+func place_ring(
+	world_point: Vector3,
+	volume_m3: float,
+	radius_m: float,
+	push_dir: Vector3 = Vector3.ZERO
+) -> float:
 	if volume_m3 <= 0.0:
 		return 0.0
 	# Around the contact in the tangent plane, so material goes sideways rather
 	# than up: the bit parts a heap, it does not launch it.
 	var side := anchor.basis.x
+	var up := anchor.basis.y
 	var other := anchor.basis.z
 	var ring := radius_m + field.cell_size * PUSH_RING_CELLS
-	var each := volume_m3 / float(PUSH_RING_SAMPLES)
-	var placed := 0.0
+	# Horizontal plough: keep only the forward half of the ring so displaced
+	# spoil builds a windrow ahead of travel instead of a symmetric halo
+	# (and instead of tall 1-cell towers under the machine).
+	var push := push_dir - up * push_dir.dot(up)
+	if push.length_squared() > 0.0001:
+		push = push.normalized()
+	else:
+		push = Vector3.ZERO
+	var offsets: Array[Vector3] = []
 	for k in PUSH_RING_SAMPLES:
 		var angle := TAU * float(k) / float(PUSH_RING_SAMPLES)
-		placed += deposit_landing_at(
-			world_point + (side * cos(angle) + other * sin(angle)) * ring,
-			each,
-			1
-		)
+		var offset := (side * cos(angle) + other * sin(angle)) * ring
+		if push != Vector3.ZERO and offset.dot(push) < 0.0:
+			continue
+		offsets.append(offset)
+	if offsets.is_empty():
+		for k in PUSH_RING_SAMPLES:
+			var angle := TAU * float(k) / float(PUSH_RING_SAMPLES)
+			offsets.append((side * cos(angle) + other * sin(angle)) * ring)
+	var each := volume_m3 / float(offsets.size())
+	# Same footprint rule as `deposit_at`, but flatter (2 stack cells): a fixed
+	# `radius_cells=1` was the vertical-pillar path once mould started moving
+	# real volumes after the coupling hot path got cheaper.
+	var cells_needed := each / field.cell_volume_m3()
+	var radius_cells := maxi(
+		2,
+		int(ceil(sqrt(cells_needed / (PI * 2.0))))
+	)
+	radius_cells = mini(radius_cells, MAX_DEPOSIT_RADIUS_CELLS)
+	var placed := 0.0
+	for offset: Vector3 in offsets:
+		placed += deposit_landing_at(world_point + offset, each, radius_cells)
 	return placed
 
 
