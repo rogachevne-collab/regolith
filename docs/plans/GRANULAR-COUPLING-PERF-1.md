@@ -291,7 +291,7 @@ early-out по геометрии, стаггер по тикам. Резуль�
 | 1 кэш колонок | 126 | **127** | **98** | 7/7 PASS (native DLL rebuilt) |
 | 2 Vector4 probe | 128 | **130** | **132** | parity PASS; script_ms 2.5→0.9 (свежий мир, мало spoil) |
 | 3 батч many | 130 | **145** | **145** | parity PASS; script_ms ~1.1 |
-| follow-up | — | — | — | column cache bypass (stale surface); `place_ring` volume footprint + forward windrow |
+| follow-up | — | — | — | column cache bypass (stale surface); place_ring/windrow experiments reverted |
 | 4 AABB early-out | | | | |
 | 5 стаггер | | | | |
 

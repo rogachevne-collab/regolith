@@ -525,29 +525,17 @@ func place_ring(world_point: Vector3, volume_m3: float, radius_m: float) -> floa
 		return 0.0
 	# Around the contact in the tangent plane, so material goes sideways rather
 	# than up: the bit parts a heap, it does not launch it.
-	#
-	# Footprint scales with volume (same rule as `deposit_at`, flatter stack
-	# budget of 2). Fixed `radius_cells=1` built vertical pillars once mould
-	# started moving real volumes. Do NOT cull the ring to a forward half —
-	# that concentrates the same volume into fewer landings and makes towers
-	# worse.
 	var side := anchor.basis.x
 	var other := anchor.basis.z
 	var ring := radius_m + field.cell_size * PUSH_RING_CELLS
 	var each := volume_m3 / float(PUSH_RING_SAMPLES)
-	var cells_needed := each / field.cell_volume_m3()
-	var radius_cells := maxi(
-		2,
-		int(ceil(sqrt(cells_needed / (PI * 2.0))))
-	)
-	radius_cells = mini(radius_cells, MAX_DEPOSIT_RADIUS_CELLS)
 	var placed := 0.0
 	for k in PUSH_RING_SAMPLES:
 		var angle := TAU * float(k) / float(PUSH_RING_SAMPLES)
 		placed += deposit_landing_at(
 			world_point + (side * cos(angle) + other * sin(angle)) * ring,
 			each,
-			radius_cells
+			1
 		)
 	return placed
 
