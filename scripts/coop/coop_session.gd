@@ -50,8 +50,10 @@ const SNAPSHOT_DEBOUNCE := 0.3
 const SNAPSHOT_FLOOR_MS := 1500
 ## Client: retry join dig_ops that failed while chunks were not editable.
 const PENDING_DIG_RETRY_INTERVAL := 0.5
-## Client: assembling host dig-stream CH_BULK chunks during join.
-const TERRAIN_BULK_CHUNK_WAIT_SEC := CoopTerrainBulk.CHUNK_WAIT_TIMEOUT_SEC
+## Client: assembling host dig-stream CH_BULK chunks during join. Var (not
+## const) so headless tests can shrink it instead of waiting out the real
+## timeout (see test_coop_bug_regressions.gd — DIG-03).
+var TERRAIN_BULK_CHUNK_WAIT_SEC := CoopTerrainBulk.CHUNK_WAIT_TIMEOUT_SEC
 ## Host: guest dig hit terrain_unavailable (Clipbox still loading around the
 ## R-COOP-7 proxy) — soft-retry locally before returning failure. No extra RPCs.
 ## Max re-submits after the first fail (total tries = 1 + MAX).
@@ -132,7 +134,10 @@ var _assembly_accum := 0.0
 var _control_input_accum := 0.0
 ## Host: last wire payloads for change detection (1 Hz store sync). Cleared on
 ## host start/stop so a new session does not suppress the first flush.
-var _last_store_wire: Dictionary = {}
+## Stores key off `SimulationResourceStore.revision` (COOP-05), not wire
+## content — content-equality would wrongly suppress a resend for a value
+## that churned back to what an earlier, unacked send already stamped.
+var _last_store_revision: Dictionary = {}
 var _last_buffer_wire: Dictionary = {}
 var _last_inventory_revision_sent := -1
 ## just_pressed edges accumulate every physics tick and flush with the next
@@ -502,21 +507,13 @@ func _srv_hello(hello: Dictionary) -> void:
 	_seed_joiner(uid)
 	var avatar := _spawn_avatar(uid, nick)
 	_registry.set_avatar(peer, avatar)
-	## Flush dig SQLite first so cold + session-flushed holes are in the file.
-	## dig_ops sent for join = only ops appended during/after that flush (avoids
-	## double-carving blocks already in the bulk). Live `_cli_dig_op` unchanged.
-	var dig_mark := _dig_ops.size()
-	await _bootstrap.flush_digs_for_coop_join()
+	var terrain_bulk := await _prepare_join_terrain_bulk()
 	if _mode != Mode.HOST or not _registry.has_peer(peer):
 		return
-	var bulk: Dictionary = _bootstrap.capture_coop_terrain_bulk()
-	var sqlite_bytes: PackedByteArray = bulk.get("sqlite", PackedByteArray())
-	var granular: Dictionary = bulk.get("granular", {})
-	## Cold bulk present → dig_ops = post-flush tail only (avoid double-carve).
-	## Empty sqlite → full session ring (pre-bulk fallback).
-	var join_dig_ops: Array = CoopTerrainBulk.select_join_dig_ops(
-		_dig_ops, dig_mark, sqlite_bytes
-	)
+	var sqlite_bytes: PackedByteArray = terrain_bulk["sqlite_bytes"]
+	var granular: Dictionary = terrain_bulk["granular"]
+	var join_dig_ops: Array = terrain_bulk["join_dig_ops"]
+	var fallback_dig_ops: Array = terrain_bulk.get("fallback_dig_ops", [])
 	var payload := CoopCommandCodec.make_join_payload(
 		_world().capture_snapshot(),
 		_registry.peers_payload(),
@@ -531,13 +528,50 @@ func _srv_hello(hello: Dictionary) -> void:
 	var known_pose: Variant = _last_poses.get(uid)
 	if known_pose is Dictionary and (known_pose as Dictionary).has("p"):
 		payload["you_pose"] = known_pose
-	CoopTerrainBulk.attach_to_join_payload(payload, sqlite_bytes, granular)
+	CoopTerrainBulk.attach_to_join_payload(
+		payload, sqlite_bytes, granular, fallback_dig_ops
+	)
 	rpc_id(peer, "_cli_join_payload", payload)
 	_send_terrain_bulk_chunks(peer, sqlite_bytes, payload.get("terrain_bulk", {}))
 	for other: int in _registry.peer_ids():
 		if other != peer:
 			rpc_id(other, "_cli_peer_joined", {"uid": uid, "nick": nick})
 	_info("'%s' joined" % nick)
+
+
+## Host join catch-up: flush dig SQLite first so cold + session-flushed holes
+## are in the file, then decide what `dig_ops` the joiner still needs.
+## Extracted from `_srv_hello` (unchanged order) so a headless test can drive
+## it against a fake `_bootstrap` — see test_coop_bug_regressions.gd
+## (DIG-01/DIG-02/DIG-03). `dig_mark` is captured *after* awaiting the flush
+## (not before), so a dig executed by the host while the flush was running is
+## already folded into `_dig_ops` by the time we mark the tail — it lands in
+## the fresh sqlite bulk only, never doubled into the dig_ops tail. The
+## fallback ring (ops before the mark) rides along in the terrain_bulk meta so
+## a joiner whose chunked sqlite transfer times out can still recover the cold
+## holes instead of losing them silently (DIG-03).
+func _prepare_join_terrain_bulk() -> Dictionary:
+	await _bootstrap.flush_digs_for_coop_join()
+	var dig_mark := _dig_ops.size()
+	var bulk: Dictionary = _bootstrap.capture_coop_terrain_bulk()
+	var sqlite_bytes: PackedByteArray = bulk.get("sqlite", PackedByteArray())
+	var granular: Dictionary = bulk.get("granular", {})
+	## Cold bulk present → dig_ops = post-flush tail only (avoid double-carve).
+	## Empty sqlite → full session ring (pre-bulk fallback).
+	var join_dig_ops: Array = CoopTerrainBulk.select_join_dig_ops(
+		_dig_ops, dig_mark, sqlite_bytes
+	)
+	var fallback_dig_ops: Array = (
+		_dig_ops.slice(0, clampi(dig_mark, 0, _dig_ops.size()))
+		if not sqlite_bytes.is_empty()
+		else []
+	)
+	return {
+		"join_dig_ops": join_dig_ops,
+		"sqlite_bytes": sqlite_bytes,
+		"granular": granular,
+		"fallback_dig_ops": fallback_dig_ops,
+	}
 
 
 func _send_terrain_bulk_chunks(
@@ -677,10 +711,27 @@ func _apply_join_terrain_bulk(meta_variant: Variant) -> void:
 				"join terrain bulk: timed out or incomplete (%d/%d chunks)"
 				% [_terrain_bulk_chunks.size(), chunk_count]
 			)
+			## DIG-03: the sqlite bulk never arrived, so any cold holes the
+			## host excluded from dig_ops (tail-only decision) exist nowhere
+			## else — replay the fallback ring instead of losing them.
+			_replay_fallback_dig_ops(meta.get("fallback_dig_ops", []))
 	_clear_terrain_bulk_state()
 	if sqlite.is_empty() and granular.is_empty():
 		return
 	_bootstrap.apply_coop_terrain_bulk(sqlite, granular)
+
+
+## Same soft-recovery shape as the join dig_ops tail (_apply_join) and live
+## ops (_cli_dig_op) — a replay that fails here (chunk not editable yet) is
+## queued into _pending_dig_ops for the existing retry loop.
+func _replay_fallback_dig_ops(ops_variant: Variant) -> void:
+	if not (ops_variant is Array) or _gateway == null:
+		return
+	for op_variant: Variant in (ops_variant as Array):
+		if not (op_variant is Dictionary):
+			continue
+		if not _gateway.replay_remote_dig(op_variant):
+			_pending_dig_ops.append(op_variant)
 
 
 func _wait_terrain_bulk_chunks(chunk_count: int, expected_bytes: int) -> PackedByteArray:
@@ -885,7 +936,11 @@ func _on_host_command_executed(command: Dictionary, result: Dictionary) -> void:
 func _cli_dig_op(op: Dictionary) -> void:
 	if _mode != Mode.CLIENT or _gateway == null:
 		return
-	_gateway.replay_remote_dig(op)
+	## COOP-04: same soft-recovery as the join path (_apply_join) — a failed
+	## replay (e.g. chunk not editable yet) must not be dropped silently, or
+	## this hole never carves for the guest.
+	if not _gateway.replay_remote_dig(op):
+		_pending_dig_ops.append(op)
 
 
 func _on_host_structural_event(event: Dictionary) -> void:
@@ -966,13 +1021,33 @@ func _broadcast_stores() -> void:
 	var world := _world()
 	if world == null:
 		return
+	var payload := _compute_store_broadcast_payload(world)
+	var stores_out: Dictionary = payload["resource_stores"]
+	var buffers_out: Dictionary = payload["buffers"]
+	var inventories_out: Dictionary = payload["player_inventories"]
+	if (
+		stores_out.is_empty()
+		and buffers_out.is_empty()
+		and inventories_out.is_empty()
+	):
+		return
+	rpc("_cli_stores", payload)
+
+
+## Diffs stores/buffers/inventories against the last-sent cache and stamps the
+## cache for whatever it finds changed. Extracted from `_broadcast_stores`
+## (unchanged order/logic) so a headless test can call it without a live
+## multiplayer peer — see test_coop_bug_regressions.gd (COOP-05). Stores diff
+## on `revision`, not wire content: content-equality would wrongly treat a
+## value that churned back to an earlier, unacked-send's content as
+## "unchanged" and never resend it over the `unreliable_ordered` CH_STREAM.
+func _compute_store_broadcast_payload(world: SimulationWorld) -> Dictionary:
 	var stores_out: Dictionary = {}
 	for store: SimulationResourceStore in world.list_resource_stores():
-		var wire: Dictionary = store.to_dict()
-		var prev: Variant = _last_store_wire.get(store.store_id)
-		if prev != wire:
-			stores_out[store.store_id] = wire
-			_last_store_wire[store.store_id] = wire
+		var prev_rev: Variant = _last_store_revision.get(store.store_id, -1)
+		if store.revision != prev_rev:
+			stores_out[store.store_id] = store.to_dict()
+			_last_store_revision[store.store_id] = store.revision
 	var buffers_out: Dictionary = {}
 	for element: SimulationElement in world.list_elements_unsorted():
 		if (
@@ -996,17 +1071,11 @@ func _broadcast_stores() -> void:
 			var registry := world.get_player_inventory(player_uid)
 			if registry != null:
 				inventories_out[player_uid] = registry.to_dict()
-	if (
-		stores_out.is_empty()
-		and buffers_out.is_empty()
-		and inventories_out.is_empty()
-	):
-		return
-	rpc("_cli_stores", {
+	return {
 		"resource_stores": stores_out,
 		"buffers": buffers_out,
 		"player_inventories": inventories_out,
-	})
+	}
 
 
 @rpc("authority", "call_remote", "unreliable_ordered", CH_STREAM)
@@ -1031,7 +1100,7 @@ func _cli_stores(payload: Dictionary) -> void:
 
 
 func _clear_store_wire_cache() -> void:
-	_last_store_wire.clear()
+	_last_store_revision.clear()
 	_last_buffer_wire.clear()
 	_last_inventory_revision_sent = -1
 	_store_accum = 0.0

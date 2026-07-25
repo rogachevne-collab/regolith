@@ -2797,8 +2797,15 @@ func rope_path(link_id: int) -> PackedVector3Array:
 		# frozen cable ever does, and only when something asks to draw it.
 		var frozen: Dictionary = state.get("_frozen", {})
 		if not frozen.is_empty():
-			var body: RigidBody3D = frozen.get("body")
-			if body != null and is_instance_valid(body):
+			# Guest join can rebuild an assembly's physics bodies without
+			# bumping topology_revision (the frozen shape's only invalidation
+			# key), so the cached body here can outlive its instance. Check
+			# validity on the untyped Variant first — assigning a freed
+			# instance straight into a typed RigidBody3D var errors on the
+			# assignment itself, before any null/validity check runs.
+			var body_variant: Variant = frozen.get("body")
+			if body_variant is RigidBody3D and is_instance_valid(body_variant):
+				var body := body_variant as RigidBody3D
 				var xf := body.global_transform
 				var out := PackedVector3Array()
 				for point: Vector3 in (frozen.get("path_local") as PackedVector3Array):
@@ -3966,6 +3973,16 @@ func _clear_all_bodies() -> void:
 	_piston_constraints.clear()
 	_rotor_constraints.clear()
 	_wheel_constraints.clear()
+	# Rope frozen-shapes cache bodies from this same body set (see
+	# _cable_try_freeze). A join/resync (rebuild_all) or teardown frees the
+	# bodies above without touching this dict, so a stale entry would keep
+	# handing rope_path a freed RigidBody3D every frame forever — this is the
+	# guest join rope_path spam. Dropping it here is harmless: on an
+	# authoritative world the next _tick_cable_ropes just re-settles and
+	# re-freezes each rope in ~0.5 s; a non-authoritative world never ticks
+	# ropes at all and instead renders the analytic curve (see
+	# _display_points), so an empty dict is exactly its resting state.
+	_rope_states.clear()
 
 func _sorted_int_keys(dictionary: Dictionary) -> Array[int]:
 	var result: Array[int] = []

@@ -732,8 +732,13 @@ func _request_quit_after_persist() -> void:
 
 ## save_modified_blocks (async) → wait tracker → flush once.
 ## Avoids SQLite lock spam and incomplete cave walls on reload.
+## DIG-01: a caller that finds a save already in flight must not return before
+## it actually completes (waits below) — an early return here let a coop join
+## capture stale sqlite while another flush was still writing.
 func _persist_digs_durable() -> void:
 	if _dig_persist_in_flight:
+		while _dig_persist_in_flight:
+			await get_tree().process_frame
 		return
 	# Coop client: skip the SQLite dig flush too, but still honor a pending quit
 	# so leaving/closing never hangs.

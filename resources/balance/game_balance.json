@@ -927,6 +927,10 @@
     }
   },
   "elements": {
+    "cable_stake": {
+      "mass_kg": 12.0,
+      "build_requirements": []
+    },
     "cargo_pipe": {
       "mass_kg": 30.0,
       "build_requirements": [

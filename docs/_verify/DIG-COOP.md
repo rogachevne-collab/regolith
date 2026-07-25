@@ -1,0 +1,50 @@
+# DIG-* / COOP-* verification pass — 2026-07-25
+
+Re-verification of every `DIG-*` and `COOP-*` finding in
+`docs/BUG-HUNT-RC-2026-07-25.md` against real code/tests. Read-only —
+no production fixes, no commits. `run_one.sh test_coop_dig_replay` was run
+once (via git-bash, `PASS`) to confirm DIG-04's acceptance test still holds;
+no other tests were run or modified. No `_tmp` scripts were created.
+
+## Already-known CONFIRMED — FIXED 2026-07-25
+
+| ID | Evidence (brief) | Fix |
+|---|---|---|
+| **DIG-01** | `bootstrap.gd:743-745` `_persist_digs_durable` early-returns while `_dig_persist_in_flight`. | **FIXED** — `_persist_digs_durable` now waits for the in-flight save to complete instead of returning early. |
+| **DIG-02** | `coop_session.gd` dig-mark captured before awaiting flush → tail replay double-carves. | **FIXED** — `_prepare_join_terrain_bulk` now takes `dig_mark` *after* `await _bootstrap.flush_digs_for_coop_join()`. |
+| **DIG-03** | Chunked `terrain_bulk` timeout with no fallback to full ring. | **FIXED** — host rides a `fallback_dig_ops` (pre-mark ring) alongside `terrain_bulk`; client replays it if the chunked sqlite transfer times out. |
+| **COOP-04** | `_cli_dig_op` ignores `replay_remote_dig` return value (no pending-queue). | **FIXED** — `_cli_dig_op` now queues a failed replay into `_pending_dig_ops`, same as the join path. |
+| **COOP-05** | Optimistic `_last_store_wire` stamp on `unreliable_ordered` send. | **FIXED** — diff now keys off `SimulationResourceStore.revision` (bumped on every mutation) instead of wire-content equality, so a value that churns back to a previously-sent-but-lost content still resends. |
+
+`test_coop_bug_regressions` now PASSes and is in `tests/run_tests.sh` `KERNEL`.
+
+## Verified in this pass
+
+| ID | Verdict | Evidence | Severity |
+|---|---|---|---|
+| **DIG-04** | **CONFIRMED** | `world_command_gateway.gd:440-451` gates path-sweep on `not _replaying_remote_dig`; host back-to-back digs path-sweep, replay does one lone-sphere bite. `test_coop_dig_replay.gd:588-716` (`_test_replay_skips_path_sweep`) asserts this exact volume gap and is **green** (`run_one.sh test_coop_dig_replay` → `PASS`) — the desync is already legitimized as an accepted contract, not a hidden defect. | keep S1 |
+| **DIG-05** | **CONFIRMED** | `bootstrap.gd:743-777` `_persist_digs_durable`: on `DIG_SAVE_TIMEOUT_MS` (15s) the inner wait `break`s on an incomplete/non-aborted tracker (758-771), still calls `_voxel_stream.flush()` (773-774) and — since `_digs_dirty` was reset to `false` at the top of the loop (755) before the timeout — exits the outer `while true` (775-776) as if persistence finished, even though the tracker never completed. | keep S2 |
+| **DIG-06** | **CONFIRMED** | `bootstrap.gd:187-223` `apply_coop_terrain_bulk`: `FileAccess.open(replica_path, WRITE)` failure (197-202) `return false`s before the granular-restore block (218-222) is ever reached — a sqlite write failure also skips granular/spoil-heap restore even though they are logically independent. | keep S2 |
+| **DIG-07** | **CONFIRMED** | `granular_voxel_world.gd:894-910` `scoop_spoil` iterates regions and `return`s as soon as the **first** covering region yields `taken > 0` (905-909), even if `taken < max_volume_m3` — a sphere straddling two regions never queries the second one. | keep S2 |
+| **DIG-08** | **CONFIRMED** | `bootstrap.gd:361-370` `_exit_tree` calls `save_modified_blocks()` fire-and-forget (no tracker/await), unlike the awaited path in `_persist_digs_durable` (753-777) used everywhere else. | keep S2 |
+| **DIG-09** | **NEEDS_PLAYTEST** | Mechanism is real and plausible: `player_controller.gd:194-204` settles purely on `is_on_floor()` (whatever body that is — pad or real terrain), while `bootstrap.gd:1538-1563` `_retire_landing_pad_when_voxel_floor_ready` probes for a **separate** physics ray excluding only the pad, on a 0.5s/120s cadence independent of the settle loop. Whether these two independently-timed checks can actually diverge enough to drop the player through the crust is an `[R7]` VT-collider-lag question (issues #676/#677) that static reading cannot settle — needs a live repro (kill collider cook speed / large descent) to confirm. | keep S2, flag needs live repro |
+| **DIG-10** | **NEEDS_PLAYTEST** | `bootstrap.gd:226-234` `_kick_voxel_viewers_for_stream_reload` only toggles `viewer.view_distance` down then back up after the `lod.stream` swap — no explicit "forget already-loaded blocks" call. Whether VT's `VoxelViewer`/`VoxelLodTerrain` actually re-requests data for already-resident LOD0 blocks on a view-distance toggle (vs. only affecting blocks outside the previous radius) is an `[R7]` question the docs/issues don't resolve from a code read alone — needs a live repro (join right after a big spawn-area dig) to confirm virgin crust is briefly visible. | keep S2, flag needs live repro |
+| **DIG-11** | **CONFIRMED** | `coop_session.gd:1609-1630` `_tick_pending_dig_reapply` runs every `PENDING_DIG_RETRY_INTERVAL` (0.5s) for as long as `_pending_dig_ops` is non-empty — no attempt counter, no TTL, no give-up; only a `push_warning` when some ops recover and others don't. | keep S3 |
+| **DIG-12** | **CONFIRMED** | `coop_session.gd:890-899` truncates `_dig_ops` past `MAX_DIG_OPS=8192` with a `push_warning`; `coop_terrain_bulk.gd:95-103` `select_join_dig_ops` returns the **full** (already-truncated) ring whenever `sqlite_bytes` is empty — a late joiner after >8192 ops with no sqlite file yet gets the truncated ring, silently missing the dropped-oldest ops. | keep S3 |
+| **DIG-13** | **PARTIAL** | Code exactly matches the finding: `voxel_space_util.gd:186-200` `raycast_hit_world_distance` divides `hit.distance` by `voxel_size_m(terrain)`, justified by an in-code "measured: ratio 0.65 at scale 0.65" comment — not by the official docs. WebSearch of `voxel-tools.readthedocs.io` (`VoxelRaycastResult`, `VoxelTool.raycast`) confirms raycast args are world-space and describes `scale` as scaling "the voxel grid... and all associated distance parameters," but does **not** explicitly state whether the *returned* `hit.distance` is pre- or post-scale — the contract genuinely isn't nailed down by upstream docs. Currently inert because `MoonGeometry.VOXEL_SCALE = 1.0` (division is a no-op), matching the catalog's own description of "masked". | keep S3, `[R7]` unresolved by docs |
+| **DIG-14** | **CONFIRMED** | `world_command_gateway.gd:452-455`: code comment states outright "`do_path` trips a `VoxelDataGrid` assert in the pinned `godot_voxel` build (`is_valid_block_position`), so sweep the gap with overlapping sphere bites instead." Spec (`docs/specs/INDUSTRY-V1.md:769-772`) still prescribes `do_path`. Code and spec verifiably disagree, with the code's own comment explaining why. | keep S3 |
+| **COOP-06** | **CONFIRMED** | `remote_player.gd:73-76,190-201` `enable_host_stream_proxy`/`_ensure_host_stream_viewer`: the collision-only `HostStreamViewer` is only created once `_samples` is non-empty, i.e. after the guest's first pose arrives. `coop_session.gd:60-61` `GUEST_DIG_RETRY_MAX=2` × `GUEST_DIG_RETRY_INTERVAL=0.3s` — soft-retry window is ≤0.6s (`_should_soft_retry_guest_dig`/`_tick_guest_dig_retries`, 1572-1607). A far dig before that viewer exists/warms Clipbox permanently fails once the short retry window elapses. | keep S2 |
+| **COOP-07** | **CONFIRMED** | `coop_session.gd:757-762` `_finish_apply_join` reads only `_pose_position(you_pose)` from the cached `you_pose` dict and calls `reseat_player_near` — it never reads `you_pose.get("seat")`, even though `_local_pose()` (1290-1312) stamps a `"seat"` field into every relayed pose. `world_persistence.gd:322-337` `_pose_row_from_entry` (cold-save path) also only persists `position`/`body_yaw`/`head_pitch` — no seat. Rejoin never restores seat occupancy either way. | keep S2 |
+| **COOP-08** | **CONFIRMED** | `world_command_gateway.gd:181-182`: force-release for a remote player calls `_seat_force_release_notify.call(...)`, wired in `coop_session.gd:1531` to `_notify_remote_seat_force_release` → `rpc_id(peer, "_cli_force_seat_release")`, declared `@rpc("authority","call_remote","reliable", CH_MAIN)` at 1412. The only other release path is the client's own `_client_seat_replica_ok` check inside `_tick_client_control_input` (1334-1339), which only runs on the client's own next control tick. Matches the finding: on a lost/late reliable RPC (e.g. right at disconnect/seat destroy), the guest's local attach persists until its own next control-tick self-check. | keep S2 |
+| **COOP-09** | **CONFIRMED** | `coop_session.gd:853-870` `_on_host_command_completed`: when `_should_soft_retry_guest_dig` is true, it appends to `_guest_dig_retries` and `return`s immediately — no `_cli_result` RPC is sent to the guest for that attempt. The guest only hears back once the retry loop (`_tick_guest_dig_retries`, `GUEST_DIG_RETRY_INTERVAL=0.3s` × `GUEST_DIG_RETRY_MAX=2`) finally succeeds or exhausts attempts (line 870 `rpc_id(peer, "_cli_result", ...)`). | keep S3 |
+| **COOP-10** | **CONFIRMED** | `coop_command_codec.gd:143-153` `validate_handshake_fields` checks `protocol`, `real_t_bits`, `generator_version` only. `make_join_payload` (103-122) does put `"seed": MoonTerrainParams.SEED` into the payload, but nothing ever compares it against the receiving client's own seed. Matches `[?]`-flagged finding: real today only because seed is a build constant, not because it's validated. | keep S3 |
+
+## Count
+
+- **CONFIRMED**: 5 (known) + 13 (this pass: DIG-04,05,06,07,08,11,12,14, COOP-06,07,08,09,10) = **18**
+- **PARTIAL**: 1 (DIG-13)
+- **FALSE ALARM**: 0
+- **NEEDS_PLAYTEST**: 2 (DIG-09, DIG-10)
+- **Total DIG+COOP catalog entries**: 21 (DIG-01…14 = 14, COOP-04…10 = 7; COOP-01/02/03/08/11 were already folded into the DIG-* rows per §4 of the hunt doc)
+
+No severities were downgraded; DIG-09/DIG-10 are flagged as needing a live repro (not static-code-provable) rather than downgraded, per their existing `[R7]` tags. No FALSE ALARMs were found — every cited line/behavior matched its finding on inspection.

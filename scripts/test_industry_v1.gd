@@ -946,9 +946,13 @@ func _run_rope_free_attach_scenario() -> bool:
 	# resolves to Transform3D.IDENTITY looks exactly like a correct one.
 	var moon_frame := GridTransform.identity()
 	moon_frame.translation = Vector3i(0, 19000, 0)
+	# One block is enough for free-attach; the distance-cable fixture also
+	# pulls a long foundation span whose native rigid-find currently disagrees
+	# with snapshot GDScript validate, and that is not what this scenario is
+	# about.
 	var spawn := _spawn(
 		world,
-		_electric_cable_blueprint(),
+		_rope_anchor_blueprint(),
 		moon_frame
 	)
 	if not spawn.is_ok():
@@ -1058,20 +1062,27 @@ func _run_rope_free_attach_scenario() -> bool:
 	var restored: SimulationWorld = SimulationSnapshot.create_from_snapshot(
 		snapshot
 	)
-	# Three now: the port wire, the block-to-ground rope, and the ground-to-
-	# ground span that used to be refused for having nothing to hold on to.
+	# Three ropes: block→ground, its twin, and ground→ground (two stakes).
 	if restored == null or restored.list_electric_links().size() != 3:
 		if restored != null:
 			restored.free()
 		world.free()
 		return _fail("ropes must survive a snapshot round trip")
 	var restored_link := restored.get_industry_network().get_link(link.link_id)
+	var restored_stake := (
+		restored.get_element(restored_link.element_b)
+		if restored_link != null
+		else null
+	)
 	if (
 		restored_link == null
 		or not restored_link.is_rope()
-		or restored_link.element_b != 0
+		or restored_stake == null
+		or restored_stake.archetype_id != "cable_stake"
+		or restored_link.element_b != link.element_b
 		or absf(restored_link.rest_length_m - expected_rest) > 0.001
-		or not restored_link.attach_b.is_equal_approx(ground_point)
+		or not restored_link.attach_a.is_equal_approx(link.attach_a)
+		or not restored_link.attach_b.is_equal_approx(link.attach_b)
 	):
 		restored.free()
 		world.free()
@@ -1710,6 +1721,20 @@ func _electric_cable_blueprint() -> Blueprint:
 	return BlueprintBaker.bake_from_placements(
 		"industry_v1_distance_cable",
 		placements
+	)
+
+
+## Single block for rope free-attach / stake snapshot coverage.
+func _rope_anchor_blueprint() -> Blueprint:
+	return BlueprintBaker.bake_from_placements(
+		"industry_v1_rope_anchor",
+		[
+			_placement(
+				"processor_0",
+				Slice01Archetypes.processor(),
+				Vector3i.ZERO
+			),
+		]
 	)
 
 

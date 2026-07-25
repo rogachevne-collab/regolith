@@ -47,11 +47,16 @@ static func join_sqlite_chunks(chunks: Array, expected_bytes: int) -> PackedByte
 
 
 ## Meta embedded in join payload. `sqlite` is set only when inline.
+## `fallback_dig_ops` (DIG-03) rides along whenever the host chose tail-only
+## `dig_ops` (non-empty sqlite) — it is the pre-mark ring the joiner needs if
+## the chunked sqlite transfer below never completes, so cold holes are not
+## silently lost. Inert (never replayed) when the sqlite bulk actually lands.
 static func make_bulk_meta(
 	sqlite_bytes: PackedByteArray,
 	granular: Dictionary,
 	chunk_count: int,
-	inline_sqlite: PackedByteArray = PackedByteArray()
+	inline_sqlite: PackedByteArray = PackedByteArray(),
+	fallback_dig_ops: Array = []
 ) -> Dictionary:
 	var meta := {
 		"sqlite_bytes": sqlite_bytes.size(),
@@ -60,6 +65,8 @@ static func make_bulk_meta(
 	}
 	if not inline_sqlite.is_empty():
 		meta["sqlite"] = inline_sqlite
+	if not fallback_dig_ops.is_empty():
+		meta["fallback_dig_ops"] = fallback_dig_ops
 	return meta
 
 
@@ -86,6 +93,8 @@ static func validate_bulk_meta(meta: Variant) -> StringName:
 		return &"bad_terrain_bulk"
 	if d.has("granular") and not (d["granular"] is Dictionary):
 		return &"bad_terrain_bulk"
+	if d.has("fallback_dig_ops") and not (d["fallback_dig_ops"] is Array):
+		return &"bad_terrain_bulk"
 	return &"ok"
 
 
@@ -108,7 +117,8 @@ static func select_join_dig_ops(
 static func attach_to_join_payload(
 	payload: Dictionary,
 	sqlite_bytes: PackedByteArray,
-	granular: Dictionary
+	granular: Dictionary,
+	fallback_dig_ops: Array = []
 ) -> void:
 	if sqlite_bytes.is_empty() and granular.is_empty():
 		return
@@ -124,12 +134,12 @@ static func attach_to_join_payload(
 		and sqlite_bytes.size() <= INLINE_SQLITE_MAX_BYTES
 	):
 		payload["terrain_bulk"] = make_bulk_meta(
-			sqlite_bytes, granular, 0, sqlite_bytes
+			sqlite_bytes, granular, 0, sqlite_bytes, fallback_dig_ops
 		)
 		return
 	var chunks := split_sqlite_chunks(sqlite_bytes)
 	payload["terrain_bulk"] = make_bulk_meta(
-		sqlite_bytes, granular, chunks.size()
+		sqlite_bytes, granular, chunks.size(), PackedByteArray(), fallback_dig_ops
 	)
 
 

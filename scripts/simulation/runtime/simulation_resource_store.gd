@@ -13,6 +13,12 @@ var capacity_l: float = INF
 ## when IndustryStoreService binds them.
 var allowed_resource_ids: PackedStringArray = PackedStringArray()
 var _amounts: Dictionary = {}
+## Bumped on every successful mutation (not serialized). Lets a content-diff
+## cache (coop store broadcast, COOP-05) tell "changed since last look" apart
+## from "content happens to match again" — a value that churns A→B→A between
+## two broadcasts must still resend if the A send was lost, which a plain
+## dict-equality cache cannot see.
+var revision: int = 0
 
 
 func amount(resource_id: String) -> float:
@@ -73,6 +79,7 @@ func add(
 	if added <= EPSILON:
 		return true
 	_amounts[resource_id] = amount(resource_id) + added
+	revision += 1
 	return true
 
 
@@ -86,6 +93,7 @@ func remove(resource_id: String, requested: float) -> bool:
 		_amounts.erase(resource_id)
 	else:
 		_amounts[resource_id] = remaining
+	revision += 1
 	return true
 
 
@@ -105,6 +113,7 @@ func set_amount(resource_id: String, value: float) -> bool:
 		_amounts.erase(resource_id)
 	else:
 		_amounts[resource_id] = value
+	revision += 1
 	return true
 
 

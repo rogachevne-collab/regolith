@@ -41,12 +41,17 @@ KERNEL=(
 	test_coop_codec
 	test_coop_seat
 	test_coop_dig_replay
+	test_coop_rope_projection
+	test_coop_bug_regressions
 	test_granular_patch
 	test_granular_lens_scoop
 	test_granular_sinter
 	test_granular_field_persist
 )
 
+# DIG-01/02/03, COOP-04/05 fixed 2026-07-25 — test_coop_bug_regressions moved
+# from red-lock manual-only into KERNEL above. See docs/BUG-HUNT-RC-2026-07-25.md
+# and docs/_verify/DIG-COOP.md.
 # Physics/gameplay/UI integration scenes. Not part of the gate: the running
 # game is the verifier for that layer. Runnable via --all or run_one.sh.
 EXTRA=(
