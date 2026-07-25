@@ -38,10 +38,12 @@ signal seat_occupant_evicted(
 
 ## COOP-HOST-V0 stage 2: host worlds simulate; replicas only mirror the host.
 ## When false, local mutation entry points refuse with push_error (invariant
-## C1). Sanctioned replica writes: restore_snapshot and
+## C1). Sanctioned replica writes: restore_snapshot,
+## sync_suit_state / sync_resource_stores / sync_element_industry_buffers /
+## sync_player_inventories (stage-5 interim HUD channels), and
 ## sync_assembly_motion / sync_assembly_body_group_motion(s) (network poses).
 ## Not gated yet (stage 3, host-only callers today): world-loot mutators,
-## assign_player_hotbar_instance, set_resource_amount / ensure_* plumbing.
+## set_resource_amount / ensure_* plumbing.
 @export var authoritative := true
 
 ## Monotonic world-wide topology counter: bumps on every structural mutation.
@@ -62,7 +64,8 @@ var _elements: Dictionary = {}
 var _joints: Dictionary = {}
 var _redirects: Dictionary = {}
 var _resource_stores: Dictionary = {}
-var _player_inventory: PlayerInventoryRegistry
+## player_uid → PlayerInventoryRegistry (COOP-HOST-V0 per-peer hotbar/tools).
+var _player_inventories: Dictionary = {}
 var _player_inventory_revision := 0
 ## player_id → SimulationSuitState.
 var _suits: Dictionary = {}
@@ -247,6 +250,75 @@ func sync_suit_state(player_id: String, values: Dictionary) -> void:
 	if previous == null or previous.to_dict() != suit.to_dict():
 		suit_changed.emit(player_id)
 
+## Sanctioned replica write (COOP-HOST-V0 stage 5 interim): mirror resource
+## store amounts between full snapshots so dig credits / transfers show up in
+## the client HUD without a topology rebuild. `stores` is store_id → to_dict().
+## Rejected on an authoritative world — the host owns stores.
+func sync_resource_stores(stores: Dictionary) -> void:
+	if authoritative:
+		push_error(
+			"SimulationWorld authoritative rejected sync_resource_stores (host owns stores)"
+		)
+		return
+	for store_id_variant: Variant in stores:
+		var store_id := str(store_id_variant)
+		if store_id.is_empty():
+			continue
+		var row: Variant = stores[store_id_variant]
+		if not row is Dictionary:
+			continue
+		var data: Dictionary = (row as Dictionary).duplicate(true)
+		data["store_id"] = store_id
+		var store := SimulationResourceStore.from_dict(data)
+		if store != null:
+			_resource_stores[store_id] = store
+
+## Sanctioned replica write (COOP-HOST-V0 stage 5 interim): mirror element
+## industry buffers (machine internal cargo) between full snapshots.
+## `buffers` is element_id → ElementIndustryBuffer.to_dict(). Topology still
+## arrives via restore_snapshot; missing elements are skipped.
+func sync_element_industry_buffers(buffers: Dictionary) -> void:
+	if authoritative:
+		push_error(
+			"SimulationWorld authoritative rejected sync_element_industry_buffers (host owns industry)"
+		)
+		return
+	for element_id_variant: Variant in buffers:
+		var element_id := int(element_id_variant)
+		var element := get_element(element_id)
+		if element == null:
+			continue
+		var row: Variant = buffers[element_id_variant]
+		if not row is Dictionary:
+			continue
+		var buffer := ElementIndustryBuffer.from_dict(row)
+		if buffer != null:
+			element.industry_buffer = buffer
+
+## Sanctioned replica write (COOP-HOST-V0 stage 5 interim): mirror per-peer
+## tool/hotbar registries. `inventories` is player_uid → registry.to_dict().
+func sync_player_inventories(inventories: Dictionary) -> void:
+	if authoritative:
+		push_error(
+			"SimulationWorld authoritative rejected sync_player_inventories (host owns inventories)"
+		)
+		return
+	var changed := false
+	for player_uid_variant: Variant in inventories:
+		var player_uid := str(player_uid_variant)
+		if player_uid.is_empty():
+			continue
+		var row: Variant = inventories[player_uid_variant]
+		if not row is Dictionary:
+			continue
+		var registry := PlayerInventoryRegistry.from_dict(row)
+		if registry == null:
+			continue
+		_player_inventories[player_uid] = registry
+		changed = true
+	if changed:
+		_bump_player_inventory_revision()
+
 func list_suit_state_ids() -> Array[String]:
 	var ids: Array[String] = []
 	for player_id: String in _suits.keys():
@@ -365,24 +437,43 @@ func apply_oxygen_refill(command: OxygenRefillCommand) -> Dictionary:
 		command
 	)
 
-func get_player_inventory() -> PlayerInventoryRegistry:
-	return _player_inventory
+func get_player_inventory(player_uid: String) -> PlayerInventoryRegistry:
+	if player_uid.is_empty():
+		return null
+	return _player_inventories.get(player_uid) as PlayerInventoryRegistry
 
 func get_player_inventory_revision() -> int:
 	return _player_inventory_revision
 
-func ensure_player_inventory() -> PlayerInventoryRegistry:
-	if _player_inventory == null:
-		_player_inventory = PlayerInventoryRegistry.new()
-		_player_inventory.seed_starter_tools(false)
-	return _player_inventory
+func list_player_inventory_uids() -> Array[String]:
+	var ids: Array[String] = []
+	for player_uid: String in _player_inventories.keys():
+		ids.append(player_uid)
+	ids.sort()
+	return ids
+
+func ensure_player_inventory(player_uid: String) -> PlayerInventoryRegistry:
+	if player_uid.is_empty():
+		return null
+	var registry := get_player_inventory(player_uid)
+	if registry == null:
+		registry = PlayerInventoryRegistry.new()
+		registry.seed_starter_tools(false)
+		_player_inventories[player_uid] = registry
+		_bump_player_inventory_revision()
+	return registry
 
 func assign_player_hotbar_instance(
+	player_uid: String,
 	page: int,
 	slot: int,
 	instance_id: String
 ) -> bool:
-	var registry := ensure_player_inventory()
+	if _refuse_replica_write(&"assign_player_hotbar_instance"):
+		return false
+	if player_uid.is_empty():
+		return false
+	var registry := ensure_player_inventory(player_uid)
 	if registry == null or not registry.set_hotbar_ref(page, slot, instance_id):
 		return false
 	_bump_player_inventory_revision()
@@ -1337,7 +1428,7 @@ func restore_snapshot(snapshot: Dictionary, emit_event := true) -> bool:
 	_redirects = restored._redirects
 	_resource_stores = restored._resource_stores
 	_suits = restored._suits
-	_player_inventory = restored._player_inventory
+	_player_inventories = restored._player_inventories
 	_player_inventory_revision = restored._player_inventory_revision
 	_industry_network = restored._industry_network
 	_industry_elements = restored._industry_elements
@@ -1720,8 +1811,13 @@ func _register_redirect(from_id: int, to_id: int) -> void:
 func _register_resource_store(store: SimulationResourceStore) -> void:
 	_resource_stores[store.store_id] = store
 
-func _register_player_inventory(registry: PlayerInventoryRegistry) -> void:
-	_player_inventory = registry
+func _register_player_inventory(
+	player_uid: String,
+	registry: PlayerInventoryRegistry
+) -> void:
+	if player_uid.is_empty() or registry == null:
+		return
+	_player_inventories[player_uid] = registry
 
 func _register_suit_state(player_id: String, suit: SimulationSuitState) -> void:
 	_suits[player_id] = suit
@@ -1828,7 +1924,6 @@ func _recompute_derived_now() -> void:
 	_deferred_derived_recompute = false
 	_industry_network.prune_dangling_links(self)
 	_purge_industry_runtime_for_missing_elements()
-	IndustryStoreService.ensure_player_inventory(self)
 	_cargo_graph.sync(self)
 
 

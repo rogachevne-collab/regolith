@@ -1,7 +1,7 @@
 class_name SimulationSnapshot
 extends RefCounted
 
-const VERSION := 10
+const VERSION := 11
 
 static var last_validate_error: String = ""
 
@@ -16,7 +16,7 @@ static func capture(world) -> Dictionary:
 		"joints": _serialize_joints(world),
 		"redirects": _serialize_redirects(world),
 		"resource_stores": _serialize_resource_stores(world),
-		"player_inventory": _serialize_player_inventory(world),
+		"player_inventories": _serialize_player_inventories(world),
 		"suits": _serialize_suits(world),
 		"industry_network": world.get_industry_network().to_dict(true),
 		"industry_elements": world.list_industry_element_runtimes(),
@@ -32,9 +32,13 @@ static func capture(world) -> Dictionary:
 
 static func create_from_snapshot(snapshot: Dictionary):
 	var world = _new_world()
-	if world == null or not _validate_and_populate(world, snapshot):
-		if world != null:
-			world.free()
+	if world == null:
+		last_validate_error = "new_world_failed"
+		return null
+	if not _validate_and_populate(world, snapshot):
+		if last_validate_error.is_empty():
+			last_validate_error = "validate_failed"
+		world.free()
 		return null
 	return world
 
@@ -53,9 +57,10 @@ static func _reject(reason: String) -> bool:
 static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 	last_validate_error = ""
 	var version := int(snapshot.get("version", 0))
-	## Capture writes VERSION 10. Loader also accepts v9: missing
-	## seat_control_states → empty (per-seat defaults on read).
-	if version != VERSION and version != 9:
+	## Capture writes VERSION 11. Loader also accepts v9–v10:
+	## v9 missing seat_control_states → empty; v10 single player_inventory
+	## migrates onto the first player:<uid> store when present.
+	if version != VERSION and version != 10 and version != 9:
 		last_validate_error = "bad_version:%d" % version
 		return false
 	var archetype_rows: Variant = snapshot.get("archetypes")
@@ -64,7 +69,9 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 	var joint_rows: Variant = snapshot.get("joints")
 	var redirect_rows: Variant = snapshot.get("redirects")
 	var store_rows: Variant = snapshot.get("resource_stores")
-	var player_inventory_row: Variant = snapshot.get("player_inventory", {})
+	var player_inventories_row: Variant = snapshot.get("player_inventories", {})
+	## Legacy v10 key: one shared registry for the whole world.
+	var legacy_player_inventory_row: Variant = snapshot.get("player_inventory", {})
 	## Optional on purpose: saves written before suits moved into the world
 	## must keep loading, they just start with a fresh suit on spawn.
 	var suit_rows: Variant = snapshot.get("suits", {})
@@ -96,13 +103,13 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 		or not locomotion_rows is Array
 		or not allocator_data is Dictionary
 	):
-		return false
+		return _reject("bad_snapshot_shape")
 
 	var registry: ArchetypeRegistry = world.get_archetype_registry()
 	var archetype_ids: Dictionary = {}
 	for row_variant: Variant in archetype_rows:
 		if not row_variant is Dictionary:
-			return false
+			return _reject("archetype_row")
 		var row: Dictionary = row_variant
 		var archetype_id := str(row.get("archetype_id", ""))
 		var resource_path := str(row.get("resource_path", ""))
@@ -113,7 +120,7 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 			or resource_path.is_empty()
 			or not ResourceLoader.exists(resource_path)
 		):
-			return false
+			return _reject("archetype_meta:%s" % archetype_id)
 		archetype_ids[archetype_id] = true
 		var archetype := load(resource_path) as ElementArchetype
 		if archetype == null or archetype.archetype_id != archetype_id:
@@ -563,15 +570,15 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 	var electric_pair_keys: Dictionary = {}
 	for link: IndustryElectricLink in industry_network.list_links():
 		if link.link_id <= 0:
-			return false
+			return _reject("electric_link_id")
 		# A rope end may be nailed to the world (element 0); a block end must
 		# still name a real element.
 		if link.element_a > 0 and not elements.has(link.element_a):
-			return false
+			return _reject("electric_link_element_a:%d" % link.element_a)
 		if link.element_b > 0 and not elements.has(link.element_b):
-			return false
+			return _reject("electric_link_element_b:%d" % link.element_b)
 		if link.element_a <= 0 and link.element_b <= 0:
-			return false
+			return _reject("electric_link_both_world")
 		max_link_id = maxi(max_link_id, link.link_id)
 		if link.is_rope():
 			# Ropes have no ports, no pair identity and no compatibility rule —
@@ -579,7 +586,7 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 			continue
 		var pair_key := link.canonical_pair_key()
 		if electric_pair_keys.has(pair_key):
-			return false
+			return _reject("electric_link_dup_pair")
 		electric_pair_keys[pair_key] = true
 		var element_a: SimulationElement = elements[link.element_a]
 		var element_b: SimulationElement = elements[link.element_b]
@@ -589,7 +596,7 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 			not IndustryElectricPortUtil.is_electric_port(port_a)
 			or not IndustryElectricPortUtil.is_electric_port(port_b)
 		):
-			return false
+			return _reject("electric_link_ports")
 
 	var next_element_id := int(allocator_data.get("next_element_id", 0))
 	var next_assembly_id := int(allocator_data.get("next_assembly_id", 0))
@@ -603,7 +610,22 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 		or next_command_id <= 0
 		or next_link_id <= max_link_id
 	):
-		return false
+		return _reject(
+			(
+				"allocator_bounds e=%d/%d a=%d/%d j=%d/%d c=%d l=%d/%d"
+				% [
+					next_element_id,
+					max_element_id,
+					next_assembly_id,
+					max_assembly_id,
+					next_joint_id,
+					max_joint_id,
+					next_command_id,
+					next_link_id,
+					max_link_id,
+				]
+			)
+		)
 
 	world.get_allocator().load_from_dict(allocator_data)
 	for assembly_id: int in _sorted_int_keys(assembly_ids):
@@ -643,12 +665,13 @@ static func _validate_and_populate(world, snapshot: Dictionary) -> bool:
 	store_ids.sort()
 	for store_id: Variant in store_ids:
 		world._register_resource_store(stores[store_id])
-	if player_inventory_row is Dictionary and not player_inventory_row.is_empty():
-		world._register_player_inventory(
-			PlayerInventoryRegistry.from_dict(player_inventory_row)
-		)
-	else:
-		world.ensure_player_inventory().migrate_legacy_save()
+	if not _restore_player_inventories(
+		world,
+		player_inventories_row,
+		legacy_player_inventory_row,
+		stores
+	):
+		return false
 	if suit_rows is Dictionary:
 		var suit_ids: Array = (suit_rows as Dictionary).keys()
 		suit_ids.sort()
@@ -724,11 +747,67 @@ static func _serialize_resource_stores(world) -> Array[Dictionary]:
 	return rows
 
 
-static func _serialize_player_inventory(world) -> Dictionary:
-	var registry: PlayerInventoryRegistry = world.get_player_inventory()
-	if registry == null:
-		return {}
-	return registry.to_dict()
+static func _serialize_player_inventories(world) -> Dictionary:
+	var rows: Dictionary = {}
+	for player_uid: String in world.list_player_inventory_uids():
+		var registry: PlayerInventoryRegistry = world.get_player_inventory(
+			player_uid
+		)
+		if registry != null:
+			rows[player_uid] = registry.to_dict()
+	return rows
+
+
+static func _restore_player_inventories(
+	world,
+	player_inventories_row: Variant,
+	legacy_player_inventory_row: Variant,
+	stores: Dictionary
+) -> bool:
+	if player_inventories_row is Dictionary and not (
+		player_inventories_row as Dictionary
+	).is_empty():
+		var uid_keys: Array = (player_inventories_row as Dictionary).keys()
+		uid_keys.sort()
+		for player_uid_variant: Variant in uid_keys:
+			var player_uid := str(player_uid_variant)
+			if player_uid.is_empty():
+				return false
+			var row: Variant = (player_inventories_row as Dictionary)[
+				player_uid_variant
+			]
+			if not row is Dictionary:
+				return false
+			world._register_player_inventory(
+				player_uid,
+				PlayerInventoryRegistry.from_dict(row)
+			)
+		return true
+	# v10: one world-wide registry. Attach it to the sole/first player store
+	# uid when the save already has player:<uid> rows; otherwise leave empty
+	# and let seed_player_starter_resources / join create a fresh fixture.
+	if (
+		legacy_player_inventory_row is Dictionary
+		and not (legacy_player_inventory_row as Dictionary).is_empty()
+		and (legacy_player_inventory_row as Dictionary).has("instances")
+	):
+		var legacy_uid := _legacy_player_inventory_uid(stores)
+		if not legacy_uid.is_empty():
+			world._register_player_inventory(
+				legacy_uid,
+				PlayerInventoryRegistry.from_dict(legacy_player_inventory_row)
+			)
+	return true
+
+
+static func _legacy_player_inventory_uid(stores: Dictionary) -> String:
+	var uids: Array[String] = []
+	for store_id_variant: Variant in stores.keys():
+		var store_id := str(store_id_variant)
+		if PlayerIdentity.is_player_store(store_id):
+			uids.append(PlayerIdentity.uid_from_store(store_id))
+	uids.sort()
+	return uids[0] if not uids.is_empty() else ""
 
 
 static func _serialize_suits(world) -> Dictionary:

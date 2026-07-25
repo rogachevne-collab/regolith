@@ -17,11 +17,14 @@ const MAX_PEERS := 8
 const CHANNELS := 4
 const CH_MAIN := 0        # handshake, commands, results, peer up/down (reliable)
 const CH_BULK := 1        # join payload + snapshot broadcasts (reliable)
-const CH_STREAM := 2      # poses + suit sync + assembly motion (unreliable_ordered)
+const CH_STREAM := 2      # poses + suit/store sync + assembly motion (unreliable_ordered)
 const CH_INPUT := 3       # guest seat control stream (unreliable_ordered; own seq)
 
 const POSE_INTERVAL := 0.05        # 20 Hz
 const SUIT_INTERVAL := 1.0
+## Stage-5 interim: same cadence as suits — changed resource stores / industry
+## buffers / player inventories only (not a full snapshot, not a delta system).
+const STORE_INTERVAL := 1.0
 ## Guest steering relay (spike stage C): 20 Hz on CH_INPUT (own seq vs poses).
 ## NOT a gateway command — ok-completion would dirty-mark the world and storm
 ## snapshot re-broadcasts plus reliable result echoes every frame.
@@ -47,6 +50,8 @@ const SNAPSHOT_DEBOUNCE := 0.3
 const SNAPSHOT_FLOOR_MS := 1500
 ## Client: retry join dig_ops that failed while chunks were not editable.
 const PENDING_DIG_RETRY_INTERVAL := 0.5
+## Client: assembling host dig-stream CH_BULK chunks during join.
+const TERRAIN_BULK_CHUNK_WAIT_SEC := CoopTerrainBulk.CHUNK_WAIT_TIMEOUT_SEC
 ## Host: guest dig hit terrain_unavailable (Clipbox still loading around the
 ## R-COOP-7 proxy) — soft-retry locally before returning failure. No extra RPCs.
 ## Max re-submits after the first fail (total tries = 1 + MAX).
@@ -72,6 +77,11 @@ const NO_BROADCAST_KINDS := {
 	&"scoop_spoil": true,
 	&"dump_scoop": true,
 	&"debug_spawn_spoil": true,
+	# Stage-5 interim store channel covers these; full snapshot would rebuild
+	# topology for amount-only HUD updates (C1 client stays read-only).
+	&"transfer_resource": true,
+	&"assign_hotbar_instance": true,
+	&"oxygen_refill": true,
 }
 
 ## Dig kinds replicated as confirmed operations on the reliable channel instead
@@ -117,8 +127,14 @@ var _avatars_root: Node3D
 
 var _pose_accum := 0.0
 var _suit_accum := 0.0
+var _store_accum := 0.0
 var _assembly_accum := 0.0
 var _control_input_accum := 0.0
+## Host: last wire payloads for change detection (1 Hz store sync). Cleared on
+## host start/stop so a new session does not suppress the first flush.
+var _last_store_wire: Dictionary = {}
+var _last_buffer_wire: Dictionary = {}
+var _last_inventory_revision_sent := -1
 ## just_pressed edges accumulate every physics tick and flush with the next
 ## 50 ms control packet (sampling only at send rate would drop taps).
 var _seat_edge_dampeners := false
@@ -143,6 +159,10 @@ var _dig_ops: Array = []
 ## Client: join dig_ops that failed (chunk not editable) — retried lightly.
 var _pending_dig_ops: Array = []
 var _pending_dig_accum := 0.0
+## Client: host dig-stream bulk chunks (seq -> PackedByteArray) during join.
+var _terrain_bulk_chunks: Dictionary = {}
+var _terrain_bulk_expect_bytes := 0
+var _terrain_bulk_expect_chunks := 0
 ## Host: uid -> last pose dict from pose relay (rejoin reseat).
 var _last_poses: Dictionary = {}
 var _host_hooks_connected := false
@@ -203,6 +223,10 @@ func _physics_process(delta: float) -> void:
 		if _suit_accum >= SUIT_INTERVAL:
 			_suit_accum = 0.0
 			_broadcast_suits()
+		_store_accum += delta
+		if _store_accum >= STORE_INTERVAL:
+			_store_accum = 0.0
+			_broadcast_stores()
 		_assembly_accum += delta
 		if _assembly_accum >= ASSEMBLY_INTERVAL:
 			_assembly_accum = 0.0
@@ -369,6 +393,7 @@ func _cmd_host(port: int = PORT_DEFAULT) -> void:
 	_guest_dig_retries.clear()
 	_dig_ops.clear()
 	_last_poses.clear()
+	_clear_store_wire_cache()
 	_connect_host_hooks()
 	_info("hosting on port %d as '%s' — share your Tailscale IP" % [port, _local_nick])
 
@@ -475,6 +500,21 @@ func _srv_hello(hello: Dictionary) -> void:
 	_seed_joiner(uid)
 	var avatar := _spawn_avatar(uid, nick)
 	_registry.set_avatar(peer, avatar)
+	## Flush dig SQLite first so cold + session-flushed holes are in the file.
+	## dig_ops sent for join = only ops appended during/after that flush (avoids
+	## double-carving blocks already in the bulk). Live `_cli_dig_op` unchanged.
+	var dig_mark := _dig_ops.size()
+	await _bootstrap.flush_digs_for_coop_join()
+	if _mode != Mode.HOST or not _registry.has_peer(peer):
+		return
+	var bulk: Dictionary = _bootstrap.capture_coop_terrain_bulk()
+	var dig_tail: Array = _dig_ops.slice(dig_mark)
+	var sqlite_bytes: PackedByteArray = bulk.get("sqlite", PackedByteArray())
+	var granular: Dictionary = bulk.get("granular", {})
+	## No dig file (or empty): fall back to full session ring like pre-bulk.
+	var join_dig_ops: Array = dig_tail
+	if sqlite_bytes.is_empty():
+		join_dig_ops = _dig_ops.duplicate()
 	var payload := CoopCommandCodec.make_join_payload(
 		_world().capture_snapshot(),
 		_registry.peers_payload(),
@@ -482,18 +522,63 @@ func _srv_hello(hello: Dictionary) -> void:
 		_local_nick,
 		_local_pose(),
 		peer,
-		_dig_ops
+		join_dig_ops
 	)
 	# Optional: last known pose for this uid (rejoin). Clients without the
 	# field keep reseating near the host.
 	var known_pose: Variant = _last_poses.get(uid)
 	if known_pose is Dictionary and (known_pose as Dictionary).has("p"):
 		payload["you_pose"] = known_pose
+	_attach_terrain_bulk_to_payload(payload, sqlite_bytes, granular)
 	rpc_id(peer, "_cli_join_payload", payload)
+	_send_terrain_bulk_chunks(peer, sqlite_bytes, payload.get("terrain_bulk", {}))
 	for other: int in _registry.peer_ids():
 		if other != peer:
 			rpc_id(other, "_cli_peer_joined", {"uid": uid, "nick": nick})
 	_info("'%s' joined" % nick)
+
+
+func _attach_terrain_bulk_to_payload(
+	payload: Dictionary,
+	sqlite_bytes: PackedByteArray,
+	granular: Dictionary
+) -> void:
+	if sqlite_bytes.is_empty() and granular.is_empty():
+		return
+	if sqlite_bytes.size() >= CoopTerrainBulk.WARN_SQLITE_BYTES:
+		push_warning(
+			(
+				"Coop: dig-stream bulk is %.1f MiB — join may hitch (explored crust in SQLite)"
+				% (float(sqlite_bytes.size()) / (1024.0 * 1024.0))
+			)
+		)
+	if (
+		not sqlite_bytes.is_empty()
+		and sqlite_bytes.size() <= CoopTerrainBulk.INLINE_SQLITE_MAX_BYTES
+	):
+		payload["terrain_bulk"] = CoopTerrainBulk.make_bulk_meta(
+			sqlite_bytes, granular, 0, sqlite_bytes
+		)
+		return
+	var chunks := CoopTerrainBulk.split_sqlite_chunks(sqlite_bytes)
+	payload["terrain_bulk"] = CoopTerrainBulk.make_bulk_meta(
+		sqlite_bytes, granular, chunks.size()
+	)
+
+
+func _send_terrain_bulk_chunks(
+	peer: int,
+	sqlite_bytes: PackedByteArray,
+	meta: Variant
+) -> void:
+	if sqlite_bytes.is_empty() or not (meta is Dictionary):
+		return
+	var chunk_count := int((meta as Dictionary).get("chunk_count", 0))
+	if chunk_count <= 0:
+		return
+	var chunks := CoopTerrainBulk.split_sqlite_chunks(sqlite_bytes)
+	for i: int in chunks.size():
+		rpc_id(peer, "_cli_terrain_bulk_chunk", i, chunks.size(), chunks[i])
 
 
 func _reject(peer_id: int, reason: StringName) -> void:
@@ -508,8 +593,13 @@ func _seed_joiner(uid: String) -> void:
 	if world == null:
 		return
 	world.ensure_suit_state(uid)
+	# Per-uid tool instances + hotbar (COOP-HOST-V0 Persistence). Fresh peers
+	# get starter resources + inventory; rejoin keeps an existing store but
+	# still ensures a registry so a missing hotbar is seeded.
 	if world.get_resource_store(PlayerIdentity.store_id(uid)) == null:
 		IndustryStoreService.seed_player_starter_resources(world, uid)
+	else:
+		world.ensure_player_inventory(uid)
 
 
 # ----------------------------------------------------------------- client: join
@@ -552,6 +642,16 @@ func _cli_join_payload(payload: Dictionary) -> void:
 	await _apply_join(payload)
 
 
+@rpc("authority", "call_remote", "reliable", CH_BULK)
+func _cli_terrain_bulk_chunk(seq: int, total: int, data: PackedByteArray) -> void:
+	if _mode != Mode.CLIENT:
+		return
+	if seq < 0 or total <= 0 or data.is_empty():
+		return
+	_terrain_bulk_expect_chunks = total
+	_terrain_bulk_chunks[seq] = data
+
+
 func _apply_join(payload: Dictionary) -> void:
 	# Flush this machine's own save first, then stop persisting the replica.
 	await _bootstrap.save_now_then_inhibit_persistence()
@@ -559,6 +659,9 @@ func _apply_join(payload: Dictionary) -> void:
 	var world := _world()
 	world.authoritative = false
 	world.restore_snapshot(payload["snapshot"])
+	## Cold digs (SQLite + granular) before session dig_ops tail — bulk is the
+	## host dig-stream truth; dig_ops only cover ops after the host flush.
+	await _apply_join_terrain_bulk(payload.get("terrain_bulk"))
 	_pending_dig_ops.clear()
 	_pending_dig_accum = 0.0
 	var dig_ok := 0
@@ -577,7 +680,63 @@ func _apply_join(payload: Dictionary) -> void:
 			"join dig replay: %d ok, %d queued for retry (chunk not editable yet)"
 			% [dig_ok, _pending_dig_ops.size()]
 		)
+	await _finish_apply_join(payload)
 
+
+func _apply_join_terrain_bulk(meta_variant: Variant) -> void:
+	if not (meta_variant is Dictionary):
+		_clear_terrain_bulk_state()
+		return
+	var meta: Dictionary = meta_variant
+	var nbytes := int(meta.get("sqlite_bytes", 0))
+	var chunk_count := int(meta.get("chunk_count", 0))
+	var granular: Dictionary = meta.get("granular", {})
+	var sqlite := PackedByteArray()
+	if meta.has("sqlite") and meta["sqlite"] is PackedByteArray:
+		sqlite = meta["sqlite"]
+	elif nbytes > 0 and chunk_count > 0:
+		_terrain_bulk_expect_bytes = nbytes
+		_terrain_bulk_expect_chunks = chunk_count
+		sqlite = await _wait_terrain_bulk_chunks(chunk_count, nbytes)
+		if sqlite.is_empty() and nbytes > 0:
+			push_warning(
+				"join terrain bulk: timed out or incomplete (%d/%d chunks)"
+				% [_terrain_bulk_chunks.size(), chunk_count]
+			)
+	_clear_terrain_bulk_state()
+	if sqlite.is_empty() and granular.is_empty():
+		return
+	_bootstrap.apply_coop_terrain_bulk(sqlite, granular)
+
+
+func _wait_terrain_bulk_chunks(chunk_count: int, expected_bytes: int) -> PackedByteArray:
+	var deadline_ms := (
+		Time.get_ticks_msec() + int(TERRAIN_BULK_CHUNK_WAIT_SEC * 1000.0)
+	)
+	while true:
+		var complete := true
+		for seq: int in range(chunk_count):
+			if not _terrain_bulk_chunks.has(seq):
+				complete = false
+				break
+		if complete:
+			break
+		if Time.get_ticks_msec() >= deadline_ms:
+			return PackedByteArray()
+		await get_tree().process_frame
+	var ordered: Array = []
+	for seq: int in range(chunk_count):
+		ordered.append(_terrain_bulk_chunks[seq])
+	return CoopTerrainBulk.join_sqlite_chunks(ordered, expected_bytes)
+
+
+func _clear_terrain_bulk_state() -> void:
+	_terrain_bulk_chunks.clear()
+	_terrain_bulk_expect_bytes = 0
+	_terrain_bulk_expect_chunks = 0
+
+
+func _finish_apply_join(payload: Dictionary) -> void:
 	if _meteorites != null:
 		_meteorites.set("enabled", false)
 		if "debug_spawn_enabled" in _meteorites:
@@ -818,6 +977,89 @@ func _cli_suits(suits: Dictionary) -> void:
 		return
 	for uid: Variant in suits:
 		world.sync_suit_state(String(uid), suits[uid])
+
+
+# -------------------------------------------------------------- store sync
+
+## Stage-5 interim (not a full delta system): 1 Hz like suits. Only stores /
+## buffers / inventories whose content changed since the last send. Topology
+## still rides the existing full-snapshot path. Dig ops stay on NO_BROADCAST +
+## their own channel — store credits from dig reach clients here.
+func _broadcast_stores() -> void:
+	if _registry.peer_ids().is_empty():
+		return
+	var world := _world()
+	if world == null:
+		return
+	var stores_out: Dictionary = {}
+	for store: SimulationResourceStore in world.list_resource_stores():
+		var wire: Dictionary = store.to_dict()
+		var prev: Variant = _last_store_wire.get(store.store_id)
+		if prev != wire:
+			stores_out[store.store_id] = wire
+			_last_store_wire[store.store_id] = wire
+	var buffers_out: Dictionary = {}
+	for element: SimulationElement in world.list_elements_unsorted():
+		if (
+			element == null
+			or element.industry_buffer == null
+			or not IndustryArchetypeProfile.has_internal_buffer(
+				element.archetype_id
+			)
+		):
+			continue
+		var wire: Dictionary = element.industry_buffer.to_dict()
+		var prev: Variant = _last_buffer_wire.get(element.element_id)
+		if prev != wire:
+			buffers_out[element.element_id] = wire
+			_last_buffer_wire[element.element_id] = wire
+	var inventories_out: Dictionary = {}
+	var inv_rev := world.get_player_inventory_revision()
+	if inv_rev != _last_inventory_revision_sent:
+		_last_inventory_revision_sent = inv_rev
+		for player_uid: String in world.list_player_inventory_uids():
+			var registry := world.get_player_inventory(player_uid)
+			if registry != null:
+				inventories_out[player_uid] = registry.to_dict()
+	if (
+		stores_out.is_empty()
+		and buffers_out.is_empty()
+		and inventories_out.is_empty()
+	):
+		return
+	rpc("_cli_stores", {
+		"resource_stores": stores_out,
+		"buffers": buffers_out,
+		"player_inventories": inventories_out,
+	})
+
+
+@rpc("authority", "call_remote", "unreliable_ordered", CH_STREAM)
+func _cli_stores(payload: Dictionary) -> void:
+	if _mode != Mode.CLIENT:
+		return
+	var world := _world()
+	if world == null:
+		return
+	var stores: Variant = payload.get("resource_stores", {})
+	if stores is Dictionary and not (stores as Dictionary).is_empty():
+		world.sync_resource_stores(stores)
+	var buffers: Variant = payload.get("buffers", {})
+	if buffers is Dictionary and not (buffers as Dictionary).is_empty():
+		world.sync_element_industry_buffers(buffers)
+	var inventories: Variant = payload.get("player_inventories", {})
+	if (
+		inventories is Dictionary
+		and not (inventories as Dictionary).is_empty()
+	):
+		world.sync_player_inventories(inventories)
+
+
+func _clear_store_wire_cache() -> void:
+	_last_store_wire.clear()
+	_last_buffer_wire.clear()
+	_last_inventory_revision_sent = -1
+	_store_accum = 0.0
 
 
 # ------------------------------------------------------- assembly motion stream
@@ -1228,6 +1470,7 @@ func _teardown_host() -> void:
 	_guest_dig_retries.clear()
 	_dig_ops.clear()
 	_last_poses.clear()
+	_clear_store_wire_cache()
 	_mode = Mode.OFFLINE
 	_info("stopped hosting")
 
@@ -1240,6 +1483,7 @@ func _teardown_client_and_reload() -> void:
 	multiplayer.multiplayer_peer = null
 	_pending_dig_ops.clear()
 	_pending_dig_accum = 0.0
+	_clear_terrain_bulk_state()
 	_mode = Mode.OFFLINE
 	# Reload rebuilds the single-player world from this machine's own save,
 	# re-enables persistence + meteorites and drops the replica — cheaper and

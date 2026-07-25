@@ -154,12 +154,17 @@ static func validate_handshake_fields(fields: Dictionary) -> StringName:
 
 
 ## Client-side full join-payload check: handshake fields plus a real snapshot.
+## Optional `terrain_bulk` (cold dig SQLite meta) validated when present.
 static func validate_join_payload(payload: Dictionary) -> StringName:
 	var handshake := validate_handshake_fields(payload)
 	if handshake != &"ok":
 		return handshake
 	if not (payload.get("snapshot") is Dictionary):
 		return &"bad_snapshot"
+	if payload.has("terrain_bulk"):
+		var bulk := CoopTerrainBulk.validate_bulk_meta(payload.get("terrain_bulk"))
+		if bulk != &"ok":
+			return bulk
 	return &"ok"
 
 

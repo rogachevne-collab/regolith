@@ -11,6 +11,7 @@ func _ready() -> void:
 
 func _run() -> void:
 	_HeadlessTestHarness.arm_watchdog(self, "PLAYER-INVENTORY-HOTBAR")
+	PlayerIdentity.override_local_uid("player")
 	if not _test_starter_seed_and_hotbar_refs():
 		_abort()
 		return
@@ -23,6 +24,12 @@ func _run() -> void:
 	if not _test_snapshot_roundtrip():
 		_abort()
 		return
+	if not _test_per_uid_isolation():
+		_abort()
+		return
+	if not _test_replica_refuses_hotbar_assign():
+		_abort()
+		return
 	print("PLAYER-INVENTORY-HOTBAR: PASS")
 	get_tree().quit(0)
 
@@ -30,7 +37,7 @@ func _run() -> void:
 func _test_starter_seed_and_hotbar_refs() -> bool:
 	var world := SimulationWorld.new()
 	IndustryStoreService.sync_all_elements(world)
-	var registry := world.ensure_player_inventory()
+	var registry := world.ensure_player_inventory("player")
 	if not registry.has_instance("starter_tool_drill"):
 		return _fail("starter drill instance missing")
 	if registry.item_id_for_instance("starter_tool_drill") != "tool_hand_drill":
@@ -72,7 +79,8 @@ func _test_hotbar_validation() -> bool:
 func _test_transfer_removal_invalidates_hotbar() -> bool:
 	var world := SimulationWorld.new()
 	IndustryStoreService.sync_all_elements(world)
-	var registry := world.ensure_player_inventory()
+	var registry := world.ensure_player_inventory("player")
+	IndustryStoreService.ensure_player_store(world, "player")
 	var element := _place_operational_element(
 		world,
 		Slice01Archetypes.cargo_store(),
@@ -105,16 +113,24 @@ func _test_snapshot_roundtrip() -> bool:
 	var world := SimulationWorld.new()
 	IndustryStoreService.sync_all_elements(world)
 	IndustryStoreService.ensure_player_store(world, "player")
+	world.ensure_player_inventory("player")
 	world.get_resource_store(PlayerIdentity.store_id("player")).add(
 		"ore_mare_regolith",
 		2.0
 	)
 	var snap := world.capture_snapshot()
+	if int(snap.get("version", 0)) != SimulationSnapshot.VERSION:
+		world.free()
+		return _fail("capture must write current snapshot VERSION")
+	var inventories: Variant = snap.get("player_inventories", {})
+	if not inventories is Dictionary or not (inventories as Dictionary).has("player"):
+		world.free()
+		return _fail("snapshot must key player_inventories by uid")
 	var restored: SimulationWorld = SimulationSnapshot.create_from_snapshot(snap)
 	if restored == null:
 		return _fail("snapshot restore failed")
-	var registry: PlayerInventoryRegistry = restored.ensure_player_inventory()
-	if not registry.has_instance("starter_tool_welder"):
+	var registry: PlayerInventoryRegistry = restored.get_player_inventory("player")
+	if registry == null or not registry.has_instance("starter_tool_welder"):
 		return _fail("restored snapshot must keep starter welder")
 	if registry.hotbar_instance_id(0, 1) != "starter_tool_welder":
 		return _fail("restored snapshot must keep hotbar ref")
@@ -133,6 +149,79 @@ func _test_snapshot_roundtrip() -> bool:
 		return _fail("player snapshot must include tool instance rows")
 	world.free()
 	restored.free()
+	return true
+
+
+func _test_per_uid_isolation() -> bool:
+	var world := SimulationWorld.new()
+	IndustryStoreService.sync_all_elements(world)
+	var host := world.ensure_player_inventory("uid_host")
+	var guest := world.ensure_player_inventory("uid_guest")
+	if host == null or guest == null:
+		world.free()
+		return _fail("both peers must get a seeded inventory")
+	if not host.set_hotbar_ref(0, 0, ""):
+		world.free()
+		return _fail("clear host slot 0 failed")
+	if guest.hotbar_instance_id(0, 0) != "starter_tool_drill":
+		world.free()
+		return _fail("guest hotbar must stay independent of host clear")
+	if not world.assign_player_hotbar_instance(
+		"uid_guest",
+		0,
+		3,
+		"starter_tool_welder"
+	):
+		world.free()
+		return _fail("guest hotbar rebind failed")
+	if guest.hotbar_instance_id(0, 3) != "starter_tool_welder":
+		world.free()
+		return _fail("guest slot 3 must own welder after rebind")
+	if host.hotbar_instance_id(0, 1) != "starter_tool_welder":
+		world.free()
+		return _fail("host welder slot must stay untouched")
+	IndustryStoreService.ensure_player_store(world, "uid_host")
+	IndustryStoreService.ensure_player_store(world, "uid_guest")
+	var snap := world.capture_snapshot()
+	var restored: SimulationWorld = SimulationSnapshot.create_from_snapshot(snap)
+	world.free()
+	if restored == null:
+		return _fail("per-uid snapshot restore failed")
+	var host_restored := restored.get_player_inventory("uid_host")
+	var guest_restored := restored.get_player_inventory("uid_guest")
+	if host_restored == null or guest_restored == null:
+		restored.free()
+		return _fail("restored world must keep both inventories")
+	if host_restored.hotbar_instance_id(0, 0) != "":
+		restored.free()
+		return _fail("host cleared slot must survive roundtrip")
+	if guest_restored.hotbar_instance_id(0, 3) != "starter_tool_welder":
+		restored.free()
+		return _fail("guest rebind must survive roundtrip")
+	restored.free()
+	return true
+
+
+func _test_replica_refuses_hotbar_assign() -> bool:
+	var world := SimulationWorld.new()
+	IndustryStoreService.sync_all_elements(world)
+	var guest := world.ensure_player_inventory("uid_guest")
+	if guest == null:
+		world.free()
+		return _fail("guest inventory seed failed")
+	world.authoritative = false
+	if world.assign_player_hotbar_instance(
+		"uid_guest",
+		0,
+		3,
+		"starter_tool_welder"
+	):
+		world.free()
+		return _fail("replica must refuse assign_player_hotbar_instance")
+	if guest.hotbar_instance_id(0, 3) == "starter_tool_welder":
+		world.free()
+		return _fail("replica hotbar must stay unbound after refused assign")
+	world.free()
 	return true
 
 

@@ -81,8 +81,8 @@ static func seed_player_starter_resources(
 	if world == null:
 		return false
 	ensure_player_store(world, player_uid)
-	ensure_player_inventory(world)
-	var projected := player_instance_volume_l(world)
+	ensure_player_inventory(world, player_uid)
+	var projected := player_instance_volume_l(world, player_uid)
 	for resource_id: String in PLAYER_STARTER_RESOURCES.keys():
 		var amount := float(PLAYER_STARTER_RESOURCES[resource_id])
 		projected += ResourceCatalog.resource_volume_l(resource_id, amount)
@@ -111,8 +111,8 @@ static func apply_playtest_cargo(
 	if store == null:
 		return false
 	store.capacity_l = PLAYTEST_PLAYER_CARRY_CAPACITY_L
-	ensure_player_inventory(world)
-	var projected := player_instance_volume_l(world)
+	ensure_player_inventory(world, player_uid)
+	var projected := player_instance_volume_l(world, player_uid)
 	for resource_id: String in PLAYTEST_PLAYER_RESOURCES.keys():
 		projected += ResourceCatalog.resource_volume_l(
 			resource_id,
@@ -134,13 +134,17 @@ static func apply_playtest_cargo(
 
 
 static func ensure_player_inventory(
-	world: SimulationWorld
+	world: SimulationWorld,
+	player_uid: String
 ) -> PlayerInventoryRegistry:
-	return world.ensure_player_inventory()
+	return world.ensure_player_inventory(player_uid)
 
 
-static func player_instance_volume_l(world: SimulationWorld) -> float:
-	var registry := world.get_player_inventory()
+static func player_instance_volume_l(
+	world: SimulationWorld,
+	player_uid: String
+) -> float:
+	var registry := world.get_player_inventory(player_uid)
 	return registry.volume_l() if registry != null else 0.0
 
 
@@ -149,7 +153,7 @@ static func player_total_volume_l(
 	player_uid: String
 ) -> float:
 	var store := world.get_resource_store(PlayerIdentity.store_id(player_uid))
-	var total := player_instance_volume_l(world)
+	var total := player_instance_volume_l(world, player_uid)
 	if store != null:
 		total += store.volume_l()
 	return total
@@ -237,7 +241,8 @@ static func sync_element_storage(
 static func sync_all_elements(world: SimulationWorld) -> void:
 	# Full walk — only for restore/bind. Topology place/dismantle syncs the
 	# touched element(s) directly; do not call this on every frame place.
-	ensure_player_inventory(world)
+	# Player inventories are per-uid and seeded on join / fresh world — do not
+	# conjure a shared registry here.
 	if world.has_method("list_elements_unsorted"):
 		for element: SimulationElement in world.list_elements_unsorted():
 			sync_element_storage(world, element)

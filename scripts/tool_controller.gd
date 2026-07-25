@@ -944,8 +944,9 @@ func toolbar_slot_accepts_tool_instance(
 	)
 
 
-## Binds an owned tool instance to its matching fixed toolbar slot. The
-## authoritative registry clears any prior binding for this instance first.
+## Binds an owned tool instance to its matching fixed toolbar slot. Submits a
+## host-authoritative command; toolbar layout refreshes when inventory revision
+## advances (local flush or coop store/inventory sync).
 func assign_slot_tool_instance(
 	page: int,
 	slot: int,
@@ -954,14 +955,9 @@ func assign_slot_tool_instance(
 	if (
 		_gateway == null
 		or not toolbar_slot_accepts_tool_instance(page, slot, instance_id)
-		or not _gateway.assign_player_hotbar_instance(page, slot, instance_id)
 	):
 		return false
-	_inventory_revision = _gateway.player_inventory_revision()
-	_sync_toolbar_from_inventory()
-	toolbar_layout_revision += 1
-	if page == toolbar_page and slot == toolbar_slot:
-		_apply_toolbar_slot(page, slot, true)
+	_gateway.assign_player_hotbar_instance(page, slot, instance_id)
 	return true
 
 

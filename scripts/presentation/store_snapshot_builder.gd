@@ -51,7 +51,10 @@ static func _build_player_snapshot(
 	var store := world.get_resource_store(store_id)
 	if store == null:
 		return failure(&"invalid_reference")
-	var registry := IndustryStoreService.ensure_player_inventory(world)
+	# Read-only: do not ensure()/seed inventory while building a snapshot.
+	var registry := world.get_player_inventory(
+		PlayerIdentity.uid_from_store(store_id)
+	)
 	var entries := _store_entries(store)
 	if registry != null:
 		for row: Dictionary in registry.snapshot_entries():

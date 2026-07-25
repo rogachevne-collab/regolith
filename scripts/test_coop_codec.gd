@@ -1,10 +1,11 @@
 extends Node
 
 const _HeadlessTestHarness := preload("res://scripts/testing/headless_test_harness.gd")
-## Headless gate for COOP-HOST-V0 stage 3 pure-logic pieces: command sanitizer,
-## block-list, peer registry, join-payload round-trip, and the sanctioned
-## sync_suit_state replica write. Networked flows are human-verified (two
-## instances) — see the plan's manual script.
+## Headless gate for COOP-HOST-V0 stage 3/5 pure-logic pieces: command sanitizer,
+## block-list, peer registry, join-payload round-trip, and sanctioned replica
+## sync_* writes (suit, resource stores, industry buffers, player inventories).
+## Networked flows are human-verified (two instances) — see the plan's manual
+## script.
 
 
 func _ready() -> void:
@@ -29,6 +30,9 @@ func _run() -> void:
 	if not _test_join_payload_dig_ops():
 		_abort()
 		return
+	if not _test_terrain_bulk_chunk_roundtrip():
+		_abort()
+		return
 	if not _test_build_dig_op():
 		_abort()
 		return
@@ -36,6 +40,18 @@ func _run() -> void:
 		_abort()
 		return
 	if not _test_sync_suit_state():
+		_abort()
+		return
+	if not _test_join_snapshot_per_uid_inventories():
+		_abort()
+		return
+	if not _test_sync_resource_stores():
+		_abort()
+		return
+	if not _test_sync_element_industry_buffers():
+		_abort()
+		return
+	if not _test_sync_player_inventories():
 		_abort()
 		return
 	print("COOP-CODEC-V0: PASS")
@@ -106,6 +122,7 @@ func _test_block_list() -> bool:
 	for allowed: StringName in [
 		&"voxel_remove", &"scoop_spoil", &"dump_scoop",
 		&"construction_apply", &"weld_element", &"transfer_resource",
+		&"assign_hotbar_instance",
 		&"collect_world_loot", &"enqueue_recipe", &"oxygen_refill",
 		&"set_actuator_target", &"connect_network",
 		&"toggle_control_seat",
@@ -236,6 +253,43 @@ func _test_join_payload_dig_ops() -> bool:
 	payload["you_pose"] = {"p": Vector3(1, 2, 3), "q": Quaternion.IDENTITY}
 	if CoopCommandCodec.validate_join_payload(payload) != &"ok":
 		return _fail("join payload with you_pose should still validate")
+	# Optional terrain_bulk (cold dig SQLite meta) — inline + chunked shapes.
+	var tiny := PackedByteArray([1, 2, 3, 4])
+	payload["terrain_bulk"] = CoopTerrainBulk.make_bulk_meta(tiny, {}, 0, tiny)
+	if CoopCommandCodec.validate_join_payload(payload) != &"ok":
+		return _fail("join payload with inline terrain_bulk should validate")
+	var legacy_bulk := payload.duplicate(true)
+	legacy_bulk.erase("terrain_bulk")
+	if CoopCommandCodec.validate_join_payload(legacy_bulk) != &"ok":
+		return _fail("join payload without terrain_bulk should still validate")
+	return true
+
+
+func _test_terrain_bulk_chunk_roundtrip() -> bool:
+	var src := PackedByteArray()
+	src.resize(CoopTerrainBulk.CHUNK_SIZE_BYTES + 17)
+	for i: int in src.size():
+		src[i] = i % 251
+	var chunks := CoopTerrainBulk.split_sqlite_chunks(src)
+	if chunks.size() != 2:
+		return _fail("expected 2 chunks for CHUNK_SIZE+17, got %d" % chunks.size())
+	var joined := CoopTerrainBulk.join_sqlite_chunks(chunks, src.size())
+	if joined != src:
+		return _fail("chunk join did not restore sqlite bytes")
+	var meta := CoopTerrainBulk.make_bulk_meta(src, {"version": 1, "regions": []}, chunks.size())
+	if CoopTerrainBulk.validate_bulk_meta(meta) != &"ok":
+		return _fail("chunked terrain_bulk meta should validate")
+	var inline := PackedByteArray([9, 8, 7])
+	var inline_meta := CoopTerrainBulk.make_bulk_meta(inline, {}, 0, inline)
+	if CoopTerrainBulk.validate_bulk_meta(inline_meta) != &"ok":
+		return _fail("inline terrain_bulk meta should validate")
+	var bad := inline_meta.duplicate(true)
+	bad["chunk_count"] = 1
+	if CoopTerrainBulk.validate_bulk_meta(bad) == &"ok":
+		return _fail("inline+chunk_count mismatch must fail")
+	var empty_ok := CoopTerrainBulk.validate_bulk_meta(null)
+	if empty_ok != &"ok":
+		return _fail("missing terrain_bulk must be ok")
 	return true
 
 
@@ -363,6 +417,157 @@ func _test_sync_suit_state() -> bool:
 	return true
 
 
+func _test_join_snapshot_per_uid_inventories() -> bool:
+	var world := SimulationWorld.new()
+	IndustryStoreService.ensure_player_store(world, "uid_host")
+	IndustryStoreService.ensure_player_store(world, "uid_guest")
+	world.ensure_player_inventory("uid_host")
+	var guest := world.ensure_player_inventory("uid_guest")
+	if guest == null or not guest.set_hotbar_ref(0, 0, ""):
+		world.free()
+		return _fail("guest hotbar setup failed")
+	var snapshot := world.capture_snapshot()
+	var registry := CoopPeerRegistry.new()
+	registry.register(11, "uid_guest", "Guest")
+	var payload := CoopCommandCodec.make_join_payload(
+		snapshot,
+		registry.peers_payload(),
+		"uid_host",
+		"Host",
+		{"p": Vector3.ZERO},
+		11
+	)
+	world.free()
+	if CoopCommandCodec.validate_join_payload(payload) != &"ok":
+		return _fail("inventory join payload rejected")
+	var replica := SimulationWorld.new()
+	replica.authoritative = false
+	if not replica.restore_snapshot(payload["snapshot"]):
+		replica.free()
+		return _fail("replica restore of inventory join snapshot failed")
+	var host_inv := replica.get_player_inventory("uid_host")
+	var guest_inv := replica.get_player_inventory("uid_guest")
+	if host_inv == null or guest_inv == null:
+		replica.free()
+		return _fail("join snapshot must carry both peer inventories")
+	if host_inv.hotbar_instance_id(0, 0) != "starter_tool_drill":
+		replica.free()
+		return _fail("host hotbar must stay seeded on replica")
+	if guest_inv.hotbar_instance_id(0, 0) != "":
+		replica.free()
+		return _fail("guest cleared hotbar must arrive on replica")
+	replica.free()
+	return true
+
+
+func _test_sync_resource_stores() -> bool:
+	var store_id := PlayerIdentity.store_id("uid_b")
+	var host := SimulationWorld.new()
+	host.ensure_resource_store(store_id)
+	host.set_resource_amount(store_id, "ore_mare_regolith", 3.5)
+	var wire := {store_id: host.get_resource_store(store_id).to_dict()}
+	host.free()
+
+	var replica := SimulationWorld.new()
+	replica.authoritative = false
+	replica.sync_resource_stores(wire)
+	var mirrored := replica.get_resource_store(store_id)
+	if (
+		mirrored == null
+		or not is_equal_approx(mirrored.amount("ore_mare_regolith"), 3.5)
+	):
+		replica.free()
+		return _fail("resource store not mirrored")
+	replica.free()
+
+	var authoritative := SimulationWorld.new()
+	authoritative.sync_resource_stores(wire)
+	if authoritative.get_resource_store(store_id) != null:
+		authoritative.free()
+		return _fail("authoritative world accepted sync_resource_stores")
+	authoritative.free()
+	return true
+
+
+func _test_sync_element_industry_buffers() -> bool:
+	var host := _build_world()
+	if host == null:
+		return _fail("world build failed")
+	var element_id := 0
+	for element: SimulationElement in host.list_elements():
+		element_id = element.element_id
+		break
+	if element_id <= 0:
+		host.free()
+		return _fail("no element to attach buffer")
+	var host_element := host.get_element(element_id)
+	host_element.industry_buffer = ElementIndustryBuffer.new()
+	host_element.industry_buffer.add("ore_mare_regolith", 2.0, 100.0)
+	var wire := {element_id: host_element.industry_buffer.to_dict()}
+	var snapshot := host.capture_snapshot()
+	host.free()
+
+	var replica := SimulationWorld.new()
+	replica.authoritative = false
+	if not replica.restore_snapshot(snapshot):
+		replica.free()
+		return _fail("replica restore failed before buffer sync")
+	var replica_element := replica.get_element(element_id)
+	replica_element.industry_buffer = ElementIndustryBuffer.new()
+	replica.sync_element_industry_buffers(wire)
+	if not is_equal_approx(
+		replica_element.industry_buffer.amount("ore_mare_regolith"),
+		2.0
+	):
+		replica.free()
+		return _fail("industry buffer not mirrored")
+	replica.free()
+
+	var authoritative := SimulationWorld.new()
+	if not authoritative.restore_snapshot(snapshot):
+		authoritative.free()
+		return _fail("authoritative restore failed")
+	var auth_element := authoritative.get_element(element_id)
+	auth_element.industry_buffer = ElementIndustryBuffer.new()
+	authoritative.sync_element_industry_buffers(wire)
+	if auth_element.industry_buffer.amount("ore_mare_regolith") > 0.000001:
+		authoritative.free()
+		return _fail("authoritative world accepted sync_element_industry_buffers")
+	authoritative.free()
+	return true
+
+
+func _test_sync_player_inventories() -> bool:
+	var host := SimulationWorld.new()
+	var registry := host.ensure_player_inventory("uid_b")
+	if registry == null:
+		host.free()
+		return _fail("ensure_player_inventory failed")
+	var wire := {"uid_b": registry.to_dict()}
+	host.free()
+
+	var replica := SimulationWorld.new()
+	replica.authoritative = false
+	var rev_before := replica.get_player_inventory_revision()
+	replica.sync_player_inventories(wire)
+	var mirrored := replica.get_player_inventory("uid_b")
+	if mirrored == null or mirrored.list_instance_ids().is_empty():
+		replica.free()
+		return _fail("player inventory not mirrored")
+	if replica.get_player_inventory_revision() <= rev_before:
+		replica.free()
+		return _fail("sync_player_inventories did not bump revision")
+	replica.free()
+
+	var authoritative := SimulationWorld.new()
+	authoritative.sync_player_inventories(wire)
+	if authoritative.get_player_inventory("uid_b") != null:
+		authoritative.free()
+		return _fail("authoritative world accepted sync_player_inventories")
+	authoritative.free()
+	return true
+
+
 func _build_world() -> SimulationWorld:
 	var world := SimulationWorld.new()
 	var helper := AssemblyBuildHelper.new(world, PlayerIdentity.store_id("player"))
@@ -376,6 +581,7 @@ func _build_world() -> SimulationWorld:
 	helper.weld_all()
 	world.ensure_suit_state("player")
 	world.apply_suit_damage("player", 5.0)
+	world.ensure_player_inventory("player")
 	return world
 
 

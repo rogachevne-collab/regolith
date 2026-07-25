@@ -114,7 +114,8 @@ func _transfer_player_tool_instance(
 ) -> Dictionary:
 	if not PlayerIdentity.is_player_store(from_store_id):
 		return _failed(&"invalid_target")
-	var registry := world.ensure_player_inventory()
+	var from_uid := PlayerIdentity.uid_from_store(from_store_id)
+	var registry := world.ensure_player_inventory(from_uid)
 	if registry == null or not registry.has_instance(instance_id):
 		return _failed(&"no_input")
 	var item_id := registry.item_id_for_instance(instance_id)
@@ -162,12 +163,12 @@ func _transfer_tool_item(
 	amount = ResourceCatalog.quantize_transfer_amount(resource_id, amount)
 	if amount <= EPSILON:
 		return _failed(&"no_input")
-	var registry := world.ensure_player_inventory()
+	var to_uid := PlayerIdentity.uid_from_store(to_store_id)
+	var registry := world.ensure_player_inventory(to_uid)
+	if registry == null:
+		return _failed(&"invalid_reference")
 	var capacity_l := IndustryStoreService.player_carry_capacity_l()
-	var projected := IndustryStoreService.player_total_volume_l(
-		world,
-		PlayerIdentity.uid_from_store(to_store_id)
-	)
+	var projected := IndustryStoreService.player_total_volume_l(world, to_uid)
 	projected += ResourceCatalog.resource_volume_l(resource_id, 1.0)
 	if projected > capacity_l + EPSILON:
 		return _failed(&"storage_full")
@@ -224,7 +225,10 @@ func _destination_extra_used_l(
 ) -> float:
 	if not PlayerIdentity.is_player_store(store_id):
 		return 0.0
-	return IndustryStoreService.player_instance_volume_l(world)
+	return IndustryStoreService.player_instance_volume_l(
+		world,
+		PlayerIdentity.uid_from_store(store_id)
+	)
 
 
 func auto_transfer_tick(

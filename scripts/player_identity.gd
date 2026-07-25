@@ -2,10 +2,11 @@ class_name PlayerIdentity
 extends RefCounted
 ## Who a player is, independently of how they connected.
 ##
-## A player owns a resource store (`player:<uid>`) and a suit state (keyed by
-## the bare uid). Before COOP-HOST-V0 both were the single literal "player",
-## which means every peer would share one rucksack; the id is now explicit so
-## N players get N stores.
+## A player owns a resource store (`player:<uid>`), a suit state, and a
+## `PlayerInventoryRegistry` (tools/hotbar) — all keyed by the bare uid. Before
+## COOP-HOST-V0 these used the single literal "player", which meant every peer
+## would share one rucksack and one hotbar; the id is now explicit so N players
+## get N stores / inventories.
 ##
 ## `uid` is stable across sessions and generated once per machine, because the
 ## save keys player state by uid — a peer id would change on every reconnect

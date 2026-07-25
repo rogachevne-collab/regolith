@@ -336,8 +336,8 @@ loopback-мьютекс). Во втором окне взять бур, води
   build/weld/scoop и т.п. — no-op);
 - затем поменяться ролями (гость ведёт, хост в PAX) — те же проверки.
 
-Не входит в приёмку D: летающие обломки (`dig_terrain_debris`), bulk
-replay dig SQLite «до host».
+Не входит в приёмку D: летающие обломки (`dig_terrain_debris`). Cold dig
+SQLite bulk — RC (не этап D).
 
 ---
 
@@ -345,19 +345,13 @@ replay dig SQLite «до host».
 
 - Настоящие дельты сторов/машин (этап 5 спеки) — клиент между событиями
   видит замороженную индустрию.
-- Late join видит ямы **сессии после Host** (2026-07-25): хост копит
-  `_dig_ops` с `host` (кольцо `MAX_DIG_OPS=8192` — truncate oldest + warn,
-  join не отказываем), join payload несёт массив, клиент реплеит через
-  `replay_remote_dig` после `restore_snapshot`. Планируемый лог
-  `terrain_edits` из спеки **superseded** формой `build_dig_op` / `dig_ops`
-  — второй сетевой лог не строить.
-- Соло-история хоста до `host` (SQLite dig-stream bulk) — later debt:
-  переслать джойнеру изменённые блоки voxel dig-stream'а (SQLite хранит
-  только правки) + сериализацию затронутых granular-чанков, чанками по
-  CH_BULK после join payload; у клиента — записать в свой стрим и сбросить
-  LOD-меши затронутых регионов. `capture_snapshot` террейн НЕ несёт
-  намеренно — не менять, это отдельный канал. Acceptance digs = session
-  digs после Host, не этот bulk.
+- Late join / cold digs (RC): session `_dig_ops` (кольцо `MAX_DIG_OPS=8192`)
+  + join `terrain_bulk` — байты host `moon.sqlite` (+ granular snapshot) по
+  CH_BULK (inline или `_cli_terrain_bulk_chunk`); клиент →
+  `user://coop_join_replica/` + stream swap (не personal gen_vN). Join
+  `dig_ops` = только ops после dig flush. `terrain_edits` из спеки
+  **superseded** — второй geometric лог не строить. `capture_snapshot`
+  террейн НЕ несёт.
 - `dig_terrain_debris` / летающие обломки — far future (кинд в блок-листе).
 - Ресинк дрейфа террейна (контрольная сумма чанка + точечная ресинхронизация).
 - Предсказание ввода водителя, клиентская физика.
@@ -391,6 +385,42 @@ replay dig SQLite «до host».
 - Если меняется формат рукопожатия/join payload — бампнуть
   `CoopCommandCodec.PROTOCOL_VERSION`. Новые поля ПОЗЫ — только через
   `.get(..., default)`, версию не бампать.
+
+## Release candidate
+
+Ship-gate спайка (полная таблица + locked — `docs/specs/COOP-HOST-V0.md`
+«Release candidate»). Здесь — короткий eyeball-лист и блокеры.
+
+**Eyeball (человек, два окна / Tailscale):**
+
+1. **A–D** — tool+взгляд; live dig у обоих; водитель (хост↔гость); PAX на
+   `passenger_seat` едет без руля
+2. **PAX** — sit + look only: без dig/tools/K; инвентарь ок
+3. **R7 far dig** — гость копает далеко от хоста; proxy + soft-retry; яма
+   видна
+4. **Brakes** — slip-limited service brake; нет сильной тряски колёс у хоста
+5. **Late join** — session digs + cold SQLite/granular `terrain_bulk`
+   (ямы до `host` / после рестарта хоста)
+6. **Rejoin pose** — тот же uid → session last-pose, не дефолтный спавн
+
+**Headless gate (sanity):** `test_coop_codec`, `test_coop_seat`,
+`test_coop_dig_replay`, `test_control_actions`, `test_seat_input_router`,
+`test_snapshot_replica`.
+
+**Не класть в RC coop commit:** viewmodel RT / day-night / sky / lamp_pole /
+`scripts/rendering/*` / probe-сцены / `.tmp_rt_*` — даже если рядом dirty.
+
+**Блокеры после land параллельных агентов (hotbar / store interim; SQLite
+bulk — в коде, нужна глазная RC-5):**
+
+1. Merge/verify слайсов без конфликтов и без RT; headless gate зелёный
+2. Глазная таблица RC-1…RC-6 — закрыть человеком (в т.ч. cold digs)
+3. Hotbar: два peer'а не делят один рюкзак/слоты; join получает свой hotbar
+4. Store interim: HUD стора/машины у гостя не вечно frozen между full snap
+5. Паритет езды хост≈гость — продуктовая цель RC (не «гость достаточно гладкий»)
+
+Не блокеры RC (записанный долг): `dig_terrain_debris`, walk-on-platform,
+dedicated server, NAT, stage-5 полные дельты топологии.
 
 ## Порядок и примерный вес
 

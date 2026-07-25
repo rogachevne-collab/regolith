@@ -320,6 +320,8 @@ func _execute(command: Dictionary) -> Dictionary:
 			return _dismantle_element(command, target)
 		&"transfer_resource":
 			return _transfer_resource(command, target)
+		&"assign_hotbar_instance":
+			return _assign_hotbar_instance(command, target)
 		&"connect_network":
 			return _connect_network(command, target)
 		&"disconnect_network":
@@ -2242,7 +2244,7 @@ func player_carry_load() -> Dictionary:
 		PlayerIdentity.store_id(actor_uid)
 	)
 	var used_l := store.volume_l() if store != null else 0.0
-	var registry := _session.world.ensure_player_inventory()
+	var registry := _session.world.ensure_player_inventory(actor_uid)
 	if registry != null:
 		used_l += registry.volume_l()
 	return {"used_l": used_l, "capacity_l": capacity_l, "valid": true}
@@ -2346,9 +2348,9 @@ func _resolve_control_terminal_target(
 
 
 func player_inventory() -> PlayerInventoryRegistry:
-	if _session == null or _session.world == null:
+	if _session == null or _session.world == null or actor_uid.is_empty():
 		return null
-	return _session.world.ensure_player_inventory()
+	return _session.world.ensure_player_inventory(actor_uid)
 
 
 func player_inventory_revision() -> int:
@@ -2357,14 +2359,33 @@ func player_inventory_revision() -> int:
 	return _session.world.get_player_inventory_revision()
 
 
+## Presentation entry for hotbar rebind. Always goes through submit() so coop
+## clients hand the mutate to the host (actor_uid stamped host-side); local /
+## host execute via `_assign_hotbar_instance`. Returns the queued command id.
 func assign_player_hotbar_instance(
 	page: int,
 	slot: int,
 	instance_id: String
-) -> bool:
-	if _session == null or _session.world == null:
-		return false
-	return _session.world.assign_player_hotbar_instance(page, slot, instance_id)
+) -> int:
+	return submit({
+		"kind": &"assign_hotbar_instance",
+		"source": self,
+		"target": {
+			"valid": true,
+			"point": Vector3.ZERO,
+			"normal": Vector3.UP,
+			"distance": 0.0,
+			"target_kind": InteractionHit.KIND_NONE,
+			"collider": null,
+			"target_id": &"",
+			"element_id": 0,
+		},
+		"parameters": {
+			"page": page,
+			"slot": slot,
+			"instance_id": instance_id,
+		},
+	})
 
 
 func construction_archetype(archetype_id: String) -> ElementArchetype:
@@ -2965,6 +2986,38 @@ func _transfer_resource(
 	transfer.amount = float(parameters.get("amount", 0.0))
 	transfer.instance_id = str(parameters.get("instance_id", ""))
 	return apply_transfer_resource(transfer)
+
+
+## Host-authoritative hotbar rebind for the current actor_uid (COOP-HOST-V0).
+## Empty instance_id clears the slot; non-empty must be owned by that player.
+func _assign_hotbar_instance(
+	command: Dictionary,
+	_target: Dictionary
+) -> Dictionary:
+	if _session == null or _session.world == null or actor_uid.is_empty():
+		return _result(&"not_ready")
+	var parameters: Dictionary = command.get("parameters", {})
+	var page := int(parameters.get("page", -1))
+	var slot := int(parameters.get("slot", -1))
+	var instance_id := str(parameters.get("instance_id", ""))
+	if page < 0 or slot < 0:
+		return _result(&"invalid_target")
+	if not instance_id.is_empty():
+		var registry := player_inventory()
+		if registry == null or not registry.has_instance(instance_id):
+			return _result(&"invalid_target")
+	if not _session.world.assign_player_hotbar_instance(
+		actor_uid,
+		page,
+		slot,
+		instance_id
+	):
+		return _result(&"invalid_target")
+	return _result(&"ok", {
+		"page": page,
+		"slot": slot,
+		"instance_id": instance_id,
+	})
 
 
 ## Переименование узла из терминала управления. Надёжная команда, но не

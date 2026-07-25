@@ -1,12 +1,12 @@
 # Coop (host-authoritative) v0
 
-Статус: этапы 0–3 реализованы и играбельны; спайк A–D в main (`eb66171`
-и др.) — копка op-каналом, стрим сборок, кресло водителя/пассажира,
-session `dig_ops` на join. Этапы 4–7 спеки частично перекрыты спайком
-(см. Implementation order); приёмка глазами A–D ещё не закрыта. См. «Что
-уже работает» и `docs/COOP_SPIKE_PLAN.md`. Цель — кооп на 2–4 игрока: один
-игрок = хост (listen server), остальные подключаются, сессия и сейв живут
-у хоста.
+Статус: этапы 0–3 реализованы и играбельны; спайк A–D в main (`eb66171`,
+`9d7b96e`, `3dcce29` и др.) — копка op-каналом, стрим сборок, кресло
+водителя/пассажира, session `dig_ops` на join, R-COOP-7 proxy + soft-retry,
+slip-limited brake, session last-pose. Этапы 4–7 спеки частично перекрыты
+спайком; **RC** — см. «Release candidate» (глазная приёмка ещё открыта).
+См. также `docs/COOP_SPIKE_PLAN.md`. Цель — кооп на 2–4 игрока: один игрок =
+хост (listen server), остальные подключаются, сессия и сейв живут у хоста.
 
 Родительские документы:
 
@@ -36,6 +36,7 @@ session `dig_ops` на join. Этапы 4–7 спеки частично пер
 | сейв хоста на N игроков | «Persistence» |
 | порядок реализации, этапы | «Implementation order» |
 | критерии приёмки | «Acceptance» |
+| RC checklist (eyeball / gate) | «Release candidate» |
 | известные риски | «Риски» |
 
 ## Границы
@@ -59,7 +60,6 @@ session `dig_ops` на join. Этапы 4–7 спеки частично пер
 - копка / инструменты / K-панель из пассажирского кресла (PAX = sit + look
   only; co-pilot / permissions — позже; инвентарь из кресла — ок);
 - репликация летающих обломков террейна (`dig_terrain_debris`) — far future;
-- bulk пересылка dig SQLite «соло-история хоста до host» — later dig-channel;
 - NAT punchthrough, Steam/EOS транспорт;
 - миграция хоста при выходе хоста (хост выходит → сессия кончилась).
 
@@ -123,7 +123,7 @@ input, aim raycast, HUD         SimulationWorld (авторитет)
 | A2 | HUD читает `world` напрямую | ~15 файлов `scripts/ui/hud_*.gd` | у клиента нет `world` | ✅ закрыто иначе, чем планировалось: клиент держит настоящую read-only реплику `world` (этап 2), HUD-файлы не тронуты вообще |
 | A3 | Один игрок захардкожен: спавн, settle, `VoxelViewer` | `bootstrap.gd` (`_player`, `_ensure_player_viewer_for_planet`, `_find_voxel_viewer`) | нужен per-peer спавн и свой `VoxelViewer` на каждого | частично: локальный игрок каждого клиента спавнится/settle'ится как раньше; на хосте у `RemotePlayer` — collision-only `VoxelViewer` proxy (R-COOP-7) для dig far from host |
 | A4 | `SuitState` — Node на сцене игрока, вне `SimulationWorld` | `suit_state.gd` | не реплицируется, не сохраняется per-peer. **Решено переносить в мир** — см. «Per-peer player state» | ✅ этап 1b |
-| A5 | Правки террейна применяются локально и никуда не публикуются | `terrain_excavation_service.gd`, `terrain_impact_carver.gd` | клиент не увидит выкопанное | частично: спайк B — live `_cli_dig_op` + session `_dig_ops` на join (`build_dig_op`); `dig_terrain_debris` в блок-листе (far future); pre-host SQLite bulk — later debt; форма `terrain_edits` из спеки **superseded** |
+| A5 | Правки террейна применяются локально и никуда не публикуются | `terrain_excavation_service.gd`, `terrain_impact_carver.gd` | клиент не увидит выкопанное | частично: спайк B — live `_cli_dig_op` + session `_dig_ops` на join; RC — cold dig SQLite+granular bulk (`terrain_bulk` / CH_BULK); `dig_terrain_debris` far future; форма `terrain_edits` **superseded** |
 | A6 | Позы сборок живут только в Jolt на хосте | `simulation_physics_projection.gd`, `assembly_motion_state.gd` | клиент не увидит движение | частично: спайк C — `_cli_assembly_motion` 15 Гц + kinematic interp; без interest / f64-пакета исходной спеки |
 
 A1 — не архитектурная проблема, а дефолтное значение параметра: `store_id`
@@ -156,14 +156,21 @@ disambiguation фикс). Разделы ниже («Транспорт кома
 - `SimulationWorld.sync_suit_state()` — новый санкционированный путь записи
   реплики (семейство `sync_*`): держит O2-бар клиента живым между полными
   снапшотами (1 Гц).
+- `SimulationWorld.sync_resource_stores()` /
+  `sync_element_industry_buffers()` / `sync_player_inventories()` —
+  **interim этапа 5** (не полная delta-система): `CoopSession` шлёт на
+  CH_STREAM 1 Гц только изменившиеся сторы/буферы/инвентари (`_cli_stores`),
+  чтобы HUD клиента не замерзал между полными снапшотами (dig credits,
+  transfer, machine buffers). Топология по-прежнему едет полным
+  `capture_snapshot` / `restore_snapshot`. Клиент остаётся read-only (C1).
 
 **Консольные команды** (LimboConsole): `host [port=7777]`,
 `join <ip> [port=7777]`, `leave`, `nick <name>`, `coop_status`.
 
 **Видимость построек — не дельты, а полный снапшот-ребродкаст.**
 Отклонение от плана «Terrain replication»/дельт: после структурного
-изменения или изменения стора/лута на хосте (кроме террейна) — дебаунс
-0.3 с + пол 1.0 с между отправками — хост шлёт **весь**
+изменения на хосте (кроме террейна и amount-only industry — см. interim
+этапа 5) — дебаунс 0.3 с + пол ~1.5 с между отправками — хост шлёт **весь**
 `capture_snapshot()`, клиент применяет через `restore_snapshot()`
 (санкционированный путь этапа 2). Работает, но с ростом базы (сотни
 деталей) каждый ребилд у клиента ощутим — настоящие дельты остаются
@@ -206,7 +213,8 @@ uid + случайный суффикс. Хост дополнительно я�
 `reload_current_scene()`, без попытки «разреплицировать на месте».
 
 **Проверено:** `tests/run_one.sh test_coop_codec` (санитайзер, блок-лист,
-реестр, join-payload round-trip, `sync_suit_state`) — чистая логика,
+реестр, join-payload round-trip, `sync_suit_state`, interim
+`sync_resource_stores` / buffers / inventories) — чистая логика,
 сетевые потоки не покрыты тестами, верификация только вручную (два
 инстанса).
 
@@ -248,15 +256,17 @@ gateway.submit_networked(cmd)  # → rpc_id(1, "_remote_submit", cmd)
   "seed": ...,                     # MoonTerrainParams
   "generator_version": MoonTerrainParams.GENERATOR_VERSION,
   "simulation": world.capture_snapshot(),   # уже есть
-  "dig_ops": [...],                # session dig log since host (см. Terrain replication)
+  "dig_ops": [...],                # ops after dig-stream flush (см. Terrain)
+  "terrain_bulk": { ... },         # optional cold dig SQLite meta (+ inline/chunks)
   "peers": { peer_id: {"name": ..., "pose": ...} },
   "you": peer_id,
 }
 ```
 
 Планируемое поле `terrain_edits` из ранней спеки **superseded** формой
-`CoopCommandCodec.build_dig_op` / массивом `dig_ops` — второй сетевой лог
-правок не строить.
+`build_dig_op` / `dig_ops` (live + join tail) и отдельным каналом
+`terrain_bulk` (байты host `moon.sqlite` + granular snapshot) — второй
+сетевой лог geometric edits не строить.
 
 Клиент отклоняет коннект при несовпадении `protocol` или
 `generator_version` — иначе террейн разъедется молча (та же проверка, что
@@ -271,32 +281,35 @@ gateway.submit_networked(cmd)  # → rpc_id(1, "_remote_submit", cmd)
 
 ## Terrain replication
 
-Террейн детерминирован от сида, поэтому воксели по сети не гоняем — только
-**лог подтверждённых dig-операций** сессии после `host`.
+Террейн детерминирован от сида; `capture_snapshot` **не** несёт воксели.
+По сети — два согласованных канала (не geometric `terrain_edits`):
 
-**Факт кода (спайк B):** не отдельный геометрический `terrain_edits`
-`{c,r,mode,mat,seq}`, а санитайзнутый op (`build_dig_op`) по CH_MAIN
-(`_cli_dig_op` live + массив `dig_ops` в join payload → `replay_remote_dig`).
-Кинды: `voxel_remove` / `scoop_spoil` / `dump_scoop`. Кольцо
-`MAX_DIG_OPS=8192` на хосте — truncate oldest + warn, join не отказываем;
-лимит держим до SQLite bulk. Acceptance digs = **session digs после Host**;
-соло-история до `host` (SQLite dig-stream bulk) — later debt, не критерий
-сейчас. `dig_terrain_debris` — far future (блок-лист).
+1. **Live / session ops** — `build_dig_op` по CH_MAIN (`_cli_dig_op`) и
+   хвост `dig_ops` в join payload → `replay_remote_dig`. Кинды:
+   `voxel_remove` / `scoop_spoil` / `dump_scoop`. Кольцо
+   `MAX_DIG_OPS=8192` — truncate oldest + warn. `_dig_ops.clear()` на `host`.
+2. **Cold dig bulk (RC)** — перед join host `flush_digs_for_coop_join`, затем
+   байты `moon.sqlite` + `GranularVoxelWorld.capture_field_snapshot` как
+   `terrain_bulk` (inline ≤384 KiB или чанки `_cli_terrain_bulk_chunk` по
+   CH_BULK). Клиент после inhibit пишет replica
+   `user://coop_join_replica/moon.sqlite` (не personal `gen_vN`),
+   `apply_coop_terrain_bulk` (swap stream + kick viewer + granular restore).
+   Join `dig_ops` = только ops **после** flush (избежать double-carve).
 
-Исходный эскиз `terrain_edits` ниже — исторический; **не реализовывать
-вторым каналом**.
+Acceptance digs RC: session после Host **и** pre-host / post-restart holes
+из SQLite bulk. `dig_terrain_debris` — far future (блок-лист).
+
+Исходный эскиз `terrain_edits` ниже — исторический; **не реализовывать**.
 
 ```gdscript
-# superseded — не строить; см. dig_ops / build_dig_op выше
+# superseded — не строить; см. dig_ops / terrain_bulk выше
 {"c": Vector3 (world, f64!), "r": float, "mode": int, "mat": int, "seq": int}
 ```
 
-**Ловушка T1:** у клиента чанк под правкой может быть ещё не загружен
-(`VoxelTerrain` стримит вокруг своего `VoxelViewer`). Правку в незагруженный
-чанк применять нельзя — её съест генератор при загрузке. Решение v0:
-хост хранит session-лог (`_dig_ops`); клиент при необходимости догоняет
-pending-reapply, когда область становится editable. Полный SQLite bulk +
-переприменение при загрузке чанка — later.
+**Ловушка T1:** у клиента чанк под правкой может быть ещё не загружен.
+Session `dig_ops` — pending-reapply когда editable. Cold bulk опирается на
+stream swap: незагруженные области подтянут host digs при стриминге с
+replica DB.
 
 **Ловушка T2:** `c` — мировая координата на лунном радиусе (~1737 км).
 Godot RPC пакует `Vector3` как **float32** → ошибка порядка метра. Для
@@ -435,13 +448,13 @@ GDScript. Мерить на этапе 4; если не тянет — пере�
 
 ## Persistence
 
-`WorldPersistence.save()` расширяется (цель v0, не спайк):
+`WorldPersistence.save()` (v0):
 
 ```gdscript
 {
-  "save_version": 2,
-  "simulation": ...,          # без изменений, сторы уже per-peer
-  "players": {                # было: "player": {...}
+  "save_version": 3,
+  "simulation": ...,          # сторы + player_inventories per-uid внутри снапшота
+  "players": {                # было: "player": {...}; cold pose map — later
     "<player_uid>": {"pose": ..., "suit": ...},
   },
   # dig: session dig_ops / локальный SQLite хоста — не поле terrain_edits
@@ -449,18 +462,21 @@ GDScript. Мерить на этапе 4; если не тянет — пере�
 }
 ```
 
-**Hotbar в сейве** — важно для продукта, но **отложено** после session
-last-pose rejoin. Пока один `PlayerInventoryRegistry` на мир — не фейкать
-`"hotbar"` в `players{}` (иначе поле врёт с первого дня). Порядок: session
-last-pose по uid → затем per-uid inventory + hotbar + bump сейва.
+**Hotbar / tool instances** — per-uid `PlayerInventoryRegistry` в
+`SimulationWorld` (`player_inventories` в simulation snapshot, рядом с
+`suits`). Seed на join (`_seed_joiner`) и на fresh world; gateway reads /
+hotbar assign / tool transfers идут по `actor_uid`. Не класть отдельное
+`"hotbar"` в cold `players{}` — источник истины уже в `simulation`.
+Session last-pose → cold `players{}` позы — всё ещё later; hotbar больше
+не postponed и не фейкается.
 
 **Миграции нет.** Игра не выпущена, сейвы существуют только как локальные
-dev-файлы, поэтому `save_version` просто поднимается, а старый payload
-отбрасывается существующей проверкой в `WorldPersistence.read_payload`
-(она уже возвращает `{}` при несовпадении версии). Писать и тестировать
-конвертер ради файлов, которые можно удалить, — чистые расходы. Если к
-моменту работ появится сейв, который жалко, — это решение надо
-пересмотреть, а не обходить.
+dev-файлы, поэтому `save_version` просто поднимается (2 → 3), а старый
+payload отбрасывается существующей проверкой в
+`WorldPersistence.read_payload` (она уже возвращает `{}` при несовпадении
+версии). Писать и тестировать конвертер ради файлов, которые можно
+удалить, — чистые расходы. Если к моменту работ появится сейв, который
+жалко, — это решение надо пересмотреть, а не обходить.
 
 Сейв пишет **только хост**; клиенты своё локальное состояние не сохраняют.
 
@@ -475,8 +491,8 @@ dev-файлы, поэтому `save_version` просто поднимаетс�
 | 1b | `SuitState` → `SimulationWorld` (см. «Per-peer player state»); обновить `PHYSICAL-LANGUAGE.md` «Состояние скафандра» и `HUD-UI-01.md` в том же коммите | ✅ (`55504c1`) | `run_one.sh test_suit_state`, `test_impact_destruction` зелёные; метеорит бьёт игрока в запущенной игре |
 | 2 | `SimulationWorld` как read-only реплика: флаг `authoritative`, отключаемый тик; snapshot apply на клиенте | ✅ (`f50df72`) | новый `test_*` на «снапшот → реплика идентична» — `test_snapshot_replica` |
 | 3 | Транспорт: ENet, host/join, `_remote_submit`, join-снапшот, спавн N игроков (`bootstrap.gd`, per-peer `VoxelViewer`) | ✅ (`db36f54`, `35c0e70`) — см. «Что уже работает»; host per-peer collision-only `VoxelViewer` (R-COOP-7) | два инстанса, видим друг друга, ходим; guest dig far from host |
-| 4 | Terrain replication (session dig_ops; SQLite bulk / chunk-reapply — later) | частично (спайк B + join `dig_ops`; без SQLite bulk / debris) | копаем в сессии после Host — видно у обоих; late join видит session digs |
-| 5 | Дельты состояния мира + HUD у клиента (сейчас — полный снапшот-ребродкаст, см. «Что уже работает») | — | строим/крафтим — HUD у обоих совпадает |
+| 4 | Terrain replication (session dig_ops + SQLite/granular bulk на join) | частично (спайк B + join `dig_ops` + RC `terrain_bulk`; без debris) | session digs live; late join — session tail + cold SQLite holes |
+| 5 | Дельты состояния мира + HUD у клиента | interim: 1 Гц `_cli_stores` (changed stores/buffers/inventories); полный snapshot — топология; полные дельты — later | копаем/крафтим/transfer — HUD сторов у клиента оживает ≤1 с без snapshot-storm |
 | 6 | Physics replication (позы сборок, f64) | частично (спайк C: `_cli_assembly_motion` 15 Гц, без f64-пакета спеки) | ровер едет — обоим видно гладко; цель — паритет ощущений хост ≈ гость |
 | 7 | Кресло: `seated`, ввод водителя, выход, PAX | частично (спайк C+D: occupancy + `toggle_control_seat` + `_srv_control_input` + `passenger_seat`; без ходьбы на платформе) | водитель (cockpit, хост или гость) ведёт; PAX = sit + look only |
 
@@ -488,13 +504,13 @@ A–D в коде — кооп играбелен для пробного заб
 
 - Хост и 3 клиента в одной сессии, 30+ минут без рассинхрона;
 - клиент выкопал яму **в текущей сессии (после Host)** → хост и другие видят
-  (±0 вокселей); late join получает session `_dig_ops`. Соло-ямы до Host /
-  cold SQLite bulk — later debt, не критерий сейчас;
+  (±0 вокселей); late join получает session dig tail + cold `terrain_bulk`
+  (SQLite dig-stream / granular) для ям до `host` и после рестарта хоста;
 - клиент поставил и приварил блок → у хоста та же сборка, ресурсы списаны
   с **его** стора, стор хоста не тронут;
-- хост сохранил, все вышли, зашли снова → мир и сторы; per-peer позы —
-  цель (session last-pose → cold `players{}`); hotbar в сейве — postponed
-  после last-pose, не фейкать;
+- хост сохранил, все вышли, зашли снова → мир, сторы и per-uid hotbar/
+  tool inventories; per-peer позы — цель (session last-pose → cold
+  `players{}`);
 - водитель (хост или гость в cockpit) ведёт ровер; второй peer в
   пассажирском кресле едет без рывков на ~100 мс RTT, freelook, без руля;
   пассажир **не** копает, **не** использует инструменты и **не** открывает
@@ -506,6 +522,42 @@ A–D в коде — кооп играбелен для пробного заб
 
 Финальное подтверждение — человек в игре на двух машинах. «Тест зелёный»
 не считается доказательством (см. `AGENTS.md`, «Верификация»).
+
+## Release candidate
+
+Короткий ship-gate для co-op RC. Не расширяет scope — только locked
+решения + уже лежащий в main код спайка A–D / R-COOP-7 / last-pose /
+slip-brake. Глазная приёмка обязательна; headless gate — sanity, не
+доказательство.
+
+**Locked (не пересматривать в RC-коммите):**
+
+- PAX = sit + look only; без копки / инструментов / K-панели; инвентарь ок
+- Acceptance digs = session digs после `host` **и** cold SQLite/granular bulk
+  на join (не через `capture_snapshot`)
+- Hotbar в сейве — только после реального per-uid inventory (не фейкать поле)
+- Паритет ощущений езды хост ≈ гость — продуктовая цель
+- `MAX_DIG_OPS=8192` остаётся для live/session ring; ring truncate + warn,
+  join не отказывать
+- RT / day-night / viewmodel probes — **не** в RC coop commit
+
+| # | Проверка | Как | Статус |
+|---|---|---|---|
+| RC-1 | Eyeball A–D | два окна / Tailscale: tool в руках + взгляд; live dig виден обоим; водитель ведёт (хост↔гость); пассажир на `passenger_seat` | ⬜ human |
+| RC-2 | PAX policy | в кресле: freelook ок; ЛКМ/ПКМ tools / dig / K — no-op; инвентарь открывается | ⬜ human |
+| RC-3 | R7 far dig | гость копает далеко от хоста (proxy `VoxelViewer`); soft-retry / toast «Грунт ещё загружается», затем яма у обоих | ⬜ human |
+| RC-4 | Brakes | service brake на грунте — slip-limited (как drive TC); нет сильной тряски колёс у хоста при торможении гостем-водителем | ⬜ human |
+| RC-5 | Late join | session digs + **cold** digs до `host` / после рестарта (`terrain_bulk`) | ⬜ human |
+| RC-6 | Rejoin pose | disconnect → join тем же uid → session last-pose (не спавн на дефолте); cold `players{}` — цель Persistence | ⬜ human |
+| RC-7 | Headless gate | `test_coop_codec`, `test_coop_seat`, `test_coop_dig_replay`, `test_control_actions`, `test_seat_input_router`, `test_snapshot_replica` | ⬜ run |
+
+Практический сценарий: `tools/coop_two_windows.bat` или `host` /
+`join 127.0.0.1` (+ `--coop-sandbox=guest` для dig). Финал — две машины.
+
+**Блокеры RC после параллельных агентов (hotbar / SQLite dig bulk / store
+interim sync):** см. актуальный список в `docs/COOP_SPIKE_PLAN.md` §
+«Release candidate» — глазная таблица выше + merge/verify тех трёх слайсов
+без RT-мусора.
 
 ## Риски
 
