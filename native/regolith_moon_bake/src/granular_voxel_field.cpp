@@ -43,6 +43,9 @@ void GranularVoxelField::configure(const Vector3i &new_size, double new_cell_siz
 	solid_known_.assign(count, 0);
 	queued_.assign(count, 0);
 	dirty_flag_.assign(count, 0);
+	const size_t columns = (size_t)size_.x * (size_t)size_.z;
+	column_cache_.assign(columns, Vector2(0, 0));
+	column_dirty_.assign(columns, 1);
 	active_.clear();
 	next_.clear();
 	dirty_.clear();
@@ -122,6 +125,50 @@ void GranularVoxelField::invalidate_solid(const Vector3i &from_cell, const Vecto
 
 double GranularVoxelField::mass_at(int x, int y, int z) const {
 	return in_bounds(x, y, z) ? (double)mass_[index(x, y, z)] : 0.0;
+}
+
+Vector2 GranularVoxelField::column_at(int cell_x, int cell_z) {
+	if (cell_x < 0 || cell_x >= size_.x || cell_z < 0 || cell_z >= size_.z) {
+		return Vector2(0, 0);
+	}
+	const int ci = cell_z * size_.x + cell_x;
+	if (column_dirty_[ci] == 0) {
+		return column_cache_[ci];
+	}
+	double filled = 0.0;
+	int top_cell = -1;
+	double top_mass = 0.0;
+	for (int y = 0; y < size_.y; ++y) {
+		const double mass = (double)mass_[index(cell_x, y, cell_z)];
+		if (mass <= 0.0) {
+			continue;
+		}
+		filled += mass;
+		top_cell = y;
+		top_mass = mass;
+	}
+	Vector2 result(0, 0);
+	if (top_cell >= 0) {
+		// Topmost cell is usually part full; rounding up to the cell boundary
+		// is a quarter-metre lie (same note as the script).
+		result = Vector2(
+				(real_t)(filled * cell_size_),
+				(real_t)((double(top_cell) + top_mass) * cell_size_));
+	}
+	column_cache_[ci] = result;
+	column_dirty_[ci] = 0;
+	return result;
+}
+
+void GranularVoxelField::invalidate_column_at_mass_index(int i) {
+	const int plane = size_.x * size_.z;
+	if (plane <= 0 || i < 0) {
+		return;
+	}
+	const int ci = i % plane;
+	if (ci < (int)column_dirty_.size()) {
+		column_dirty_[ci] = 1;
+	}
 }
 
 /// Returned rather than filled through an out-parameter, unlike the script:
@@ -243,6 +290,9 @@ double GranularVoxelField::take_fraction(int x, int y, int z, double fraction) {
 		removed = mass;
 	}
 	mass_[i] = (float)(mass - removed);
+	// Column memo must track every mass write, including the ones that skip
+	// `mark_dirty` (script parity for the mesher dirty list stays as-is).
+	invalidate_column_at_mass_index(i);
 	// `touch`, not `mark_dirty` — which is what the script does, and is very
 	// probably a bug there: every other mutator tells the renderer the cell
 	// changed and this one only re-queues it for simulation. Transliterated
@@ -254,6 +304,7 @@ double GranularVoxelField::take_fraction(int x, int y, int z, double fraction) {
 }
 
 void GranularVoxelField::mark_dirty(int i) {
+	invalidate_column_at_mass_index(i);
 	if (dirty_flag_[i] != 0) {
 		return;
 	}
@@ -1329,6 +1380,7 @@ void GranularVoxelField::_bind_methods() {
 	ClassDB::bind_method(
 			D_METHOD("invalidate_solid", "from_cell", "to_cell"), &GranularVoxelField::invalidate_solid);
 	ClassDB::bind_method(D_METHOD("mass_at", "x", "y", "z"), &GranularVoxelField::mass_at);
+	ClassDB::bind_method(D_METHOD("column_at", "cell_x", "cell_z"), &GranularVoxelField::column_at);
 	ClassDB::bind_method(D_METHOD("copy_mass_box", "lo", "extent"), &GranularVoxelField::copy_mass_box);
 	ClassDB::bind_method(D_METHOD("copy_solid_box", "lo", "extent"), &GranularVoxelField::copy_solid_box);
 	ClassDB::bind_method(D_METHOD("total_volume_m3"), &GranularVoxelField::total_volume_m3);

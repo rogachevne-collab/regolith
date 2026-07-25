@@ -11,6 +11,7 @@
 #include <godot_cpp/variant/packed_int32_array.hpp>
 #include <godot_cpp/variant/packed_vector3_array.hpp>
 #include <godot_cpp/variant/transform3d.hpp>
+#include <godot_cpp/variant/vector2.hpp>
 #include <godot_cpp/variant/vector3.hpp>
 #include <godot_cpp/variant/vector3i.hpp>
 
@@ -71,6 +72,11 @@ public:
 	void invalidate_solid(const godot::Vector3i &from_cell, const godot::Vector3i &to_cell);
 
 	double mass_at(int x, int y, int z) const;
+	/// Memoized column summary `(depth_m, surface_height_local)`. Same
+	/// arithmetic as `GranularVoxelRegion._column_at` / the GDScript field's
+	/// `column_at`. Dirtied from `mark_dirty` and `take_fraction`.
+	/// GRANULAR-COUPLING-PERF-1 stage 1.
+	godot::Vector2 column_at(int cell_x, int cell_z);
 	godot::PackedFloat32Array copy_mass_box(const godot::Vector3i &lo, const godot::Vector3i &extent);
 	godot::PackedByteArray copy_solid_box(const godot::Vector3i &lo, const godot::Vector3i &extent);
 
@@ -286,6 +292,7 @@ private:
 	void wake(int x, int y, int z);
 	void step_cell(int i);
 	void spread(int i, int x, int y, int z, double mass, int to_y, double rate, double min_difference);
+	void invalidate_column_at_mass_index(int i);
 
 	godot::Vector3i size_ = godot::Vector3i(0, 0, 0);
 	double cell_size_ = DEFAULT_CELL_SIZE_M;
@@ -303,6 +310,10 @@ private:
 	std::vector<uint8_t> solid_known_;
 	std::vector<uint8_t> queued_;
 	std::vector<uint8_t> dirty_flag_;
+	/// Per-(x,z) memo for `column_at`. Parallel to the GDScript field's
+	/// `_column_cache` / `_column_dirty`.
+	std::vector<godot::Vector2> column_cache_;
+	std::vector<uint8_t> column_dirty_;
 
 	std::vector<int32_t> active_;
 	std::vector<int32_t> next_;

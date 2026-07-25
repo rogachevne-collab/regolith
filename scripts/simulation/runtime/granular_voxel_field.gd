@@ -106,6 +106,12 @@ var _dirty_flag: PackedByteArray = PackedByteArray()
 var _spread_targets: PackedInt32Array = PackedInt32Array()
 var _spread_shares: PackedFloat32Array = PackedFloat32Array()
 
+## Memo of `_column_at` / `column_at` results: (depth_m, surface_height_local).
+## Dirtied from `_mark_dirty` (and `take_fraction`) so every mass write
+## invalidates its (x, z) column. GRANULAR-COUPLING-PERF-1 stage 1.
+var _column_cache: PackedVector2Array = PackedVector2Array()
+var _column_dirty: PackedByteArray = PackedByteArray()
+
 var _last_active_count := 0
 ## Where the next budgeted sweep starts in the sorted active list. Keeps a
 ## backlog from starving the same cells sweep after sweep.
@@ -129,6 +135,10 @@ static func create(
 	field._solid_known.resize(count)
 	field._spread_targets.resize(_SPREAD_COUNT)
 	field._spread_shares.resize(_SPREAD_COUNT)
+	var columns := field.size.x * field.size.z
+	field._column_cache.resize(columns)
+	field._column_dirty.resize(columns)
+	field._column_dirty.fill(1)
 	return field
 
 
@@ -208,6 +218,49 @@ func invalidate_solid(from_cell: Vector3i, to_cell: Vector3i) -> void:
 
 func mass_at(x: int, y: int, z: int) -> float:
 	return _mass[index(x, y, z)] if in_bounds(x, y, z) else 0.0
+
+
+## One column as `(depth_m, surface_height in field-local Y)`. Zero depth means
+## empty. Memoized; see `_column_cache`. Same arithmetic as the former
+## `GranularVoxelRegion._column_at` — cache is only memoization.
+func column_at(cell_x: int, cell_z: int) -> Vector2:
+	if (
+		cell_x < 0 or cell_x >= size.x
+		or cell_z < 0 or cell_z >= size.z
+	):
+		return Vector2.ZERO
+	var ci := cell_z * size.x + cell_x
+	if _column_dirty[ci] == 0:
+		return _column_cache[ci]
+	var filled := 0.0
+	var top_cell := -1
+	var top_mass := 0.0
+	for y in size.y:
+		var mass := _mass[index(cell_x, y, cell_z)]
+		if mass <= 0.0:
+			continue
+		filled += mass
+		top_cell = y
+		top_mass = mass
+	var result := Vector2.ZERO
+	if top_cell >= 0:
+		result = Vector2(
+			filled * cell_size,
+			(float(top_cell) + top_mass) * cell_size
+		)
+	_column_cache[ci] = result
+	_column_dirty[ci] = 0
+	return result
+
+
+func _invalidate_column_at_mass_index(i: int) -> void:
+	# index = (y * size.z + z) * size.x + x  →  column = z * size.x + x
+	var plane := size.x * size.z
+	if plane <= 0 or i < 0:
+		return
+	var ci: int = i % plane
+	if ci < _column_dirty.size():
+		_column_dirty[ci] = 1
 
 
 ## A box of mass, cells outside the field reading as empty — so a caller may
@@ -354,12 +407,14 @@ func take_fraction(x: int, y: int, z: int, fraction: float) -> float:
 	if mass - removed < MIN_MASS:
 		removed = mass
 	_mass[i] = mass - removed
+	_invalidate_column_at_mass_index(i)
 	_touch(i)
 	_wake(x, y, z)
 	return removed * cell_volume_m3()
 
 
 func _mark_dirty(i: int) -> void:
+	_invalidate_column_at_mass_index(i)
 	if _dirty_flag[i] != 0:
 		return
 	_dirty_flag[i] = 1

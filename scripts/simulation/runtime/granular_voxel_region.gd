@@ -392,32 +392,10 @@ func dust_column_at(world_point: Vector3) -> Dictionary:
 
 
 ## One column, as `(depth in metres, surface height in the region's frame)`.
-## Zero depth means the column holds nothing.
+## Zero depth means the column holds nothing. Memoized on the field
+## (GRANULAR-COUPLING-PERF-1 stage 1) — arithmetic unchanged.
 func _column_at(cell_x: int, cell_z: int) -> Vector2:
-	if (
-		cell_x < 0 or cell_x >= field.size.x
-		or cell_z < 0 or cell_z >= field.size.z
-	):
-		return Vector2.ZERO
-	var filled := 0.0
-	var top_cell := -1
-	var top_mass := 0.0
-	for y in field.size.y:
-		var mass := field.mass_at(cell_x, y, cell_z)
-		if mass <= 0.0:
-			continue
-		filled += mass
-		top_cell = y
-		top_mass = mass
-	if top_cell < 0:
-		return Vector2.ZERO
-	# The topmost cell is usually part full, and rounding it up to the cell
-	# boundary is a quarter-metre lie the player would feel as a step at the
-	# edge of every heap.
-	return Vector2(
-		filled * field.cell_size,
-		(float(top_cell) + top_mass) * field.cell_size
-	)
+	return field.column_at(cell_x, cell_z)
 
 
 ## Fill fraction at a world point, for anything that has to find material
