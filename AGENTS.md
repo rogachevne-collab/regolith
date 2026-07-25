@@ -30,7 +30,11 @@ Rule 1 - отвечай коротко, по делу и понятным язы
 Операция анти-godobject (механическая нарезка монолитов): контракт заморозки —
 `docs/plans/ANTIGOD-CONTRACT-FREEZE.md`. Cheatsheet'ы волны —
 `docs/cheatsheets/world-command-gateway.md`, `physics-projection.md`,
-`control-terminal.md` (появятся по мере extract'ов). Поведение не менять.
+`control-terminal.md`, `bootstrap.md` (появятся по мере extract'ов).
+Поведение не менять.
+
+Задачи на bootstrap / spawn / terrain streaming / coop persistence: сначала
+`docs/cheatsheets/bootstrap.md` — не читать монолит целиком.
 
 ## Инварианты (нарушать НЕЛЬЗЯ)
 
@@ -46,8 +50,16 @@ Rule 1 - отвечай коротко, по делу и понятным язы
   Шпаргалки: `docs/cheatsheets/vfx-design.md`, `vfx-authoring.md`.
 - **R5** — spawn на voxel terrain: SDF + physics collider + settle (см.
   `bootstrap.gd`); не телепортировать игрока на y=0 до готовности коллизии.
-- **R6** — внешние зависимости: только Voxel Tools (MIT); macOS binaries в git,
-  остальные платформы — bootstrap из README.
+- **R6** — внешние зависимости: Voxel Tools (MIT) и Ropes! (см. R10); macOS
+  binaries в git, остальные платформы — bootstrap из README.
+- **R10** — `addons/ropes/` — **чужой код, заходить нельзя.** Плагин Ropes!
+  живёт в отдельном репозитории `Y:\ropes` и смонтирован сюда junction'ом:
+  гит Regolith его не видит, правка «по-быстрому здесь» молча уедет в чужой
+  репозиторий и не покажется в `git status`. Не читать, не править, не
+  коммитить. Баг в верёвках — задача в `Y:\ropes`. Со стороны игры трогать
+  можно только фасад `scripts/simulation/projection/xpbd_cable_rope_solver.gd`
+  и адаптеры бенча; их API — `docs/cheatsheets/ropes-seam.md`, открывать
+  плагин для этого не нужно.
 - **R7** — задачи с voxel terrain / SDF / `VoxelTool` / scale / collider /
   streaming: сначала `docs/cheatsheets/voxel-tools.md` и § *Voxel scale* в
   `docs/specs/INDUSTRY-V1.md`, затем **официальная дока** и **GitHub issues**
@@ -104,6 +116,7 @@ Rule 1 - отвечай коротко, по делу и понятным язы
 | voxel terrain / SDF / raycast / scale | `docs/cheatsheets/voxel-tools.md` + сверка с докой плагина; проверка в игре (spawn, aim, drill) |
 | физика / Jolt / projection / constraints | `PHYSICAL-LANGUAGE.md` («Граница владения») + релевантная спека; сверка с [докой Godot Jolt](https://docs.godotengine.org/en/stable/tutorials/physics/using_jolt_physics.html) и веб-поиском |
 | новая GDExtension-зависимость | строка в README (bootstrap) + лицензия |
+| поведение верёвок/кабелей изменилось со стороны плагина | правка и её проверка — в репозитории `Y:\ropes` (`bash addons/ropes/tests/run_tests.sh`); здесь — сверить фасад по `docs/cheatsheets/ropes-seam.md` и посмотреть кабель в игре |
 | перед «готово»/коммитом | полный `./tests/run_tests.sh` — только если трогали ядро (см. «Верификация»); иначе по типу изменения выше |
 
 ## Субагенты и экономия токенов

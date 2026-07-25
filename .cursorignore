@@ -7,3 +7,7 @@
 # Local editor / platform bundles
 bin/
 *.zip
+
+# Ropes! — чужой репозиторий (Y:\ropes), сюда приходит junction'ом.
+# API шва: docs/cheatsheets/ropes-seam.md
+addons/ropes/
