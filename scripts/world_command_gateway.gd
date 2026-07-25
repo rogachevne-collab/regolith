@@ -435,8 +435,11 @@ func _remove_voxel(
 	_plow_hand_drill_loose(contact_point, radius)
 	var total_removed_m3 := 0.0
 	var now_msec := Time.get_ticks_msec()
+	# Coop replay must not path-sweep from local wall-clock / last-bite state:
+	# join catch-up and live ops arrive back-to-back, which would over-carve
+	# vs the host. Host already stamped the final sphere(s) it chose.
 	var use_path_sweep := false
-	if _hand_drill_last_bite_center is Vector3:
+	if not _replaying_remote_dig and _hand_drill_last_bite_center is Vector3:
 		var span_m := bite_center.distance_to(_hand_drill_last_bite_center)
 		var gap_ms := now_msec - _hand_drill_last_bite_msec
 		use_path_sweep = (

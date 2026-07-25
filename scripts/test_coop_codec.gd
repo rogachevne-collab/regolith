@@ -232,6 +232,10 @@ func _test_join_payload_dig_ops() -> bool:
 	legacy.erase("dig_ops")
 	if CoopCommandCodec.validate_join_payload(legacy) != &"ok":
 		return _fail("join payload without dig_ops should still validate")
+	# Optional you_pose (session last-pose reseat) must not break validation.
+	payload["you_pose"] = {"p": Vector3(1, 2, 3), "q": Quaternion.IDENTITY}
+	if CoopCommandCodec.validate_join_payload(payload) != &"ok":
+		return _fail("join payload with you_pose should still validate")
 	return true
 
 

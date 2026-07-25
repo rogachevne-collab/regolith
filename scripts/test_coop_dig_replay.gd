@@ -26,6 +26,11 @@ const ORDER_SECOND_SAMPLE := ORDER_SECOND + Vector3(0.0, -0.35, 0.0)
 
 const LOOT_TEST_POINT := Vector3(3.0, 0.0, 3.0)
 
+## r=0.5 spheres barely overlap; span < path_max_span so host path-sweeps the gap.
+const SWEEP_A := Vector3(0.0, 0.0, 0.0)
+const SWEEP_B := Vector3(1.3, 0.0, 0.0)
+const SWEEP_RADIUS := 0.5
+
 
 
 
@@ -53,6 +58,8 @@ func _run() -> void:
 		_test_join_dig_ops_replay_order,
 
 		_test_replay_discard_yield_no_double_loot,
+
+		_test_replay_skips_path_sweep,
 
 	]
 
@@ -525,6 +532,142 @@ func _test_replay_discard_yield_no_double_loot() -> bool:
 			"replay must force discard_yield (loot %d -> %d)"
 
 			% [loot_before, loot_after]
+
+		)
+
+	return true
+
+
+
+
+
+func _test_replay_skips_path_sweep() -> bool:
+
+	## Host back-to-back digs path-sweep (2nd bite removes more volume). Coop
+
+	## replay must not — 2nd replay bite stays near a lone-sphere volume.
+
+	var host_fixture := await _new_fixture()
+
+	if host_fixture.is_empty():
+
+		return _fail("host fixture build failed (terrain not editable)")
+
+	var host_gateway: WorldCommandGateway = host_fixture["gateway"]
+
+	var host_cmd_a := _dig_command(SWEEP_A, true)
+
+	host_cmd_a["parameters"]["radius"] = SWEEP_RADIUS
+
+	var host_cmd_b := _dig_command(SWEEP_B, true)
+
+	host_cmd_b["parameters"]["radius"] = SWEEP_RADIUS
+
+	_host_dig(host_gateway, host_cmd_a)
+
+	var host_b := _host_dig(host_gateway, host_cmd_b)
+
+	var host_b_vol := float(
+
+		(host_b.get("data", {}) as Dictionary).get("removed_volume_m3", 0.0)
+
+	)
+
+	_free_fixture(host_fixture)
+
+	var alone_fixture := await _new_fixture()
+
+	if alone_fixture.is_empty():
+
+		return _fail("alone fixture build failed")
+
+	var alone_gateway: WorldCommandGateway = alone_fixture["gateway"]
+
+	var alone_b := _host_dig(alone_gateway, host_cmd_b)
+
+	var alone_b_vol := float(
+
+		(alone_b.get("data", {}) as Dictionary).get("removed_volume_m3", 0.0)
+
+	)
+
+	_free_fixture(alone_fixture)
+
+	if host_b_vol <= 0.0 or alone_b_vol <= 0.0:
+
+		return _fail(
+
+			"sweep probe digs must remove volume (host_b=%.4f alone_b=%.4f)"
+
+			% [host_b_vol, alone_b_vol]
+
+		)
+
+	if host_b_vol <= alone_b_vol * 1.2:
+
+		return _fail(
+
+			"host A→B should path-sweep more than lone B (host_b=%.4f alone_b=%.4f)"
+
+			% [host_b_vol, alone_b_vol]
+
+		)
+
+	var replay_fixture := await _new_fixture()
+
+	if replay_fixture.is_empty():
+
+		return _fail("replay fixture build failed (terrain not editable)")
+
+	var replay_gateway: WorldCommandGateway = replay_fixture["gateway"]
+
+	var op_a := _wire_op(SWEEP_A, true)
+
+	(op_a["parameters"] as Dictionary)["radius"] = SWEEP_RADIUS
+
+	var op_b := _wire_op(SWEEP_B, true)
+
+	(op_b["parameters"] as Dictionary)["radius"] = SWEEP_RADIUS
+
+	## Same gate as replay_remote_dig — measure 2nd-bite volume without sweep.
+
+	replay_gateway._replaying_remote_dig = true
+
+	replay_gateway._remove_voxel(op_a, op_a["target"])
+
+	var replay_b: Dictionary = replay_gateway._remove_voxel(op_b, op_b["target"])
+
+	replay_gateway._replaying_remote_dig = false
+
+	var replay_b_vol := float(
+
+		(replay_b.get("data", {}) as Dictionary).get("removed_volume_m3", 0.0)
+
+	)
+
+	_free_fixture(replay_fixture)
+
+	if replay_b_vol <= 0.0:
+
+		return _fail("replay dig B removed no volume")
+
+	if replay_b_vol > alone_b_vol * 1.15:
+
+		return _fail(
+
+			"replay A→B must not path-sweep (replay_b=%.4f alone_b=%.4f)"
+
+			% [replay_b_vol, alone_b_vol]
+
+		)
+
+	if replay_b_vol > host_b_vol * 0.75:
+
+		return _fail(
+
+			"replay dig B must carve less than host path-sweep (host_b=%.4f replay_b=%.4f)"
+
+			% [host_b_vol, replay_b_vol]
 
 		)
 

@@ -41,7 +41,12 @@ const ASSEMBLY_INTERP_DELAY_MS := 120
 const ASSEMBLY_BUFFER_LIMIT := 8
 const ASSEMBLY_STALE_MS := 1500
 const SNAPSHOT_DEBOUNCE := 0.3
-const SNAPSHOT_FLOOR_MS := 1000
+## Min gap between full-snapshot broadcasts. Slightly above 1s so structural
+## + command_completed bursts (and multi-command flushes) coalesce without
+## flooding CH_BULK; join still gets a fresh capture on hello.
+const SNAPSHOT_FLOOR_MS := 1500
+## Client: retry join dig_ops that failed while chunks were not editable.
+const PENDING_DIG_RETRY_INTERVAL := 0.5
 const NICK_PATH := "user://player_nick.txt"
 ## Loopback single-instance mutex. The first game process on a machine binds it;
 ## a second process (two windows for testing) fails to bind, learns it is a
@@ -122,8 +127,16 @@ var _assembly_streams: Dictionary = {}
 var _snapshot_dirty := false
 var _snapshot_debounce := 0.0
 var _last_broadcast_ms := 0
+## Process frame of the last _mark_snapshot_dirty — same-frame re-entry from
+## structural_event + command_completed for one mutate must not reset debounce.
+var _snapshot_dirty_frame := -1
 ## Host-only log of confirmed dig ops since `host` — replayed to late joiners.
 var _dig_ops: Array = []
+## Client: join dig_ops that failed (chunk not editable) — retried lightly.
+var _pending_dig_ops: Array = []
+var _pending_dig_accum := 0.0
+## Host: uid -> last pose dict from pose relay (rejoin reseat).
+var _last_poses: Dictionary = {}
 var _host_hooks_connected := false
 ## Held for the process lifetime by the primary instance (see INSTANCE_LOCK_PORT).
 var _instance_lock: PacketPeerUDP
@@ -173,6 +186,7 @@ func _physics_process(delta: float) -> void:
 		_send_local_pose()
 	if _mode == Mode.CLIENT:
 		_tick_client_control_input(delta)
+		_tick_pending_dig_reapply(delta)
 	if _mode == Mode.HOST:
 		_tick_remote_driver_watchdog()
 		_tick_snapshot_broadcast(delta)
@@ -344,6 +358,7 @@ func _cmd_host(port: int = PORT_DEFAULT) -> void:
 	_registry = CoopPeerRegistry.new()
 	_pending_results.clear()
 	_dig_ops.clear()
+	_last_poses.clear()
 	_connect_host_hooks()
 	_info("hosting on port %d as '%s' — share your Tailscale IP" % [port, _local_nick])
 
@@ -459,6 +474,11 @@ func _srv_hello(hello: Dictionary) -> void:
 		peer,
 		_dig_ops
 	)
+	# Optional: last known pose for this uid (rejoin). Clients without the
+	# field keep reseating near the host.
+	var known_pose: Variant = _last_poses.get(uid)
+	if known_pose is Dictionary and (known_pose as Dictionary).has("p"):
+		payload["you_pose"] = known_pose
 	rpc_id(peer, "_cli_join_payload", payload)
 	for other: int in _registry.peer_ids():
 		if other != peer:
@@ -529,6 +549,8 @@ func _apply_join(payload: Dictionary) -> void:
 	var world := _world()
 	world.authoritative = false
 	world.restore_snapshot(payload["snapshot"])
+	_pending_dig_ops.clear()
+	_pending_dig_accum = 0.0
 	var dig_ok := 0
 	var dig_fail := 0
 	for op_variant: Variant in payload.get("dig_ops", []):
@@ -537,12 +559,13 @@ func _apply_join(payload: Dictionary) -> void:
 				dig_ok += 1
 			else:
 				dig_fail += 1
+				_pending_dig_ops.append(op_variant)
 		else:
 			dig_fail += 1
 	if dig_fail > 0:
 		push_warning(
-			"join dig replay: %d ok, %d failed (terrain may be partially synced)"
-			% [dig_ok, dig_fail]
+			"join dig replay: %d ok, %d queued for retry (chunk not editable yet)"
+			% [dig_ok, _pending_dig_ops.size()]
 		)
 
 	if _meteorites != null:
@@ -566,8 +589,12 @@ func _apply_join(payload: Dictionary) -> void:
 			continue
 		_spawn_avatar(uid, String(row.get("nick", uid.substr(0, 6))))
 
-	var host_pos: Vector3 = _pose_position(host_info["pose"])
-	await _bootstrap.reseat_player_near(host_pos + _tangent_offset(host_pos, 4.0))
+	var you_pose: Variant = payload.get("you_pose")
+	if you_pose is Dictionary and (you_pose as Dictionary).has("p"):
+		await _bootstrap.reseat_player_near(_pose_position(you_pose))
+	else:
+		var host_pos: Vector3 = _pose_position(host_info["pose"])
+		await _bootstrap.reseat_player_near(host_pos + _tangent_offset(host_pos, 4.0))
 	_info("joined '%s' — welcome to their Moon" % String(host_info["nick"]))
 
 
@@ -688,8 +715,15 @@ func _on_host_command_executed(command: Dictionary, result: Dictionary) -> void:
 		return
 	var op := CoopCommandCodec.build_dig_op(command, result)
 	_dig_ops.append(op)
+	var truncated := 0
 	while _dig_ops.size() > MAX_DIG_OPS:
 		_dig_ops.pop_front()
+		truncated += 1
+	if truncated > 0:
+		push_warning(
+			"Coop: dig_ops ring truncated — dropped %d oldest (cap %d); late joiners miss early digs"
+			% [truncated, MAX_DIG_OPS]
+		)
 	if _registry.peer_ids().is_empty():
 		return
 	rpc("_cli_dig_op", op)
@@ -711,7 +745,13 @@ func _on_host_structural_event(event: Dictionary) -> void:
 # ------------------------------------------------------------ snapshot broadcast
 
 func _mark_snapshot_dirty() -> void:
+	# Same-frame structural_event + command_completed for one mutate: keep a
+	# single debounce start. Later frames still refresh debounce (burst coalesce).
+	var frame := Engine.get_process_frames()
+	if _snapshot_dirty and _snapshot_dirty_frame == frame:
+		return
 	_snapshot_dirty = true
+	_snapshot_dirty_frame = frame
 	_snapshot_debounce = SNAPSHOT_DEBOUNCE
 
 
@@ -939,6 +979,7 @@ func _srv_pose(pose: Dictionary) -> void:
 	var uid := _registry.uid_of(peer)
 	if uid.is_empty():
 		return
+	_last_poses[uid] = pose
 	for other: int in _registry.peer_ids():
 		if other != peer:
 			rpc_id(other, "_cli_pose", uid, pose)
@@ -1163,6 +1204,7 @@ func _teardown_host() -> void:
 	_registry = CoopPeerRegistry.new()
 	_pending_results.clear()
 	_dig_ops.clear()
+	_last_poses.clear()
 	_mode = Mode.OFFLINE
 	_info("stopped hosting")
 
@@ -1173,6 +1215,8 @@ func _teardown_client_and_reload() -> void:
 	if multiplayer.multiplayer_peer != null:
 		multiplayer.multiplayer_peer.close()
 	multiplayer.multiplayer_peer = null
+	_pending_dig_ops.clear()
+	_pending_dig_accum = 0.0
 	_mode = Mode.OFFLINE
 	# Reload rebuilds the single-player world from this machine's own save,
 	# re-enables persistence + meteorites and drops the replica — cheaper and
@@ -1208,6 +1252,32 @@ func _disconnect_host_hooks() -> void:
 
 func _pose_position(pose: Dictionary) -> Vector3:
 	return pose.get("p", Vector3.ZERO)
+
+
+## Retry join dig_ops that failed while the local chunk was not editable.
+## Light interval — not every physics tick (R9).
+func _tick_pending_dig_reapply(delta: float) -> void:
+	if _pending_dig_ops.is_empty() or _gateway == null:
+		return
+	_pending_dig_accum += delta
+	if _pending_dig_accum < PENDING_DIG_RETRY_INTERVAL:
+		return
+	_pending_dig_accum = 0.0
+	var remaining: Array = []
+	var recovered := 0
+	for op_variant: Variant in _pending_dig_ops:
+		if op_variant is Dictionary and _gateway.replay_remote_dig(op_variant):
+			recovered += 1
+		else:
+			remaining.append(op_variant)
+	_pending_dig_ops = remaining
+	if recovered > 0 and _pending_dig_ops.is_empty():
+		_info("join dig replay: recovered %d pending op(s)" % recovered)
+	elif recovered > 0:
+		push_warning(
+			"join dig replay: recovered %d, %d still pending"
+			% [recovered, _pending_dig_ops.size()]
+		)
 
 
 ## A point `dist` metres to the side of `world_pos` along the local surface, so

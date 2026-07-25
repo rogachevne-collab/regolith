@@ -59,6 +59,13 @@ func _is_active() -> bool:
 		and bool(_control_terminal.call("is_open"))
 	):
 		return false
+	# Пассажир: лента скрыта (политика PAX — только sit+look; co-pilot позже).
+	if (
+		_control_terminal != null
+		and _control_terminal.has_method("controls_permitted")
+		and not bool(_control_terminal.call("controls_permitted"))
+	):
+		return false
 	return (
 		_player != null
 		and _player.has_method("is_in_vehicle")

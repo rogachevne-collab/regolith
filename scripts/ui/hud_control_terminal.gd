@@ -338,7 +338,7 @@ func close_for_interact() -> void:
 func toggle() -> void:
 	if _open:
 		close()
-	else:
+	elif controls_permitted():
 		open()
 
 
@@ -351,11 +351,26 @@ func toggle() -> void:
 const INTERACT_RANGE_M := 4.0
 
 
+## K-пульт / компактная лента: пешком и водитель — да; пассажирское кресло —
+## жёсткий запрет (co-pilot permissions позже). Читает gateway seat id /
+## `is_local_seat_driver()`, без своего состояния посадки.
+func controls_permitted() -> bool:
+	if _gateway == null or not _gateway.has_method("get_local_seat_element_id"):
+		return true
+	if int(_gateway.call("get_local_seat_element_id")) <= 0:
+		return true
+	return (
+		_gateway.has_method("is_local_seat_driver")
+		and bool(_gateway.call("is_local_seat_driver"))
+	)
+
+
 func try_open_on_target(hit: InteractionHit) -> bool:
 	if (
 		hit == null
 		or not hit.valid
 		or hit.distance > INTERACT_RANGE_M
+		or not controls_permitted()
 		or str(hit.card_keys(_gateway.get_world()).get("archetype_id", "")) != "control_terminal"
 	):
 		return false
@@ -367,6 +382,8 @@ func try_open_on_target(hit: InteractionHit) -> bool:
 
 func open() -> void:
 	if _open:
+		return
+	if not controls_permitted():
 		return
 	if not UIWindowStack.push(self, Callable(self, "close"), Callable(self, "_on_stack_escape")):
 		return
@@ -432,16 +449,21 @@ func _process(delta: float) -> void:
 	if _interact_release_latch and not Input.is_action_pressed(&"interact"):
 		_interact_release_latch = false
 	_release_stale_holds()
-	# Бар обновляется, пока игрок сидит, даже если окно закрыто — компактная
+	if _open and not controls_permitted():
+		close()
+		return
+	# Бар обновляется, пока водитель сидит, даже если окно закрыто — компактная
 	# лента (hud_compact_action_bar.gd) переиспользует именно этот бар и эту
 	# же _fire_slot, а не дублирует резолв цели и исполнение глаголов.
-	# Список узлов/фейсплейт/аварии — тяжелее и нужны только открытому окну.
-	var seated := (
+	# Пассажир — без ленты и без фонового резолва. Список узлов/фейсплейт/
+	# аварии — тяжелее и нужны только открытому окну.
+	var seated_driver := (
 		_player != null
 		and _player.has_method("is_in_vehicle")
 		and bool(_player.call("is_in_vehicle"))
+		and controls_permitted()
 	)
-	if not _open and not seated:
+	if not _open and not seated_driver:
 		return
 	if _open and _fault_left > 0.0:
 		_fault_left = maxf(_fault_left - delta, 0.0)
@@ -742,10 +764,14 @@ func active_page_number() -> int:
 
 
 func fire_slot(index: int, pressed: bool, source := "") -> void:
+	if not controls_permitted():
+		return
 	_fire_slot(index, pressed, source)
 
 
 func set_active_page(index: int) -> void:
+	if not controls_permitted():
+		return
 	_set_page(index)
 
 
