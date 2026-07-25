@@ -40,9 +40,24 @@ extends Node3D
 ## wall of sand and nothing else — not the trajectory, not the depth, not where
 ## the ground changes. The default view is an orthographic section cut through
 ## the machine's own axis, with a drawn lid on the plane of the cut, the track
-## behind, the arc ahead and the arcs the minimum radius allows, a plan inset of
-## the whole trace, and a ground column beside it. Chase and free are still on
-## `C`; nothing in them changed.
+## behind, the arc ahead and the arcs the minimum radius allows. Chase and free
+## are still on `C`; nothing in them changed.
+##
+## Beside it stands **one instrument with three screens** — plan, profile, ground
+## column — and it is one instrument on purpose. It used to be three windows in
+## three corners, and the plan among them was a second orthographic render of the
+## whole world while the other two were drawings; they read as three panels
+## borrowed from three different games. Every screen is drawn from the record
+## now, off one clock, at one scale, in one case, and the plan's second render is
+## gone with the 0.40 ms a frame it cost.
+##
+## What was *not* done, and should not be done later: the readings were not
+## repainted. Sand warm, rock cool, worked ground rust, open bore black — that is
+## the driver's only read of what he is driving in, and flooding the screens with
+## one phosphor green would have bought a radar look with the whole of it. What
+## makes them one instrument is the case, the bezel, the grid at one price per
+## division, the type, the machine symbol, the accent, the shared metre and the
+## shared refresh. `V` and `B` put one screen out, `H` puts the instrument out.
 ##
 ## The cut is **not a plane**, and that is the one thing about this view that had
 ## to change. A driver who dives loses everything behind: the tunnel he dug is
@@ -69,7 +84,9 @@ extends Node3D
 ## section costs), `--ring-solid=N` walks the un-pinning path, `--dive` makes
 ## the autopilot climb and dive so the cut has to follow, `--flat-cut` runs the
 ## old plane instead of the surface, `--no-mark` runs it without the marking on
-## worked ground, and `--shot=<abs path>.png` saves the last frame — the only way
+## worked ground, `--no-plan` / `--no-profile` / `--no-instrument` walk what `V`,
+## `B` and `H` do to the case, and `--shot=<abs path>.png` saves the last frame —
+## the only way
 ## to check a view without sitting at it.
 
 ## The project's one grid. Not a knob: step 0 decided it, and construction,
@@ -183,6 +200,45 @@ const COURSE_COLOUR := Color(0.45, 0.92, 1.0)
 const COURSE_SHADOW := Color(0.07, 0.30, 0.42, 0.70)
 const ENVELOPE_COLOUR := Color(0.35, 0.62, 0.78, 0.55)
 const PLUMB_COLOUR := Color(1.0, 1.0, 1.0, 0.55)
+
+## The instrument's own palette — the case, not the readings.
+##
+## The two screens used to be two windows out of two different games: one was a
+## second render of the world, warm and lit, and the other was a drawing on a
+## dark ground. The obvious fix is to flood both with one colour and call it a
+## radar. That is the wrong fix and it was not taken: sand is warm, rock is cool,
+## worked ground is rust and open bore is black *because those mean something*,
+## and the driver reads the ground by hue before he reads anything else.
+##
+## So nothing below is ever mixed into a reading. What makes the two screens one
+## instrument is everything around the readings — one case, one bezel, one grid
+## at one price per division, one typeface at three sizes, one machine symbol,
+## one accent for "you are here" and for where the course goes, and one refresh
+## clock that both screens are visibly swept by.
+const HUD_CASE := Color(0.055, 0.062, 0.078, 0.94)
+const HUD_CASE_EDGE := Color(0.38, 0.48, 0.55, 0.80)
+const HUD_SCREEN := Color(0.035, 0.042, 0.055, 0.96)
+const HUD_SCREEN_EDGE := Color(0.32, 0.42, 0.50, 0.65)
+## The grid has to be legible over a screen of dry sand and over a screen of dark
+## rock without being two different grids, so it is a pale cool line rather than
+## either a light one or a dark one: it lifts off the rock and it cools the sand,
+## and the same two alphas do both.
+const HUD_GRID := Color(0.58, 0.74, 0.84, 0.20)
+const HUD_GRID_MAJOR := Color(0.62, 0.78, 0.88, 0.34)
+const HUD_TEXT := Color(0.80, 0.88, 0.92)
+const HUD_TEXT_DIM := Color(0.60, 0.70, 0.76)
+## Every word on a screen is set over this, one pixel down and across. The
+## screens are drawn *on* the readings and the readings run from near-black to
+## near-white, so a label without a shadow is a label that disappears somewhere.
+const HUD_TEXT_SHADOW := Color(0.02, 0.03, 0.04, 0.85)
+## The sweep. Barely there on purpose: it is a sign that the picture is live, and
+## anything strong enough to notice while reading is a fault and not a feature.
+const HUD_SCAN := Color(0.45, 0.92, 1.0, 0.13)
+const HUD_SCAN_LINE := Color(0.45, 0.92, 1.0, 0.030)
+## Three sizes and no more. A fourth size is how a panel stops looking built.
+const HUD_TITLE_PT := 13
+const HUD_LABEL_PT := 11
+const HUD_TICK_PT := 10
 
 enum View { ISO, CHASE, FREE }
 
@@ -403,20 +459,6 @@ void fragment() {
 ## Widths of the drawn ribbons, metres.
 @export var trail_width_m := 0.9
 @export var course_width_m := 0.5
-## The plan inset: on by default, and its size in pixels. The aspect is the
-## trace's own, so the whole box fits with nothing cropped.
-@export var plan_inset := true
-@export var plan_inset_px := Vector2i(400, 160)
-## The profile inset: the trace unrolled, drawn from the recorded path rather
-## than rendered. The plan inset is a second camera on the whole world every
-## frame; a second one of those for the side view would cost more than everything
-## else in this file put together, and a profile *should* be unrolled anyway —
-## a camera at the side of a tunnel that turns draws it foreshortened.
-@export var profile_inset := true
-@export var profile_inset_px := Vector2i(520, 190)
-## How often the profile re-reads the ground. It is a drawing of a hundred
-## metres of tunnel and it does not change in a frame.
-@export var profile_hz := 10.0
 ## How far back along the tunnel the chase camera rides, and how far off the
 ## axis. Back far enough to see the machine, close enough to stay in the lit
 ## part of the bore.
@@ -427,6 +469,61 @@ void fragment() {
 ## Metres per second the camera closes on where it should be. High enough to
 ## keep up in a turn, low enough to smooth the 0.25 m trail steps.
 @export var camera_follow_rate := 12.0
+
+@export_group("Instrument")
+## The whole instrument: one case, three screens. `H` at run time.
+##
+## It used to be three separate things in three corners — a rendered plan inset,
+## a drawn profile inset and a drawn ground column — and they read as three
+## windows from three different games. They are one box now, and the plan is
+## drawn from the recorded path and the maps like the other two rather than
+## rendered by a second camera on the world.
+@export var instrument := true
+## The plan screen — the trace seen from above. `V` at run time.
+@export var plan_screen := true
+## The profile screen — the trace unrolled. `B` at run time.
+##
+## Unrolled and not rendered, and that is not only about cost: a camera at the
+## side of a tunnel that turns draws it foreshortened, so the one view in which
+## a dive is a line going down has to be a drawing.
+@export var profile_screen := true
+## The width of a screen, in pixels. This is the one number the whole instrument
+## is scaled from: it is the trace's own length across the screen, so a metre is
+## the same number of pixels in every screen and a division of the grid is the
+## same width in both. Two panels drawn at two scales are two panels.
+@export var screen_width_px := 600
+## The ground-column screen down the right of the case. Narrow, and at its own
+## magnification — which is why it says so on its face.
+@export var column_width_px := 168
+## Where the case sits, from the bottom left corner of the window.
+@export var instrument_margin_px := Vector2i(16, 16)
+## What one division of the grid is worth, metres. The same in every screen; it
+## is written on the case so it never has to be guessed.
+@export var grid_step_m := 10.0
+## How far apart the distance ticks along the trace are, metres, and how often
+## one of them is numbered. The same numbers appear in the plan, on the trail
+## itself, and along the foot of the profile — which is what makes "sixty metres"
+## a place both screens agree about.
+@export var tick_step_m := 10.0
+@export var tick_label_every := 2
+## The vertical scale of the profile screen, as a multiple of the true one. One
+## is a true section: a metre down is the same number of pixels as a metre along,
+## and the same as a metre in the plan. Raise it if the tunnel's dive needs
+## exaggerating, and know that the grid stops being square when you do.
+@export var profile_v_scale := 1.0
+## How often the instrument re-reads the ground. It is a drawing of a hundred
+## metres of tunnel and it does not change in a frame — and the refresh is drawn
+## rather than hidden, because a picture that is a tenth of a second old should
+## say so.
+@export var instrument_hz := 10.0
+## The sweep: one pass of a faint bar across every screen at once, on the case's
+## own clock. Both screens swept by the same bar at the same moment is the
+## cheapest possible statement that they are one instrument.
+@export var scan_sweep := true
+@export var scan_period_s := 2.4
+## Scan lines over the screens. Very faint — a reading that is harder to read is
+## a worse instrument however good it looks.
+@export var scan_lines := true
 
 # --- state -------------------------------------------------------------------
 
@@ -499,12 +596,28 @@ var _sun: DirectionalLight3D
 var _overlay: MeshInstance3D
 var _overlay_mesh: ImmediateMesh
 var _overlay_material: StandardMaterial3D
-var _plan_viewport: SubViewport
-var _plan_camera: Camera3D
-var _plan_frame: Control
-var _ruler: Control
+## The instrument. One case, three screens, one clock.
+var _case: Control
+var _plan: Control
 var _profile: Control
-var _profile_label: Label
+var _ruler: Control
+## The sheet over the screens: the sweep and the refresh lamp, and nothing that
+## is a reading. It is the one part of the instrument redrawn every frame.
+var _glass: Control
+## Metres to pixels — one number for the whole instrument, derived from the
+## screen width and the length of the trace.
+var _px_per_m := 5.0
+## The plan's ground map, one texel per square metre: what the column is made of
+## and whether the machine has been through it. Rebuilt on the instrument's clock
+## and only when something in it moved, which most of the time is nothing.
+var _plan_words := PackedInt32Array()
+var _plan_texture: ImageTexture
+var _plan_map_dirty := true
+## Where the sweep bar stands, 0..1 across every screen at once.
+var _scan_phase := 0.0
+## Lit for one refresh period after a sample is taken, so the blip on the case
+## blinks at exactly the rate the screens are being redrawn from.
+var _scan_blip := 0.0
 ## The profile's samples, rebuilt on their own slow clock: distance along the
 ## trace, the axis there, the top of the rock, how full the bore is, and where
 ## the cut stands. The projected course carries its own two.
@@ -573,6 +686,18 @@ var _prof_worst_ms := 0.0
 ## average of a spike that lands on one tick in twenty is a number that hides it.
 var _prof_map_ms := 0.0
 var _prof_cap_ms := 0.0
+## What the instrument costs: one rebuild of the plan's ground map and one
+## resample of the profile, both on the instrument's own clock rather than the
+## frame's. Worst rather than mean, for the same reason as the flare.
+var _prof_plan_ms := 0.0
+var _prof_pf_ms := 0.0
+## And the mean of the same two, because what they cost per *frame* is what they
+## cost per refresh divided by however many frames a refresh covers — and a worst
+## case on its own cannot be divided by anything.
+var _prof_plan_sum := 0.0
+var _prof_plan_n := 0
+var _prof_pf_sum := 0.0
+var _prof_pf_n := 0
 ## Where the ground last changed under the machine, for the headless check:
 ## a run that never leaves the sand proves nothing about the trace.
 var _seen_grounds := {}
@@ -604,6 +729,15 @@ func _ready() -> void:
 			# The old plane, for measuring what the surface costs and for proving
 			# it still works.
 			cut_follows_tunnel = false
+		elif arg == "--no-plan":
+			# The case has to close over a missing screen, and a layout that is
+			# computed rather than written down is a layout only a key press
+			# reaches. These three walk it.
+			plan_screen = false
+		elif arg == "--no-profile":
+			profile_screen = false
+		elif arg == "--no-instrument":
+			instrument = false
 		elif arg == "--no-mark":
 			# The lid and the volume without the marking on worked ground, which
 			# is otherwise a path only a key press reaches.
@@ -618,6 +752,7 @@ func _ready() -> void:
 	_build_shapes()
 	_build_fields()
 	_build_cut_map()
+	_build_plan_map()
 	_build_views()
 	_build_machine()
 	_build_overlay()
@@ -911,6 +1046,11 @@ func _mark_dug(c: Vector3i, index: int) -> void:
 	var col := (c.z >> CUT_MAP_SHIFT) * CUT_MAP.x + (c.x >> CUT_MAP_SHIFT)
 	var low := float(c.y) * CELL
 	var high := low + CELL
+	# The first cell taken out of a map column is the one that turns it into
+	# worked ground on the plan. Every cell after it is already inside a column
+	# that is drawn as worked, so the plan's map does not have to hear about it.
+	if _cut_pixels[col * 4 + 1] > _cut_pixels[col * 4 + 2]:
+		_plan_map_dirty = true
 	if low < _cut_pixels[col * 4 + 1]:
 		_cut_pixels[col * 4 + 1] = low
 		_cut_map_dirty = true
@@ -937,6 +1077,115 @@ func _rock_top_m(x_m: float, z_m: float) -> float:
 		# and a plateau long enough to be unmistakably *in* the rock.
 		top += rock_hill_m * smoothstep(0.12, 0.42, sin(PI * t))
 	return top + (z_m - float(BOX.z) * CELL * 0.5) * rock_cross_slope
+
+
+# --- the plan's ground map ----------------------------------------------------
+#
+# The trace seen from above, one texel per square metre, at the same resolution
+# and on the same lattice as the cut map — so "has the machine been through this
+# column" is a read of the cut map's own envelope and not a second bookkeeping.
+#
+# What is drawn is the same three things the lid draws and in the same colours:
+# rock, banded by how far it stands over the driving depth; sand, banded by how
+# far under it the rock starts; and ground the machine has been through, tinted
+# with the same rust the volume is tinted with. Same rule as the lid — darker is
+# more rock — so the plan, the profile, the column and the section are one map
+# read four ways.
+#
+# It is a texture and not a few thousand rectangles because the panel is redrawn
+# every frame for the sweep and the map changes ten times a second at most.
+
+
+func _build_plan_map() -> void:
+	_plan_words.resize(CUT_MAP.x * CUT_MAP.y)
+	_refresh_plan_map()
+	_plan_texture = ImageTexture.create_from_image(_plan_image())
+
+
+func _plan_image() -> Image:
+	return Image.create_from_data(
+		CUT_MAP.x, CUT_MAP.y, false, Image.FORMAT_RGBA8,
+		_plan_words.to_byte_array()
+	)
+
+
+## The colour of one map column, as a packed RGBA word. Little-endian, which is
+## the byte order `FORMAT_RGBA8` wants.
+static func _plan_word(colour: Color) -> int:
+	return (
+		int(clampf(colour.r, 0.0, 1.0) * 255.0)
+		| (int(clampf(colour.g, 0.0, 1.0) * 255.0) << 8)
+		| (int(clampf(colour.b, 0.0, 1.0) * 255.0) << 16)
+		| (255 << 24)
+	)
+
+
+## Every colour the plan can be, built once per refresh: sand bands, then rock
+## bands, then the same twenty again as worked ground. Twenty words rather than a
+## colour mixed per texel is what keeps a rebuild of the whole trace under a
+## millisecond.
+func _plan_palette() -> PackedInt32Array:
+	var out := PackedInt32Array()
+	var span := maxf(float(cap_bands - 1), 1.0)
+	for dug in 2:
+		for band in cap_bands:
+			var colour := CAP_SAND_NEAR.lerp(CAP_SAND_FAR, float(band) / span)
+			if dug == 1:
+				colour = colour.lerp(DUG_TINT, DUG_TINT_MIX)
+			out.append(_plan_word(colour))
+		for band in cap_bands:
+			var colour := CAP_ROCK_THIN.lerp(CAP_ROCK_DEEP, float(band) / span)
+			if dug == 1:
+				colour = colour.lerp(DUG_TINT, DUG_TINT_MIX)
+			out.append(_plan_word(colour))
+	return out
+
+
+## Read the rock map into the plan's texels.
+##
+## The reference height is the bore axis and not the cut, and that is the whole
+## difference between this and the lid: the lid answers "what is at the plane I
+## am looking through", and looking down at the trace the driver is asking "at
+## the depth I drive at, is there rock in front of me". So rock is banded by how
+## far it stands *above the axis* — the height he would have to climb over — and
+## sand by how far under the axis the rock starts.
+func _refresh_plan_map() -> void:
+	_plan_map_dirty = false
+	var started := Time.get_ticks_usec()
+	var palette := _plan_palette()
+	var bands := cap_bands
+	# Over the same ten metres in both directions, and not over a bore radius the
+	# way the lid bands rock. The lid is reading one plane and everything more
+	# than a radius over it is the same news; the plan is reading a hill fifteen
+	# metres tall, and banded over three of them the whole hill came out as one
+	# flat slab of the darkest blue with no shape in it at all.
+	var rock_step := maxf(cap_probe_m / float(bands), 0.01)
+	var sand_step := maxf(cap_probe_m / float(bands), 0.01)
+	var dug_slot := bands * 2 if mark_disturbed else 0
+	var half := CUT_MAP_STEP >> 1
+	for mz in CUT_MAP.y:
+		var z := (mz << CUT_MAP_SHIFT) + half
+		var row := mz * CUT_MAP.x
+		var z_base := z * BOX.x
+		for mx in CUT_MAP.x:
+			var col := row + mx
+			var over := (
+				float(_rock_top[z_base + (mx << CUT_MAP_SHIFT) + half] + 1) * CELL
+				- bore_axis_y_m
+			)
+			var slot := (
+				bands + clampi(int(over / rock_step), 0, bands - 1) if over > 0.0
+				else clampi(int(-over / sand_step), 0, bands - 1)
+			)
+			if _cut_pixels[col * 4 + 1] <= _cut_pixels[col * 4 + 2]:
+				slot += dug_slot
+			_plan_words[col] = palette[slot]
+	if _plan_texture != null:
+		_plan_texture.update(_plan_image())
+	var spent := float(Time.get_ticks_usec() - started) / 1000.0
+	_prof_plan_ms = maxf(_prof_plan_ms, spent)
+	_prof_plan_sum += spent
+	_prof_plan_n += 1
 
 
 func _build_views() -> void:
@@ -1100,35 +1349,6 @@ func _build_machine() -> void:
 	# because a rotation inherited from the key is not the direction it reads as.
 	_sun.add_child(fill)
 	fill.global_rotation = Vector3(deg_to_rad(-34.0), deg_to_rad(-146.0), 0.0)
-	_build_plan_view()
-
-
-## A second ortho camera looking straight down on the whole trace, rendered into
-## a corner inset. The isometric view answers "what is around me"; nothing in it
-## answers "where am I on the run", which is the question a drive with an
-## eighteen-metre turning radius is actually made of.
-func _build_plan_view() -> void:
-	_plan_viewport = SubViewport.new()
-	_plan_viewport.size = plan_inset_px
-	_plan_viewport.transparent_bg = false
-	# No `own_world_3d`: the inset draws this same world, so the lid, the trail
-	# and the projected course cannot disagree between the two views.
-	_plan_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-	add_child(_plan_viewport)
-	_plan_camera = Camera3D.new()
-	_plan_camera.projection = Camera3D.PROJECTION_ORTHOGONAL
-	# Height first: the inset's aspect is the trace's, so fixing the cross-trace
-	# extent fits the length as well.
-	_plan_camera.keep_aspect = Camera3D.KEEP_HEIGHT
-	_plan_camera.size = float(BOX.z) * CELL * 1.04
-	_plan_camera.near = 1.0
-	_plan_camera.far = 400.0
-	_plan_camera.position = Vector3(
-		float(BOX.x) * CELL * 0.5, 200.0, float(BOX.z) * CELL * 0.5
-	)
-	_plan_camera.rotation = Vector3(-PI * 0.5, 0.0, 0.0)
-	_plan_camera.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
-	_plan_viewport.add_child(_plan_camera)
 
 
 ## Where the machine has been and where it is going, as flat ribbons laid in the
@@ -1172,73 +1392,142 @@ func _build_hud() -> void:
 	_legend.text = "\n".join([
 		"W / S — thrust      A / D — course      Q / E — pitch      wheel — cut depth",
 		"F — cut: rides the tunnel / flat      T — mark the ground you have worked",
-		"V — plan inset      B — profile inset      [ / ] — zoom      Z / X — turn the view",
-		"C — view: section / chase / free (free: hold RMB + WASD)      R — restart",
+		"V — plan screen      B — profile screen      H — instrument",
+		"[ / ] — zoom      Z / X — turn the view      R — restart",
+		"C — view: section / chase / free (free: hold RMB + WASD)",
 	])
+	# The keys and the readout are not screens and do not get a case, but they do
+	# get the instrument's type colours — white text beside a panel that has none
+	# on it is the loudest thing on the screen and it is the least important.
+	_legend.add_theme_color_override("font_color", HUD_TEXT_DIM)
 	layer.add_child(_legend)
 	_status = Label.new()
 	_outline(_status)
-	_status.position = Vector2(16.0, 108.0)
+	_status.add_theme_color_override("font_color", HUD_TEXT)
+	_status.position = Vector2(16.0, 140.0)
 	layer.add_child(_status)
 
-	_plan_frame = Control.new()
-	_plan_frame.position = Vector2(16.0, 300.0)
-	_plan_frame.size = Vector2(plan_inset_px) + Vector2(4.0, 4.0)
-	_plan_frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	layer.add_child(_plan_frame)
-	var backing := ColorRect.new()
-	backing.color = Color(0.06, 0.06, 0.08, 0.9)
-	backing.size = _plan_frame.size
-	backing.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_plan_frame.add_child(backing)
-	var plan_image := TextureRect.new()
-	plan_image.texture = _plan_viewport.get_texture()
-	plan_image.position = Vector2(2.0, 2.0)
-	plan_image.size = Vector2(plan_inset_px)
-	plan_image.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_plan_frame.add_child(plan_image)
-	var plan_label := Label.new()
-	_outline(plan_label)
-	plan_label.text = "plan — the whole trace"
-	plan_label.position = Vector2(4.0, -20.0)
-	_plan_frame.add_child(plan_label)
+	# The case. Everything that used to be a window in a corner is a screen in
+	# this, and the case is what draws every frame, every bezel, every label and
+	# the sweep — so no screen can drift into a style of its own.
+	_case = Control.new()
+	_case.name = "Instrument"
+	_case.anchor_top = 1.0
+	_case.anchor_bottom = 1.0
+	_case.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_case.draw.connect(_draw_case)
+	layer.add_child(_case)
+
+	# The plan: the trace seen from above, drawn from the recorded path and the
+	# rock map. It used to be a second orthographic camera on the whole world,
+	# rendered every frame — measured at 0.40 ms a frame of the 1.90 the scene
+	# cost — and while it was a render and the profile was a drawing there was no
+	# chance of the two ever looking like one instrument.
+	_plan = Control.new()
+	_plan.name = "PlanScreen"
+	_plan.clip_contents = true
+	_plan.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# A ground map of one texel per square metre, blown up five times. Nearest,
+	# because a texel is a square metre of ground and blurring it into its
+	# neighbours would invent a boundary that is not on the map.
+	_plan.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_plan.draw.connect(_draw_plan)
+	_case.add_child(_plan)
 
 	# The trace unrolled: the one thing neither the section nor the plan can show,
-	# because both of them are looking down a tunnel that turns. Drawn from the
-	# recorded path and the rock map rather than rendered — a third camera on the
-	# world would cost more than everything else in this file, and a profile of a
-	# tunnel that turns is not a picture of it from the side anyway.
+	# because both of them are looking down a tunnel that turns.
 	_profile = Control.new()
-	_profile.position = Vector2(16.0, 512.0)
-	_profile.size = Vector2(profile_inset_px)
-	# The course ahead is drawn past the right edge whenever the run is short, so
-	# that the part actually driven keeps most of the panel.
+	_profile.name = "ProfileScreen"
+	# The course ahead runs off the right edge whenever the run is short.
 	_profile.clip_contents = true
 	_profile.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_profile.draw.connect(_draw_profile)
-	layer.add_child(_profile)
-	# On the layer and not on the panel: the panel clips its children, which is
-	# the whole point of it, and a caption is a child.
-	_profile_label = Label.new()
-	_outline(_profile_label)
-	_profile_label.text = "profile — along the tunnel"
-	_profile_label.position = _profile.position + Vector2(4.0, -22.0)
-	layer.add_child(_profile_label)
+	_case.add_child(_profile)
 
-	# The ruler is a section of its own: the column of ground the machine is
-	# standing in, and the same column twenty metres ahead. Two columns rather
-	# than one because the question underground is never "what am I in" but
-	# "what am I about to be in".
+	# The column of ground the machine is standing in, and the same column twenty
+	# metres ahead. Two columns rather than one because the question underground
+	# is never "what am I in" but "what am I about to be in".
 	_ruler = Control.new()
-	_ruler.anchor_left = 1.0
-	_ruler.anchor_right = 1.0
-	_ruler.offset_left = -176.0
-	_ruler.offset_right = -16.0
-	_ruler.offset_top = 16.0
-	_ruler.offset_bottom = 372.0
+	_ruler.name = "ColumnScreen"
+	_ruler.clip_contents = true
 	_ruler.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_ruler.draw.connect(_draw_ruler)
-	layer.add_child(_ruler)
+	_case.add_child(_ruler)
+
+	# Added last so it is over every screen. Nothing on it is a reading.
+	_glass = Control.new()
+	_glass.name = "Glass"
+	_glass.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_glass.draw.connect(_draw_glass)
+	_case.add_child(_glass)
+	_layout_instrument()
+
+
+## Where every screen stands and how big the case has to be to hold them.
+##
+## Computed rather than written down, because `V` and `B` put screens out and a
+## case with a hole in it where a screen used to be is not a case. One number
+## drives all of it: `screen_width_px` is the length of the trace across a
+## screen, and every extent in every screen is that many pixels per metre.
+func _layout_instrument() -> void:
+	var trace_m := float(BOX.x) * CELL
+	_px_per_m = float(screen_width_px) / maxf(trace_m, 0.001)
+	var pad := 10.0
+	var head := 20.0
+	var caption := 15.0
+	var status := 18.0
+	var gap := 8.0
+	var plan_h := float(BOX.z) * CELL * _px_per_m
+	var profile_h := (sand_top_m + 2.0) * _px_per_m * maxf(profile_v_scale, 0.05)
+	var stack := 0.0
+	if plan_screen:
+		stack += caption + plan_h
+	if profile_screen:
+		stack += (gap if stack > 0.0 else 0.0) + caption + profile_h
+	# The column screen is always in the case: it is the readout the driver looks
+	# at when he has stopped looking at the trace, and it is the same instrument.
+	# It takes exactly the height of whatever is stacked beside it — a case with a
+	# screen out of it should close up, not leave a hole where the screen was —
+	# and only falls back to a height of its own when there is nothing beside it.
+	var column_h := stack if stack > 0.0 else 200.0
+	var body := maxf(stack, column_h)
+	var width := pad * 2.0 + float(column_width_px)
+	if stack > 0.0:
+		width += float(screen_width_px) + gap
+	var height := pad * 2.0 + head + body + gap + status
+	_case.offset_left = float(instrument_margin_px.x)
+	_case.offset_right = _case.offset_left + width
+	_case.offset_bottom = -float(instrument_margin_px.y)
+	_case.offset_top = _case.offset_bottom - height
+
+	var y := pad + head
+	if plan_screen:
+		_plan.position = Vector2(pad, y + caption)
+		_plan.size = Vector2(float(screen_width_px), plan_h)
+		y += caption + plan_h + gap
+	if profile_screen:
+		_profile.position = Vector2(pad, y + caption)
+		_profile.size = Vector2(float(screen_width_px), profile_h)
+	_ruler.position = Vector2(
+		width - pad - float(column_width_px), pad + head + caption
+	)
+	_ruler.size = Vector2(float(column_width_px), column_h - caption)
+	_glass.position = Vector2.ZERO
+	_glass.size = Vector2(width, height)
+	_case.visible = instrument
+	_plan.visible = plan_screen
+	_profile.visible = profile_screen
+	_redraw_screens()
+
+
+## Everything on the instrument except the glass. On the instrument's own clock,
+## which is the whole point: the readings under the sweep are a tenth of a second
+## old and the instrument does not pretend otherwise.
+func _redraw_screens() -> void:
+	_case.queue_redraw()
+	_plan.queue_redraw()
+	_profile.queue_redraw()
+	_ruler.queue_redraw()
 
 
 # --- driving -----------------------------------------------------------------
@@ -1538,6 +1827,9 @@ func _lower_rock_top(c: Vector3i) -> void:
 	while top >= 0 and _rock.mass_at(c.x, top, c.z) <= 0.5:
 		top -= 1
 	_rock_top[column] = top
+	# The plan is a drawing of this map, so a bore through the crest of the hill
+	# has to show up on it as the hill being eaten.
+	_plan_map_dirty = true
 
 
 ## Set the spoil down on the bore floor behind the shield. Returns what was
@@ -2119,13 +2411,37 @@ func _process(delta: float) -> void:
 	_update_camera(delta)
 	_update_overlay()
 	_update_hud()
-	_ruler.queue_redraw()
-	if _profile.visible:
-		_pf_due -= delta
-		if _pf_due <= 0.0:
-			_pf_due = 1.0 / maxf(profile_hz, 1.0)
-			_sample_profile()
-		_profile.queue_redraw()
+	_update_instrument(delta)
+
+
+## The instrument's own clock, and the one thing on this HUD that is shared by
+## every screen rather than owned by one of them.
+##
+## Both readings are taken on the same tick of it — the profile's samples and the
+## plan's ground map — so the two screens can never be a frame apart in what they
+## are showing, which is a thing the old pair could not promise: one of them was
+## a live render of the world and the other was a tenth of a second old.
+func _update_instrument(delta: float) -> void:
+	if not instrument:
+		return
+	var period := 1.0 / maxf(instrument_hz, 1.0)
+	_scan_blip = maxf(_scan_blip - delta / maxf(period * 0.4, 0.001), 0.0)
+	_scan_phase = fmod(_scan_phase + delta / maxf(scan_period_s, 0.05), 1.0)
+	_pf_due -= delta
+	if _pf_due <= 0.0:
+		_pf_due = period
+		_scan_blip = 1.0
+		# Sampled whether or not the profile is being looked at: the case's own
+		# status line reads how full the bore behind is off these samples, and a
+		# status line that says 0 % because a screen was switched off is a lie
+		# printed on the instrument.
+		_sample_profile()
+		if plan_screen and _plan_map_dirty:
+			_refresh_plan_map()
+		_redraw_screens()
+	# Every frame, and it is the only thing that is: a sweep redrawn ten times a
+	# second is a stutter, and a sweep is what makes a still panel read as live.
+	_glass.queue_redraw()
 
 
 ## Where the machine was `back_m` ago, as `[position, forward]`. Along the
@@ -2356,98 +2672,426 @@ func _rock_surface_m(x_m: float, z_m: float) -> float:
 	return float(_rock_top[z * BOX.x + x] + 1) * CELL
 
 
-## Two ground columns, drawn to scale: where the machine is standing and what it
-## will be standing in twenty metres from now. The one number a tunnel driver
-## never has — how much ground is over the crown — is on it, and so is the
-## boundary the whole trace is about.
-func _draw_ruler() -> void:
-	_ruler.draw_rect(Rect2(Vector2.ZERO, _ruler.size), Color(0.05, 0.05, 0.07, 0.82))
-	var font := _ruler.get_theme_default_font()
-	var font_size := 12
-	var box := _ruler.size
-	var top := 22.0
-	var height := box.y - top - 18.0
-	var world_top := sand_top_m + 2.0
-	var radius := bore_diameter_m * 0.5
-	var ahead := _pos + _forward() * 20.0
-	var columns := [
-		["here", _pos.x, _pos.z, 8.0],
-		["+20 m", ahead.x, ahead.z, 84.0],
-	]
-	for entry in columns:
-		var label: String = entry[0]
-		var rock_m := _rock_surface_m(entry[1], entry[2])
-		var left: float = entry[3]
-		var width := 60.0
-		var sand_px := top + height * (1.0 - clampf(sand_top_m / world_top, 0.0, 1.0))
-		var rock_px := top + height * (1.0 - clampf(rock_m / world_top, 0.0, 1.0))
-		var base_px := top + height
-		_ruler.draw_rect(
-			Rect2(left, sand_px, width, base_px - sand_px), CAP_SAND_FAR
-		)
-		_ruler.draw_rect(
-			Rect2(left, rock_px, width, base_px - rock_px), CAP_ROCK_DEEP
-		)
-		_ruler.draw_string(
-			font, Vector2(left, top - 8.0), label,
-			HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.85, 0.85, 0.9)
-		)
-		# The bore, to scale, at the machine's own axis: the gap between the top
-		# of that box and the rock band is the cover, and it is a length on the
-		# screen rather than a number to be trusted.
-		var axis_y := _pos.y if label == "here" else ahead.y
-		var crown_px := top + height * (
-			1.0 - clampf((axis_y + radius) / world_top, 0.0, 1.0)
-		)
-		var invert_px := top + height * (
-			1.0 - clampf((axis_y - radius) / world_top, 0.0, 1.0)
-		)
-		_ruler.draw_rect(
-			Rect2(left + 14.0, crown_px, 32.0, invert_px - crown_px),
-			Color(0.08, 0.09, 0.11)
-		)
-		if label == "here":
-			_ruler.draw_rect(
-				Rect2(left + 14.0, crown_px, 32.0, invert_px - crown_px),
-				Color(0.95, 0.78, 0.35), false, 2.0
+# --- the instrument ----------------------------------------------------------
+#
+# One case, three screens, one clock.
+#
+# What follows is split down the middle into chrome and readings, and that split
+# is the whole answer to "two windows out of two different games":
+#
+#   * the chrome — case, bezel, grid, ticks, type, the machine symbol, the accent
+#     and the sweep — is drawn by shared code and comes out identical in every
+#     screen. There is one `_bezel`, one `_screen_grid`, one `_machine_symbol`,
+#     one `_scan`. A screen cannot drift into a style of its own because it has
+#     no style of its own to drift into.
+#
+#   * the readings are untouched. Sand stays warm, rock stays cool, worked ground
+#     stays rust, open bore stays black. Flooding the lot with one phosphor
+#     colour would have made a radar out of this in an afternoon and thrown away
+#     the only thing on the screen that tells the driver what he is driving in.
+#
+# The unit that ties the screens to each other is the metre. `_px_per_m` is
+# derived once, in `_layout_instrument`, from the screen width and the length of
+# the trace, and every extent in every screen is that many pixels per metre — so
+# a ten metre division is the same width of glass in the plan as in the profile,
+# a 6 m bore is the same 30 px in both, and the numbers written along the trail
+# in one screen are the numbers written along the foot of the other.
+
+
+## The one typeface on the instrument. Three sizes and no more.
+func _hud_font() -> Font:
+	return _case.get_theme_default_font()
+
+
+## Every word on this instrument goes through here, and it is one line of drop
+## shadow. Without it half the labels are white on a dune and the other half are
+## grey on black rock, which is exactly how a panel stops looking designed.
+func _hud_text(
+	on: CanvasItem,
+	font: Font,
+	at: Vector2,
+	text: String,
+	colour: Color,
+	points := HUD_TICK_PT
+) -> void:
+	on.draw_string(
+		font, at + Vector2.ONE, text, HORIZONTAL_ALIGNMENT_LEFT, -1, points,
+		HUD_TEXT_SHADOW
+	)
+	on.draw_string(
+		font, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, points, colour
+	)
+
+
+## The frame of everything here: a hairline and four corner brackets. The case
+## goes through it and so does every screen, which is most of the reason they
+## read as parts of one object rather than as neighbours.
+func _bezel(on: CanvasItem, rect: Rect2, edge: Color, corner := 9.0) -> void:
+	on.draw_rect(rect, edge, false, 1.0)
+	var bright := Color(edge.r, edge.g, edge.b, minf(edge.a * 1.9, 1.0))
+	var xs: Array[float] = [rect.position.x, rect.end.x]
+	var ys: Array[float] = [rect.position.y, rect.end.y]
+	for ix in 2:
+		var sx := 1.0 if ix == 0 else -1.0
+		for iy in 2:
+			var sy := 1.0 if iy == 0 else -1.0
+			var at := Vector2(xs[ix], ys[iy])
+			on.draw_line(at, at + Vector2(sx * corner, 0.0), bright, 2.0)
+			on.draw_line(at, at + Vector2(0.0, sy * corner), bright, 2.0)
+
+
+## The grid a screen is ruled with. One price per division across the whole
+## instrument — the price is written on the case, so it never has to be counted —
+## and every fifth line brighter, because ten of anything is easier to find than
+## a hundred of it.
+func _screen_grid(
+	on: CanvasItem,
+	size: Vector2,
+	step_x: float,
+	step_y: float,
+	y_from_bottom: bool,
+	base := -1.0,
+	major := 5
+) -> void:
+	# Where the horizontal lines are counted from. The screens that draw a height
+	# count from the level that is zero metres on them, which is not always the
+	# bottom edge of the glass.
+	var zero := base if base >= 0.0 else size.y
+	if step_x > 3.0:
+		var i := 1
+		var x := step_x
+		while x < size.x - 0.5:
+			on.draw_line(
+				Vector2(x, 0.0), Vector2(x, size.y),
+				HUD_GRID_MAJOR if i % major == 0 else HUD_GRID, 1.0
 			)
-	var surface_px := top + height * (1.0 - clampf(sand_top_m / world_top, 0.0, 1.0))
-	_ruler.draw_line(
-		Vector2(0.0, surface_px), Vector2(box.x, surface_px),
-		Color(0.95, 0.95, 1.0, 0.8), 1.0
+			x += step_x
+			i += 1
+	if step_y > 3.0:
+		var i := 1
+		var offset := step_y
+		while offset < size.y - 0.5:
+			var y := zero - offset if y_from_bottom else offset
+			if y > 0.5 and y < size.y - 0.5:
+				on.draw_line(
+					Vector2(0.0, y), Vector2(size.x, y),
+					HUD_GRID_MAJOR if i % major == 0 else HUD_GRID, 1.0
+				)
+			offset += step_y
+			i += 1
+
+
+## Scan lines. What makes a screen look like a screen when nothing on it moves.
+## Faint to the point of being arguable, and that is the specification: anything
+## strong enough to notice while reading a depth off the profile is a fault
+## dressed up as a feature. Drawn into the screen itself, because it does not
+## move and so costs nothing between refreshes.
+func _scan(on: CanvasItem, size: Vector2) -> void:
+	if not scan_lines:
+		return
+	var y := 1.0
+	while y < size.y:
+		on.draw_line(Vector2(0.0, y), Vector2(size.x, y), HUD_SCAN_LINE, 1.0)
+		y += 4.0
+
+
+## The glass: one sheet over the whole case, and the only thing here redrawn
+## every frame.
+##
+## The sweep is one bar travelling across the *instrument* and not one bar per
+## screen. It crosses the plan and the profile at the same instant at the same
+## column, then goes on and crosses the ground column — which is a statement no
+## amount of matching bezel can make, that these are three faces of one machine.
+##
+## It is on its own layer for a reason that is not cosmetic. The screens under it
+## are a few hundred draw calls each and they are redrawn on the instrument's own
+## clock, ten times a second; the sweep and the refresh lamp are eight draw calls
+## and they are redrawn every frame. Drawing the screens every frame instead cost
+## 0.84 ms a frame — more than the second world render this whole pass removed.
+func _draw_glass() -> void:
+	var size := _glass.size
+	var blip := Color(
+		COURSE_COLOUR.r, COURSE_COLOUR.g, COURSE_COLOUR.b,
+		0.16 + 0.78 * _scan_blip
 	)
-	_ruler.draw_string(
-		font, Vector2(0.0, surface_px - 4.0), "surface",
-		HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.95, 0.95, 1.0, 0.8)
+	_glass.draw_circle(Vector2(size.x - 27.0, 17.0), 3.0, blip)
+	if not scan_sweep:
+		return
+	var x := _scan_phase * size.x
+	var trail := Color(HUD_SCAN.r, HUD_SCAN.g, HUD_SCAN.b, HUD_SCAN.a * 0.5)
+	for screen: Control in [_plan, _profile, _ruler]:
+		if not screen.visible:
+			continue
+		var rect := Rect2(screen.position, screen.size)
+		var from := maxf(x - 10.0, rect.position.x)
+		var to := minf(x, rect.end.x)
+		if to <= from:
+			continue
+		# A band behind the line and not a line on its own: a hairline at a
+		# fractional position flickers as it is rounded, and this is meant to be
+		# barely seen.
+		_glass.draw_rect(
+			Rect2(from, rect.position.y, to - from, rect.size.y), trail
+		)
+		if x <= rect.end.x:
+			_glass.draw_line(
+				Vector2(x, rect.position.y), Vector2(x, rect.end.y), HUD_SCAN, 1.0
+			)
+
+
+## The machine, in whichever screen has one. The same arrowhead, the same size,
+## the same accent, pointed the way it is going — in the plan that is the course,
+## in the profile it is the pitch — so the eye never has to learn two of them.
+## The ring around it is the "you are here" and nothing else on the instrument is
+## allowed to be a ring.
+func _machine_symbol(on: CanvasItem, at: Vector2, heading: Vector2, size := 7.0) -> void:
+	var f := (
+		heading.normalized() if heading.length_squared() > 1e-8 else Vector2.RIGHT
 	)
-	var cut_px := top + height * (1.0 - clampf(_cut_y / world_top, 0.0, 1.0))
-	_ruler.draw_line(
-		Vector2(0.0, cut_px), Vector2(box.x, cut_px),
-		Color(0.45, 0.92, 1.0, 0.7), 1.0
+	var r := Vector2(-f.y, f.x)
+	var points := PackedVector2Array([
+		at + f * size,
+		at - f * size * 0.6 + r * size * 0.66,
+		at - f * size * 0.18,
+		at - f * size * 0.6 - r * size * 0.66,
+	])
+	var ring := Color(COURSE_COLOUR.r, COURSE_COLOUR.g, COURSE_COLOUR.b, 0.45)
+	on.draw_arc(at, size * 2.0, 0.0, TAU, 28, ring, 1.0)
+	on.draw_colored_polygon(points, COURSE_COLOUR)
+	var outline := points
+	outline.append(points[0])
+	on.draw_polyline(outline, HUD_SCREEN, 1.0)
+
+
+## A caption over a screen, and the bezel round it. The left half names the
+## screen, the right half says what one division of its grid is worth — which is
+## the one thing a grid must never leave to be guessed.
+func _screen_caption(
+	font: Font, screen: Control, name: String, note: String
+) -> void:
+	var at := screen.position
+	var size := screen.size
+	_case.draw_string(
+		font, at + Vector2(1.0, -5.0), name, HORIZONTAL_ALIGNMENT_LEFT, -1,
+		HUD_LABEL_PT, HUD_TEXT
 	)
-	_ruler.draw_string(
-		font, Vector2(0.0, cut_px - 4.0), "cut",
-		HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.45, 0.92, 1.0, 0.8)
+	var width := font.get_string_size(
+		note, HORIZONTAL_ALIGNMENT_LEFT, -1, HUD_TICK_PT
+	).x
+	_case.draw_string(
+		font, at + Vector2(size.x - width - 1.0, -5.0), note,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, HUD_TICK_PT, HUD_TEXT_DIM
 	)
-	_ruler.draw_string(
-		font, Vector2(0.0, box.y - 4.0),
-		"%.1f m deep   cover %.1f m" % [
-			sand_top_m - _pos.y,
-			maxf(sand_top_m - (_pos.y + radius), 0.0),
+	_bezel(
+		_case, Rect2(at - Vector2.ONE, size + Vector2(2.0, 2.0)),
+		HUD_SCREEN_EDGE, 8.0
+	)
+
+
+## How much bigger than true scale the column screen is drawn. It is the one
+## screen on the instrument that is not at the shared scale — it is 24 m of
+## ground in a panel a fifth of the width of the others — so it says so on its
+## own face rather than quietly lying about a length.
+func _column_magnification() -> float:
+	var world_top := maxf(sand_top_m + 2.0, 0.001)
+	var true_px := world_top * _px_per_m * maxf(profile_v_scale, 0.05)
+	return maxf(_ruler.size.y - 30.0, 1.0) / maxf(true_px, 0.001)
+
+
+## The case: everything that is not a reading. Drawn here and not in the screens
+## so that there is exactly one description of what this instrument looks like.
+func _draw_case() -> void:
+	var font := _hud_font()
+	var size := _case.size
+	_case.draw_rect(Rect2(Vector2.ZERO, size), HUD_CASE)
+	_bezel(
+		_case, Rect2(Vector2.ONE, size - Vector2(2.0, 2.0)), HUD_CASE_EDGE, 14.0
+	)
+	# Four fasteners. It takes about that much for a rectangle to read as a thing
+	# that was bolted together instead of a rectangle.
+	for corner: Vector2 in [
+		Vector2(14.0, 14.0), Vector2(size.x - 14.0, 14.0),
+		Vector2(14.0, size.y - 14.0), Vector2(size.x - 14.0, size.y - 14.0),
+	]:
+		_case.draw_circle(corner, 2.0, HUD_CASE_EDGE)
+	_case.draw_string(
+		font, Vector2(24.0, 22.0), "TRACE SCAN", HORIZONTAL_ALIGNMENT_LEFT, -1,
+		HUD_TITLE_PT, HUD_TEXT
+	)
+	# The refresh, stated and shown. Both screens are redrawn off one sample taken
+	# ten times a second; the blip is lit for the first third of each period, so
+	# what is blinking in the corner is literally the clock the pictures are on.
+	var hz := "REFRESH %.0f Hz" % instrument_hz
+	var hz_width := font.get_string_size(
+		hz, HORIZONTAL_ALIGNMENT_LEFT, -1, HUD_TICK_PT
+	).x
+	_case.draw_string(
+		font, Vector2(size.x - 24.0 - hz_width - 12.0, 21.0), hz,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, HUD_TICK_PT, HUD_TEXT_DIM
+	)
+	_case.draw_line(
+		Vector2(14.0, 28.0), Vector2(size.x - 14.0, 28.0), HUD_SCREEN_EDGE, 1.0
+	)
+
+	var division := "grid %.0f m" % grid_step_m
+	if plan_screen:
+		_screen_caption(font, _plan, "PLAN · looking down", division)
+	if profile_screen:
+		_screen_caption(font, _profile, "PROFILE · along the tunnel", division)
+	_screen_caption(
+		font, _ruler, "COLUMN · here / +20 m",
+		"x%.1f" % _column_magnification()
+	)
+
+	# The status strip: the scale bar first, because a drawing with a bar on it is
+	# a drawing anybody can measure, and then the four numbers the two screens are
+	# a picture of.
+	var base := size.y - 12.0
+	var bar := grid_step_m * _px_per_m
+	var rule := base - 5.0
+	_case.draw_line(Vector2(24.0, rule), Vector2(24.0 + bar, rule), HUD_TEXT, 1.0)
+	for end_x: float in [24.0, 24.0 + bar]:
+		_case.draw_line(
+			Vector2(end_x, rule - 3.0), Vector2(end_x, rule + 3.0), HUD_TEXT, 1.0
+		)
+	_case.draw_string(
+		font, Vector2(24.0 + bar + 7.0, base), "%.0f m" % grid_step_m,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, HUD_TICK_PT, HUD_TEXT_DIM
+	)
+	_case.draw_string(
+		font, Vector2(24.0 + bar + 60.0, base),
+		"%.1f m driven   %d%% of the bore behind is full   face: %s" % [
+			_travelled,
+			int(round(_pf_mean_fill * 100.0)),
+			_ground_name(),
 		],
-		HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.85, 0.85, 0.9)
+		HORIZONTAL_ALIGNMENT_LEFT, -1, HUD_LABEL_PT, HUD_TEXT_DIM
 	)
+
+
+# --- the plan screen ---------------------------------------------------------
+
+
+## A point of the world on the plan screen. The plan is the trace at the shared
+## scale with no offset at all: world x runs across, world z runs down, and the
+## whole 120 x 48 m box is exactly the screen.
+func _plan_at(point: Vector3) -> Vector2:
+	return Vector2(point.x, point.z) * _px_per_m
+
+
+func _plan_course(points: PackedVector3Array, colour: Color, width: float) -> void:
+	if points.size() < 2:
+		return
+	var out := PackedVector2Array()
+	out.resize(points.size())
+	for i in points.size():
+		out[i] = _plan_at(points[i])
+	_plan.draw_polyline(out, colour, width)
+
+
+## The distance ticks. Every ten metres of driven tunnel gets a tick across the
+## trail and every twentieth gets a number, and the same numbers are written
+## along the foot of the profile — so "sixty metres" is a place both screens
+## agree about even though one of them is a map and the other is a graph.
+func _plan_ticks(font: Font) -> void:
+	if tick_step_m <= 0.0:
+		return
+	# From zero, and the zero is drawn: the profile's origin is the left edge of
+	# its glass and is obvious, the plan's origin is a point in the middle of a
+	# map and is not. Both screens number the same trace from the same place, and
+	# the plan has to say where that place is or the numbers are only decoration.
+	var mark := 0.0
+	var index := 0
+	while mark <= _travelled:
+		var at := _trail_at(mark)
+		var point: Vector3 = at[0]
+		var forward: Vector3 = at[1]
+		var here := _plan_at(point)
+		var along := Vector2(forward.x, forward.z)
+		if along.length_squared() < 1e-8:
+			along = Vector2.RIGHT
+		var side := Vector2(-along.y, along.x).normalized()
+		var labelled := index % maxi(tick_label_every, 1) == 0
+		var reach := 7.0 if labelled else 4.0
+		_plan.draw_line(
+			here - side * reach, here + side * reach,
+			HUD_TEXT if labelled else HUD_TEXT_DIM, 1.0
+		)
+		if labelled:
+			_hud_text(
+				_plan, font, here + side * reach + Vector2(3.0, 4.0),
+				"%d" % int(round(mark)), HUD_TEXT_DIM
+			)
+		mark += tick_step_m
+		index += 1
+
+
+## The trace from above, drawn from the recorded path and the ground map.
+##
+## This used to be a second orthographic camera on the whole world, rendered into
+## the corner every frame. It was replaced for two reasons and the cheaper one is
+## the 0.40 ms a frame it cost. The other is that a render and a drawing can never
+## be made to look like one instrument: one of them is lit, shaded, perspective-
+## free but photographic, and the other is ink. Both screens are ink now.
+func _draw_plan() -> void:
+	var size := _plan.size
+	_plan.draw_rect(Rect2(Vector2.ZERO, size), HUD_SCREEN)
+	if _plan_texture != null:
+		_plan.draw_texture_rect(_plan_texture, Rect2(Vector2.ZERO, size), false)
+	var step := grid_step_m * _px_per_m
+	_screen_grid(_plan, size, step, step, false)
+	var font := _hud_font()
+	# Where the machine has been. One point per metre, as in the section: the
+	# trail is recorded four times finer than that because the lining rides it.
+	var trail := PackedVector2Array()
+	var stride := maxi(1, int(round(1.0 / TRAIL_STEP_M)))
+	var i := 0
+	while i < _trail_pos.size():
+		trail.append(_plan_at(_trail_pos[i]))
+		i += stride
+	trail.append(_plan_at(_pos))
+	if trail.size() > 1:
+		# On its own shadow, because the corridor it runs down is tinted with the
+		# same rust the trail is drawn in — the track would vanish into exactly
+		# the ground it made. The same pairing the section uses.
+		_plan.draw_polyline(trail, TRAIL_SHADOW, 5.0)
+		_plan.draw_polyline(trail, TRAIL_COLOUR, 2.0)
+	# Where it can go and where it is going, in the same two colours the section
+	# draws them in — so the arcs on the screen and the arcs in the world are
+	# recognisably the same arcs.
+	var limit := 1.0 / maxf(min_turn_radius_m, 0.1)
+	_plan_course(_course_points(limit, course_preview_m), ENVELOPE_COLOUR, 1.0)
+	_plan_course(_course_points(-limit, course_preview_m), ENVELOPE_COLOUR, 1.0)
+	_plan_course(
+		_course_points(_steer * limit, course_preview_m), COURSE_COLOUR, 2.0
+	)
+	_plan_ticks(font)
+	var here := _plan_at(_pos)
+	_machine_symbol(_plan, here, Vector2(cos(_yaw), sin(_yaw)))
+	# The same number the profile writes at its own caret, in the same accent, at
+	# the same place relative to the same symbol.
+	_hud_text(
+		_plan, font, here + Vector2(14.0, -11.0), "%.0f m" % _travelled,
+		COURSE_COLOUR
+	)
+	_scan(_plan, size)
+
+
+# --- the profile screen ------------------------------------------------------
 
 
 ## How many samples the profile is drawn from. Sixty-four across the run and
-## whatever the course preview brings: the panel is five hundred pixels wide and
+## whatever the course preview brings: the panel is six hundred pixels wide and
 ## a sample is a column of it.
 const PROFILE_SAMPLES := 64
 
 
-## Read the trace off the record, once every tenth of a second. Everything the
-## profile draws is here, so the draw itself is arithmetic on packed arrays.
+## Read the trace off the record, on the instrument's own clock. Everything the
+## profile draws is here, so the draw itself is arithmetic on packed arrays —
+## which is what lets the screen be redrawn every frame for the sweep while the
+## reading underneath it is only a tenth of a second's work ten times a second.
 func _sample_profile() -> void:
+	var started := Time.get_ticks_usec()
 	_pf_dist.clear()
 	_pf_axis.clear()
 	_pf_rock.clear()
@@ -2485,84 +3129,89 @@ func _sample_profile() -> void:
 		_pf_ahead_dist.append(run)
 		_pf_ahead_axis.append(course[i].y)
 		_pf_ahead_rock.append(_rock_surface_m(course[i].x, course[i].z))
-	# The run, plus enough of the course ahead to see the next decision in, and
-	# never less than sixty metres — at two seconds in, a panel scaled to what has
-	# been driven is a hundred pixels to the metre and nothing in it holds still.
-	# The rest of the course runs off the right edge and is clipped.
-	_pf_span = maxf(_travelled + 25.0, 60.0)
+	# The whole trace, always, and never a span that grows with the run.
+	#
+	# It used to be scaled to what had been driven, because a panel two seconds in
+	# was a hundred pixels to the metre and nothing in it held still. A fixed span
+	# fixes that harder — nothing in it ever moves but the machine — and it buys
+	# the thing this pass is actually for: the profile and the plan are now the
+	# same number of pixels to the metre, so one grid division, one bore diameter
+	# and one scale bar mean the same width of glass in both.
+	_pf_span = float(BOX.x) * CELL
 	var sum := 0.0
 	for value in _pf_fill:
 		sum += value
 	_pf_mean_fill = sum / float(maxi(_pf_fill.size(), 1))
+	var spent := float(Time.get_ticks_usec() - started) / 1000.0
+	_prof_pf_ms = maxf(_prof_pf_ms, spent)
+	_prof_pf_sum += spent
+	_prof_pf_n += 1
 
 
 ## The trace unrolled: what is over the tunnel, what is under it, how deep it is
 ## lying and how much of it is standing open, against metres driven. The section
 ## and the plan are both looking down a tunnel that turns; this is the only view
 ## in which a dive is a line going down.
+##
+## At `profile_v_scale = 1` this is a true section — a metre down is a metre
+## along is a metre in the plan — so the bore is drawn the same 30 px across here
+## as the machine's own ring is drawn in the screen above it.
 func _draw_profile() -> void:
-	var box := _profile.size
-	_profile.draw_rect(Rect2(Vector2.ZERO, box), Color(0.05, 0.05, 0.07, 0.86))
+	var size := _profile.size
+	_profile.draw_rect(Rect2(Vector2.ZERO, size), HUD_SCREEN)
 	if _pf_dist.size() < 2:
 		return
-	var font := _profile.get_theme_default_font()
-	var font_size := 12
-	var pad := 4.0
-	var top := 6.0
-	var height := box.y - top - 16.0
-	var world_top := sand_top_m + 2.0
-	var width := box.x - pad * 2.0
-	var to_x := width / maxf(_pf_span, 0.001)
+	var font := _hud_font()
+	var world_top := maxf(sand_top_m + 2.0, 0.001)
+	var to_x := _px_per_m
+	var to_y := size.y / world_top
 	var radius := bore_diameter_m * 0.5
-	var floor_px := top + height
-	var surface_px := top + height * (
-		1.0 - clampf(sand_top_m / world_top, 0.0, 1.0)
-	)
+	var floor_px := size.y
+	var surface_px := size.y - sand_top_m * to_y
 	# Sand first, as one block: everything under the surface is sand until the
 	# rock is drawn over it.
 	_profile.draw_rect(
-		Rect2(pad, surface_px, width, floor_px - surface_px), CAP_SAND_FAR
+		Rect2(0.0, surface_px, size.x, floor_px - surface_px), CAP_SAND_FAR
 	)
 	var last := _pf_dist.size() - 1
 	for i in _pf_dist.size():
-		var x0 := pad + _pf_dist[i] * to_x
+		var x0 := _pf_dist[i] * to_x
 		var x1 := (
-			pad + _pf_dist[mini(i + 1, last)] * to_x if i < last
-			else x0 + width / float(PROFILE_SAMPLES)
+			_pf_dist[mini(i + 1, last)] * to_x if i < last
+			else x0 + _pf_span * to_x / float(PROFILE_SAMPLES)
 		)
 		var w := maxf(x1 - x0, 1.0)
-		var rock_px := top + height * (
-			1.0 - clampf(_pf_rock[i] / world_top, 0.0, 1.0)
-		)
+		var rock_px := size.y - _pf_rock[i] * to_y
 		_profile.draw_rect(
 			Rect2(x0, rock_px, w, floor_px - rock_px), CAP_ROCK_DEEP
 		)
 		# The bore, to scale. Open is a hole; what has filled back up is drawn in
 		# the same colour the lid gives it, from the invert up, so the muck line
 		# down the tunnel is a shape and not a number.
-		var crown_px := top + height * (
-			1.0 - clampf((_pf_axis[i] + radius) / world_top, 0.0, 1.0)
-		)
-		var invert_px := top + height * (
-			1.0 - clampf((_pf_axis[i] - radius) / world_top, 0.0, 1.0)
-		)
+		var crown_px := size.y - (_pf_axis[i] + radius) * to_y
+		var invert_px := size.y - (_pf_axis[i] - radius) * to_y
 		_profile.draw_rect(
-			Rect2(x0, crown_px, w, invert_px - crown_px),
-			Color(0.07, 0.08, 0.10)
+			Rect2(x0, crown_px, w, invert_px - crown_px), Color(0.07, 0.08, 0.10)
 		)
 		var fill := (invert_px - crown_px) * clampf(_pf_fill[i], 0.0, 1.0)
 		if fill > 0.5:
 			_profile.draw_rect(
 				Rect2(x0, invert_px - fill, w, fill), CAP_SPOIL_FULL
 			)
+	# The same grid as the plan, at the same price per division, over the reading
+	# rather than under it — the profile's bands are opaque and a grid beneath
+	# them would only be a grid over the sky.
+	var step := grid_step_m * _px_per_m
+	_screen_grid(
+		_profile, size, step, grid_step_m * to_y, true
+	)
 	# Where the cut is standing over the tunnel: the line between what is drawn
 	# in the section and what is thrown away.
 	var cut_line := PackedVector2Array()
 	for i in _pf_dist.size():
-		cut_line.append(Vector2(
-			pad + _pf_dist[i] * to_x,
-			top + height * (1.0 - clampf(_pf_cut[i] / world_top, 0.0, 1.0))
-		))
+		cut_line.append(
+			Vector2(_pf_dist[i] * to_x, size.y - _pf_cut[i] * to_y)
+		)
 	_profile.draw_polyline(cut_line, Color(0.45, 0.92, 1.0, 0.55), 1.0)
 	# The ground ahead, and the course through it. Ahead is drawn as a band and
 	# not as a line because the question the driver is asking is not where the
@@ -2573,52 +3222,159 @@ func _draw_profile() -> void:
 		var invert := PackedVector2Array()
 		var last_ahead := _pf_ahead_dist.size() - 1
 		for i in _pf_ahead_dist.size():
-			var x := pad + _pf_ahead_dist[i] * to_x
+			var x := _pf_ahead_dist[i] * to_x
 			if i < last_ahead:
-				var next_x := pad + _pf_ahead_dist[i + 1] * to_x
-				var rock_px := top + height * (
-					1.0 - clampf(_pf_ahead_rock[i] / world_top, 0.0, 1.0)
-				)
+				var next_x := _pf_ahead_dist[i + 1] * to_x
+				var rock_px := size.y - _pf_ahead_rock[i] * to_y
 				# The same rock, paler: ahead is a reading of the map and not of
 				# the ground, and it should not be mistaken for ground crossed.
 				_profile.draw_rect(
 					Rect2(x, rock_px, maxf(next_x - x, 1.0), floor_px - rock_px),
 					CAP_ROCK_DEEP.lerp(CAP_ROCK_THIN, 0.75)
 				)
-			crown.append(Vector2(x, top + height * (
-				1.0 - clampf((_pf_ahead_axis[i] + radius) / world_top, 0.0, 1.0)
-			)))
-			invert.append(Vector2(x, top + height * (
-				1.0 - clampf((_pf_ahead_axis[i] - radius) / world_top, 0.0, 1.0)
-			)))
+			crown.append(
+				Vector2(x, size.y - (_pf_ahead_axis[i] + radius) * to_y)
+			)
+			invert.append(
+				Vector2(x, size.y - (_pf_ahead_axis[i] - radius) * to_y)
+			)
 		_profile.draw_polyline(crown, COURSE_COLOUR, 2.0)
 		_profile.draw_polyline(invert, COURSE_COLOUR, 2.0)
 	_profile.draw_line(
-		Vector2(pad, surface_px), Vector2(box.x - pad, surface_px),
+		Vector2(0.0, surface_px), Vector2(size.x, surface_px),
 		Color(0.95, 0.95, 1.0, 0.8), 1.0
 	)
-	# The machine, and the one number a driver cannot get from anywhere else on
-	# this panel: how far along the run he is.
-	var here_x := pad + _travelled * to_x
+	# The same distance ticks the plan writes on the trail, on the axis they
+	# belong to. Same step, same numbers, same type.
+	if tick_step_m > 0.0:
+		var mark := 0.0
+		var index := 0
+		while mark * to_x < size.x:
+			var x := mark * to_x
+			var labelled := index % maxi(tick_label_every, 1) == 0
+			_profile.draw_line(
+				Vector2(x, size.y), Vector2(x, size.y - (7.0 if labelled else 4.0)),
+				HUD_TEXT if labelled else HUD_TEXT_DIM, 1.0
+			)
+			if labelled:
+				_hud_text(
+					_profile, font, Vector2(x + 3.0, size.y - 4.0),
+					"%d" % int(round(mark)), HUD_TEXT_DIM
+				)
+			mark += tick_step_m
+			index += 1
+	# Heights up the left edge, so the vertical scale is stated rather than
+	# implied by the surface line.
+	var level := grid_step_m
+	while level < world_top:
+		_hud_text(
+			_profile, font, Vector2(3.0, size.y - level * to_y - 3.0),
+			"%d" % int(round(level)), HUD_TEXT_DIM
+		)
+		level += grid_step_m
+	# The machine: the same symbol as the plan, at the same distance the plan
+	# writes beside it, pointed at its own pitch.
+	var here_x := _travelled * to_x
 	_profile.draw_line(
-		Vector2(here_x, top), Vector2(here_x, floor_px),
-		Color(0.98, 0.72, 0.28, 0.9), 1.0
+		Vector2(here_x, 0.0), Vector2(here_x, size.y),
+		Color(COURSE_COLOUR.r, COURSE_COLOUR.g, COURSE_COLOUR.b, 0.35), 1.0
 	)
-	_profile.draw_string(
-		font, Vector2(pad, box.y - 3.0),
-		"0 m", HORIZONTAL_ALIGNMENT_LEFT, -1, font_size,
-		Color(0.75, 0.75, 0.82)
+	_machine_symbol(
+		_profile, Vector2(here_x, size.y - _pos.y * to_y),
+		Vector2(cos(_pitch), -sin(_pitch) * maxf(profile_v_scale, 0.05))
 	)
-	_profile.draw_string(
-		font, Vector2(box.x - 78.0, box.y - 3.0),
-		"%.0f m" % _pf_span, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size,
-		Color(0.75, 0.75, 0.82)
+	_scan(_profile, size)
+
+
+# --- the column screen -------------------------------------------------------
+
+
+## Two ground columns, drawn to scale: where the machine is standing and what it
+## will be standing in twenty metres from now. The one number a tunnel driver
+## never has — how much ground is over the crown — is on it, and so is the
+## boundary the whole trace is about.
+##
+## The only screen at its own magnification, and it says so in its caption. Its
+## colours are the other screens' colours and its type is the other screens'
+## type, which is what keeps it a third screen of this instrument rather than a
+## fourth window.
+func _draw_ruler() -> void:
+	var size := _ruler.size
+	_ruler.draw_rect(Rect2(Vector2.ZERO, size), HUD_SCREEN)
+	var font := _hud_font()
+	var top := 16.0
+	var height := size.y - top - 14.0
+	var world_top := maxf(sand_top_m + 2.0, 0.001)
+	var to_y := height / world_top
+	var base_px := top + height
+	_screen_grid(_ruler, size, size.x * 2.0, grid_step_m * to_y, true, base_px)
+	var radius := bore_diameter_m * 0.5
+	var ahead := _pos + _forward() * 20.0
+	var wide := (size.x - 24.0) * 0.5
+	var columns := [
+		["here", _pos.x, _pos.z, 8.0, _pos.y],
+		["+20 m", ahead.x, ahead.z, 16.0 + wide, ahead.y],
+	]
+	for entry in columns:
+		var label: String = entry[0]
+		var rock_m := _rock_surface_m(entry[1], entry[2])
+		var left: float = entry[3]
+		var sand_px := base_px - sand_top_m * to_y
+		var rock_px := base_px - rock_m * to_y
+		_ruler.draw_rect(
+			Rect2(left, sand_px, wide, base_px - sand_px), CAP_SAND_FAR
+		)
+		_ruler.draw_rect(
+			Rect2(left, rock_px, wide, base_px - rock_px), CAP_ROCK_DEEP
+		)
+		_hud_text(_ruler, font, Vector2(left, top - 4.0), label, HUD_TEXT_DIM)
+		# The bore, to scale, at the machine's own axis: the gap between the top
+		# of that box and the rock band is the cover, and it is a length on the
+		# screen rather than a number to be trusted.
+		var axis_y: float = entry[4]
+		var crown_px := base_px - (axis_y + radius) * to_y
+		var invert_px := base_px - (axis_y - radius) * to_y
+		_ruler.draw_rect(
+			Rect2(left + wide * 0.22, crown_px, wide * 0.56, invert_px - crown_px),
+			Color(0.07, 0.08, 0.10)
+		)
+		# Both bores are outlined — the one the machine is in with the accent, the
+		# one it is about to be in dimly. Unoutlined, a black box on the dark blue
+		# of deep rock is a box nobody can see, which is the one place a driver
+		# most needs to see it.
+		_ruler.draw_rect(
+			Rect2(left + wide * 0.22, crown_px, wide * 0.56, invert_px - crown_px),
+			COURSE_COLOUR if label == "here" else HUD_TEXT_DIM, false, 1.0
+		)
+	var surface_px := base_px - sand_top_m * to_y
+	_ruler.draw_line(
+		Vector2(0.0, surface_px), Vector2(size.x, surface_px),
+		Color(0.95, 0.95, 1.0, 0.8), 1.0
 	)
-	_profile.draw_string(
-		font, Vector2(pad + 30.0, box.y - 3.0),
-		"%d%% of the bore behind is full" % int(round(_pf_mean_fill * 100.0)),
-		HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, CAP_SPOIL_FULL
+	# Only when there is room for it. The column takes the height of the screens
+	# beside it, so with the plan out it can be short enough that this word lands
+	# on the two column headings — and a label sitting on another label is the one
+	# thing that makes a panel look unbuilt.
+	if surface_px - top > 13.0:
+		_hud_text(
+			_ruler, font, Vector2(2.0, surface_px - 3.0), "surface",
+			Color(0.95, 0.95, 1.0, 0.85)
+		)
+	var cut_px := base_px - _cut_y * to_y
+	_ruler.draw_line(
+		Vector2(0.0, cut_px), Vector2(size.x, cut_px),
+		Color(0.45, 0.92, 1.0, 0.7), 1.0
 	)
+	_hud_text(_ruler, font, Vector2(2.0, cut_px - 3.0), "cut", COURSE_COLOUR)
+	_hud_text(
+		_ruler, font, Vector2(2.0, size.y - 3.0),
+		"%.1f m deep   cover %.1f m" % [
+			sand_top_m - _pos.y,
+			maxf(sand_top_m - (_pos.y + radius), 0.0),
+		],
+		HUD_TEXT
+	)
+	_scan(_ruler, size)
 
 
 # --- views -------------------------------------------------------------------
@@ -2647,16 +3403,11 @@ func _set_view(view: View) -> void:
 		# it. The section is a drawing and has to be legible.
 		_environment.ambient_light_energy = 0.12 if view == View.CHASE else 0.62
 	_overlay.visible = view != View.CHASE
-	_plan_frame.visible = view == View.ISO and plan_inset
-	_plan_viewport.render_target_update_mode = (
-		SubViewport.UPDATE_ALWAYS if _plan_frame.visible
-		else SubViewport.UPDATE_DISABLED
-	)
-	# The profile is a drawing of the trace and not of the section, so it stands
-	# in every view — in the chase it is the only thing on the screen that says
-	# where the machine is on the run.
-	_profile.visible = profile_inset
-	_profile_label.visible = profile_inset
+	# The instrument stands in every view. It could not before: the plan was a
+	# second camera on the world and was only ever shown beside the section. Now
+	# that every screen is a drawing of the record, the chase view keeps the one
+	# thing that says where the machine is on the run.
+	_layout_instrument()
 	_update_cut(true)
 
 
@@ -2731,18 +3482,21 @@ func _unhandled_input(event: InputEvent) -> void:
 			else:
 				_set_view(View.ISO)
 		KEY_V:
-			plan_inset = not plan_inset
-			_plan_frame.visible = _view == View.ISO and plan_inset
-			_plan_viewport.render_target_update_mode = (
-				SubViewport.UPDATE_ALWAYS if _plan_frame.visible
-				else SubViewport.UPDATE_DISABLED
-			)
+			plan_screen = not plan_screen
+			if plan_screen:
+				_refresh_plan_map()
+			_layout_instrument()
 		KEY_B:
-			profile_inset = not profile_inset
-			_profile.visible = profile_inset
-			_profile_label.visible = profile_inset
-			if profile_inset:
+			profile_screen = not profile_screen
+			if profile_screen:
 				_sample_profile()
+			_layout_instrument()
+		KEY_H:
+			# The whole instrument, case and all. `V` and `B` are still there for
+			# one screen at a time, but a driver who wants the picture of the
+			# ground and nothing else should not have to press two keys for it.
+			instrument = not instrument
+			_layout_instrument()
 		KEY_F:
 			# Both cuts are built out of the same map, so this is one rebuild and
 			# not a second code path: flat mode simply writes the machine's own
@@ -2752,6 +3506,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			_update_cut(true)
 		KEY_T:
 			mark_disturbed = not mark_disturbed
+			# The plan marks worked ground with the same rust and off the same
+			# switch, so the two pictures agree about what has been dug.
+			_refresh_plan_map()
 			_update_cut(true)
 		KEY_Z:
 			iso_yaw_deg -= 45.0
@@ -2840,6 +3597,21 @@ func _finish_autopilot() -> void:
 		)
 	if mark_disturbed and _dug_cells <= 0:
 		faults.append("nothing was marked as ground the machine had been through")
+	# The plan is a drawing now and not a render, so nothing about it fails
+	# loudly: a plan built from an empty map is a clean black panel and the run
+	# would still pass. What it is made of has to be counted.
+	var worked_columns := 0
+	for col in CUT_MAP.x * CUT_MAP.y:
+		if _cut_pixels[col * 4 + 1] <= _cut_pixels[col * 4 + 2]:
+			worked_columns += 1
+	if instrument and plan_screen:
+		if _plan_texture == null:
+			faults.append("the plan screen has no ground map")
+		elif worked_columns <= 0 and _dug_cells > 0:
+			faults.append(
+				"%d cells were dug and the plan has no worked ground on it"
+				% _dug_cells
+			)
 	print(
 		"SHIELD: %d ticks, %.1f m, %.2f m/s, face %s, grounds seen %s"
 		% [
@@ -2880,6 +3652,19 @@ func _finish_autopilot() -> void:
 	print(
 		"SHIELD: cut map — worst write %.2f ms every %.1f m, worst lid chunk %.2f ms, %d chunks still owed"
 		% [_prof_map_ms, CUT_MAP_STEP_M, _prof_cap_ms, _cap_pending.size()]
+	)
+	# What the instrument costs, against the 0.40 ms a frame the plan cost while
+	# it was a second render of the world. Both of these are paid at `instrument_hz`
+	# and not per frame, so divide by ten before comparing them to anything.
+	print(
+		"SHIELD: instrument at %.0f Hz — plan map %.2f mean / %.2f worst ms over %d refreshes, profile sample %.2f / %.2f ms over %d, %.1f px/m, %d of %d plan columns worked"
+		% [
+			instrument_hz,
+			_prof_plan_sum / float(maxi(_prof_plan_n, 1)), _prof_plan_ms,
+			_prof_plan_n,
+			_prof_pf_sum / float(maxi(_prof_pf_n, 1)), _prof_pf_ms, _prof_pf_n,
+			_px_per_m, worked_columns, CUT_MAP.x * CUT_MAP.y,
+		]
 	)
 	# What the section is made of: how much of the plane is the open bore, how
 	# much is lining, how much is rock, and where the plane ended up.
