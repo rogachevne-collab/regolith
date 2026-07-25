@@ -354,14 +354,17 @@ func _test_seat_control_defaults_and_mutation() -> bool:
 	var peeked := world.peek_seat_control_state(host_id)
 	if not (
 		peeked.control_wheels
-		and peeked.control_thrusters
+		and not peeked.control_thrusters
 		and peeked.control_gyros
 	):
 		world.free()
-		return _fail("defaults should be all true")
+		return _fail(
+			"defaults should be wheels+gyros on, thrusters off: %s"
+			% peeked.to_dict()
+		)
 	var host := world.get_element(host_id)
 	var revision_before := host.state_revision
-	var result := _configure_seat(world, host_id, false, null, true)
+	var result := _configure_seat(world, host_id, false, true, true)
 	if StringName(result.get("reason", &"")) != &"ok":
 		world.free()
 		return _fail("configure_seat_controls failed: %s" % result.get("reason"))
@@ -526,14 +529,17 @@ func _test_snapshot_v9_loads_without_seat_control_states() -> bool:
 	var policy := restored.get_seat_control_state_ref(host_id)
 	var ok := (
 		policy.control_wheels
-		and policy.control_thrusters
+		and not policy.control_thrusters
 		and policy.control_gyros
 		and not restored.has_seat_control_state(host_id)
 	)
 	world.free()
 	restored.free()
 	if not ok:
-		return _fail("v9 load must expose defaults without creating a row")
+		return _fail(
+			"v9 load must expose defaults without creating a row: %s"
+			% policy.to_dict()
+		)
 	return true
 
 

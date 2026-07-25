@@ -149,6 +149,82 @@ func save_now_then_inhibit_persistence() -> void:
 	_coop_persistence_inhibited = true
 
 
+## Host join catch-up: push pending digs to SQLite before reading the file for
+## CH_BULK. Does not touch world JSON / granular sidecar cadence beyond digs.
+func flush_digs_for_coop_join() -> void:
+	if _coop_persistence_inhibited:
+		return
+	_digs_dirty = true
+	_dig_persist_cooldown_s = 0.0
+	await _persist_digs_durable()
+
+
+## Host: bytes of moon.sqlite + live granular snapshot for join bulk.
+## Call after flush_digs_for_coop_join. Empty sqlite when no dig stream file.
+func capture_coop_terrain_bulk() -> Dictionary:
+	var sqlite := PackedByteArray()
+	var db_path := MoonTerrainParams.stream_database_path()
+	if FileAccess.file_exists(db_path):
+		sqlite = FileAccess.get_file_as_bytes(db_path)
+	var granular := {}
+	var granular_world := get_node_or_null("GranularVoxelWorld") as GranularVoxelWorld
+	if granular_world != null and granular_world.has_method(&"capture_field_snapshot"):
+		granular = granular_world.capture_field_snapshot()
+	return {"sqlite": sqlite, "granular": granular}
+
+
+## Client: write host dig DB to a session replica (not personal gen_vN), swap
+## terrain.stream onto it, kick viewers so loaded shells re-read digs. Granular
+## restore is memory-only — persistence stays inhibited.
+func apply_coop_terrain_bulk(sqlite_bytes: PackedByteArray, granular: Dictionary) -> bool:
+	if not (_terrain is VoxelLodTerrain):
+		return false
+	var applied_db := false
+	if not sqlite_bytes.is_empty():
+		var replica_dir := CoopTerrainBulk.REPLICA_DIR
+		var abs_dir := ProjectSettings.globalize_path(replica_dir)
+		if not DirAccess.dir_exists_absolute(abs_dir):
+			DirAccess.make_dir_recursive_absolute(abs_dir)
+		var replica_path := CoopTerrainBulk.replica_database_path()
+		var file := FileAccess.open(replica_path, FileAccess.WRITE)
+		if file == null:
+			push_warning(
+				"Coop: cannot write terrain bulk replica %s" % replica_path
+			)
+			return false
+		file.store_buffer(sqlite_bytes)
+		file.close()
+		var stream := VoxelStreamSQLite.new()
+		stream.database_path = replica_path
+		## Replica is host truth for this session — do not grow it with local gen.
+		stream.save_generator_output = false
+		var lod := _terrain as VoxelLodTerrain
+		lod.stream = stream
+		_voxel_stream = stream
+		_kick_voxel_viewers_for_stream_reload()
+		applied_db = true
+		print(
+			"Coop: applied host dig-stream bulk (%d bytes) → %s"
+			% [sqlite_bytes.size(), replica_path]
+		)
+	if not granular.is_empty():
+		var granular_world := get_node_or_null("GranularVoxelWorld") as GranularVoxelWorld
+		if granular_world != null and granular_world.has_method(&"restore_field_snapshot"):
+			var n: int = int(granular_world.restore_field_snapshot(granular))
+			print("Coop: restored %d granular region(s) from host bulk" % n)
+	return applied_db or not granular.is_empty()
+
+
+func _kick_voxel_viewers_for_stream_reload() -> void:
+	## Client join only needs the local viewer — host proxies are host-side.
+	var viewer := _find_voxel_viewer()
+	if viewer == null:
+		return
+	var dist := viewer.view_distance
+	viewer.view_distance = maxi(dist / 4, 8)
+	viewer.view_distance = dist
+
+
 ## Re-drop the local player near a world point using the existing settle
 ## machinery (COOP-HOST-V0 join: land the client next to the host). Async.
 func reseat_player_near(target_world: Vector3) -> void:
@@ -627,7 +703,11 @@ func _persist_world_snapshot_only(force := false) -> void:
 	var now_ms := Time.get_ticks_msec()
 	if not force and now_ms - _last_save_ms < 5000:
 		return
-	if WorldPersistence.save(_session.world, _player):
+	if WorldPersistence.save(
+		_session.world,
+		_player,
+		_coop_extra_player_poses_for_save()
+	):
 		_last_save_ms = now_ms
 	_persist_granular()
 
@@ -800,6 +880,7 @@ func _apply_playtest_cargo_if_enabled() -> void:
 		PlayerIdentity.local_uid()
 	):
 		push_error("Playtest cargo seed failed")
+
 
 
 func _spawn_demo_rover_near_player() -> void:
@@ -1081,8 +1162,12 @@ func _place_when_ground_exists() -> void:
 				simulation
 			)
 		):
+			WorldPersistence.restore_players_from_payload(payload)
+			var player_row := WorldPersistence.player_pose_row(
+				PlayerIdentity.local_uid()
+			)
 			var saved_spawn := _resolve_saved_player_position(
-				payload.get("player", {}),
+				player_row,
 				tool
 			)
 			_player.global_position = MoonGeometry.spawn_hold_point(saved_spawn)
@@ -1095,7 +1180,7 @@ func _place_when_ground_exists() -> void:
 			)
 			WorldPersistence.apply_player_view(
 				_player,
-				payload.get("player", {}),
+				player_row,
 				loaded_spawn
 			)
 			WorldPersistence.restore_map_markers_from_payload(payload)
@@ -1104,6 +1189,7 @@ func _place_when_ground_exists() -> void:
 			return
 		var rejected_backup := WorldPersistence.backup_rejected_save()
 		WorldPersistence.clear_map_markers()
+		WorldPersistence.clear_players()
 		if rejected_backup.is_empty():
 			push_warning(
 				"Save rejected or corrupt; starting a fresh world."
@@ -1120,6 +1206,7 @@ func _place_when_ground_exists() -> void:
 	## Fresh world (or rejected save): stream SDF, then wait for physics floor.
 	if not WorldPersistence.has_save():
 		WorldPersistence.clear_map_markers()
+		WorldPersistence.clear_players()
 	while true:
 		var player_hit: VoxelRaycastResult = VoxelSpaceUtil.raycast_world(
 			tool,
@@ -1275,16 +1362,27 @@ func _peek_saved_player_position() -> Vector3:
 	var payload: Dictionary = WorldPersistence.read_payload()
 	if payload.is_empty():
 		return Vector3.ZERO
-	var row: Variant = payload.get("player", {})
-	if row is Dictionary:
-		var position_data: Variant = (row as Dictionary).get("position", [])
-		if position_data is Array and position_data.size() >= 3:
-			return Vector3(
-				float(position_data[0]),
-				float(position_data[1]),
-				float(position_data[2]),
-			)
+	WorldPersistence.restore_players_from_payload(payload)
+	var row := WorldPersistence.player_pose_row(PlayerIdentity.local_uid())
+	var position_data: Variant = row.get("position", [])
+	if position_data is Array and position_data.size() >= 3:
+		return Vector3(
+			float(position_data[0]),
+			float(position_data[1]),
+			float(position_data[2]),
+		)
 	return Vector3.ZERO
+
+
+## Host CoopSession last-pose cache for cold `players{}` (guests). Empty offline.
+func _coop_extra_player_poses_for_save() -> Dictionary:
+	var coop := get_node_or_null("CoopSession")
+	if coop == null or not coop.has_method("export_cold_poses"):
+		return {}
+	var poses: Variant = coop.call("export_cold_poses")
+	if poses is Dictionary:
+		return poses as Dictionary
+	return {}
 
 
 ## Wait until a cooked voxel collider exists under `hint` (SDF alone is not

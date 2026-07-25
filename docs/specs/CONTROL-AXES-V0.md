@@ -63,7 +63,9 @@ Router не знает про capabilities assembly — только policy + ra
 
 **Space fan-out:** при включённых wheels и thrusters одно нажатие Space даёт
 service brake на колёса **и** vertical translate на thrusters — без mutex
-«flight vs drive».
+«flight vs drive». Default per-seat: `control_thrusters=false` (см. ниже),
+чтобы Space на stock rover был чистым тормозом; hybrid lift — opt-in
+faceplate / `configure_seat_controls` (hopper spawn включает явно).
 
 **Parking brake:** assembly-wide safety latch. При latched PB router публикует
 `drive=0`, `steer=0`, `brake=1` **даже если** `control_wheels=false` (pilot

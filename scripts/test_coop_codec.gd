@@ -33,6 +33,9 @@ func _run() -> void:
 	if not _test_terrain_bulk_chunk_roundtrip():
 		_abort()
 		return
+	if not _test_join_dig_ops_bulk_contract():
+		_abort()
+		return
 	if not _test_build_dig_op():
 		_abort()
 		return
@@ -290,6 +293,124 @@ func _test_terrain_bulk_chunk_roundtrip() -> bool:
 	var empty_ok := CoopTerrainBulk.validate_bulk_meta(null)
 	if empty_ok != &"ok":
 		return _fail("missing terrain_bulk must be ok")
+	## Out-of-order chunk dict (client CH_BULK receive order) must still resolve.
+	var by_seq := {1: chunks[1], 0: chunks[0]}
+	var resolved := CoopTerrainBulk.resolve_join_sqlite(meta, by_seq)
+	if resolved != src:
+		return _fail("resolve_join_sqlite out-of-order chunks must restore bytes")
+	var inline_resolved := CoopTerrainBulk.resolve_join_sqlite(inline_meta)
+	if inline_resolved != inline:
+		return _fail("resolve_join_sqlite inline path lost bytes")
+	return true
+
+
+## Join catch-up contract: dig_ops tail vs full ring + attach inline/chunked
+## + full payload validate. Fake sqlite bytes — no VoxelStream / dual process.
+func _test_join_dig_ops_bulk_contract() -> bool:
+	var cold_op := CoopCommandCodec.build_dig_op(
+		{
+			"kind": &"voxel_remove",
+			"target": {
+				"valid": true,
+				"point": Vector3(1, 0, 1),
+				"target_kind": InteractionHit.KIND_VOXEL,
+			},
+			"parameters": {"radius": 0.5, "discard_yield": true},
+		},
+		{"status": &"ok", "data": {"removed_volume_m3": 0.1}}
+	)
+	var live_op := CoopCommandCodec.build_dig_op(
+		{
+			"kind": &"voxel_remove",
+			"target": {
+				"valid": true,
+				"point": Vector3(4, 0, 4),
+				"target_kind": InteractionHit.KIND_VOXEL,
+			},
+			"parameters": {"radius": 0.5, "discard_yield": true},
+		},
+		{"status": &"ok", "data": {"removed_volume_m3": 0.1}}
+	)
+	var ring: Array = [cold_op, live_op]
+	var dig_mark := 1
+	var fake_sqlite := PackedByteArray([0x53, 0x51, 0x4c, 0x69, 0x74, 0x65])  # "SQLite"
+	var with_bulk := CoopTerrainBulk.select_join_dig_ops(ring, dig_mark, fake_sqlite)
+	if with_bulk.size() != 1:
+		return _fail("non-empty sqlite must send dig_ops tail only (got %d)" % with_bulk.size())
+	var tail_op: Dictionary = with_bulk[0]
+	var tail_point: Vector3 = (tail_op.get("target", {}) as Dictionary).get(
+		"point", Vector3.ZERO
+	)
+	if not tail_point.is_equal_approx(Vector3(4, 0, 4)):
+		return _fail("dig_ops tail must keep the post-flush op")
+	var no_bulk := CoopTerrainBulk.select_join_dig_ops(
+		ring, dig_mark, PackedByteArray()
+	)
+	if no_bulk.size() != 2:
+		return _fail("empty sqlite must fall back to full dig_ops ring")
+
+	var world := _build_world()
+	if world == null:
+		return _fail("world build failed")
+	var snapshot := world.capture_snapshot()
+	world.free()
+	var granular := {"version": 1, "regions": [{"id": "r0"}]}
+	var payload := CoopCommandCodec.make_join_payload(
+		snapshot, {}, "player", "Host", {"p": Vector3.ZERO}, 9, with_bulk
+	)
+	CoopTerrainBulk.attach_to_join_payload(payload, fake_sqlite, granular)
+	if CoopCommandCodec.validate_join_payload(payload) != &"ok":
+		return _fail("join payload with dig_ops+inline terrain_bulk rejected")
+	var bulk_meta: Dictionary = payload.get("terrain_bulk", {})
+	if int(bulk_meta.get("chunk_count", -1)) != 0:
+		return _fail("tiny sqlite must attach inline (chunk_count=0)")
+	if not (bulk_meta.get("sqlite") is PackedByteArray):
+		return _fail("inline terrain_bulk missing sqlite bytes")
+	if (bulk_meta["sqlite"] as PackedByteArray) != fake_sqlite:
+		return _fail("inline terrain_bulk sqlite bytes mismatch")
+	if not (bulk_meta.get("granular") is Dictionary):
+		return _fail("terrain_bulk granular lost")
+	if CoopTerrainBulk.resolve_join_sqlite(bulk_meta) != fake_sqlite:
+		return _fail("client resolve of inline join bulk failed")
+
+	## Chunked attach: just over INLINE max → no inline sqlite, chunks reassemble.
+	var big := PackedByteArray()
+	big.resize(CoopTerrainBulk.INLINE_SQLITE_MAX_BYTES + 1)
+	for i: int in big.size():
+		big[i] = (i * 17) % 256
+	var chunked_payload := CoopCommandCodec.make_join_payload(
+		snapshot, {}, "player", "Host", {"p": Vector3.ZERO}, 9, with_bulk
+	)
+	CoopTerrainBulk.attach_to_join_payload(chunked_payload, big, {})
+	if CoopCommandCodec.validate_join_payload(chunked_payload) != &"ok":
+		return _fail("chunked terrain_bulk join payload rejected")
+	var chunk_meta: Dictionary = chunked_payload.get("terrain_bulk", {})
+	if chunk_meta.has("sqlite"):
+		return _fail("over-inline bulk must not embed sqlite in payload")
+	var expected_chunks := CoopTerrainBulk.split_sqlite_chunks(big)
+	if int(chunk_meta.get("chunk_count", 0)) != expected_chunks.size():
+		return _fail("chunk_count mismatch after attach")
+	## Simulate CH_BULK arrival shuffled, then client resolve.
+	var recv := {}
+	for i: int in expected_chunks.size():
+		recv[expected_chunks.size() - 1 - i] = expected_chunks[expected_chunks.size() - 1 - i]
+	var reassembled := CoopTerrainBulk.resolve_join_sqlite(chunk_meta, recv)
+	if reassembled != big:
+		return _fail("chunked join bulk did not reassemble host sqlite bytes")
+
+	## Replica path: write/read fake bytes (path contract, not VoxelStream).
+	var replica_dir := ProjectSettings.globalize_path(CoopTerrainBulk.REPLICA_DIR)
+	if not DirAccess.dir_exists_absolute(replica_dir):
+		DirAccess.make_dir_recursive_absolute(replica_dir)
+	var replica_path := CoopTerrainBulk.replica_database_path()
+	var file := FileAccess.open(replica_path, FileAccess.WRITE)
+	if file == null:
+		return _fail("cannot write fake sqlite to replica path")
+	file.store_buffer(fake_sqlite)
+	file.close()
+	var read_back := FileAccess.get_file_as_bytes(replica_path)
+	if read_back != fake_sqlite:
+		return _fail("replica path roundtrip lost fake sqlite bytes")
 	return true
 
 

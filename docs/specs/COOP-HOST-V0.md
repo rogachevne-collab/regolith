@@ -3,8 +3,9 @@
 Статус: этапы 0–3 реализованы и играбельны; спайк A–D в main (`eb66171`,
 `9d7b96e`, `3dcce29` и др.) — копка op-каналом, стрим сборок, кресло
 водителя/пассажира, session `dig_ops` на join, R-COOP-7 proxy + soft-retry,
-slip-limited brake, session last-pose. Этапы 4–7 спеки частично перекрыты
-спайком; **RC** — см. «Release candidate» (глазная приёмка ещё открыта).
+slip-limited brake, session last-pose, cold `players{}` poses (SAVE_VERSION
+4). Этапы 4–7 спеки частично перекрыты спайком; **RC** — см. «Release
+candidate» (глазная приёмка ещё открыта).
 См. также `docs/COOP_SPIKE_PLAN.md`. Цель — кооп на 2–4 игрока: один игрок =
 хост (listen server), остальные подключаются, сессия и сейв живут у хоста.
 
@@ -452,10 +453,12 @@ GDScript. Мерить на этапе 4; если не тянет — пере�
 
 ```gdscript
 {
-  "save_version": 3,
-  "simulation": ...,          # сторы + player_inventories per-uid внутри снапшота
-  "players": {                # было: "player": {...}; cold pose map — later
-    "<player_uid>": {"pose": ..., "suit": ...},
+  "save_version": 4,
+  "simulation": ...,          # сторы + suits + player_inventories per-uid
+  "players": {                # cold pose map (было: singular "player" в v3)
+    "<player_uid>": {
+      "pose": {"position": [x,y,z], "body_yaw": ..., "head_pitch": ...},
+    },
   },
   # dig: session dig_ops / локальный SQLite хоста — не поле terrain_edits
   "map_markers": ...,
@@ -467,16 +470,19 @@ GDScript. Мерить на этапе 4; если не тянет — пере�
 `suits`). Seed на join (`_seed_joiner`) и на fresh world; gateway reads /
 hotbar assign / tool transfers идут по `actor_uid`. Не класть отдельное
 `"hotbar"` в cold `players{}` — источник истины уже в `simulation`.
-Session last-pose → cold `players{}` позы — всё ещё later; hotbar больше
-не postponed и не фейкается.
+**Suit** — тоже только в `simulation.suits`; cold `players{}` не дублирует.
+
+**Cold poses** — хост пишет local uid + session `_last_poses` (гости) в
+`players{}` (merge, чтобы autosave до rejoin не затирал чужие uid). После
+рестарта хоста `host` сидит `_last_poses` из cold → join `you_pose` /
+reseat как session rejoin.
 
 **Миграции нет.** Игра не выпущена, сейвы существуют только как локальные
-dev-файлы, поэтому `save_version` просто поднимается (2 → 3), а старый
-payload отбрасывается существующей проверкой в
-`WorldPersistence.read_payload` (она уже возвращает `{}` при несовпадении
-версии). Писать и тестировать конвертер ради файлов, которые можно
-удалить, — чистые расходы. Если к моменту работ появится сейв, который
-жалко, — это решение надо пересмотреть, а не обходить.
+dev-файлы, поэтому `save_version` просто поднимается (3 → 4 при вводе
+`players{}`; ранее 2 → 3 для per-uid hotbar), а старый payload
+отбрасывается существующей проверкой в `WorldPersistence.read_payload`
+(она уже возвращает `{}` при несовпадении версии). Dev wipe OK. Писать
+конвертер ради локальных файлов — чистые расходы.
 
 Сейв пишет **только хост**; клиенты своё локальное состояние не сохраняют.
 
@@ -508,9 +514,9 @@ A–D в коде — кооп играбелен для пробного заб
   (SQLite dig-stream / granular) для ям до `host` и после рестарта хоста;
 - клиент поставил и приварил блок → у хоста та же сборка, ресурсы списаны
   с **его** стора, стор хоста не тронут;
-- хост сохранил, все вышли, зашли снова → мир, сторы и per-uid hotbar/
-  tool inventories; per-peer позы — цель (session last-pose → cold
-  `players{}`);
+- хост сохранил, все вышли, зашли снова → мир, сторы, per-uid hotbar/
+  tool inventories и per-uid cold позы (`players{}` → session last-pose
+  seed → join reseat);
 - водитель (хост или гость в cockpit) ведёт ровер; второй peer в
   пассажирском кресле едет без рывков на ~100 мс RTT, freelook, без руля;
   пассажир **не** копает, **не** использует инструменты и **не** открывает
@@ -548,7 +554,7 @@ slip-brake. Глазная приёмка обязательна; headless gate 
 | RC-3 | R7 far dig | гость копает далеко от хоста (proxy `VoxelViewer`); soft-retry / toast «Грунт ещё загружается», затем яма у обоих | ⬜ human |
 | RC-4 | Brakes | service brake на грунте — slip-limited (как drive TC); нет сильной тряски колёс у хоста при торможении гостем-водителем | ⬜ human |
 | RC-5 | Late join | session digs + **cold** digs до `host` / после рестарта (`terrain_bulk`) | ⬜ human |
-| RC-6 | Rejoin pose | disconnect → join тем же uid → session last-pose (не спавн на дефолте); cold `players{}` — цель Persistence | ⬜ human |
+| RC-6 | Rejoin pose | disconnect → join тем же uid → session last-pose; cold `players{}` после рестарта хоста → seed `_last_poses` → `you_pose` | ⬜ human |
 | RC-7 | Headless gate | `test_coop_codec`, `test_coop_seat`, `test_coop_dig_replay`, `test_control_actions`, `test_seat_input_router`, `test_snapshot_replica` | ⬜ run |
 
 Практический сценарий: `tools/coop_two_windows.bat` или `host` /

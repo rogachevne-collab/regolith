@@ -2279,6 +2279,17 @@ func _tick_wheel_record(
 		0.0,
 		suspension_def.max_suspension_force_n
 	)
+	WheelBodyProjectionUtil.maybe_print_drive_probe(delta, {
+		"wheel_id": wheel_element_id,
+		"grounded": grounded,
+		"compression_m": compression,
+		"ground_speed_mps": float(measured.get("ground_speed_mps", 0.0)),
+		"motor_target_v": target_forward_rad_s,
+		"motor_limit_n": torque_limit,
+		"brake_command": brake_command,
+		"drive_command": drive_command,
+		"normal_force_n": normal_force,
+	})
 	var reference_body: PhysicsBody3D = (
 		root_body if root_body != null else strut_body
 	)
@@ -3918,7 +3929,7 @@ func _restore_evacuated_drivers() -> void:
 			continue
 		if player.has_method("enter_vehicle"):
 			player.call("enter_vehicle", body, seat_local)
-		# Coop replica seat: enter_vehicle turns interpolation ON (host path);
+		# Coop replica seat: enter_vehicle sets INHERIT (host RigidBody path);
 		# re-assert OFF so the camera does not smear on streamed kinematic bodies.
 		if (
 			player is Node3D

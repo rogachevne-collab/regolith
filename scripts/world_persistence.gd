@@ -2,17 +2,22 @@ class_name WorldPersistence
 extends RefCounted
 
 const SAVE_PATH := "user://regolith_world_save.json"
-## v3: player tool inventories / hotbars are per-uid inside the simulation
-## snapshot (COOP-HOST-V0 Persistence). No converter — unreleased game, local
-## dev saves; read_payload discards mismatched versions.
-const SAVE_VERSION := 3
+## v4: cold `players{}` pose map keyed by player_uid (was singular `player` in
+## v3). Hotbar/tool inventories stay per-uid inside the simulation snapshot.
+## No converter — unreleased game, local dev saves; read_payload discards
+## mismatched versions (wipe OK).
+const SAVE_VERSION := 4
 
 ## Optional override for alternate scenes (moon experiment). Empty → SAVE_PATH.
 static var save_path_override := ""
 
 ## Player map annotations (MAP-UI-01). Not part of the simulation snapshot —
-## stored alongside player pose in world_save.json.
+## stored alongside player poses in world_save.json.
 static var _map_markers: Array = []
+
+## Cold pose map: uid -> {"pose": {position, body_yaw, head_pitch}}. Merged on
+## every save so guest poses survive host-only autosaves before rejoin.
+static var _players: Dictionary = {}
 
 
 static func active_save_path() -> String:
@@ -62,14 +67,50 @@ static func clear_map_markers() -> void:
 	_map_markers = []
 
 
-static func save(world: SimulationWorld, player: Node3D) -> bool:
+static func clear_players() -> void:
+	_players = {}
+
+
+## Pose row for `uid` from the in-memory cold map (after load / last save).
+static func player_pose_row(uid: String) -> Dictionary:
+	if uid.is_empty() or not _players.has(uid):
+		return {}
+	var entry: Variant = _players[uid]
+	if not entry is Dictionary:
+		return {}
+	return _pose_row_from_entry(entry as Dictionary)
+
+
+## uid -> {"p": Vector3} for CoopSession `_last_poses` seed after host restart.
+static func cold_relay_poses() -> Dictionary:
+	var out := {}
+	for uid_variant: Variant in _players.keys():
+		var uid := str(uid_variant)
+		if uid.is_empty():
+			continue
+		var row := player_pose_row(uid)
+		var pos := _position_from_pose_row(row)
+		if not pos.is_finite():
+			continue
+		if not _is_usable_save_position(pos):
+			continue
+		out[uid] = {"p": pos}
+	return out
+
+
+static func save(
+	world: SimulationWorld,
+	player: Node3D,
+	extra_player_poses: Dictionary = {}
+) -> bool:
 	if world == null or player == null:
 		return false
+	_merge_players_for_save(player, extra_player_poses)
 	var payload := {
 		"save_version": SAVE_VERSION,
 		"saved_at_unix": int(Time.get_unix_time_from_system()),
 		"simulation": world.capture_snapshot(),
-		"player": _serialize_player(player),
+		"players": _players.duplicate(true),
 		"map_markers": _map_markers.duplicate(true),
 	}
 	if not save_path_override.is_empty():
@@ -126,23 +167,44 @@ static func load_into(world: SimulationWorld, player: Node3D) -> bool:
 	var payload := read_payload()
 	if payload.is_empty():
 		clear_map_markers()
+		clear_players()
 		return false
 	var simulation: Variant = payload.get("simulation", {})
 	if not simulation is Dictionary:
 		_backup_corrupt_save()
 		clear_map_markers()
+		clear_players()
 		return false
 	if not restore_snapshot_data(world, simulation):
 		return false
 	finalize_loaded_world(world)
+	restore_players_from_payload(payload)
 	_restore_map_markers(payload.get("map_markers", []))
 	if player != null:
-		_apply_player(player, payload.get("player", {}))
+		_apply_player(player, player_pose_row(PlayerIdentity.local_uid()))
 	return true
 
 
 static func restore_map_markers_from_payload(payload: Dictionary) -> void:
 	_restore_map_markers(payload.get("map_markers", []))
+
+
+static func restore_players_from_payload(payload: Dictionary) -> void:
+	_players = {}
+	var raw: Variant = payload.get("players", {})
+	if not raw is Dictionary:
+		return
+	for uid_variant: Variant in (raw as Dictionary).keys():
+		var uid := str(uid_variant).strip_edges()
+		if uid.is_empty():
+			continue
+		var entry: Variant = (raw as Dictionary)[uid_variant]
+		if not entry is Dictionary:
+			continue
+		var pose := _pose_row_from_entry(entry as Dictionary)
+		if pose.is_empty():
+			continue
+		_players[uid] = {"pose": pose}
 
 
 static func _restore_map_markers(raw: Variant) -> void:
@@ -197,6 +259,23 @@ static func apply_player_view(
 		player.rotation.y = float(data.get("body_yaw", player.rotation.y))
 
 
+static func _merge_players_for_save(
+	player: Node3D,
+	extra_player_poses: Dictionary
+) -> void:
+	var local_uid := PlayerIdentity.local_uid()
+	if not local_uid.is_empty():
+		_players[local_uid] = {"pose": _serialize_player(player)}
+	for uid_variant: Variant in extra_player_poses.keys():
+		var uid := str(uid_variant).strip_edges()
+		if uid.is_empty() or uid == local_uid:
+			continue
+		var pose := _normalize_pose_variant(extra_player_poses[uid_variant])
+		if pose.is_empty():
+			continue
+		_players[uid] = {"pose": pose}
+
+
 static func _serialize_player(player: Node3D) -> Dictionary:
 	var row := {
 		"body_yaw": player.rotation.y,
@@ -210,6 +289,61 @@ static func _serialize_player(player: Node3D) -> Dictionary:
 		row["body_yaw"] = angles.x
 		row["head_pitch"] = angles.y
 	return row
+
+
+## Accept cold pose row, players{} entry, or coop relay pose (`p` Vector3).
+static func _normalize_pose_variant(raw: Variant) -> Dictionary:
+	if not raw is Dictionary:
+		return {}
+	var data: Dictionary = raw
+	if data.has("pose"):
+		return _normalize_pose_variant(data.get("pose"))
+	if data.has("p"):
+		var p: Variant = data.get("p")
+		var pos := Vector3.ZERO
+		if p is Vector3:
+			pos = p as Vector3
+		elif p is Array and (p as Array).size() >= 3:
+			var arr: Array = p
+			pos = Vector3(float(arr[0]), float(arr[1]), float(arr[2]))
+		else:
+			return {}
+		if not _is_usable_save_position(pos):
+			return {}
+		var row := {"position": [pos.x, pos.y, pos.z]}
+		var q: Variant = data.get("q")
+		if q is Quaternion:
+			var euler: Vector3 = (q as Quaternion).get_euler()
+			row["body_yaw"] = euler.y
+		return row
+	return _pose_row_from_entry(data)
+
+
+static func _pose_row_from_entry(entry: Dictionary) -> Dictionary:
+	var pose_variant: Variant = entry.get("pose", entry)
+	if not pose_variant is Dictionary:
+		return {}
+	var data: Dictionary = pose_variant
+	var row := {}
+	var position_data: Variant = data.get("position", [])
+	if position_data is Array and (position_data as Array).size() >= 3:
+		var arr: Array = position_data
+		var pos := Vector3(float(arr[0]), float(arr[1]), float(arr[2]))
+		if _is_usable_save_position(pos):
+			row["position"] = [pos.x, pos.y, pos.z]
+	if data.has("body_yaw"):
+		row["body_yaw"] = float(data.get("body_yaw", 0.0))
+	if data.has("head_pitch"):
+		row["head_pitch"] = float(data.get("head_pitch", 0.0))
+	return row
+
+
+static func _position_from_pose_row(row: Dictionary) -> Vector3:
+	var position_data: Variant = row.get("position", [])
+	if position_data is Array and (position_data as Array).size() >= 3:
+		var arr: Array = position_data
+		return Vector3(float(arr[0]), float(arr[1]), float(arr[2]))
+	return Vector3(NAN, NAN, NAN)
 
 
 static func _apply_player(player: Node3D, row: Variant) -> void:

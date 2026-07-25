@@ -163,7 +163,8 @@ var _pending_dig_accum := 0.0
 var _terrain_bulk_chunks: Dictionary = {}
 var _terrain_bulk_expect_bytes := 0
 var _terrain_bulk_expect_chunks := 0
-## Host: uid -> last pose dict from pose relay (rejoin reseat).
+## Host: uid -> last pose dict from pose relay (session rejoin reseat).
+## Seeded from WorldPersistence cold `players{}` on `host` after restart.
 var _last_poses: Dictionary = {}
 var _host_hooks_connected := false
 ## Held for the process lifetime by the primary instance (see INSTANCE_LOCK_PORT).
@@ -393,6 +394,7 @@ func _cmd_host(port: int = PORT_DEFAULT) -> void:
 	_guest_dig_retries.clear()
 	_dig_ops.clear()
 	_last_poses.clear()
+	_seed_last_poses_from_cold()
 	_clear_store_wire_cache()
 	_connect_host_hooks()
 	_info("hosting on port %d as '%s' — share your Tailscale IP" % [port, _local_nick])
@@ -508,13 +510,13 @@ func _srv_hello(hello: Dictionary) -> void:
 	if _mode != Mode.HOST or not _registry.has_peer(peer):
 		return
 	var bulk: Dictionary = _bootstrap.capture_coop_terrain_bulk()
-	var dig_tail: Array = _dig_ops.slice(dig_mark)
 	var sqlite_bytes: PackedByteArray = bulk.get("sqlite", PackedByteArray())
 	var granular: Dictionary = bulk.get("granular", {})
-	## No dig file (or empty): fall back to full session ring like pre-bulk.
-	var join_dig_ops: Array = dig_tail
-	if sqlite_bytes.is_empty():
-		join_dig_ops = _dig_ops.duplicate()
+	## Cold bulk present → dig_ops = post-flush tail only (avoid double-carve).
+	## Empty sqlite → full session ring (pre-bulk fallback).
+	var join_dig_ops: Array = CoopTerrainBulk.select_join_dig_ops(
+		_dig_ops, dig_mark, sqlite_bytes
+	)
 	var payload := CoopCommandCodec.make_join_payload(
 		_world().capture_snapshot(),
 		_registry.peers_payload(),
@@ -529,41 +531,13 @@ func _srv_hello(hello: Dictionary) -> void:
 	var known_pose: Variant = _last_poses.get(uid)
 	if known_pose is Dictionary and (known_pose as Dictionary).has("p"):
 		payload["you_pose"] = known_pose
-	_attach_terrain_bulk_to_payload(payload, sqlite_bytes, granular)
+	CoopTerrainBulk.attach_to_join_payload(payload, sqlite_bytes, granular)
 	rpc_id(peer, "_cli_join_payload", payload)
 	_send_terrain_bulk_chunks(peer, sqlite_bytes, payload.get("terrain_bulk", {}))
 	for other: int in _registry.peer_ids():
 		if other != peer:
 			rpc_id(other, "_cli_peer_joined", {"uid": uid, "nick": nick})
 	_info("'%s' joined" % nick)
-
-
-func _attach_terrain_bulk_to_payload(
-	payload: Dictionary,
-	sqlite_bytes: PackedByteArray,
-	granular: Dictionary
-) -> void:
-	if sqlite_bytes.is_empty() and granular.is_empty():
-		return
-	if sqlite_bytes.size() >= CoopTerrainBulk.WARN_SQLITE_BYTES:
-		push_warning(
-			(
-				"Coop: dig-stream bulk is %.1f MiB — join may hitch (explored crust in SQLite)"
-				% (float(sqlite_bytes.size()) / (1024.0 * 1024.0))
-			)
-		)
-	if (
-		not sqlite_bytes.is_empty()
-		and sqlite_bytes.size() <= CoopTerrainBulk.INLINE_SQLITE_MAX_BYTES
-	):
-		payload["terrain_bulk"] = CoopTerrainBulk.make_bulk_meta(
-			sqlite_bytes, granular, 0, sqlite_bytes
-		)
-		return
-	var chunks := CoopTerrainBulk.split_sqlite_chunks(sqlite_bytes)
-	payload["terrain_bulk"] = CoopTerrainBulk.make_bulk_meta(
-		sqlite_bytes, granular, chunks.size()
-	)
 
 
 func _send_terrain_bulk_chunks(
@@ -693,7 +667,7 @@ func _apply_join_terrain_bulk(meta_variant: Variant) -> void:
 	var granular: Dictionary = meta.get("granular", {})
 	var sqlite := PackedByteArray()
 	if meta.has("sqlite") and meta["sqlite"] is PackedByteArray:
-		sqlite = meta["sqlite"]
+		sqlite = CoopTerrainBulk.resolve_join_sqlite(meta)
 	elif nbytes > 0 and chunk_count > 0:
 		_terrain_bulk_expect_bytes = nbytes
 		_terrain_bulk_expect_chunks = chunk_count
@@ -724,10 +698,11 @@ func _wait_terrain_bulk_chunks(chunk_count: int, expected_bytes: int) -> PackedB
 		if Time.get_ticks_msec() >= deadline_ms:
 			return PackedByteArray()
 		await get_tree().process_frame
-	var ordered: Array = []
-	for seq: int in range(chunk_count):
-		ordered.append(_terrain_bulk_chunks[seq])
-	return CoopTerrainBulk.join_sqlite_chunks(ordered, expected_bytes)
+	var resolved := CoopTerrainBulk.resolve_join_sqlite(
+		{"sqlite_bytes": expected_bytes, "chunk_count": chunk_count},
+		_terrain_bulk_chunks
+	)
+	return resolved
 
 
 func _clear_terrain_bulk_state() -> void:
@@ -1218,6 +1193,27 @@ func _apply_assembly_blend(
 
 
 # -------------------------------------------------------------------- pose relay
+
+## Cold `players{}` extras for WorldPersistence.save (host only). Relay pose
+## dicts keyed by uid — persistence normalizes to position/yaw rows.
+func export_cold_poses() -> Dictionary:
+	if _mode != Mode.HOST:
+		return {}
+	return _last_poses.duplicate(true)
+
+
+## After host restart: session last-pose cache starts empty; seed from cold
+## save so rejoin `you_pose` works without a prior live relay this session.
+func _seed_last_poses_from_cold() -> void:
+	var cold := WorldPersistence.cold_relay_poses()
+	for uid_variant: Variant in cold.keys():
+		var uid := str(uid_variant)
+		if uid.is_empty() or uid == _local_uid:
+			continue
+		var pose: Variant = cold[uid_variant]
+		if pose is Dictionary and (pose as Dictionary).has("p"):
+			_last_poses[uid] = pose
+
 
 func _send_local_pose() -> void:
 	if _player == null:

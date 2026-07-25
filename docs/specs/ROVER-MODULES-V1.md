@@ -439,10 +439,12 @@ element:
 `AssemblyLocomotionController.apply_driver_frame`. Один occupied seat — один
 writer за тик; policy строго с `element_id` сиденья (`SeatControlState`).
 
-Per-seat toggles (`control_wheels` / `control_thrusters` / `control_gyros`,
-default `true`): `configure_seat_controls` или Control Terminal faceplate на
-`ControlSeat` (`CONTROL-ACTIONS-V0.md`). Effective gates на locomotion
-подавляют wheel/thruster/gyro consumers (manual + dampening) по каналу.
+Per-seat toggles (`control_wheels` / `control_gyros` default `true`;
+`control_thrusters` default `false` — Space = service brake without lift hop
+on stock rovers; flight craft opt in): `configure_seat_controls` или Control
+Terminal faceplate на `ControlSeat` (`CONTROL-ACTIONS-V0.md`). Effective gates
+на locomotion подавляют wheel/thruster/gyro consumers (manual + dampening) по
+каналу.
 
 `AssemblyLocomotionController` (per assembly) хранит continuous channels +
 latched `parking_brake` (default `true`) и `dampeners` (default `true`,

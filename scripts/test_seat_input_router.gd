@@ -13,6 +13,7 @@ func _ready() -> void:
 func _run_tests() -> void:
 	_HeadlessTestHarness.arm_watchdog(self, "SEAT-INPUT-ROUTER")
 	var tests: Array[Callable] = [
+		_test_stock_defaults_space_is_brake_only,
 		_test_hybrid_defaults_w,
 		_test_hybrid_space_fanout,
 		_test_wheels_off_space_stays_flight_up,
@@ -68,6 +69,22 @@ func _raw(overrides: Dictionary = {}) -> Dictionary:
 	for key: Variant in overrides.keys():
 		raw[key] = overrides[key]
 	return raw
+
+
+func _test_stock_defaults_space_is_brake_only() -> bool:
+	## New SeatControlState: thrusters OFF — Space must not fan out to lift.
+	var frame := SeatInputRouter.route(
+		_raw({"space": 1.0}),
+		SeatControlState.new(),
+		false
+	)
+	if absf(frame.brake_command - 1.0) > 0.001:
+		return _fail("stock default Space: brake expected 1")
+	if frame.translate_command.length() > 0.001:
+		return _fail("stock default Space: translate must stay zero")
+	if frame.thrusters_route_enabled:
+		return _fail("stock default: thrusters_route_enabled must be false")
+	return true
 
 
 func _test_hybrid_defaults_w() -> bool:

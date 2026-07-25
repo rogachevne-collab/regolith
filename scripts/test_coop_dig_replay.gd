@@ -57,6 +57,8 @@ func _run() -> void:
 
 		_test_join_dig_ops_replay_order,
 
+		_test_join_bulk_tail_skips_cold_ops,
+
 		_test_replay_discard_yield_no_double_loot,
 
 		_test_replay_skips_path_sweep,
@@ -481,6 +483,48 @@ func _test_join_dig_ops_replay_order() -> bool:
 
 
 
+
+
+func _test_join_bulk_tail_skips_cold_ops() -> bool:
+	## With non-empty cold sqlite, join dig_ops = post-flush tail only.
+	## Fresh terrain must carve the live hole and leave the cold point solid
+	## (cold holes arrive via stream swap, not dig_ops — double-carve guard).
+	var fixture := await _new_fixture()
+	if fixture.is_empty():
+		return _fail("fixture build failed (terrain not editable)")
+	var gateway: WorldCommandGateway = fixture["gateway"]
+	var tool: VoxelTool = (fixture["terrain"] as VoxelTerrain).get_voxel_tool()
+	tool.channel = VoxelBuffer.CHANNEL_SDF
+	var ring: Array = [
+		_wire_op(ORDER_FIRST, true),
+		_wire_op(ORDER_SECOND, true),
+	]
+	var join_ops := CoopTerrainBulk.select_join_dig_ops(
+		ring, 1, PackedByteArray([1, 2, 3, 4, 5, 6, 7, 8])
+	)
+	if join_ops.size() != 1:
+		_free_fixture(fixture)
+		return _fail("bulk join must select dig_ops tail only")
+	var first_before := _sample_sdf(tool, ORDER_FIRST_SAMPLE)
+	var second_before := _sample_sdf(tool, ORDER_SECOND_SAMPLE)
+	for op_variant: Variant in join_ops:
+		if not gateway.replay_remote_dig(op_variant):
+			_free_fixture(fixture)
+			return _fail("bulk-tail replay must return true")
+		await get_tree().physics_frame
+	var first_delta := _sample_sdf(tool, ORDER_FIRST_SAMPLE) - first_before
+	var second_delta := _sample_sdf(tool, ORDER_SECOND_SAMPLE) - second_before
+	_free_fixture(fixture)
+	if first_delta > 0.05:
+		return _fail(
+			"cold dig must not be in join dig_ops when bulk present (delta=%.4f)"
+			% first_delta
+		)
+	if second_delta <= 0.05:
+		return _fail(
+			"post-flush dig_ops tail must carve (delta=%.4f)" % second_delta
+		)
+	return true
 
 
 func _test_replay_discard_yield_no_double_loot() -> bool:

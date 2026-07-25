@@ -245,6 +245,19 @@ k·x+c·ẋ с клампом)/wheel_center_body_local/contact_world и т.д. �
 - `slip_stiffness` / `lateral_stiffness` / `wheel_inertia` — устаревшие поля:
   остаются в определении (совместимость визарда), физикой не читаются.
 
+### Host drive probes (playtest, not a tune pass)
+
+Suspension stiffness/damping and motor torque ceilings need a host↔guest A/B
+before changing numbers (guest ~120 ms assembly blend masks saw/shake). Toggle:
+
+```gdscript
+WheelBodyProjectionUtil.debug_drive_probes = true
+```
+
+Console ~4 Hz: `grounded`, `compression_m`, `ground_speed_mps`, motor
+`target`/`limit`, `brake`/`drive`, estimated `normal_force_n`. Compare host
+driver vs guest driver on the same brake/accel. Leave off in ship builds (R9).
+
 ### Известные ограничения v1
 
 - Restore из снапшота сажает колесо в droop-позу базы (реальный прогиб не

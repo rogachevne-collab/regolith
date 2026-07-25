@@ -1583,7 +1583,7 @@ func apply_local_seat_attach(
 	if player.has_method("enter_vehicle"):
 		player.call("enter_vehicle", body, seat_offset)
 	# Replica bodies are written in CoopSession._process; physics interpolation
-	# (on by enter_vehicle for host RigidBodies) smears the camera here.
+	# (INHERIT by enter_vehicle for host RigidBodies) smears the camera here.
 	player.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	player.reset_physics_interpolation()
 	_rover_seat_player = player
@@ -3127,7 +3127,7 @@ func _configure_seat_controls(
 		{
 			"seat_element_id": int(result.get("seat_element_id", configure.seat_element_id)),
 			"control_wheels": bool(result.get("control_wheels", true)),
-			"control_thrusters": bool(result.get("control_thrusters", true)),
+			"control_thrusters": bool(result.get("control_thrusters", false)),
 			"control_gyros": bool(result.get("control_gyros", true)),
 		}
 	)

@@ -87,3 +87,70 @@ static func validate_bulk_meta(meta: Variant) -> StringName:
 	if d.has("granular") and not (d["granular"] is Dictionary):
 		return &"bad_terrain_bulk"
 	return &"ok"
+
+
+## After host dig flush: join dig_ops = only ops appended during/after the
+## flush when cold SQLite bytes exist (those holes are already in the file).
+## Empty sqlite → full session ring (pre-bulk fallback).
+static func select_join_dig_ops(
+	dig_ops: Array,
+	dig_mark: int,
+	sqlite_bytes: PackedByteArray
+) -> Array:
+	if sqlite_bytes.is_empty():
+		return dig_ops.duplicate()
+	var mark := clampi(dig_mark, 0, dig_ops.size())
+	return dig_ops.slice(mark)
+
+
+## Host join: attach inline (≤ INLINE) or chunked meta. Empty sqlite+granular
+## leaves payload unchanged. Warns on huge dig streams.
+static func attach_to_join_payload(
+	payload: Dictionary,
+	sqlite_bytes: PackedByteArray,
+	granular: Dictionary
+) -> void:
+	if sqlite_bytes.is_empty() and granular.is_empty():
+		return
+	if sqlite_bytes.size() >= WARN_SQLITE_BYTES:
+		push_warning(
+			(
+				"Coop: dig-stream bulk is %.1f MiB — join may hitch (explored crust in SQLite)"
+				% (float(sqlite_bytes.size()) / (1024.0 * 1024.0))
+			)
+		)
+	if (
+		not sqlite_bytes.is_empty()
+		and sqlite_bytes.size() <= INLINE_SQLITE_MAX_BYTES
+	):
+		payload["terrain_bulk"] = make_bulk_meta(
+			sqlite_bytes, granular, 0, sqlite_bytes
+		)
+		return
+	var chunks := split_sqlite_chunks(sqlite_bytes)
+	payload["terrain_bulk"] = make_bulk_meta(
+		sqlite_bytes, granular, chunks.size()
+	)
+
+
+## Client join: inline `sqlite` or ordered chunks_by_seq → host dig DB bytes.
+## Missing/partial chunks → empty (caller treats as timeout/incomplete).
+static func resolve_join_sqlite(
+	meta: Dictionary,
+	chunks_by_seq: Dictionary = {}
+) -> PackedByteArray:
+	if meta.has("sqlite") and meta["sqlite"] is PackedByteArray:
+		return meta["sqlite"] as PackedByteArray
+	var nbytes := int(meta.get("sqlite_bytes", 0))
+	var chunk_count := int(meta.get("chunk_count", 0))
+	if nbytes <= 0 or chunk_count <= 0:
+		return PackedByteArray()
+	var ordered: Array = []
+	for seq: int in range(chunk_count):
+		if not chunks_by_seq.has(seq):
+			return PackedByteArray()
+		var piece: Variant = chunks_by_seq[seq]
+		if not (piece is PackedByteArray):
+			return PackedByteArray()
+		ordered.append(piece)
+	return join_sqlite_chunks(ordered, nbytes)

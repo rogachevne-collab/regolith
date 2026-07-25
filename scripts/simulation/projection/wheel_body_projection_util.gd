@@ -49,6 +49,38 @@ const AIRBORNE_SPIN_ACCEL_RAD_S2 := 80.0
 const AIRBORNE_STEER_TORQUE_SCALE := 0.35
 ## Tire friction cannot exceed the authored ceiling even if grip tuning grows.
 const MAX_TIRE_FRICTION := 4.0
+## Host≈guest drive probes (playtest). Set true in debugger / one-liner —
+## prints grounded, compression, ground_speed, motor target/limit, brake.
+## Off by default (R9). See WHEEL-BODY-V1 «Host drive probes».
+static var debug_drive_probes := false
+static var _debug_probe_accum_s := 0.0
+const DEBUG_PROBE_INTERVAL_S := 0.25
+
+
+## Rate-limited console line while `debug_drive_probes` is on. Call from the
+## wheel tick with fresh measured + motor fields (one line per interval, first
+## wheel that reaches the budget wins — enough for host/guest A/B).
+static func maybe_print_drive_probe(delta: float, fields: Dictionary) -> void:
+	if not debug_drive_probes:
+		return
+	_debug_probe_accum_s += maxf(delta, 0.0)
+	if _debug_probe_accum_s < DEBUG_PROBE_INTERVAL_S:
+		return
+	_debug_probe_accum_s = 0.0
+	print(
+		"WHEEL_PROBE wheel=%s grounded=%s comp=%.3f gnd_v=%.2f tgt=%.2f lim=%.1f brake=%.2f drive=%.2f n=%.0f"
+		% [
+			str(fields.get("wheel_id", "?")),
+			str(fields.get("grounded", false)),
+			float(fields.get("compression_m", 0.0)),
+			float(fields.get("ground_speed_mps", 0.0)),
+			float(fields.get("motor_target_v", 0.0)),
+			float(fields.get("motor_limit_n", 0.0)),
+			float(fields.get("brake_command", 0.0)),
+			float(fields.get("drive_command", 0.0)),
+			float(fields.get("normal_force_n", 0.0)),
+		]
+	)
 
 
 static func mount_pad_anchor_assembly_local(

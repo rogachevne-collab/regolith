@@ -2035,7 +2035,7 @@ func _fp_readings(node: Dictionary, kind: String, detail: Dictionary) -> Control
 		))
 		v.add_child(_pv_row(
 			"Тяга",
-			"вкл" if bool(detail.get("control_thrusters", true)) else "выкл",
+			"вкл" if bool(detail.get("control_thrusters", false)) else "выкл",
 			""
 		))
 		v.add_child(_pv_row(
@@ -2165,7 +2165,7 @@ func _fp_setpoints(kind: String, detail: Dictionary) -> Control:
 		))
 		v.add_child(_sw_row(
 			"Control Thrusters",
-			bool(detail.get("control_thrusters", true)),
+			bool(detail.get("control_thrusters", false)),
 			"Вкл",
 			"Выкл",
 			"seat.control_thrusters_toggle"

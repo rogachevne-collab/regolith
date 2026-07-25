@@ -147,9 +147,11 @@ Legacy `thrust_command` в snapshot читается как `translate.y`.
 
 Когда operational `ControlSeat` occupied, `WorldCommandGateway` собирает raw
 InputMap strengths и `SeatInputRouter` публикует **semantic channels** в
-`SeatInputFrame` по per-seat policy (`control_wheels` / `control_thrusters` /
-`control_gyros`, default `true`). `AssemblyLocomotionController` — единственный
-writer continuous state на assembly за тик. См. `CONTROL-AXES-V0.md`.
+`SeatInputFrame` по per-seat policy (`control_wheels` / `control_gyros`
+default `true`; `control_thrusters` default `false` — Space не даёт lift на
+stock rover; hopper / VTOL включают thrusters явно).
+`AssemblyLocomotionController` — единственный writer continuous state на
+assembly за тик. См. `CONTROL-AXES-V0.md`.
 
 Нет mutex «flight побеждает locomotion»: каналы **broadcast** независимо.
 Включены оба — WASD одновременно drive/steer (колёса) и translate (трастеры).

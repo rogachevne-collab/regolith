@@ -146,9 +146,12 @@ func enter_vehicle(vehicle: Node3D, seat_position: Vector3) -> void:
 	rotation = Vector3.ZERO
 	if _head != null and _head.has_method("capture_yaw_from_body"):
 		_head.call("capture_yaw_from_body")
-	# Seated child of RigidBody must interpolate or the top-level camera
-	# judders at physics rate while the world renders at display rate.
-	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_ON
+	# Seated child of a live RigidBody: INHERIT the parent's FTI pose.
+	# Explicit ON interpolates this CharacterBody3D's own (frozen) physics
+	# xform instead of the seat body — host camera then sees tick judder /
+	# harsh bounce that guest's kinematic blend masks. Godot advanced
+	# physics interpolation: inherit under a moving physics parent.
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_INHERIT
 	reset_physics_interpolation()
 	$Drill.set_physics_process(false)
 	$Drill.call("set_first_person_visuals_visible", false)

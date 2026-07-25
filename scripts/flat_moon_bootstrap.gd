@@ -99,7 +99,7 @@ func _persist_world(force := false) -> void:
 	var now_ms := Time.get_ticks_msec()
 	if not force and now_ms - _last_save_ms < 5000:
 		return
-	if WorldPersistence.save(_session.world, _player):
+	if WorldPersistence.save(_session.world, _player, {}):
 		_last_save_ms = now_ms
 
 
@@ -309,13 +309,17 @@ func _place_when_ground_exists() -> void:
 						simulation
 					)
 				):
+					WorldPersistence.restore_players_from_payload(payload)
+					var player_row := WorldPersistence.player_pose_row(
+						PlayerIdentity.local_uid()
+					)
 					var spawn_position := _resolve_saved_player_position(
-						payload.get("player", {}),
+						player_row,
 						tool
 					)
 					WorldPersistence.apply_player_view(
 						_player,
-						payload.get("player", {}),
+						player_row,
 						spawn_position
 					)
 					WorldPersistence.restore_map_markers_from_payload(payload)
@@ -324,6 +328,7 @@ func _place_when_ground_exists() -> void:
 					return
 				var rejected_backup := WorldPersistence.backup_rejected_save()
 				WorldPersistence.clear_map_markers()
+				WorldPersistence.clear_players()
 				if rejected_backup.is_empty():
 					push_warning(
 						"Save rejected or corrupt; starting a fresh world."

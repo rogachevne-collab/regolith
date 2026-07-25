@@ -115,8 +115,10 @@ Step solver использует motion tests `up → forward → down`; camera 
 - top-level camera в `_process`: **origin** из
   `get_global_transform_interpolated()`, **look basis** из immediate
   yaw/pitch (не raw body basis). Смешение interpolated origin с raw body
-  basis давало rotation jitter на неровном voxel ground; пешком и в
-  `ControlSeat` у игрока `physics_interpolation_mode = ON`;
+  basis давало rotation jitter на неровном voxel ground; пешком
+  `physics_interpolation_mode = ON`; в `ControlSeat` на live RigidBody —
+  `INHERIT` (FTI родителя) и camera origin = seat body FTI × local seat
+  offset (не own CharacterBody3D physics xform); coop replica seat — `OFF`;
 - mouse delta применяется без зависимости от render FPS;
 - pitch ограничен, roll отсутствует без отдельного эффекта;
 - в `ControlSeat` допустим toggle FP ↔ free orbit 3P (`toggle_vehicle_camera`,

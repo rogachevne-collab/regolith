@@ -96,6 +96,14 @@ static func _spawn_batched(
 	var battery_id := int(helper.element_ids.get("battery", 0))
 	if battery_id > 0:
 		IndustryElectricBudget.mark_battery_charged(session.world, battery_id)
+	# Stock SeatControlState defaults thrusters OFF (rover Space = brake).
+	# Flight craft must opt in so Space fans out to translate.y.
+	var cockpit_id := int(helper.element_ids.get("cockpit", 0))
+	if cockpit_id > 0:
+		var seat_cmd := ConfigureSeatControlsCommand.new()
+		seat_cmd.seat_element_id = cockpit_id
+		seat_cmd.control_thrusters = true
+		session.world.apply_configure_seat_controls(seat_cmd)
 	session.world.get_locomotion_controller(
 		helper.assembly_id
 	).mark_released_from_anchor()

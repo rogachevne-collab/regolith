@@ -301,6 +301,14 @@ func _target_physics_transform() -> Transform3D:
 func _follow_origin() -> Vector3:
 	if _target == null:
 		return Vector3.ZERO
+	# Seated: compose from the seat RigidBody's FTI pose + local seat offset.
+	# CharacterBody3D child FTI can lag the parent; orbit already used this path.
+	if _is_in_vehicle():
+		var vehicle := _current_vehicle()
+		if vehicle != null and vehicle.is_inside_tree():
+			return (
+				vehicle.get_global_transform_interpolated() * _target.transform
+			).origin
 	if _target.is_inside_tree():
 		return _target.get_global_transform_interpolated().origin
 	return _target.global_position
@@ -330,10 +338,16 @@ func _camera_transform(target_position: Vector3) -> Transform3D:
 	# interpolated body basis (that mix was the old voxel-ground jitter).
 	# Seat: keep body-up when upright so suspension bounce matches look.
 	var head_offset := field_up
-	if _is_in_vehicle() and _target != null and _target.is_inside_tree():
-		var body_up := (
-			_target.get_global_transform_interpolated().basis.y.normalized()
-		)
+	if _is_in_vehicle():
+		var vehicle := _current_vehicle()
+		var seat_xf: Transform3D
+		if vehicle != null and vehicle.is_inside_tree():
+			seat_xf = vehicle.get_global_transform_interpolated()
+		elif _target != null and _target.is_inside_tree():
+			seat_xf = _target.get_global_transform_interpolated()
+		else:
+			seat_xf = Transform3D.IDENTITY
+		var body_up := seat_xf.basis.y.normalized()
 		if body_up.dot(field_up) >= 0.35:
 			head_offset = body_up
 	var camera_position := target_position + head_offset * head_height
@@ -453,6 +467,7 @@ func _load_preferences() -> void:
 
 func _save_preferences() -> void:
 	var config := ConfigFile.new()
+	config.load(SETTINGS_PATH) # keep graphics / other sections
 	config.set_value("look", "sensitivity", sensitivity)
 	config.set_value("camera", "fov", fov)
 	var error := config.save(SETTINGS_PATH)
