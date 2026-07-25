@@ -5,7 +5,7 @@ $Root = $PSScriptRoot
 
 # Bare .\run.ps1 opens the current visual test scene; pass args to override
 # (e.g. .\run.ps1 res://scenes/main.tscn, or any other engine args).
-$DefaultScene = "res://scenes/shield_drive.tscn"
+$DefaultScene = "res://scenes/main.tscn"
 
 function Pick-Godot {
 	if ($env:GODOT -and (Test-Path $env:GODOT)) {
