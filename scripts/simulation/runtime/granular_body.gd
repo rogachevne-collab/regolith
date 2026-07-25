@@ -116,6 +116,8 @@ var _wet_points: PackedVector3Array = PackedVector3Array()
 ## Reused probe batch buffers (GRANULAR-COUPLING-PERF-1 stage 3).
 var _probe_points: PackedVector3Array = PackedVector3Array()
 var _probe_out: PackedVector4Array = PackedVector4Array()
+## Local AABB of sample points, grown by `_sample_radius` (stage 4 early-out).
+var _sample_aabb_local := AABB()
 var _sample_debt := 0.0
 var _press_debt := 0.0
 ## Last reading, held between samples and applied every frame.
@@ -129,6 +131,12 @@ func _ready() -> void:
 	if _body == null:
 		push_warning("GranularBody: no RigidBody3D above %s" % get_path())
 		set_physics_process(false)
+		return
+	# Soft stagger inside one sample period (~33 ms at 30 Hz): same rate per
+	# body, peak cost spread across ticks (GRANULAR-COUPLING-PERF-1 stage 5).
+	var phase := float(absi(get_instance_id()) % 1024) / 1024.0
+	_sample_debt = phase
+	_press_debt = phase
 
 
 func _physics_process(delta: float) -> void:
@@ -211,6 +219,12 @@ func _resample() -> void:
 	var sum := Vector3.ZERO
 	var granular := world as GranularVoxelWorld
 	if granular == null:
+		return
+	# Stage 4: skip 27 probes when the body box is clear of every spoil AABB.
+	if (
+		_sample_aabb_local.size.length_squared() > 0.0
+		and not granular.has_material_near(frame * _sample_aabb_local)
+	):
 		return
 	var n := _samples.size()
 	_probe_points.resize(n)
@@ -303,6 +317,10 @@ func _build_samples() -> void:
 						step.z * (float(iz) + 0.5)
 					)
 				)
+	_sample_aabb_local = AABB(_samples[0], Vector3.ZERO)
+	for point: Vector3 in _samples:
+		_sample_aabb_local = _sample_aabb_local.expand(point)
+	_sample_aabb_local = _sample_aabb_local.grow(_sample_radius)
 
 
 ## Union of the body's collision shapes, in the body's own frame. Built once —

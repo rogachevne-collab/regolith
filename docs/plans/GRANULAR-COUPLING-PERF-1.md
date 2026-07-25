@@ -292,8 +292,8 @@ early-out по геометрии, стаггер по тикам. Резуль�
 | 2 Vector4 probe | 128 | **130** | **132** | parity PASS; script_ms 2.5→0.9 (свежий мир, мало spoil) |
 | 3 батч many | 130 | **145** | **145** | parity PASS; script_ms ~1.1 |
 | follow-up | — | — | — | column cache bypass (stale surface); place_ring/windrow experiments reverted |
-| 4 AABB early-out | | | | |
-| 5 стаггер | | | | |
+| 4 AABB early-out | 144 | **145** | **145** | 7/7 PASS (with stage 5; demo=6-wheel/7 bodies) |
+| 5 стаггер | 144 | **145** | **145** | same run as 4; soft phase in 1/sample_hz |
 
 Примечание baseline: два прогона, взято худшее. Разброс driving большой
 (28 / 42); unparked 66 / 97. Сравнивать следующие этапы с этими worst-case.

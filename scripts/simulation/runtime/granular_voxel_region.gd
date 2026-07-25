@@ -288,6 +288,34 @@ func mark_touched_cell(cell: Vector3i) -> void:
 	_touched_hi = _touched_hi.max(cell)
 
 
+## Whether this region has ever held deposited mass (PERF-H13 touch box).
+func has_spoil() -> bool:
+	return _has_touched
+
+
+## World AABB of cells that have ever held mass. Empty when none.
+## Conservative: the touch box never shrinks when material is taken out
+## (GRANULAR-COUPLING-PERF-1 stage 4 early-out).
+func spoil_world_aabb() -> AABB:
+	if not _has_touched:
+		return AABB()
+	var frame := world_transform()
+	var cs := field.cell_size
+	var lo := Vector3(_touched_lo) * cs
+	var hi := Vector3(_touched_hi + Vector3i.ONE) * cs
+	var box := AABB(frame * lo, Vector3.ZERO)
+	for dx in 2:
+		for dy in 2:
+			for dz in 2:
+				var corner := Vector3(
+					hi.x if dx == 1 else lo.x,
+					hi.y if dy == 1 else lo.y,
+					hi.z if dz == 1 else lo.z
+				)
+				box = box.expand(frame * corner)
+	return box
+
+
 ## Pour material in where it would come to rest, rather than where it was
 ## released. Walks down from the given point to the first cell with something
 ## under it, then fills from there.

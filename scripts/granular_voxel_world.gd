@@ -704,6 +704,26 @@ func _scatter_spoil(
 	return accepted
 
 
+## True when `world_aabb` (grown by `margin_m`) overlaps any region's spoil
+## touch-box. Conservative gate for GranularBody early-out
+## (GRANULAR-COUPLING-PERF-1 stage 4): false negatives skip coupling.
+func has_material_near(world_aabb: AABB, margin_m: float = -1.0) -> bool:
+	if _regions.is_empty():
+		return false
+	var margin := margin_m
+	if margin < 0.0:
+		var first: GranularVoxelRegion = _regions[0]["region"]
+		margin = maxf(first.field.cell_size, 0.25)
+	var query := world_aabb.grow(margin)
+	for entry: Dictionary in _regions:
+		var region: GranularVoxelRegion = entry["region"]
+		if not region.has_spoil():
+			continue
+		if query.intersects(region.spoil_world_aabb()):
+			return true
+	return false
+
+
 ## Loose material at a world point as `(surface.xyz, depth_m)`. `w <= 0` means
 ## none. Hot path for GranularBody / PressSource / CharacterMotor — no
 ## Dictionary, no `call()` (GRANULAR-COUPLING-PERF-1 stage 2). Region order
