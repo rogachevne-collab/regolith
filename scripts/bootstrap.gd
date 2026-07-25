@@ -22,6 +22,9 @@ const MAX_SPAWN_SETTLE_FRAMES := 360
 const PHYSICS_GROUND_TIMEOUT_MS := 8000
 const PHYSICS_GROUND_TIMEOUT_LOAD_MS := 8000
 const AUTOSAVE_INTERVAL_S := 90.0
+## COOP-PERF-PLAYBOOK.md Phase 0: sample VT/Performance stats at ~7 Hz, not
+## every frame — cheap reads, but no reason to reformat the string 200×/s.
+const PERF_OVERLAY_SAMPLE_INTERVAL_S := 0.15
 ## Coalesce carve spam before writing digs; flush only after async save completes.
 const DIG_PERSIST_DEBOUNCE_S := 1.5
 const DIG_SAVE_TIMEOUT_MS := 15000
@@ -62,6 +65,7 @@ const MAP_HEIGHTMAP_SIZE := Vector2i(2048, 1024)
 @onready var _loading: Label = $CanvasLayer/Loading
 @onready var _coordinates: Label = $CanvasLayer/Coordinates
 @onready var _hint: Label = $CanvasLayer/Hint
+@onready var _perf_line: Label = $CanvasLayer/PerfLine
 
 @export var debug_overlay := false
 ## Draws the streamer's own view of itself: one wire box per viewer, and where
@@ -112,6 +116,26 @@ const MAP_HEIGHTMAP_SIZE := Vector2i(2048, 1024)
 ## Negate height — ridged carves instead of puffing (Generators→Planet).
 @export var carve_eroded := true
 
+var _perf_overlay_accum := 0.0
+## proc/phys are averaged over the sample window instead of a single snapshot:
+## TIME_PROCESS is per render frame and TIME_PHYSICS_PROCESS is per physics
+## tick, two different clocks that free-run at different rates (render can be
+## 190 Hz while physics stays fixed at 60 Hz) — one-shot samples of each
+## picked at an arbitrary instant do not add up to 1000/FPS and are not
+## comparable to each other. Averaging both across the same window at least
+## makes each number a true rate in its own clock.
+var _perf_proc_ms_accum := 0.0
+var _perf_proc_samples := 0
+var _perf_phys_ms_accum := 0.0
+var _perf_phys_ticks := 0
+## Breakdown of our own GDScript inside the physics tick (SimulationSession +
+## SimulationPhysicsProjection totals) — see get_last_tick_breakdown_us().
+## What's left of phys after subtracting this is PhysicsServer3D::sync/
+## flush_queries/step, i.e. the actual native Jolt cost.
+var _perf_script_ms_accum := 0.0
+var _perf_wheel_ms_accum := 0.0
+var _perf_motion_sync_ms_accum := 0.0
+var _perf_industry_ms_accum := 0.0
 var _warmup_frames := 0
 var _player_spawn_hint := Vector3.UP
 var _player_spawn_pos := Vector3.ZERO
@@ -270,6 +294,8 @@ func _ready() -> void:
 	_loading.visible = true
 	_coordinates.visible = debug_overlay
 	_hint.visible = debug_overlay
+	_perf_line.visible = debug_overlay
+	_register_perf_overlay_console_command()
 	_loading.text = "Луна..."
 	_configure_terrain()
 	_configure_dig_stream()
@@ -319,6 +345,23 @@ func _ready() -> void:
 	_place_when_ground_exists()
 
 
+func _physics_process(_delta: float) -> void:
+	if not debug_overlay:
+		return
+	_perf_phys_ms_accum += Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0
+	_perf_phys_ticks += 1
+	if _session == null or _session.projection == null:
+		return
+	var proj_us: Dictionary = _session.projection.get_last_tick_breakdown_us()
+	var sess_us: Dictionary = _session.get_last_tick_breakdown_us()
+	_perf_script_ms_accum += (
+		float(proj_us.get("total", 0)) + float(sess_us.get("total", 0))
+	) / 1000.0
+	_perf_wheel_ms_accum += float(proj_us.get("wheel_bodies_per_wheel", 0)) / 1000.0
+	_perf_motion_sync_ms_accum += float(proj_us.get("motion_sync", 0)) / 1000.0
+	_perf_industry_ms_accum += float(sess_us.get("industry_tick", 0)) / 1000.0
+
+
 func _process(delta: float) -> void:
 	_update_streaming_budget()
 	_update_far_impostor()
@@ -349,6 +392,127 @@ func _process(delta: float) -> void:
 		player_position.y,
 		player_position.z,
 	]
+	_perf_proc_ms_accum += Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0
+	_perf_proc_samples += 1
+	_perf_overlay_accum += delta
+	if _perf_overlay_accum < PERF_OVERLAY_SAMPLE_INTERVAL_S:
+		return
+	_perf_overlay_accum = 0.0
+	_update_perf_overlay_line()
+
+
+## COOP-PERF-PLAYBOOK.md Phase 0 (measurement only — no tuning here). Cheap
+## reads of already-computed VT/Performance/coop counters, sampled at
+## PERF_OVERLAY_SAMPLE_INTERVAL_S (AGENTS.md R9) — no per-frame allocation,
+## no world scan (`voxel_viewers` is a group, not a tree walk).
+##
+## proc/phys are the average over the last window, not one instantaneous
+## Performance sample — TIME_PROCESS/TIME_PHYSICS_PROCESS are two different
+## clocks (render frame vs. fixed physics tick) that free-run at different
+## rates, so a single snapshot of each does not add up to 1000/FPS.
+## main_blk reads VoxelEngine's own main-thread task queue (VoxelEngine
+## .get_stats()["tasks"]["main_thread"]) — that is the actual H1 metric
+## (main-thread collider/mesh build backlog); VoxelLodTerrain.get_statistics()
+## has no such key, it only has time_update_task (last update task's total
+## time, ms here) which upd_ms reports as a "did VT do anything this tick"
+## signal.
+##
+## active/pairs/islands (PHYSICS_3D_ACTIVE_OBJECTS/COLLISION_PAIRS/
+## ISLAND_COUNT) are always 0 with Jolt: Godot docs — "Only supported when
+## using GodotPhysics3D. This parameter is ignored when using Jolt Physics" —
+## confirmed in engine source, JoltPhysicsServer3D::get_process_info
+## (modules/jolt_physics/jolt_physics_server_3d.cpp) unconditionally
+## `return 0`. Kept in the overlay only so nobody re-discovers this the hard
+## way; they are not evidence of anything.
+##
+## script/engine splits `phys` using SimulationPhysicsProjection/
+## SimulationSession's own tick timers: main/main.cpp's physics iteration
+## runs PhysicsServer3D::sync + every node's _physics_process() (script,
+## including ours) THEN PhysicsServer3D::step() (native Jolt) inside the same
+## TIME_PHYSICS_PROCESS window, so the raw number cannot tell them apart on
+## its own — see SimulationPhysicsProjection.get_last_tick_breakdown_us().
+func _update_perf_overlay_line() -> void:
+	if _perf_line == null or not (_terrain is VoxelLodTerrain):
+		return
+	var lod := _terrain as VoxelLodTerrain
+	var stats := lod.get_statistics()
+	var engine_tasks: Dictionary = VoxelEngine.get_stats().get("tasks", {})
+	var coop := get_node_or_null("CoopSession")
+	var peers := 0
+	if coop != null and coop.has_method("peer_count"):
+		peers = int(coop.call("peer_count"))
+	var viewers := get_tree().get_nodes_in_group(&"voxel_viewers").size()
+	var avg_proc_ms := (
+		_perf_proc_ms_accum / float(_perf_proc_samples) if _perf_proc_samples > 0 else 0.0
+	)
+	var ticks := maxi(_perf_phys_ticks, 1)
+	var avg_phys_ms := _perf_phys_ms_accum / float(ticks)
+	var avg_script_ms := _perf_script_ms_accum / float(ticks)
+	var avg_wheel_ms := _perf_wheel_ms_accum / float(ticks)
+	var avg_motion_sync_ms := _perf_motion_sync_ms_accum / float(ticks)
+	var avg_industry_ms := _perf_industry_ms_accum / float(ticks)
+	var avg_engine_ms := maxf(avg_phys_ms - avg_script_ms, 0.0)
+	_perf_line.text = (
+		(
+			"FPS %.0f | proc %.1fms | phys %.1fms = script %.1fms + engine≈%.1fms "
+			+ "(wheel %.2f motion %.2f industry %.2f) (%d ticks) | main_blk %d | "
+			+ "upd_ms %.2f | active %d | pairs %d | islands %d | peers %d | viewers %d"
+		)
+	) % [
+		Performance.get_monitor(Performance.TIME_FPS),
+		avg_proc_ms,
+		avg_phys_ms,
+		avg_script_ms,
+		avg_engine_ms,
+		avg_wheel_ms,
+		avg_motion_sync_ms,
+		avg_industry_ms,
+		_perf_phys_ticks,
+		int(engine_tasks.get("main_thread", 0)),
+		float(stats.get("time_update_task", 0)) / 1000.0,
+		int(Performance.get_monitor(Performance.PHYSICS_3D_ACTIVE_OBJECTS)),
+		int(Performance.get_monitor(Performance.PHYSICS_3D_COLLISION_PAIRS)),
+		int(Performance.get_monitor(Performance.PHYSICS_3D_ISLAND_COUNT)),
+		peers,
+		viewers,
+	]
+	_perf_proc_ms_accum = 0.0
+	_perf_proc_samples = 0
+	_perf_phys_ms_accum = 0.0
+	_perf_phys_ticks = 0
+	_perf_script_ms_accum = 0.0
+	_perf_wheel_ms_accum = 0.0
+	_perf_motion_sync_ms_accum = 0.0
+	_perf_industry_ms_accum = 0.0
+
+
+## No hardcoded key (AGENTS.md conventions): toggled from LimboConsole like
+## CoopSession's `host`/`join`/`coop_status`, not a new input action.
+func _register_perf_overlay_console_command() -> void:
+	if LimboConsole == null:
+		return
+	LimboConsole.register_command(
+		_toggle_perf_overlay,
+		"perf_overlay",
+		"Coop perf: toggle main-thread collider budget overlay (COOP-PERF-PLAYBOOK.md)",
+	)
+
+
+func _toggle_perf_overlay() -> void:
+	debug_overlay = not debug_overlay
+	_coordinates.visible = debug_overlay
+	_hint.visible = debug_overlay
+	_perf_line.visible = debug_overlay
+	_perf_overlay_accum = 0.0
+	_perf_proc_ms_accum = 0.0
+	_perf_proc_samples = 0
+	_perf_phys_ms_accum = 0.0
+	_perf_phys_ticks = 0
+	_perf_script_ms_accum = 0.0
+	_perf_wheel_ms_accum = 0.0
+	_perf_motion_sync_ms_accum = 0.0
+	_perf_industry_ms_accum = 0.0
+	print("MoonExperiment: perf overlay %s" % ("ON" if debug_overlay else "OFF"))
 
 
 func _notification(what: int) -> void:

@@ -907,12 +907,16 @@ func peek_seat_control_state(element_id: int) -> SeatControlState:
 func get_wheel_runtime(wheel_element_id: int) -> Dictionary:
 	return _wheel_runtime.get(wheel_element_id, {})
 
+## `tick_result` must be a fresh Dictionary literal owned solely by the
+## caller (wheel tick builds one per call) — this method takes ownership of
+## it directly instead of `duplicate(true)`-ing it every physics tick per
+## wheel (PERF-H03: real per-tick allocation cost while a rover is unfrozen).
 func store_wheel_runtime(
 	wheel_element_id: int,
 	suspension_element_id: int,
 	tick_result: Dictionary
 ) -> void:
-	var runtime := tick_result.duplicate(true)
+	var runtime := tick_result
 	runtime["wheel_element_id"] = wheel_element_id
 	runtime["suspension_element_id"] = suspension_element_id
 	for key: String in [

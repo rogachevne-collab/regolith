@@ -115,6 +115,11 @@ func _ready() -> void:
 	super._ready()
 	_head = get_node(head_path)
 	_voxel_viewer = get_node_or_null("VoxelViewer") as VoxelViewer
+	## Group membership, not a scene tree walk: the perf overlay
+	## (COOP-PERF-PLAYBOOK.md Phase 0) counts active streaming viewers to
+	## show churn without scanning the world every sample.
+	if _voxel_viewer != null:
+		_voxel_viewer.add_to_group(&"voxel_viewers")
 	if _head != null:
 		_mining_light = _head.get_node_or_null("MiningLight") as SpotLight3D
 	_world_parent = get_parent()

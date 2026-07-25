@@ -309,6 +309,13 @@ func _world() -> SimulationWorld:
 	return _session.world if _session != null else null
 
 
+## Host-only connected peer count. Used by the host-side perf overlay
+## (COOP-PERF-PLAYBOOK.md Phase 0) to correlate FPS/VT stats with churn from
+## a joining/leaving peer. Zero offline or on a client.
+func peer_count() -> int:
+	return _registry.peer_ids().size()
+
+
 # --------------------------------------------------------- cmdline autostart
 
 ## `--coop-autohost` / `--coop-autojoin[=ip[:port]]` after `--`. Waits for

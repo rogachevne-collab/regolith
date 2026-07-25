@@ -105,6 +105,57 @@ var _rope_wake_overshoot: Dictionary = {}
 ## otherwise Player+Camera die with the old RigidBody and the viewport shows
 ## only default_clear_color.
 var _evacuated_drivers: Array[Dictionary] = []
+## PERF-H03: `_bodies` / `_wheel_constraints` only change on structural
+## mutation (project/remove a body, rebuild wheel constraints), not every
+## physics tick — bump on those sites instead of re-sorting+allocating a
+## fresh key array from scratch in every one of the several per-tick passes
+## below (parking-freeze scan, wheel tick, motion capture).
+var _tick_key_structure_rev := 0
+var _tick_key_cache_rev := -1
+var _bodies_keys_cache: Array[int] = []
+var _wheel_constraints_keys_cache: Array[int] = []
+
+## Diagnostic only (PERF-COOP-REGRESS): Performance.TIME_PHYSICS_PROCESS
+## measures the whole engine iteration — PhysicsServer3D::sync/flush_queries,
+## every node's _physics_process() (this one included), THEN
+## PhysicsServer3D::step() (main/main.cpp Main::iteration) — so it cannot
+## tell GDScript tick cost apart from the native Jolt step. This breaks that
+## number down by sub-tick so the overlay/bench can show where our own script
+## time goes instead of guessing. Cheap (a handful of get_ticks_usec() calls
+## per physics tick) — not a hot-path allocation, R9-safe.
+var _last_tick_breakdown_us: Dictionary = {}
+## Wall-clock timestamp (usec) this node's _physics_process last returned.
+## Performance.TIME_PHYSICS_PROCESS is USELESS for per-tick measurement: it is
+## set exactly once per real-world second to the WORST single tick seen in
+## that second and holds that value for the rest of the second (confirmed in
+## engine source, main/main.cpp Main::iteration — `if (frame > 1000000) {
+## performance->set_physics_process_time(...); frame = 0; }`, `frame` being a
+## running sum of elapsed usec). Sampling it every tick and averaging (as an
+## earlier pass here did) just averages repeated copies of last second's
+## worst spike — not a real per-tick average.
+## The wall-clock gap between "our script ends this tick" and "our script
+## starts next tick" is a real measurement instead: per main.cpp's physics
+## loop, that gap is exactly nav processing + PhysicsServer3D::step()
+## (native Jolt) + message_queue.flush() + iteration_end() + the next tick's
+## PhysicsServer3D::sync()/flush_queries() — i.e. everything OUTSIDE our own
+## GDScript, dominated in practice by the native step. Works the same whether
+## or not the engine is running multiple physics substeps per rendered frame.
+var _prev_tick_end_us := -1
+## Bumped every physics tick so pollers (bench/overlay) sampling once per
+## rendered frame can tell whether a new tick actually landed since their
+## last read, instead of re-averaging the same stale dictionary N times when
+## render FPS > physics Hz.
+var _tick_seq := 0
+
+func get_last_tick_breakdown_us() -> Dictionary:
+	return _last_tick_breakdown_us
+
+func _ensure_tick_key_caches() -> void:
+	if _tick_key_cache_rev == _tick_key_structure_rev:
+		return
+	_tick_key_cache_rev = _tick_key_structure_rev
+	_bodies_keys_cache = _sorted_int_keys(_bodies)
+	_wheel_constraints_keys_cache = _sorted_int_keys(_wheel_constraints)
 
 func bind_impact_service(service: ImpactResolverService) -> void:
 	_impact_service = service
@@ -273,14 +324,23 @@ func _physics_process(delta: float) -> void:
 	# — poses arrive over the network via sync_assembly_motion instead.
 	if _world == null or not _world.authoritative:
 		return
+	var t0 := Time.get_ticks_usec()
+	var native_gap_us := (t0 - _prev_tick_end_us) if _prev_tick_end_us >= 0 else -1
+	_ensure_tick_key_caches()
+	var t_rotor := Time.get_ticks_usec()
 	_tick_rotor_actuators(delta)
+	var t_piston := Time.get_ticks_usec()
 	_tick_piston_actuators(delta)
+	var t_wheel := Time.get_ticks_usec()
 	_tick_wheel_bodies(delta)
+	var t_thruster := Time.get_ticks_usec()
 	_tick_thrusters(delta)
+	var t_rope := Time.get_ticks_usec()
 	_tick_cable_ropes(delta)
 	_tick_cable_tension(delta)
 	_tick_cable_anchors(delta)
-	for assembly_id: int in _sorted_int_keys(_bodies):
+	var t_sync := Time.get_ticks_usec()
+	for assembly_id: int in _bodies_keys_cache:
 		var assembly: SimulationAssembly = _world.get_assembly_raw(assembly_id)
 		if assembly == null or assembly.tombstoned:
 			continue
@@ -304,6 +364,21 @@ func _physics_process(delta: float) -> void:
 		if body == null:
 			continue
 		_world.sync_assembly_motion(assembly_id, _capture_body_motion(body))
+	var t_end := Time.get_ticks_usec()
+	_last_tick_breakdown_us = {
+		"key_cache": t_rotor - t0,
+		"rotor": t_piston - t_rotor,
+		"piston": t_wheel - t_piston,
+		"wheel_bodies": t_thruster - t_wheel,
+		"thrusters": t_rope - t_thruster,
+		"cable": t_sync - t_rope,
+		"motion_sync": t_end - t_sync,
+		"total": t_end - t0,
+		"native_gap_since_prev_tick": native_gap_us,
+	}
+	_prev_tick_end_us = t_end
+	_tick_seq += 1
+	_last_tick_breakdown_us["tick_seq"] = _tick_seq
 
 func _exit_tree() -> void:
 	unbind_world()
@@ -1110,6 +1185,7 @@ func _project_assembly_single(
 			)
 		_apply_locomotive_rigid_tuning(assembly_id, rigid)
 	_bodies[assembly_id] = body
+	_tick_key_structure_rev += 1
 	for element_id: int in colliders_by_element:
 		_element_records[element_id] = {
 			"assembly_id": assembly_id,
@@ -1321,6 +1397,7 @@ func _project_assembly_multibody(
 	_root_group_ids[assembly_id] = root_group_id
 	if root_group_id > 0 and groups_map.has(root_group_id):
 		_bodies[assembly_id] = groups_map[root_group_id]
+	_tick_key_structure_rev += 1
 
 	var piston_records: Array[Dictionary] = []
 	var rotor_records: Array[Dictionary] = []
@@ -1574,6 +1651,7 @@ func _project_assembly_multibody(
 		)
 	else:
 		_wheel_constraints.erase(assembly_id)
+	_tick_key_structure_rev += 1
 	var motion: AssemblyMotionState = seed_motion.duplicate_state()
 	if _world.authoritative and _world.assembly_has_anchor(assembly_id):
 		if not active_locomotive:
@@ -1962,9 +2040,13 @@ func wake_frozen_near(center: Vector3, radius: float) -> void:
 func _tick_wheel_bodies(delta: float) -> void:
 	if _world == null or delta <= 0.0:
 		return
-	for assembly_id: int in _sorted_int_keys(_bodies):
+	var t0 := Time.get_ticks_usec()
+	_ensure_tick_key_caches()
+	for assembly_id: int in _bodies_keys_cache:
 		_update_parking_freeze(assembly_id)
-	for assembly_id: int in _sorted_int_keys(_wheel_constraints):
+	var t_freeze := Time.get_ticks_usec()
+	var wheel_records_ticked := 0
+	for assembly_id: int in _wheel_constraints_keys_cache:
 		var assembly: SimulationAssembly = _world.get_assembly_raw(assembly_id)
 		if assembly == null or assembly.tombstoned:
 			continue
@@ -1982,6 +2064,11 @@ func _tick_wheel_bodies(delta: float) -> void:
 					active_input,
 					delta
 				)
+				wheel_records_ticked += 1
+	var t_end := Time.get_ticks_usec()
+	_last_tick_breakdown_us["wheel_bodies_parking_freeze"] = t_freeze - t0
+	_last_tick_breakdown_us["wheel_bodies_per_wheel"] = t_end - t_freeze
+	_last_tick_breakdown_us["wheel_bodies_records_ticked"] = wheel_records_ticked
 
 
 func _tick_wheel_record(
@@ -3874,6 +3961,7 @@ func _remove_body(assembly_id: int) -> void:
 			body.queue_free()
 	_bodies.erase(assembly_id)
 	_projected_revision.erase(assembly_id)
+	_tick_key_structure_rev += 1
 
 
 ## Pull seated Player nodes off a body before queue_free. Seat entry parents the

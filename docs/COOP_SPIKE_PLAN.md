@@ -359,7 +359,9 @@ SQLite bulk — RC (не этап D).
   не фейкать в Persistence пока); стояние на движущихся платформах.
 - Roam без «держитесь рядом» → **R-COOP-7** ✅ host per-peer collision-only
   `VoxelViewer` on `RemotePlayer` (`requires_visuals=false`, dig budget =
-  `DEFAULT_LOD_DISTANCE`); playtest guest dig far from host still required.
+  `DEFAULT_LOD_DISTANCE`); **lazy:** viewer только on-foot + drill в руках —
+  из кресла бурить нельзя (`tool_controller` блокирует `in_vehicle`); seated
+  viewer гонял второй Clipbox на ровере и рвал FPS хоста (~30 vs ~170 parked).
 
 ## Рабочие правила спайка (для всех агентов)
 

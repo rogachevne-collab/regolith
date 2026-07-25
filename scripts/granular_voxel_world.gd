@@ -1151,6 +1151,7 @@ func restore_field_snapshot(data: Dictionary) -> int:
 			var z := rem / cells
 			var x := rem - z * cells
 			field.deposit(x, y, z, val[k] * cell_vol)
+			region.mark_touched_cell(Vector3i(x, y, z))
 		restored += 1
 	return restored
 

@@ -137,6 +137,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 9580, 0)
 
 [node name="WorldRtGeometry" type="Node" parent="."]
 script = ExtResource("26_world_rt")
+enabled = false
 camera_path = NodePath("../Player/Camera")
 terrain_path = NodePath("../VoxelTerrain")
 extra_mesh_roots = Array[NodePath]([NodePath("../Player/Camera/DrillVisual")])
@@ -196,4 +197,21 @@ theme_override_constants/shadow_offset_x = 1
 theme_override_constants/shadow_offset_y = 1
 theme_override_font_sizes/font_size = 18
 text = "Игрок:  0.0, 0.0, 0.0"
+horizontal_alignment = 2
+
+[node name="PerfLine" type="Label" parent="CanvasLayer" unique_id=1659077726]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -460.0
+offset_top = 76.0
+offset_right = -16.0
+offset_bottom = 134.0
+grow_horizontal = 0
+theme_override_colors/font_color = Color(1, 0.95, 0.6, 0.9)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.8)
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 1
+theme_override_font_sizes/font_size = 16
+text = "FPS ? | proc ?ms | phys ?ms | main_blk ? | upd_blk ? | peers ? | viewers ?"
 horizontal_alignment = 2

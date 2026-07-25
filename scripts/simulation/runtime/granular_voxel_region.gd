@@ -87,6 +87,18 @@ var field: GranularVoxelField
 ## Cell in the field that the anchor's origin corresponds to. The field counts
 ## from a corner and the anchor is centred, so this is the shift between them.
 var _centre_cell := Vector3i.ZERO
+## Bounding box (field-cell coordinates) of every cell this wrapper has ever
+## put mass into. `sinter_into_terrain` scans only this box instead of the
+## full 96^3 grid — nearly all of a region is air, and PERF: driving a dig
+## point across a region's edge evicts+sinters the outgoing region on the
+## spot (`GranularVoxelWorld._instantiate_region`), so an eviction that used
+## to walk the whole grid could fire several times a second while digging on
+## the move. Never shrunk when material is taken back out — a slightly wider
+## box than the live heap costs nothing next to walking cells that were never
+## touched at all.
+var _touched_lo := Vector3i.ZERO
+var _touched_hi := Vector3i.ZERO
+var _has_touched := false
 ## Kept so rock can also be read in bulk, which the per-cell oracle closure
 ## cannot do. Null in the headless tests and the demo stands, where the field
 ## is self-contained and `prime_rock` has nothing to read from.
@@ -253,13 +265,27 @@ func deposit_at(
 			for dy in field.size.y:
 				if share <= 0.0:
 					break
-				var accepted := field.deposit(
-					ground.x, ground.y + dy, ground.z, share
-				)
+				var cell := Vector3i(ground.x, ground.y + dy, ground.z)
+				var accepted := field.deposit(cell.x, cell.y, cell.z, share)
+				if accepted > 0.0:
+					mark_touched_cell(cell)
 				placed += accepted
 				remaining -= accepted
 				share -= accepted
 	return placed
+
+
+## Record a cell as holding (or having held) mass, for `sinter_into_terrain`'s
+## bounding box. Also called by save/restore, which writes straight into
+## `field` and bypasses `deposit_at`.
+func mark_touched_cell(cell: Vector3i) -> void:
+	if not _has_touched:
+		_touched_lo = cell
+		_touched_hi = cell
+		_has_touched = true
+		return
+	_touched_lo = _touched_lo.min(cell)
+	_touched_hi = _touched_hi.max(cell)
 
 
 ## Pour material in where it would come to rest, rather than where it was
@@ -598,11 +624,40 @@ const SINTER_SPHERE_RADIUS_M := 0.6
 ## the field and reports the volume, so the dwell/eviction logic that drives it
 ## is verifiable without a world.
 func sinter_into_terrain() -> float:
-	if field.total_volume_m3() <= 0.0:
+	# Scan only the box this region's wrapper has actually deposited into
+	# (`_touched_lo/_touched_hi`), not the whole 96^3 grid: a region is
+	# ~885k cells and almost all of them are air a spoil heap never reaches.
+	# `total_volume_m3` + a full `copy_mass_box` sift here used to cost as
+	# much as stepping the entire grid, and this runs every time a region is
+	# evicted (`GranularVoxelWorld._instantiate_region`) — which happens on
+	# the spot whenever a dig point crosses the current region's edge, so it
+	# fired repeatedly while driving and digging at the same time.
+	#
+	# Falls back to the old whole-grid read when nothing was ever routed
+	# through `deposit_at`/`mark_touched_cell` (tests and benches that poke
+	# `field.deposit` directly) — correctness never depends on the tracked
+	# box, only the fast path does.
+	var lo := Vector3i.ZERO
+	var extent := field.size
+	if _has_touched:
+		lo = Vector3i(
+			clampi(_touched_lo.x, 0, field.size.x - 1),
+			clampi(_touched_lo.y, 0, field.size.y - 1),
+			clampi(_touched_lo.z, 0, field.size.z - 1)
+		)
+		var hi := Vector3i(
+			clampi(_touched_hi.x, 0, field.size.x - 1),
+			clampi(_touched_hi.y, 0, field.size.y - 1),
+			clampi(_touched_hi.z, 0, field.size.z - 1)
+		)
+		extent = hi - lo + Vector3i.ONE
+	elif field.total_volume_m3() <= 0.0:
 		return 0.0
-	var mass := field.copy_mass_box(Vector3i.ZERO, field.size)
-	var sx := field.size.x
-	var plane := field.size.x * field.size.z
+	var mass := field.copy_mass_box(lo, extent)
+	if mass.is_empty():
+		return 0.0
+	var sx := extent.x
+	var plane := extent.x * extent.z
 	var writing := _terrain != null and _voxel_tool != null
 	# Occupancy summed per terrain-local metre voxel, and the field cells that
 	# fed each — so a voxel crossing the solid threshold clears exactly the cells
@@ -618,12 +673,12 @@ func sinter_into_terrain() -> float:
 		if m <= 0.0:
 			continue
 		@warning_ignore("integer_division")
-		var y := i / plane
-		var rem := i - y * plane
+		var ly := i / plane
+		var rem := i - ly * plane
 		@warning_ignore("integer_division")
-		var z := rem / sx
-		var x := rem - z * sx
-		var cell := Vector3i(x, y, z)
+		var lz := rem / sx
+		var lx := rem - lz * sx
+		var cell := lo + Vector3i(lx, ly, lz)
 		occupied.append(cell)
 		if not has_bounds:
 			occ_lo = cell

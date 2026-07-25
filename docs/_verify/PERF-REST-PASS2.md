@@ -86,3 +86,120 @@ evidence.
 - Remaining rows (`PERF-H04/05/06/11/12`, `CMP-12`) spot-checked for internal consistency against already-verified sibling patterns; not independently re-read line-by-line this pass.
 - No `./run.sh`, no profiler, no coop smoke, no commits, no production fixes.
 - All frame-cost figures treated as **NOT_PROFILED** per user instruction — no ms number in this document is a measurement.
+
+---
+
+## 6. PERF-H13 (new, 2026-07-25) — FIXED same day
+
+Real playtest report: dual-window coop, guest passenger + drilling while the
+vehicle is moving → host 2–5 FPS. Standing (no dig) on the same moving
+vehicle → 30–40 FPS (PERF-H03, unrelated, still open). Parked, no dig →
+170–180 FPS.
+
+**Root cause:** `GranularVoxelRegion.sinter_into_terrain()`
+(`granular_voxel_region.gd`) read the *entire* 96³ (~885k-cell) granular
+region with `field.total_volume_m3()` + `field.copy_mass_box(ZERO, size)`
+and then sifted it cell-by-cell in GDScript, every time a region was
+sintered — which includes **eviction**: `GranularVoxelWorld._instantiate_region`
+evicts+sinters the oldest of `MAX_REGIONS=3` the moment a dig lands outside
+all current regions' 24 m boxes. Digging while stationary keeps landing in
+the same region (no eviction, no cost); digging while *driving* keeps
+crossing region edges, firing this ~885k-cell GDScript scan several times a
+second — on top of PERF-H03's already-elevated per-tick cost while the
+vehicle is unfrozen.
+
+**Fix:** `GranularVoxelRegion` now tracks a bounding box of cells it has
+actually deposited into (`mark_touched_cell`, called from `deposit_at` and
+the save-restore path) and `sinter_into_terrain` scans only that box —
+typically a few dozen to a few hundred cells for a spoil heap, not 885k.
+Falls back to the old whole-grid read when nothing was routed through the
+tracked entry points (tests/benches poking `field.deposit` directly), so
+correctness never depends on the fast path.
+
+Files: `scripts/simulation/runtime/granular_voxel_region.gd`,
+`scripts/granular_voxel_world.gd` (one line, restore path).
+
+Verified: `test_granular_sinter`, `test_granular_lens_scoop`,
+`test_granular_field_persist`, `test_granular_patch`,
+`test_granular_field_parity`, `test_granular_prime_rock`,
+`test_granular_mesher` all PASS after the change (Windows, custom
+`godot.windows.editor.double.x86_64.console.exe`). No live two-window FPS
+re-measurement was taken — see retest note for the user.
+
+**Out of scope:** vehicle-mounted `stationary_drill` never touches
+`GranularVoxelWorld` (ore credited directly, no spoil) — see
+`docs/_verify/COOP-PERF-PLAYBOOK.md` §7 for that VT-cost analysis.
+
+---
+
+## 7. PERF-H03 — measured (2026-07-25) — script cost fixed, NOT the dominant term
+
+**Measurement.** Built a temporary headless bench (real `VoxelTerrain` +
+`RoverComposer.spawn_on_terrain` demo rover on the actual
+`SimulationSession`/`SimulationPhysicsProjection` path, so Jolt collides real
+wheel/chassis bodies against real terrain colliders — not a synthetic
+no-ground rig) plus per-pass `Time.get_ticks_usec()` instrumentation inside
+`_physics_process` (rotor/piston/wheel/thruster/rope/tension/anchor/motion-
+capture), removed after measuring. A/B on the SAME assembly, forcing
+`RigidBody3D.freeze` explicitly (`_set_assembly_bodies_frozen`) so the
+comparison is apples-to-apples (letting it free-fall to "natural" park never
+re-froze without real ground):
+
+| State | `Performance.TIME_PHYSICS_PROCESS` avg | `SimulationPhysicsProjection` script total |
+|---|---|---|
+| PARKED (`freeze=true`) | ~4.4 ms/tick | ~0.11 ms/tick |
+| AWAKE (`freeze=false`, no throttle) | ~4.9 ms/tick | ~0.48 ms/tick |
+| DRIVING (`freeze=false`, throttle=1.0) | ~5.3–5.9 ms/tick | ~0.45–0.49 ms/tick |
+
+Dominant script-side term confirmed exactly as pass-1/pass-2 described:
+`_tick_wheel_bodies` (the parking-freeze scan over `_bodies` plus the
+per-wheel-constraint tick) — ~55 µs/tick frozen (root body skipped, only the
+cheap parking-freeze check runs) vs ~320–390 µs/tick unfrozen for a 4-wheel
+demo rover, i.e. the "whenever an assembly is unfrozen" tax is real and
+attributable to `_tick_wheel_bodies`, not the other 6 passes (rope/tension/
+anchor/thruster/rotor/piston all stayed ≤tens of µs throughout, gated
+correctly by their own early-outs since this rover has none of those parts).
+
+**But: the measured total swing (frozen → driving) is only ~0.9–1.5 ms per
+physics tick for one simple rover** — an unconditional, real, R9-violating
+cost, but nowhere near enough on its own to produce a 170→30-40 FPS (~5×)
+drop. `docs/_verify/COOP-PERF-PLAYBOOK.md` (parallel research, same day)
+independently ranks this same code path (its `H5`) as "amplifying, not root
+cause" for exactly this symptom, and points at Voxel Tools mesh/collider
+churn from a fast-moving `VoxelViewer` (`H2`) and main-thread collider
+budget contention (`H1`) as the more likely dominant terms — neither of
+which live in `simulation_physics_projection.gd`. Re-open a dedicated PERF
+item under that playbook if the two-window retest below still shows the
+full ~5× gap after this fix.
+
+**Fix applied (minimal, matches the CONFIRMED defect exactly — R9 cache/
+dirty-flag pattern, no behavior change):**
+- `SimulationPhysicsProjection`: `_bodies` / `_wheel_constraints` key
+  iteration order was being rebuilt (`Array` alloc + `sort()`) from scratch
+  in the two hottest per-tick call sites (`_physics_process` motion-capture
+  loop, `_tick_wheel_bodies`'s two scans) every single tick regardless of
+  whether anything structural changed. Replaced with a `_tick_key_structure_rev`
+  counter bumped only at the actual mutation sites (project/remove a body,
+  (re)build wheel constraints) and a small cache (`_ensure_tick_key_caches`)
+  that only re-sorts when that counter moves. Iteration order is unchanged
+  (still numerically sorted), so this is not a behavior change.
+- `SimulationWorld.store_wheel_runtime`: was `tick_result.duplicate(true)`-ing
+  a ~20-key dict every wheel every tick while unfrozen; the caller always
+  passes a fresh literal it never reuses, so this is a pure allocation with
+  no aliasing benefit. Now takes ownership of the caller's dict directly.
+
+Files: `scripts/simulation/projection/simulation_physics_projection.gd`,
+`scripts/simulation/simulation_world.gd`.
+
+Verified (Windows, custom `godot.windows.editor.double.x86_64.console.exe`,
+headless): `test_coop_seat`, `test_coop_codec`, `test_coop_dig_replay`,
+`test_coop_bug_regressions`, `test_coop_rope_projection` all PASS.
+`test_simulation_wheel`, `test_simulation_projection`, `test_impact_destruction`
+fail identically on a clean stash of this change (pre-existing, unrelated
+dirty WIP in the tree) — confirmed via `git stash` A/B, not blamed on this fix.
+
+**Status: PARTIAL.** The confirmed R9 defect (unconditional per-tick
+re-sort + per-wheel deep-copy allocation) is fixed and measurably reduces
+the "whenever unfrozen" tax, but it is not the dominant term for the
+reported 170→30-40 FPS regression on a simple rover. No live two-window FPS
+re-measurement was taken — retest note for the user below.

@@ -3,6 +3,10 @@ $ErrorActionPreference = "Stop"
 
 $Root = $PSScriptRoot
 
+# Bare .\run.ps1 opens the current visual test scene; pass args to override
+# (e.g. .\run.ps1 res://scenes/main.tscn, or any other engine args).
+$DefaultScene = "res://scenes/shield_drive.tscn"
+
 function Pick-Godot {
 	if ($env:GODOT -and (Test-Path $env:GODOT)) {
 		return $env:GODOT
@@ -44,5 +48,9 @@ if (-not (Test-Path $VoxelDll)) {
 
 Write-Host "Using: $(& $GodotBin --version)"
 Set-Location $Root
-& $GodotBin --path $Root @args
+if ($args.Count -eq 0) {
+	& $GodotBin --path $Root $DefaultScene
+} else {
+	& $GodotBin --path $Root @args
+}
 exit $LASTEXITCODE

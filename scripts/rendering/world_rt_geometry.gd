@@ -26,7 +26,8 @@ const SPAN_CELL_RESTAGE_THRESHOLD := 1
 const MAX_RT_LOD := 2
 const DIAG_CAP := 24
 
-@export var enabled := true
+## Esc menu / prefs drive this; default off (CSM until user enables RT).
+@export var enabled := false
 @export var camera_path: NodePath = ^""
 @export var terrain_path: NodePath = ^"/root/Main/VoxelTerrain"
 @export var extra_mesh_roots: Array[NodePath] = []
@@ -125,6 +126,18 @@ func _ready() -> void:
 func _exit_tree() -> void:
 	_unhook_terrain_signals()
 	_free_all()
+
+
+## Esc / prefs: when off, drop the live TLAS so the engine keeps CSM only.
+func set_world_rt_enabled(on: bool) -> void:
+	if enabled == on:
+		return
+	enabled = on
+	if on:
+		return
+	if rt_available and _tlas_registered:
+		RenderingServer.set_world_tlas(RID())
+		_tlas_registered = false
 
 
 func _process(delta: float) -> void:

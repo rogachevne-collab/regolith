@@ -20,6 +20,13 @@ const SLICE01_BASE_MINIMAL := preload(
 @onready var world_loot: WorldLootProjection = $WorldLootProjection
 
 var _industry_simulation := IndustrySimulation.new()
+## Diagnostic only (PERF-COOP-REGRESS) — see SimulationPhysicsProjection
+## .get_last_tick_breakdown_us() for why TIME_PHYSICS_PROCESS alone can't
+## separate our GDScript tick from the native Jolt step.
+var _last_tick_breakdown_us: Dictionary = {}
+
+func get_last_tick_breakdown_us() -> Dictionary:
+	return _last_tick_breakdown_us
 
 
 func _ready() -> void:
@@ -39,13 +46,23 @@ func _physics_process(delta: float) -> void:
 	# Replica sessions (COOP-HOST-V0) never advance the world locally.
 	if world == null or not world.authoritative:
 		return
+	var t0 := Time.get_ticks_usec()
 	_industry_simulation.tick(world, delta)
+	var t_industry := Time.get_ticks_usec()
 	world.tick_suits(delta)
+	var t_suits := Time.get_ticks_usec()
 	var gateway: WorldCommandGateway = null
 	if not gateway_path.is_empty():
 		gateway = get_node_or_null(gateway_path) as WorldCommandGateway
 	if gateway != null:
 		gateway.tick_rover_locomotion_input()
+	var t_end := Time.get_ticks_usec()
+	_last_tick_breakdown_us = {
+		"industry_tick": t_industry - t0,
+		"suits": t_suits - t_industry,
+		"rover_locomotion_input": t_end - t_suits,
+		"total": t_end - t0,
+	}
 
 
 func get_industry_simulation() -> IndustrySimulation:

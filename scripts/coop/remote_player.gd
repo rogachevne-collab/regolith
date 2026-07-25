@@ -70,10 +70,10 @@ func set_seat_transform_resolver(resolver: Callable) -> void:
 
 ## Host path only (CoopSession). Collision/data stream for remote dig
 ## editability; no meshes. Viewer is a child — follows pose / seat snaps.
+## Created lazily: a seated passenger on a moving rover otherwise drags a
+## second Clipbox viewer every frame and tanks host FPS.
 func enable_host_stream_proxy() -> void:
 	_host_stream_wanted = true
-	if not _samples.is_empty():
-		_ensure_host_stream_viewer()
 
 
 ## Pose dict from the network: {p, q, qh, l, v, seat}. Stamped with local
@@ -111,14 +111,17 @@ func _process(delta: float) -> void:
 	# assembly stream already carries the vehicle; lagging p trails by metres).
 	var seat_id := int(newest.get("seat", 0))
 	if seat_id > 0 and _try_apply_seated(seat_id, newest):
+		_sync_host_stream_viewer(seat_id)
 		return
 
 	if render_t <= int(oldest["t"]):
 		_apply(oldest["p"], oldest["q"], oldest["qh"], bool(oldest["l"]))
+		_sync_host_stream_viewer(seat_id)
 		return
 
 	if render_t >= int(newest["t"]):
 		_apply_extrapolated(newest, render_t)
+		_sync_host_stream_viewer(seat_id)
 		return
 
 	for i in range(_samples.size() - 1):
@@ -134,6 +137,7 @@ func _process(delta: float) -> void:
 		var pb: Vector3 = b["p"]
 		if pa.distance_to(pb) > SNAP_DIST:
 			_apply(pb, b["q"], b["qh"], bool(b["l"]))
+			_sync_host_stream_viewer(seat_id)
 			return
 		_apply(
 			pa.lerp(pb, f),
@@ -141,6 +145,7 @@ func _process(delta: float) -> void:
 			(a["qh"] as Quaternion).slerp(b["qh"], f),
 			bool(b["l"])
 		)
+		_sync_host_stream_viewer(seat_id)
 		return
 
 
@@ -184,7 +189,26 @@ func _apply(
 		_head.global_basis = Basis(head_q)
 	if _headlamp != null:
 		_headlamp.visible = lamp_on
+
+
+## R-COOP-7: host-only Clipbox proxy for remote is_area_editable.
+## On foot + drill equipped only. Seated (driver or PAX): tools blocked by
+## tool_controller — no peer viewer; a moving viewer on the rover tanked host FPS.
+func _host_needs_terrain_stream(seat_id: int) -> bool:
+	if seat_id > 0:
+		return false
+	return _tool_id == &"drill"
+
+
+func _sync_host_stream_viewer(seat_id: int) -> void:
+	if not _host_stream_wanted:
+		return
+	if not _host_needs_terrain_stream(seat_id):
+		_release_host_stream_viewer()
+		return
 	_ensure_host_stream_viewer()
+	if _host_stream_viewer != null and is_instance_valid(_host_stream_viewer):
+		_host_stream_viewer.view_distance = HOST_PEER_VIEW_DISTANCE_VOXELS
 
 
 func _ensure_host_stream_viewer() -> void:
@@ -197,8 +221,19 @@ func _ensure_host_stream_viewer() -> void:
 	viewer.requires_visuals = false
 	viewer.requires_collisions = true
 	viewer.view_distance = HOST_PEER_VIEW_DISTANCE_VOXELS
+	## Group membership so the host perf overlay (COOP-PERF-PLAYBOOK.md
+	## Phase 0) can count active streaming viewers without a scene tree walk.
+	viewer.add_to_group(&"voxel_viewers")
 	add_child(viewer)
 	_host_stream_viewer = viewer
+
+
+func _release_host_stream_viewer() -> void:
+	if _host_stream_viewer == null:
+		return
+	if is_instance_valid(_host_stream_viewer):
+		_host_stream_viewer.queue_free()
+	_host_stream_viewer = null
 
 
 func _build_visuals() -> void:
