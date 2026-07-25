@@ -242,23 +242,92 @@ const HUD_TICK_PT := 10
 
 enum View { ISO, CHASE, FREE }
 
-## The surface shader, and the whole of the depth cut. It used to be a string in
-## this file and three flat colours; it is a file of its own now because it
-## `#include`s the project's triplanar normal blend, and because a shader with
-## fifteen texture slots in it is not a string constant.
+## The surface shader, and the whole of the depth cut.
 ##
-## What it draws and why the volume needed textures at all is written at the top
-## of the shader. The one thing worth repeating here: it reads the world position
-## straight off the vertex, because the chunk instances carry a pure scale by the
-## cell size and no translation, and it touches nothing derived from the camera —
-## this build's camera-relative world transforms make `CAMERA_POSITION_WORLD` and
-## everything like it unreliable.
-const GROUND_SHADER := "res://resources/shield_ground.gdshader"
+## World position without `MODEL_MATRIX` and without anything derived from the
+## camera: the chunk instances carry a pure scale by the cell size and no
+## translation at all (see `_mesh_chunk`), so a vertex's own coordinates — the
+## mesher emits vertices in cell units — are the world position over the cell
+## size. This build's camera-relative world transforms make
+## `CAMERA_POSITION_WORLD` and everything like it unreliable; none of that is
+## touched here, and the cut map is read in world XZ for the same reason.
+##
+## The bilinear is written out by hand over `texelFetch` rather than left to the
+## sampler, and that is not fussiness. Two reasons. The lid is built out of the
+## same map on the CPU and the two have to agree to the centimetre — a lid drawn
+## a hair off the height fragments are thrown away at is a hairline gap running
+## the length of the trench — and writing the filter out is the only way to be
+## sure both are computing the same thing. And a 32-bit float texture is not
+## guaranteed to be filterable at all: `filter_linear` on it is a driver-dependent
+## black screen waiting to happen.
+##
+## The cut *has* to be interpolated and not stepped. Quantised to the cell it
+## already quantises to, the flare came out as a field of loose tiles — the slope
+## is shallow, so half the trace straddled a cell boundary and dithered between
+## two levels. That reads as breakage, not as a slope.
+const SECTION_SHADER_CODE := """
+shader_type spatial;
+render_mode cull_back;
 
-## Where the three photographed grounds live. Five maps each, all 2048 square:
-## albedo, normal (OpenGL convention, green not flipped), roughness, ao, height.
-## No metallic: in all three it is a flat black fill, and ground is not metal.
-const GROUND_TEXTURES := "res://resources/textures/shield/"
+uniform float cell_size = 0.5;
+uniform bool cut_on = false;
+uniform bool dug_on = true;
+uniform float map_cell = 1.0;
+uniform vec2 map_dim = vec2(120.0, 48.0);
+uniform sampler2D cut_map : filter_nearest, repeat_disable, hint_default_black;
+uniform vec4 albedo : source_color = vec4(0.6, 0.5, 0.4, 1.0);
+uniform vec4 dug_tint : source_color = vec4(0.86, 0.42, 0.18, 1.0);
+uniform float dug_mix : hint_range(0.0, 1.0) = 0.42;
+uniform float rough : hint_range(0.0, 1.0) = 1.0;
+
+varying vec3 world_pos;
+
+// The cut surface, in metres, at a point on the trace. Texel centres sit half a
+// map cell in from the corner of the box, which is what the lid assumes too.
+float cut_at(vec2 p) {
+	vec2 t = p / map_cell - vec2(0.5);
+	vec2 f = fract(t);
+	ivec2 last = ivec2(map_dim) - ivec2(1);
+	ivec2 lo = clamp(ivec2(floor(t)), ivec2(0), last);
+	ivec2 hi = clamp(ivec2(floor(t)) + ivec2(1), ivec2(0), last);
+	float h00 = texelFetch(cut_map, ivec2(lo.x, lo.y), 0).r;
+	float h10 = texelFetch(cut_map, ivec2(hi.x, lo.y), 0).r;
+	float h01 = texelFetch(cut_map, ivec2(lo.x, hi.y), 0).r;
+	float h11 = texelFetch(cut_map, ivec2(hi.x, hi.y), 0).r;
+	return mix(mix(h00, h10, f.x), mix(h01, h11, f.x), f.y);
+}
+
+void vertex() {
+	world_pos = VERTEX * cell_size;
+}
+
+void fragment() {
+	vec3 colour = albedo.rgb;
+	if (cut_on) {
+		if (world_pos.y > cut_at(world_pos.xz)) {
+			discard;
+		}
+		if (dug_on) {
+			// g and b are the bottom and the top of the volume the machine has
+			// taken out of this column, and an empty span where it never came.
+			// Read flat, not interpolated: an envelope is a fact about one
+			// column and smearing it into its neighbours would tint ground the
+			// machine never touched.
+			ivec2 last = ivec2(map_dim) - ivec2(1);
+			ivec2 c = clamp(
+				ivec2(floor(world_pos.xz / map_cell)), ivec2(0), last
+			);
+			vec2 span = texelFetch(cut_map, c, 0).gb;
+			if (world_pos.y >= span.x && world_pos.y <= span.y) {
+				colour = mix(colour, dug_tint.rgb, dug_mix);
+			}
+		}
+	}
+	ALBEDO = colour;
+	ROUGHNESS = rough;
+	METALLIC = 0.0;
+}
+"""
 
 # --- the knobs ---------------------------------------------------------------
 
@@ -370,55 +439,6 @@ const GROUND_TEXTURES := "res://resources/textures/shield/"
 ## lines on a map, a smooth ramp reads as lighting.
 @export var cap_bands := 5
 
-@export_group("Ground")
-## How many metres of ground one tile of each photograph covers. These are the
-## only numbers in the whole material that have to be set by eye, and they are
-## the first thing to reach for when the ground reads wrong: too large and the
-## whole six-metre bore wall is one smear of one photograph, too small and the
-## trench is television static at the section's zoom.
-##
-## The defaults are picked against the two distances the drive is read at: the
-## section stands about 38 m across, so a metre is about 50 px, and the bore is
-## 6 m. Soil at 3 m puts about two tiles across the bore and twelve across the
-## view; rock at 4 m is coarser because the hill is read as a mass and not as a
-## surface; spoil at 1.6 m is the finest of the three because gravel is *made* of
-## a grain and a muck heap with no grain in it is a brown dune.
-@export var soil_texture_m := 3.0
-@export var rock_texture_m := 4.0
-@export var spoil_texture_m := 1.6
-## Tint over each photograph. White is the photograph as it was shot; the drive's
-## own read — sand warm, rock cool — is the one thing these are for.
-@export var soil_tint := Color(1.04, 0.99, 0.90)
-@export var rock_tint := Color(0.90, 0.93, 1.0)
-@export var spoil_tint := Color(1.0, 0.96, 0.92)
-## Multipliers over each roughness map. Under one is a wetter ground.
-@export var soil_roughness := 1.0
-@export var rock_roughness := 0.92
-@export var spoil_roughness := 1.0
-## How wide every boundary between two grounds is, metres, and how far off the
-## map's own metre lattice it is allowed to wander. Both exist for the same
-## reason: the worked envelope and the top of the rock are per-column facts on a
-## one-metre grid, and read straight they draw a staircase.
-@export var ground_blend_m := 0.7
-@export var ground_blend_warp_m := 1.1
-## How hard the triplanar picks one plane over the other two.
-@export var ground_triplanar_sharpness := 4.0
-## How much of the AO maps is let through, and how much of the normal maps.
-@export var ground_ao_strength := 0.7
-@export var ground_normal_strength := 1.0
-## Blend the three grounds by their height maps instead of cross-fading them, so
-## the gravel sits *in* the sand at the edge of a heap rather than dissolving
-## into it. Off by default: it is three more taps a fragment and the boundary is
-## legible without it. This is not parallax — the height maps are only read as a
-## blend weight, and displacement is a separate piece of work.
-@export var ground_height_blend := false
-## How hard that blend picks the taller ground. Small is a knife edge.
-@export var ground_height_sharp := 0.25
-## The old rust tint over worked ground, in the volume only. Zero because the
-## gravel says it now. The lid and the plan keep their rust and are untouched —
-## they are a diagram and the diagram's palette is the driver's read.
-@export var dug_tint_in_volume := 0.0
-
 @export_group("Camera")
 ## Which view comes up first. The isometric section is the one the drive is
 ## meant to be read from; the other two are kept for debugging.
@@ -520,9 +540,6 @@ var _rock_material: Material
 
 var _section_shader: Shader
 var _clipped: Array[ShaderMaterial] = []
-## The three grounds' maps, loaded once and shared by both materials — the rock
-## field's material carries all three sets and samples one of them.
-var _ground_cache: Dictionary = {}
 var _cap_view: Node3D
 var _cap_chunks: Dictionary = {}
 var _cap_pending: Dictionary = {}
@@ -538,13 +555,7 @@ var _cell_volume := 0.125
 ## The cut map. Four floats a texel because that is the one float format every
 ## target samples without asking: r is the height of the cut there, g and b are
 ## the bottom and the top of the volume the machine has taken out of that column,
-## and a is the top of the rock in it.
-##
-## The alpha used to be spare. It carries the rock line now because the ground
-## shader needs it and there was nowhere cheaper to put it: the sand field draws
-## the rock's own solid cells wherever they touch loose material, so without a
-## rock line in the shader the two meshes stand in the same place wearing two
-## different grounds and the boundary the whole drive is about is a z-fight.
+## a is spare.
 var _cut_pixels := PackedFloat32Array()
 ## The cell layer the lid draws in each map column, derived from r.
 var _cut_map_cell := PackedInt32Array()
@@ -885,15 +896,13 @@ func _build_cut_map() -> void:
 	)
 	_cut_owner_y.fill(bore_axis_y_m)
 	_cut_owner_w.fill(0.0)
-	for mz in CUT_MAP.y:
-		for mx in CUT_MAP.x:
-			var col := mz * CUT_MAP.x + mx
-			_cut_pixels[col * 4] = bore_axis_y_m + cut_above_axis_m
-			# An empty span: nothing is inside it, so nothing is drawn as worked
-			# ground until the machine has actually taken something out of it.
-			_cut_pixels[col * 4 + 1] = 1.0e9
-			_cut_pixels[col * 4 + 2] = -1.0e9
-			_cut_pixels[col * 4 + 3] = _map_rock_top_m(mx, mz)
+	for col in count:
+		_cut_pixels[col * 4] = bore_axis_y_m + cut_above_axis_m
+		# An empty span: nothing is inside it, so nothing is tinted until the
+		# machine has actually taken something out of the column.
+		_cut_pixels[col * 4 + 1] = 1.0e9
+		_cut_pixels[col * 4 + 2] = -1.0e9
+		_cut_pixels[col * 4 + 3] = 1.0
 	_dug.resize(BOX.x * BOX.y * BOX.z)
 	_dug.fill(0)
 	_cap_nx = int(ceil(float(BOX.x) / float(FLUSH_CHUNK)))
@@ -923,18 +932,6 @@ func _build_cut_map() -> void:
 			_cut_disc_w.append(w)
 	_cut_texture = ImageTexture.create_from_image(_cut_map_image())
 	_cut_map_dirty = false
-
-
-## The top of the rock over one map column, in metres. Read off the same centre
-## cell the plan's ground map reads, so the picture from above and the ground in
-## the volume can never disagree about where the hill is. A column with no rock
-## in it comes out at zero, which is the floor of the trace and so never wins a
-## blend.
-func _map_rock_top_m(mx: int, mz: int) -> float:
-	var half := CUT_MAP_STEP >> 1
-	var x := (mx << CUT_MAP_SHIFT) + half
-	var z := (mz << CUT_MAP_SHIFT) + half
-	return float(_rock_top[z * BOX.x + x] + 1) * CELL
 
 
 func _cut_map_image() -> Image:
@@ -1192,16 +1189,10 @@ func _refresh_plan_map() -> void:
 
 
 func _build_views() -> void:
-	_section_shader = load(GROUND_SHADER)
-	# The sand field's mesh is everything that is not the hill: untouched ground,
-	# the bore walls, the muck, and the rock's own solid cells wherever they stand
-	# against loose material. All three grounds, mixed per fragment.
-	_sand_material = _make_section_material(false)
-	# The rock field's mesh is rock and nothing else, so its two other sets are
-	# never sampled. They are still assigned — the same three textures, not four
-	# more — because an unassigned sampler is a white default and a branch that
-	# stops being taken is a bug waiting for the next knob.
-	_rock_material = _make_section_material(true)
+	_section_shader = Shader.new()
+	_section_shader.code = SECTION_SHADER_CODE
+	_sand_material = _make_section_material(Color(0.60, 0.52, 0.39), 1.0)
+	_rock_material = _make_section_material(Color(0.30, 0.31, 0.34), 0.85)
 	_sand_view = Node3D.new()
 	_sand_view.name = "SandSurface"
 	add_child(_sand_view)
@@ -1225,23 +1216,7 @@ func _build_views() -> void:
 	add_child(_cap_view)
 
 
-## The five maps of one ground. Height is only loaded when something is going to
-## read it: an unread 2048-square map is eight megabytes of video memory for a
-## switch that is off.
-func _ground_maps(name: String) -> Dictionary:
-	var dir := GROUND_TEXTURES + name + "/"
-	var out := {
-		"albedo": load(dir + "albedo.png"),
-		"normal": load(dir + "normal.png"),
-		"rough": load(dir + "roughness.png"),
-		"ao": load(dir + "ao.png"),
-	}
-	if ground_height_blend:
-		out["height"] = load(dir + "height.png")
-	return out
-
-
-func _make_section_material(all_rock: bool) -> ShaderMaterial:
+func _make_section_material(albedo: Color, roughness: float) -> ShaderMaterial:
 	var material := ShaderMaterial.new()
 	material.shader = _section_shader
 	material.set_shader_parameter("cell_size", CELL)
@@ -1252,43 +1227,12 @@ func _make_section_material(all_rock: bool) -> ShaderMaterial:
 		"map_dim", Vector2(float(CUT_MAP.x), float(CUT_MAP.y))
 	)
 	material.set_shader_parameter("cut_map", _cut_texture)
-	material.set_shader_parameter("all_rock", all_rock)
-	for ground: String in ["soil", "rock", "spoil"]:
-		if not _ground_cache.has(ground):
-			_ground_cache[ground] = _ground_maps(ground)
-		var maps: Dictionary = _ground_cache[ground]
-		for map: String in maps:
-			material.set_shader_parameter("%s_%s" % [ground, map], maps[map])
-	_clipped.append(material)
-	_apply_ground_knobs(material)
-	return material
-
-
-## Every knob that is only a look, pushed at one material. Separate from the
-## build so the two materials can never drift apart and so a knob turned at run
-## time is one call and not a rebuild.
-func _apply_ground_knobs(material: ShaderMaterial) -> void:
-	material.set_shader_parameter("soil_scale_m", soil_texture_m)
-	material.set_shader_parameter("rock_scale_m", rock_texture_m)
-	material.set_shader_parameter("spoil_scale_m", spoil_texture_m)
-	material.set_shader_parameter("soil_tint", soil_tint)
-	material.set_shader_parameter("rock_tint", rock_tint)
-	material.set_shader_parameter("spoil_tint", spoil_tint)
-	material.set_shader_parameter("soil_rough_gain", soil_roughness)
-	material.set_shader_parameter("rock_rough_gain", rock_roughness)
-	material.set_shader_parameter("spoil_rough_gain", spoil_roughness)
-	material.set_shader_parameter("blend_m", ground_blend_m)
-	material.set_shader_parameter("blend_warp_m", ground_blend_warp_m)
-	material.set_shader_parameter(
-		"triplanar_sharpness", ground_triplanar_sharpness
-	)
-	material.set_shader_parameter("ao_strength", ground_ao_strength)
-	material.set_shader_parameter("normal_strength", ground_normal_strength)
-	material.set_shader_parameter("height_blend", ground_height_blend)
-	material.set_shader_parameter("height_blend_sharp", ground_height_sharp)
-	material.set_shader_parameter("rock_line_on", true)
+	material.set_shader_parameter("albedo", albedo)
 	material.set_shader_parameter("dug_tint", DUG_TINT)
-	material.set_shader_parameter("dug_mix", dug_tint_in_volume)
+	material.set_shader_parameter("dug_mix", DUG_TINT_MIX)
+	material.set_shader_parameter("rough", roughness)
+	_clipped.append(material)
+	return material
 
 
 static func _make_material(albedo: Color, roughness: float) -> Material:
@@ -1886,16 +1830,6 @@ func _lower_rock_top(c: Vector3i) -> void:
 	# The plan is a drawing of this map, so a bore through the crest of the hill
 	# has to show up on it as the hill being eaten.
 	_plan_map_dirty = true
-	# And so is the ground in the volume: the rock line the shader blends on is
-	# the alpha of the cut map, and a bore that ate the crest and left the rock
-	# line standing over it would paint the open sky above the trench as stone.
-	var mx := c.x >> CUT_MAP_SHIFT
-	var mz := c.z >> CUT_MAP_SHIFT
-	var col := mz * CUT_MAP.x + mx
-	var top_m := _map_rock_top_m(mx, mz)
-	if _cut_pixels[col * 4 + 3] != top_m:
-		_cut_pixels[col * 4 + 3] = top_m
-		_cut_map_dirty = true
 
 
 ## Set the spoil down on the bore floor behind the shield. Returns what was
