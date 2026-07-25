@@ -517,7 +517,7 @@ A–D в коде — кооп играбелен для пробного заб
 | **R-COOP-4** Объём дельт не тянет в GDScript | средняя | мерить в этапе 5; фолбэк — бинарный кодек |
 | **R-COOP-5** Каждая новая фича теперь обязана ходить через сеть | 100% | это постоянный налог, а не риск. Инвариант C1 делает нарушение заметным |
 | **R-COOP-6** Оценка этапов 6–7 может поехать вдвое | средняя | контрольная точка после этапа 3 |
-| **R-COOP-7** Хост не стримит террейн вокруг чужих игроков (`VoxelViewer` только у локального) | снята (host proxy) | Host: `RemotePlayer.enable_host_stream_proxy` — child `VoxelViewer` с `requires_visuals=false`, `view_distance=MoonGeometry.DEFAULT_LOD_DISTANCE` (Clipbox multi-viewer). Playtest: guest dig far from host. Клиентские remote-аватары без viewer |
+| **R-COOP-7** Хост не стримит террейн вокруг чужих игроков (`VoxelViewer` только у локального) | снята (host proxy) | Host: `RemotePlayer.enable_host_stream_proxy` — child `VoxelViewer` с `requires_visuals=false`, `view_distance=MoonGeometry.DEFAULT_LOD_DISTANCE` (Clipbox multi-viewer). Guest dig `terrain_unavailable` while proxy shell loads: host soft-retries dig kinds up to 2× / 0.3 s (≤3 tries, no extra RPCs); guest HUD already toasts «Грунт ещё загружается» (`hud_feedback`). Playtest: guest dig far from host. Клиентские remote-аватары без viewer |
 
 ## Оценка
 

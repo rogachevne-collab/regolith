@@ -47,6 +47,11 @@ const SNAPSHOT_DEBOUNCE := 0.3
 const SNAPSHOT_FLOOR_MS := 1500
 ## Client: retry join dig_ops that failed while chunks were not editable.
 const PENDING_DIG_RETRY_INTERVAL := 0.5
+## Host: guest dig hit terrain_unavailable (Clipbox still loading around the
+## R-COOP-7 proxy) — soft-retry locally before returning failure. No extra RPCs.
+## Max re-submits after the first fail (total tries = 1 + MAX).
+const GUEST_DIG_RETRY_MAX := 2
+const GUEST_DIG_RETRY_INTERVAL := 0.3
 const NICK_PATH := "user://player_nick.txt"
 ## Loopback single-instance mutex. The first game process on a machine binds it;
 ## a second process (two windows for testing) fails to bind, learns it is a
@@ -103,7 +108,10 @@ var _local_uid := ""
 var _local_nick := ""
 
 var _registry := CoopPeerRegistry.new()          # host only
-var _pending_results: Dictionary = {}            # host: host_cmd_id -> [peer, local_id]
+## host: host_cmd_id -> [peer, local_id, command, attempts]
+var _pending_results: Dictionary = {}
+## host: [{peer, local_id, command, attempts, wait}] soft-retry dig queue
+var _guest_dig_retries: Array = []
 var _avatars: Dictionary = {}                    # uid -> RemotePlayer
 var _avatars_root: Node3D
 
@@ -188,6 +196,7 @@ func _physics_process(delta: float) -> void:
 		_tick_client_control_input(delta)
 		_tick_pending_dig_reapply(delta)
 	if _mode == Mode.HOST:
+		_tick_guest_dig_retries(delta)
 		_tick_remote_driver_watchdog()
 		_tick_snapshot_broadcast(delta)
 		_suit_accum += delta
@@ -357,6 +366,7 @@ func _cmd_host(port: int = PORT_DEFAULT) -> void:
 	_mode = Mode.HOST
 	_registry = CoopPeerRegistry.new()
 	_pending_results.clear()
+	_guest_dig_retries.clear()
 	_dig_ops.clear()
 	_last_poses.clear()
 	_connect_host_hooks()
@@ -662,12 +672,7 @@ func _srv_submit(local_id: int, command: Dictionary) -> void:
 			"data": {}, "command_kind": kind,
 		})
 		return
-	var host_id := _gateway.submit_as(
-		_registry.uid_of(peer),
-		command,
-		_registry.avatar_of(peer)
-	)
-	_pending_results[host_id] = [peer, local_id]
+	_route_guest_submit(peer, local_id, command, 0)
 
 
 @rpc("authority", "call_remote", "reliable", CH_MAIN)
@@ -694,7 +699,20 @@ func _on_host_command_completed(command_id: int, result: Dictionary) -> void:
 	if _pending_results.has(command_id):
 		var route: Array = _pending_results[command_id]
 		_pending_results.erase(command_id)
-		rpc_id(int(route[0]), "_cli_result", int(route[1]), CoopCommandCodec.sanitize_result(result))
+		var peer := int(route[0])
+		var local_id := int(route[1])
+		var command: Dictionary = route[2]
+		var attempts := int(route[3])
+		if _should_soft_retry_guest_dig(result, attempts):
+			_guest_dig_retries.append({
+				"peer": peer,
+				"local_id": local_id,
+				"command": command,
+				"attempts": attempts + 1,
+				"wait": GUEST_DIG_RETRY_INTERVAL,
+			})
+			return
+		rpc_id(peer, "_cli_result", local_id, CoopCommandCodec.sanitize_result(result))
 	if StringName(result.get("status", &"")) != &"ok":
 		return
 	if NO_BROADCAST_KINDS.has(StringName(result.get("command_kind", &""))):
@@ -1207,6 +1225,7 @@ func _teardown_host() -> void:
 		_despawn_avatar(uid)
 	_registry = CoopPeerRegistry.new()
 	_pending_results.clear()
+	_guest_dig_retries.clear()
 	_dig_ops.clear()
 	_last_poses.clear()
 	_mode = Mode.OFFLINE
@@ -1256,6 +1275,57 @@ func _disconnect_host_hooks() -> void:
 
 func _pose_position(pose: Dictionary) -> Vector3:
 	return pose.get("p", Vector3.ZERO)
+
+
+func _route_guest_submit(
+	peer: int,
+	local_id: int,
+	command: Dictionary,
+	attempts: int
+) -> void:
+	if not _registry.has_peer(peer) or _gateway == null:
+		return
+	var host_id := _gateway.submit_as(
+		_registry.uid_of(peer),
+		command,
+		_registry.avatar_of(peer)
+	)
+	_pending_results[host_id] = [peer, local_id, command, attempts]
+
+
+func _should_soft_retry_guest_dig(result: Dictionary, attempts: int) -> bool:
+	if attempts >= GUEST_DIG_RETRY_MAX:
+		return false
+	if not DIG_OP_KINDS.has(StringName(result.get("command_kind", &""))):
+		return false
+	return StringName(result.get("reason", &"")) == &"terrain_unavailable"
+
+
+## Host: re-run guest digs that failed while Clipbox loaded the proxy shell.
+## Interval backoff — not every physics tick (R9); no extra client RPCs.
+func _tick_guest_dig_retries(delta: float) -> void:
+	if _guest_dig_retries.is_empty():
+		return
+	var remaining: Array = []
+	for entry_variant: Variant in _guest_dig_retries:
+		if not (entry_variant is Dictionary):
+			continue
+		var entry: Dictionary = entry_variant
+		var wait := float(entry.get("wait", 0.0)) - delta
+		if wait > 0.0:
+			entry["wait"] = wait
+			remaining.append(entry)
+			continue
+		var peer := int(entry.get("peer", 0))
+		if not _registry.has_peer(peer):
+			continue
+		_route_guest_submit(
+			peer,
+			int(entry.get("local_id", 0)),
+			entry.get("command", {}),
+			int(entry.get("attempts", 0))
+		)
+	_guest_dig_retries = remaining
 
 
 ## Retry join dig_ops that failed while the local chunk was not editable.
