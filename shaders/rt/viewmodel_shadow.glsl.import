@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://bba008jggs1lv"
+path="res://.godot/imported/viewmodel_shadow.glsl-fc05857120546fbe288c711f92af0bf0.res"
+
+[deps]
+
+source_file="res://shaders/rt/viewmodel_shadow.glsl"
+dest_files=["res://.godot/imported/viewmodel_shadow.glsl-fc05857120546fbe288c711f92af0bf0.res"]
+
+[params]
+

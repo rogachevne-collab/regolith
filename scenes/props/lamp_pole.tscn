@@ -1,0 +1,52 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://scripts/props/lamp_pole.gd" id="1_script"]
+
+[sub_resource type="StandardMaterial3D" id="Mat_pole"]
+albedo_color = Color(0.22, 0.24, 0.26, 1)
+roughness = 0.85
+metallic = 0.35
+
+[sub_resource type="CylinderMesh" id="Mesh_pole"]
+top_radius = 0.055
+bottom_radius = 0.07
+height = 3.4
+radial_segments = 10
+rings = 1
+
+[sub_resource type="StandardMaterial3D" id="Mat_bulb"]
+albedo_color = Color(1, 0.96, 0.82, 1)
+emission_enabled = true
+emission = Color(1, 0.92, 0.7, 1)
+emission_energy_multiplier = 2.4
+roughness = 0.35
+
+[sub_resource type="SphereMesh" id="Mesh_bulb"]
+radius = 0.14
+height = 0.28
+radial_segments = 14
+rings = 8
+
+[node name="LampPole" type="Node3D"]
+script = ExtResource("1_script")
+
+[node name="Pole" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.7, 0)
+mesh = SubResource("Mesh_pole")
+surface_material_override/0 = SubResource("Mat_pole")
+
+[node name="Bulb" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.45, 0)
+mesh = SubResource("Mesh_bulb")
+surface_material_override/0 = SubResource("Mat_bulb")
+
+[node name="OmniLight3D" type="OmniLight3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.45, 0)
+light_color = Color(1, 0.93, 0.78, 1)
+light_energy = 4.5
+light_specular = 0.35
+## Omni dual-paraboloid maps acne hard on cratered crust; sun RT + mesh
+## occluders already cover pole shadows. Keep the warm pool without a map.
+shadow_enabled = false
+omni_range = 22.0
+omni_attenuation = 1.35

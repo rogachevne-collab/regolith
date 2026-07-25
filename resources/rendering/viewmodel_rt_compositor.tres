@@ -1,0 +1,9 @@
+[gd_resource type="Compositor" load_steps=2 format=3 uid="uid://viewmodelrtcomp"]
+
+[ext_resource type="Script" path="res://scripts/rendering/viewmodel_rt_composite_effect.gd" id="1"]
+
+[sub_resource type="CompositorEffect" id="CompositorEffect_viewmodel_rt"]
+script = ExtResource("1")
+
+[resource]
+compositor_effects = Array[CompositorEffect]([SubResource("CompositorEffect_viewmodel_rt")])
