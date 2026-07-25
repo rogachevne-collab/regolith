@@ -23,6 +23,10 @@ addons/zylann.voxel/bin/libvoxel.windows.*
 # Local godot-cpp checkout/symlink for native bake (see README)
 native/godot-cpp
 
+# Ropes! — плагин живёт в своём репозитории (Y:\ropes) и приходит сюда
+# junction'ом. Правится там, не здесь: docs/cheatsheets/ropes-seam.md
+/addons/ropes/
+
 # Windows moon bake link side-products (DLL itself is local/optional)
 addons/regolith_moon_bake/bin/*.exp
 addons/regolith_moon_bake/bin/*.lib
