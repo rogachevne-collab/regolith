@@ -5,9 +5,9 @@ class_name LunarSkyDecor
 ## Locked to the camera on a long celestial ray — no walking parallax.
 
 @export var enabled := true
-@export var angular_diameter_deg := 5.5
+@export var angular_diameter_deg := 9.0
 ## Camera-relative distance. Large ⇒ reads as infinitely far.
-@export var distance_m := 14000.0
+@export var distance_m := 8500.0
 ## World / selenocentric direction toward Earth.
 @export var earth_direction := Vector3(0.28, 0.92, 0.28)
 @export var spin_deg_per_sec := 0.04

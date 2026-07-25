@@ -12,10 +12,15 @@ uniform float plane_width : hint_range(0.02, 0.35, 0.005) = 0.1;
 uniform float dust_strength : hint_range(0.0, 1.0, 0.01) = 0.72;
 uniform float bulge_strength : hint_range(0.0, 2.0, 0.01) = 0.55;
 uniform vec3 bulge_warm : source_color = vec3(1.0, 0.86, 0.72);
-uniform vec3 sun_color : source_color = vec3(1.0, 0.96, 0.88);
-uniform float sun_angular_diameter_deg : hint_range(0.2, 6.0, 0.05) = 2.0;
-uniform float sun_core_energy : hint_range(0.0, 20.0, 0.1) = 10.0;
-uniform float sun_corona_energy : hint_range(0.0, 8.0, 0.05) = 1.8;
+uniform vec3 sun_color : source_color = vec3(1.0, 1.0, 0.98);
+uniform vec3 sun_chromosphere_color : source_color = vec3(1.0, 0.55, 0.18);
+uniform vec3 sun_corona_color : source_color = vec3(1.0, 0.88, 0.65);
+uniform float sun_angular_diameter_deg : hint_range(0.2, 6.0, 0.05) = 1.8;
+uniform float sun_core_energy : hint_range(0.0, 40.0, 0.1) = 18.0;
+uniform float sun_chromosphere_energy : hint_range(0.0, 8.0, 0.05) = 2.4;
+uniform float sun_corona_energy : hint_range(0.0, 8.0, 0.05) = 0.35;
+uniform float sun_limb_darkening : hint_range(0.0, 1.0, 0.01) = 0.22;
+uniform float sun_corona_power : hint_range(1.0, 8.0, 0.1) = 4.0;
 
 float hash13(vec3 p) {
 	p = fract(p * 0.1031);
@@ -113,17 +118,33 @@ void sky() {
 	col += bulge_warm * integrated * 0.3 + vec3(0.75, 0.82, 1.0) * integrated * 0.2;
 
 	// Sun disc locked to LIGHT0 (first DirectionalLight3D = scene sun).
-	if (LIGHT0_ENABLED) {
+	// Overexposed white plate + thin chromosphere ring + faint outer corona.
+	// Skip on radiance cubemap so IBL stays neutral black sky.
+	if (LIGHT0_ENABLED && !AT_CUBEMAP_PASS) {
 		vec3 sun_dir = normalize(LIGHT0_DIRECTION);
 		float cos_ang = clamp(dot(dir, sun_dir), -1.0, 1.0);
+		float ang = acos(cos_ang);
 		float half_rad = radians(max(sun_angular_diameter_deg, 0.05) * 0.5);
-		float cos_core = cos(half_rad);
-		float cos_corona = cos(half_rad * 2.8);
-		float core = smoothstep(cos_core, mix(cos_core, 1.0, 0.2), cos_ang);
-		float corona = smoothstep(cos_corona, cos_core, cos_ang);
-		corona *= corona;
-		float sun = (core * sun_core_energy + corona * sun_corona_energy) * max(LIGHT0_ENERGY, 0.0);
-		col += sun_color * sun;
+		float r = ang / max(half_rad, 1e-5);
+
+		float aa = 0.016;
+		float disc = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, r);
+
+		float mu = sqrt(max(1.0 - min(r * r, 1.0), 0.0));
+		float limb = mix(1.0 - sun_limb_darkening, 1.0, mu);
+		vec3 photosphere = sun_color * disc * limb * sun_core_energy;
+
+		// Chromosphere: thin hot ring right on the limb — the "beautiful sun" cue.
+		float chromo = exp(-pow((r - 1.0) * 22.0, 2.0));
+		vec3 chromosphere = sun_chromosphere_color * chromo * sun_chromosphere_energy;
+
+		// Faint circular corona outside the disc only.
+		float corona = pow(1.0 / max(r, 1.0), sun_corona_power);
+		corona *= smoothstep(2.8, 1.05, r) * (1.0 - disc);
+		vec3 corona_rgb = sun_corona_color * corona * sun_corona_energy;
+
+		float sun_e = max(LIGHT0_ENERGY, 0.0);
+		col += (photosphere + chromosphere + corona_rgb) * sun_e;
 	}
 
 	COLOR = col;

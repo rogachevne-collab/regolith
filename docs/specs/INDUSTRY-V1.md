@@ -139,8 +139,10 @@ OxygenModule — deferred; suit refill из OxygenModule —
 
 Инструменты игрока — **уникальные discrete instances**, не stack count в
 `SimulationResourceStore`. Bulk-компоненты и руда остаются amount-based stacks;
-tools живут в `PlayerInventoryRegistry` (authoritative fixture рядом с player
-store) и участвуют в общем лимите `capacity_l` игрока через derived volume/mass.
+tools живут в per-uid `PlayerInventoryRegistry` (authoritative fixture на
+`SimulationWorld`, ключ = `player_uid`, рядом с `player:<uid>` store; см.
+COOP-HOST-V0 Persistence) и участвуют в общем лимите `capacity_l` игрока
+через derived volume/mass.
 
 ```text
 InventoryItemInstance {

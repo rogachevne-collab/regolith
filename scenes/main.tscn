@@ -18,6 +18,7 @@
 [ext_resource type="Script" path="res://scripts/day_night_cycle.gd" id="20"]
 [ext_resource type="Resource" path="res://resources/environment/moon_simulation_environment.tres" id="24_sim_env"]
 [ext_resource type="Script" path="res://scripts/coop/coop_session.gd" id="25_coop"]
+[ext_resource type="Script" path="res://scripts/rendering/world_rt_geometry.gd" id="26_world_rt"]
 
 [sub_resource type="SphereShape3D" id="SphereShape_gravity"]
 radius = 675.0
@@ -64,14 +65,16 @@ light_energy = 0.12
 light_specular = 0.0
 
 [node name="LunarSkyDecor" parent="." unique_id=845958376 instance=ExtResource("14")]
-angular_diameter_deg = 5.8
-distance_m = 12000.0
+angular_diameter_deg = 9.0
+distance_m = 8500.0
 sun_light_path = NodePath("../DirectionalLight3D")
 
 [node name="SolarSkyDecor" parent="." instance=ExtResource("19")]
-enabled = false
+enabled = true
 sun_light_path = NodePath("../DirectionalLight3D")
-distance_m = 12000.0
+angular_diameter_deg = 3.0
+distance_m = 8500.0
+
 
 [node name="DayNightCycle" type="Node" parent="."]
 script = ExtResource("20")
@@ -131,6 +134,13 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 9500, 0)
 
 [node name="Player" parent="." unique_id=2047904443 instance=ExtResource("2")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 9580, 0)
+
+[node name="WorldRtGeometry" type="Node" parent="."]
+script = ExtResource("26_world_rt")
+camera_path = NodePath("../Player/Camera")
+terrain_path = NodePath("../VoxelTerrain")
+extra_mesh_roots = Array[NodePath]([NodePath("../Player/Camera/DrillVisual")])
+sun_path = NodePath("../DirectionalLight3D")
 
 [node name="MeteoriteSystem" type="Node" parent="."]
 script = ExtResource("17")

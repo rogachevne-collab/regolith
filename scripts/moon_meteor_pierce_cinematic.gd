@@ -118,8 +118,8 @@ func _run() -> void:
 
 	var decor: LunarSkyDecor = _LUNAR_SKY_DECOR.instantiate()
 	decor.earth_direction = Vector3(0.28, 0.92, 0.28)
-	decor.angular_diameter_deg = 5.8
-	decor.distance_m = 12000.0
+	decor.angular_diameter_deg = 9.0
+	decor.distance_m = 8500.0
 	decor.hide_below_horizon = false
 	_world_root.add_child(decor)
 	decor.sun_light_path = sun.get_path()

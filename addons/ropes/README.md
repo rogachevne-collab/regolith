@@ -193,7 +193,13 @@ candidates in the research note become worth their complexity.
    `XpbdCableRopeSolver` still pins: its cables run between parts of one
    machine, where two anchor reactions are a torque couple)
 5. Winch on `length`, no re-seed — done
-6. C++ GDExtension port of the XPBD core; performance, LOD, demos
+
+The physics is ahead of the field; the plugin around it is not. Gates 6-14,
+the road to 0.1.0, are in **docs/ROADMAP.md**: editor preview, a real
+material, self-collision and bending, breaking and cutting, runtime
+attachment, sleeping and culling, save state and wind, showcase demos, and
+last the C++ GDExtension port — which moves earlier only if GDScript cannot
+hold 30 ropes.
 
 AVBD remains a researched alternative for load-bearing mass ratios
 (ADR 0007/0008, spikes under `spikes/`) but is not on the shipping path
@@ -201,7 +207,9 @@ while paused.
 
 ## Open API questions
 
-Informed by the Obi Rope precedent (docs/research/obi-rope-api-notes.md):
+Informed by the Obi Rope precedent (docs/research/obi-rope-api-notes.md).
+The first three leanings below are scheduled in docs/ROADMAP.md — the global
+budget in gate 11, mid-rope attachments in gate 10, breaking in gate 9:
 
 - Stiffness/damping — leaning: per-rope stretch compliance in m/N (0 =
   as stiff as the budget allows); damping and the quality dial (substeps)

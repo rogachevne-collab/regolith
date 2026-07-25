@@ -49,14 +49,15 @@ light_energy = 0.12
 light_specular = 0.0
 
 [node name="LunarSkyDecor" parent="." unique_id=845958376 instance=ExtResource("14")]
-angular_diameter_deg = 5.8
-distance_m = 12000.0
+angular_diameter_deg = 9.0
+distance_m = 8500.0
 sun_light_path = NodePath("../DirectionalLight3D")
 
 [node name="SolarSkyDecor" parent="." instance=ExtResource("20")]
-enabled = false
+enabled = true
 sun_light_path = NodePath("../DirectionalLight3D")
-distance_m = 12000.0
+angular_diameter_deg = 3.6
+distance_m = 8500.0
 
 [node name="DayNightCycle" type="Node" parent="."]
 script = ExtResource("21")

@@ -28,6 +28,55 @@
 Рудные зоны / `CHANNEL_INDICES` / yield — контракт
 `docs/specs/TERRAIN-MATERIALS-V1.md` (не выводить материал из shader).
 
+## Visual mesh blocks (world RT)
+
+Patched `Y:\godot_voxel` exposes on `VoxelLodTerrain` (rebuild
+`libvoxel.windows.editor.double.x86_64.dll`):
+
+- `get_mesh_block_surface(block_pos, lod) -> Array` (surface arrays + CUSTOM0)
+- `get_meshed_block_positions_at_lod(lod) -> Array[Vector3i]` —
+  **visual_active only** (GDScript binding; C++ Instancer path unchanged)
+- `mesh_block_local_origin(block_pos, lod) -> Vector3`
+- `get_mesh_block_transition_mask(block_pos, lod) -> int` — shader-space
+  `u_transition_mask` (bake must apply `get_transvoxel_position` or RT ≠ visual)
+- signals `mesh_block_visual_changed` / `mesh_block_visual_removed`
+  (changed on remesh, activate, **and transition-mask updates**; removed on deactivate)
+- `get_mesh_visual_topology_revision() -> int` + signal
+  `mesh_block_visual_topology_committed(revision)` — emitted **once at the end**
+  of a complete `apply_main_thread_update_tasks()` that had visual
+  activate/deactivate/drop/unload/transition work, **and** at end of
+  `process()` after coalesced dig/edit remeshes (`apply_mesh_update` on
+  visual_active blocks). Per-block signals are mid-transaction dirty hints
+  (LOD0 children can fire before LOD1 parents); they are **not** snapshot
+  boundaries. Drop/unload may lack removed signals — the post-commit active
+  snapshot covers that.
+
+Consumer: `scripts/rendering/world_rt_geometry.gd` (versioned staging +
+double-buffered TLAS, no `convert_to_nodes`). Pipeline:
+
+1. On topology commit (or coalesced remesh dirty): capture full
+   `visual_active` snapshot LOD0..MAX_RT_LOD inside `RAY_SPAN`, exact
+   Transvoxel bake (CUSTOM0 + transition mask).
+2. Per-block dig/remesh dirty keys are **evicted from committed immediately**
+   (hole/CSM beats a phantom RT lid). Never reuse BLAS for dirty keys.
+   Empty Transvoxel extracts are omitted (not whole-candidate reject).
+3. Reuse committed BLAS by `key + content_hash`; budget-build the rest.
+   Stale jobs carry a staging generation and cannot publish.
+4. Publish only when every staged entry is READY and the candidate has
+   **no parent/child active overlap** (reject/retry).
+5. Build the inactive TLAS from that one snapshot, `set_world_tlas`, flip
+   active index; keep old committed live until swap. Retire unique old
+   bundles after `RenderingDevice.get_frame_delay()` frames.
+
+Raw mesh buffers are **not** the shaded surface — Transvoxel secondary verts
++ inactive-transition cull live in the vertex shader. Inactive LOD shells
+must never enter TLAS. Physics colliders stay too coarse for RT shadows.
+
+Engine spawn (custom Godot `scene_forward_clustered.glsl`): RT Gems Ch.6
+`offset_ray` + face-normal terminator (dFdx/dFdy Ng, Hanika-lite). Rebuild via
+`.\tools\build_godot_double.ps1` after editing that shader. Do not remove the
+terminator — it is not the LOD-swap fix.
+
 ## Проектные инварианты (кратко)
 
 - **Voxel size:** uniform `scale` на `VoxelTerrain` / `VoxelLodTerrain`

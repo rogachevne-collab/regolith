@@ -36,6 +36,12 @@ const TERRAIN_NORMALMAP_BEGIN_LOD := 2
 const DEMO_ROVER_OFFSET_M := 32.0
 const DEBUG_ROVER_SPAWN_OFFSET_M := 6.0
 const DEMO_HOPPER_OFFSET_M := 68.0
+const LAMP_POLE_SCENE := preload("res://scenes/props/lamp_pole.tscn")
+const LAMP_POLE_OFFSETS_M: Array[Vector3] = [
+	Vector3(6.0, 0.0, 4.0),
+	Vector3(-5.0, 0.0, 7.0),
+	Vector3(2.0, 0.0, -8.0),
+]
 ## Shrink streaming during spawn so VT finishes local colliders first
 ## (full shell budget restored at world_ready).
 const SPAWN_FOCUS_VIEW_DISTANCE_VOXELS := 512
@@ -69,6 +75,8 @@ const MAP_HEIGHTMAP_SIZE := Vector2i(2048, 1024)
 @export var spawn_demo_rover := true
 ## Flight hopper for POC-THRUSTERS-V0 manual hop/land checks.
 @export var spawn_demo_hopper := true
+## A few omni lamp poles near spawn — local lights + RT occluders.
+@export var spawn_lamp_poles := true
 ## «На новых» = пара колесо+подвеска, испечённая визардом (authored). Прежнее
 ## значение — "колбаса на 12 колес, низкая".
 ## Длинная база + центр масс + батареи сбоку: меньше клевка на газе и кувырка на тормозе.
@@ -846,6 +854,8 @@ func _finish_world_entry(player_position: Vector3) -> void:
 			await get_tree().physics_frame
 	if spawn_demo_hopper:
 		await _spawn_demo_hopper_near_player()
+	if spawn_lamp_poles:
+		_spawn_lamp_poles_near_player()
 	_set_spawn_streaming_focus(false)
 
 
@@ -865,6 +875,8 @@ func _finish_loaded_world_entry(spawn_position: Vector3) -> void:
 	)
 	_session.get_industry_simulation().bind_world(_session.world)
 	_apply_playtest_cargo_if_enabled()
+	if spawn_lamp_poles:
+		_spawn_lamp_poles_near_player()
 
 
 func _align_sun_day_at(world_position: Vector3) -> void:
@@ -886,6 +898,36 @@ func _apply_playtest_cargo_if_enabled() -> void:
 	):
 		push_error("Playtest cargo seed failed")
 
+
+func _spawn_lamp_poles_near_player() -> void:
+	if get_node_or_null("LampPoles") != null:
+		return
+	var root := Node3D.new()
+	root.name = "LampPoles"
+	add_child(root)
+	var space := _physics_space_state()
+	var placed := 0
+	for local_off in LAMP_POLE_OFFSETS_M:
+		var hint := _demo_spawn_hint_offset(local_off.normalized(), local_off.length())
+		var up := Vector3.UP
+		if _gravity_field != null:
+			up = _gravity_field.up_at(hint)
+		var ground := hint
+		if space != null:
+			var from := hint + up * 40.0
+			var to := hint - up * 80.0
+			var q := PhysicsRayQueryParameters3D.create(from, to)
+			var hit := space.intersect_ray(q)
+			if not hit.is_empty():
+				ground = hit["position"] as Vector3
+		var pole: Node3D = LAMP_POLE_SCENE.instantiate()
+		root.add_child(pole)
+		var basis := Basis.IDENTITY
+		if _gravity_field != null:
+			basis = _gravity_field.tangent_basis_at(ground)
+		pole.global_transform = Transform3D(basis, ground)
+		placed += 1
+	print("MoonExperiment: spawned %d lamp poles near player" % placed)
 
 
 func _spawn_demo_rover_near_player() -> void:

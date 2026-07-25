@@ -18,7 +18,6 @@
 [ext_resource type="PackedScene" path="res://scenes/vfx/drill_impact_vfx.tscn" id="16"]
 [ext_resource type="Script" uid="uid://li5ry5aytj42" path="res://scripts/player_footsteps.gd" id="17"]
 [ext_resource type="AudioStream" path="res://resources/audio/footsteps/gravel_run_randomizer.tres" id="18"]
-
 [sub_resource type="CapsuleShape3D" id="CapsuleShape_player"]
 radius = 0.3
 height = 1.8
@@ -154,9 +153,9 @@ anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
 offset_left = -260.0
-offset_top = -165.0
+offset_top = -190.0
 offset_right = 260.0
-offset_bottom = 165.0
+offset_bottom = 190.0
 grow_horizontal = 2
 grow_vertical = 2
 
@@ -224,6 +223,20 @@ value = 60.0
 custom_minimum_size = Vector2(48, 0)
 layout_mode = 2
 horizontal_alignment = 2
+
+[node name="SoftPenumbra" type="HBoxContainer" parent="SettingsOverlay/Panel/Margin/Content"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="Label" type="Label" parent="SettingsOverlay/Panel/Margin/Content/SoftPenumbra"]
+custom_minimum_size = Vector2(145, 0)
+layout_mode = 2
+text = "Мягкие тени RT"
+
+[node name="Check" type="CheckBox" parent="SettingsOverlay/Panel/Margin/Content/SoftPenumbra"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Вкл"
 
 [node name="Hint" type="Label" parent="SettingsOverlay/Panel/Margin/Content" unique_id=226119135]
 layout_mode = 2

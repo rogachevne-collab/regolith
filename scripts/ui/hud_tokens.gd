@@ -159,6 +159,7 @@ const RESOURCE_LABELS := {
 	"tool_welder": "СВАРКА",
 	"tool_grinder": "БОЛГАРКА",
 	"tool_connector": "СОЕДИНЕНИЕ",
+	"tool_rope": "КАНАТ",
 }
 
 const RECIPE_LABELS := {
@@ -221,6 +222,7 @@ const ITEM_CODES := {
 	"tool_welder": "WLD",
 	"tool_grinder": "GRD",
 	"tool_connector": "CON",
+	"tool_rope": "ROP",
 }
 
 ## Category-tinted icon colors; stable per item_id via catalog category.
@@ -272,6 +274,7 @@ const ITEM_COLORS := {
 	"tool_welder": ITEM_CATEGORY_COLORS["tool"],
 	"tool_grinder": ITEM_CATEGORY_COLORS["tool"],
 	"tool_connector": ITEM_CATEGORY_COLORS["tool"],
+	"tool_rope": ITEM_CATEGORY_COLORS["tool"],
 }
 
 

@@ -1,27 +1,32 @@
 shader_type spatial;
-render_mode unshaded, blend_add, depth_draw_opaque, cull_back, shadows_disabled, fog_disabled;
+// Vacuum sun: blown-out white photosphere with a hard limb.
+// No noise, no TIME — surface detail only reads through a solar filter, and
+// animated granulation turned the disc into a shivering fireball.
+render_mode unshaded, depth_draw_opaque, cull_disabled, shadows_disabled, fog_disabled;
 
-uniform vec4 core_color : source_color = vec4(1.0, 0.97, 0.88, 1.0);
-uniform vec4 corona_color : source_color = vec4(1.0, 0.85, 0.55, 1.0);
-uniform float core_radius : hint_range(0.05, 0.95, 0.01) = 0.55;
-uniform float corona_softness : hint_range(0.05, 1.5, 0.01) = 0.65;
-uniform float core_energy : hint_range(0.0, 12.0, 0.05) = 5.0;
-uniform float corona_energy : hint_range(0.0, 6.0, 0.05) = 1.6;
+uniform vec3 core_color : source_color = vec3(1.0, 0.99, 0.96);
+uniform vec3 rim_color : source_color = vec3(1.0, 0.86, 0.62);
+uniform float photo_radius : hint_range(0.15, 0.9, 0.01) = 0.4;
+uniform float energy : hint_range(0.0, 40.0, 0.05) = 9.0;
+uniform float limb_darkening : hint_range(0.0, 1.0, 0.01) = 0.14;
+uniform float rim_warmth : hint_range(0.0, 1.0, 0.01) = 0.45;
 
 void fragment() {
-	// View-space normal: center of facing disc ≈ (0,0,1), rim → xy grows.
-	vec3 n = normalize(NORMAL);
-	float facing = clamp(n.z, 0.0, 1.0);
-	float r = length(n.xy);
+	vec2 p = (UV * 2.0 - 1.0) / max(photo_radius, 0.001);
+	float r = length(p);
+	float aa = max(fwidth(r) * 0.6, 0.002);
+	if (r > 1.0 + aa) {
+		discard;
+	}
 
-	float core = 1.0 - smoothstep(core_radius * 0.7, core_radius, r);
-	float corona = 1.0 - smoothstep(core_radius, core_radius + corona_softness, r);
-	corona *= corona * facing;
+	float disc = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, r);
+	float mu = sqrt(max(1.0 - min(r * r, 1.0), 0.0));
+	float limb = mix(1.0 - limb_darkening, 1.0, pow(mu, 0.45));
 
-	vec3 col = core_color.rgb * core * core_energy;
-	col += corona_color.rgb * corona * corona_energy;
+	// Warm tint only in the last few percent of the radius.
+	float rim = smoothstep(0.86, 1.0, r) * rim_warmth;
+	vec3 col = mix(core_color, rim_color, rim) * limb * energy;
 
-	ALBEDO = col;
-	EMISSION = col;
-	ALPHA = clamp(core + corona, 0.0, 1.0) * core_color.a;
+	ALBEDO = col * disc;
+	EMISSION = col * disc;
 }

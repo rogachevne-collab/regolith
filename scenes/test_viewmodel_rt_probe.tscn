@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/rendering/viewmodel_rt_probe_scene.gd" id="1"]
+
+[node name="ViewmodelRtProbe" type="Node"]
+script = ExtResource("1")

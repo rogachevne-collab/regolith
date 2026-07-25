@@ -17,10 +17,11 @@
 | Длительность цикла (default) | **600 s** полный оборот (`cycle_duration_sec`) |
 | Старт | bootstrap зовёт `align_noon_above(spawn)` → локальный полдень |
 | Контроллер | `DayNightCycle` (`scripts/day_night_cycle.gd`) |
-| Диск Солнца | sky shader `lunar_starfield.gdshader` via `LIGHT0_DIRECTION` |
-| Угловой размер диска | ~2° (читаемость; реальный ~0.5°) |
+| Диск Солнца | `SolarSkyDecor`: opaque white photosphere + additive radial halo QuadMesh, locked to `DirectionalLight3D +Z` |
+| Угловой размер диска | ~3.0° photosphere (читаемость; реальный ~0.5°); hard limb, warm rim, no surface animation (granulation читалась как дрожащий fireball) |
 | Направление на Солнце | Godot `+basis.z` (= scene L = sky `LIGHT0_DIRECTION`) |
-| Mesh fallback | `SolarSkyDecor` disabled in play scenes (kept for cinematics) |
+| Sky sun | `lunar_starfield` sun energies = 0 (mesh owns the disc; sky keeps stars only) |
+| Дистанция mesh | **8500 m** (Солнце + Земля) — inside player camera `far = 10000` (was 12000 → clipped) |
 | Сцены | `main.tscn`, `flat_moon.tscn`, `granular_corridor_test.tscn` |
 
 ### Что модулируется

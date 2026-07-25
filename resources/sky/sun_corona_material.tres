@@ -1,0 +1,14 @@
+[gd_resource type="ShaderMaterial" format=3]
+
+[ext_resource type="Shader" path="res://resources/sky/sun_corona.gdshader" id="1"]
+
+[resource]
+render_priority = 1
+shader = ExtResource("1")
+shader_parameter/inner_color = Color(1, 0.88, 0.66, 1)
+shader_parameter/outer_color = Color(1, 0.72, 0.42, 1)
+shader_parameter/photo_radius = 0.4
+shader_parameter/energy = 1.6
+shader_parameter/tight_falloff = 26.0
+shader_parameter/mid_falloff = 6.5
+shader_parameter/wide_falloff = 1.6
