@@ -9,11 +9,12 @@ Read-model не мутирует state (кроме существующих ensu
 
 | Слой | Файл | Что лежит |
 |---|---|---|
-| шина | `scripts/world_command_gateway.gd` | `submit` / `submit_as` / `_flush` / `_execute` (27 kind), `complete_remote`, `replay_remote_dig`, сигналы, seat/locomotion, `_result` / `_structural_result`, тонкие обёртки |
+| шина | `scripts/world_command_gateway.gd` | `submit` / `submit_as` / `_flush` / `_execute` (27 kind), `complete_remote`, `replay_remote_dig`, сигналы, seat-**состояние** + evict-хук, `_result` / `_structural_result`, тонкие обёртки |
 | dig / terrain | `scripts/gateway/gateway_terrain_dig_service.gd` | carve/scoop/dump, hand drill, stationary drill, dozer blade, floating chunks |
 | machine | `scripts/gateway/gateway_machine_command_service.gd` | network/transfer/recipes/actuators/wheels/hotbar/oxygen/damage |
 | construction | `scripts/gateway/gateway_construction_service.gd` | preview/place/weld/dismantle/snap/ground seat |
 | read-model | `scripts/gateway/gateway_read_model_service.gd` | carry, stores, power, control terminal, inventory, map overlay |
+| seat / locomotion | `scripts/gateway/gateway_seat_locomotion_service.gd` | вход/выход в ControlSeat, per-tick driver input, coop remote-driver поток, client seat attach, PB, wake, power-prep |
 
 Паттерн сервиса: `class_name … extends RefCounted`, только `static func`, первый
 аргумент нетипизированный `gateway` (без цикла `class_name`). Значения с
@@ -30,7 +31,7 @@ Read-model не мутирует state (кроме существующих ensu
 | `debug_spawn_spoil` | `_debug_spawn_spoil` | `GatewayTerrainDigService` | `_debug_spawn_spoil` |
 | `damage_element` | `_damage_element` | `GatewayMachineCommandService` | `_damage_element` |
 | `place_block` | `_place_block` | `GatewayConstructionService` | `_place_block` |
-| `toggle_control_seat` | `_toggle_control_seat` | *(gateway, seat-кластер)* | — |
+| `toggle_control_seat` | `_toggle_control_seat` | `GatewaySeatLocomotionService` | `_toggle_control_seat` |
 | `construction_apply` | `_construction_apply` | `GatewayConstructionService` | `_construction_apply` |
 | `weld_element` | `_weld_element` | `GatewayConstructionService` | `_weld_element` |
 | `dismantle_element` | `_dismantle_element` | `GatewayConstructionService` | `_dismantle_element` |
@@ -59,9 +60,32 @@ Read-model не мутирует state (кроме существующих ensu
 | `apply_damage`, `apply_transfer_resource`, `apply_connect_network`, `apply_connect_rope` | `GatewayMachineCommandService` |
 | `preview_construction`, `baseline_ground_pivot`, `resolve_construction_placement`, `snap_*`, `reset_construction_snap` | `GatewayConstructionService` |
 | `player_carry_load`, `resource_store`, `store_snapshot`, `vehicle_power_snapshot`, `control_terminal_*`, `player_inventory*`, `construction_archetype`, `archetype_display_name`, `map_overlay_entries` | `GatewayReadModelService` |
+| `force_eject_seat_occupant`, `is_rover_seated`, `get_local_seat_element_id`, `is_local_seat_driver`, `tick_rover_locomotion_input`, `collect_seat_raw_input`, `apply_remote_driver_input`, `clear_remote_driver_input`, `apply_local_seat_attach`, `ensure_local_seat_binding`, `release_local_seat_attach` | `GatewaySeatLocomotionService` |
 
 `replay_remote_dig` остаётся на gateway (coop-вход); внутри зовёт dig-обёртки
 (`_remove_voxel` / `_scoop_spoil` / `_dump_scoop`).
+
+## Seat / locomotion — что осталось на узле
+
+Сервис — `GatewaySeatLocomotionService`, но узел держит всё, что нельзя
+переносить:
+
+| На gateway | Почему |
+|---|---|
+| `_rover_seat_player`, `_rover_seat_assembly_id`, `_rover_seat_element_id`, `_rover_seat_passenger`, `_rover_seat_policy` | состояние; `GatewayMachineCommandService` и `GatewayReadModelService` читают/пишут поля напрямую. Сервис присваивает через `gateway._rover_seat_*` |
+| `_seat_force_release_notify`, `set_seat_force_release_notify`, `_seat_evict_hook_connected` | coop-хук, ставится снаружи |
+| `_bind_seat_evict_hook`, `_on_seat_occupant_evicted` | `call_deferred` из `_ready` + цель `world.seat_occupant_evicted.connect` — identity Callable ломать нельзя |
+| `is_passenger_seat_archetype` | единственная реально статическая функция кластера; сервис зовёт её по имени на `gateway` (ссылка на `WorldCommandGateway` из сервиса дала бы цикл `class_name`) |
+| `_execute` (`toggle_control_seat`), `_result`, `_target_card_keys` | роутер |
+
+`_rover_seat_policy` — **разделяемая ссылка** на `SeatControlState` (R9, без
+per-tick дублирования): сервис не держит локальную копию.
+
+`FLIGHT_LOOK_SENSITIVITY` переехала в сервис вместе с `_consume_flight_look_delta`
+(внешних читателей константы нет).
+
+Порядок в coop-потоке 20 Гц (`apply_remote_driver_input`) заморожен:
+edges → `SeatInputRouter.route` → `apply_driver_frame` → `_seat_frame_should_wake`.
 
 ## Правила
 
@@ -69,4 +93,7 @@ Read-model не мутирует state (кроме существующих ensu
 - Порядок и набор 27 `kind` в `_execute` заморожены (`ANTIGOD-CONTRACT-FREEZE.md`).
 - Форма результата: `{ status: &"ok"|&"failed", reason, data }` — не трогать.
 - Мутации — только через команды (`submit` / `submit_as`), не из read-model.
-- Seat/locomotion-кластер на gateway до отдельной волны.
+- Обёртки на узле — **никогда** не `static`: в статической функции нет `self`,
+  в сервис уедет `null`.
+- Подписки на сигналы — только методами узла, не `Service.method.bind(gateway)`:
+  `Callable.bind` дописывает аргументы ПОСЛЕ аргументов сигнала.
