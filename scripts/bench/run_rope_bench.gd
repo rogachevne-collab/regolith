@@ -11,6 +11,11 @@ extends Node3D
 ## is better" has to be a number in this same table, not a separate run
 ## someone has to remember to compare by hand.
 
+## By path, not by class_name: the bench harness ships with the Ropes! plugin,
+## which lives in its own repository and deliberately claims a single global
+## name (Rope3D). See docs/cheatsheets/ropes-seam.md.
+const RopeBench := preload("res://addons/ropes/bench/rope_bench.gd")
+
 const KNOWN_ADAPTERS := ["verlet", "xpbd"]
 
 

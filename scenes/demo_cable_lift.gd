@@ -8,7 +8,7 @@ extends Node3D
 
 const Solver := preload("res://scripts/simulation/projection/xpbd_cable_rope_solver.gd")
 const CableCurve := preload("res://scripts/simulation/projection/cable_curve_util.gd")
-const FlyCamera := preload("res://addons/ropes/demos/fly_camera.gd")
+const FlyCamera := preload("res://scripts/debug/fly_camera.gd")
 
 const ANCHOR := Vector3(0, 9, 0)
 const ROVER_START := Vector3(0, 0.4, 0)

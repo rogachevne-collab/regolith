@@ -19,6 +19,8 @@ extends RefCounted
 ## separate "solved" shape to fall out of sync with the drawn one.
 
 const XPBDRope := preload("res://addons/ropes/core/xpbd_rope.gd")
+## By path, not by class_name — see run_rope_bench.gd.
+const RopeBench := preload("res://addons/ropes/bench/rope_bench.gd")
 
 const SEGMENTS_PER_M := 4.0
 const MASS_PER_M := 0.5
