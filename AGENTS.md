@@ -27,6 +27,11 @@ Rule 1 - отвечай коротко, по делу и понятным язы
 `resources/balance/game_balance.json` + `docs/cheatsheets/game-balance.md` —
 не размазывать числа по GDScript-константам.
 
+Операция анти-godobject (механическая нарезка монолитов): контракт заморозки —
+`docs/plans/ANTIGOD-CONTRACT-FREEZE.md`. Cheatsheet'ы волны —
+`docs/cheatsheets/world-command-gateway.md`, `physics-projection.md`,
+`control-terminal.md` (появятся по мере extract'ов). Поведение не менять.
+
 ## Инварианты (нарушать НЕЛЬЗЯ)
 
 - **R1** — новые типы машин/элементов сначала в `PHYSICAL-LANGUAGE.md` или

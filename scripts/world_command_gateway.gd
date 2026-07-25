@@ -11,38 +11,6 @@ signal command_completed(command_id: int, result: Dictionary)
 ## (COOP spike stage B), which command_completed's result does not include.
 signal command_executed(command: Dictionary, result: Dictionary)
 
-# A flat, gravity-upright block bottom cannot follow bumpy/sloped terrain, so the
-# aim hit (near, highest footprint edge) leaves the rest of the base floating. We
-# reseat a first-on-ground block onto the LOWEST terrain point under its whole
-# footprint (plus a hairline embed) so no corner ever floats above the surface.
-const GROUND_SEAT_EMBED := 0.02
-const INTERACTION_RANGE_M := 4.5
-const INTERACTION_SOURCE_MARGIN_M := 1.5
-## Aim can sit slightly outside the authored collider AABB (mesh bevel / float).
-const _OXYGEN_MODULE_HIT_MARGIN_M := 0.2
-const _GROUND_SEAT_SAMPLES: Array[Vector2] = [
-	Vector2(0.0, 0.0),
-	Vector2(-0.5, -0.5),
-	Vector2(0.5, -0.5),
-	Vector2(-0.5, 0.5),
-	Vector2(0.5, 0.5),
-]
-## Archetypes shown on the moon map overlay (MAP-UI-01).
-const MAP_STRUCTURE_ARCHETYPES := {
-	"power_source": true,
-	"power_distributor": true,
-	"power_battery": true,
-	"power_battery_small": true,
-	"power_distributor_small": true,
-	"stationary_drill": true,
-	"cargo_store": true,
-	"processor": true,
-	"fabricator": true,
-	"foundation": true,
-	"cockpit": true,
-	"passenger_seat": true,
-}
-
 @export var terrain_path: NodePath = NodePath("../VoxelTerrain")
 @export var placed_blocks_path: NodePath = NodePath("../PlacedBlocks")
 @export var simulation_session_path: NodePath = NodePath("../SimulationSession")
@@ -186,15 +154,7 @@ func _probe_assembly_terrain_contact(
 	assembly: SimulationAssembly,
 	elements: Array[SimulationElement]
 ) -> Array[int]:
-	var space_state: PhysicsDirectSpaceState3D = _physics_space_state()
-	return TerrainAnchorProbe.touching_element_ids(
-		_voxel_tool,
-		_session.world,
-		assembly,
-		elements,
-		space_state,
-		_terrain
-	)
+	return GatewayTerrainDigService._probe_assembly_terrain_contact(self, assembly, elements)
 
 
 ## Installed by CoopSession on a client (COOP-HOST-V0). When valid, submit()
@@ -354,14 +314,6 @@ func _execute(command: Dictionary) -> Dictionary:
 			return _result(&"invalid_target")
 
 
-## Share of loose material the spinning bit throws clear of its cylinder each
-## bite. High on purpose: the drill mines rock only, so anything loose in the
-## throat is parted aside, never left to re-flood the cut. `plow_spoil` rings it
-## onto the rim and collects nothing — no spoil is credited as yield. First knob
-## to drop if the ejected ring visibly pumps back in and out.
-const HAND_DRILL_PLOW_SHARE := 1.0
-
-
 ## True while this gateway is re-applying a dig confirmed by the coop host.
 ## Gates the side effects that must stay host-only (floating-chunk separation
 ## becomes elements and arrives via snapshot instead).
@@ -404,120 +356,7 @@ func _remove_voxel(
 	command: Dictionary,
 	target: Dictionary
 ) -> Dictionary:
-	var target_kind := StringName(target["target_kind"])
-	# Loose material neither blocks the bit nor is mined by it. Whether the aim
-	# landed on rock or on the dust standing in front of it, one path: part the
-	# loose aside (below) and cut the rock behind. `_remove_granular` is retired —
-	# kept for reference, no longer reached — because the drill does not scoop.
-	if (
-		target_kind != InteractionHit.KIND_VOXEL
-		and target_kind != InteractionHit.KIND_GRANULAR
-	):
-		return _result(&"invalid_target")
-	var parameters: Dictionary = command.get("parameters", {})
-	var radius := clampf(
-		float(
-			parameters.get(
-				"radius",
-				IndustryArchetypeProfile.hand_drill_carve_radius_m()
-			)
-		),
-		0.05,
-		4.0
-	)
-	var direction := InteractionHit.aim_direction_from(target).normalized()
-	var contact_point := Vector3(target["point"])
-	var bite_center := contact_point - direction * (
-		radius - IndustryArchetypeProfile.hand_drill_bite_depth_m()
-	)
-	var sdf_scale := IndustryArchetypeProfile.hand_drill_sdf_scale()
-	# Clear the throat first: shove any loose out of the bit's cylinder so a dust
-	# cover cannot stall the cut. Collects nothing — the parted spoil stays in the
-	# world, ringed on the rim, and the carve below reaches the rock underneath.
-	_plow_hand_drill_loose(contact_point, radius)
-	var total_removed_m3 := 0.0
-	var now_msec := Time.get_ticks_msec()
-	# Coop replay must not path-sweep from local wall-clock / last-bite state:
-	# join catch-up and live ops arrive back-to-back, which would over-carve
-	# vs the host. Host already stamped the final sphere(s) it chose.
-	var use_path_sweep := false
-	if not _replaying_remote_dig and _hand_drill_last_bite_center is Vector3:
-		var span_m := bite_center.distance_to(_hand_drill_last_bite_center)
-		var gap_ms := now_msec - _hand_drill_last_bite_msec
-		use_path_sweep = (
-			span_m > 0.0001
-			and span_m <= IndustryArchetypeProfile.hand_drill_path_max_span_m()
-			and gap_ms <= IndustryArchetypeProfile.hand_drill_path_max_gap_ms()
-		)
-	if use_path_sweep:
-		# do_path trips a VoxelDataGrid assert in the pinned godot_voxel
-		# build (is_valid_block_position), so sweep the gap with
-		# overlapping sphere bites instead.
-		var last_center: Vector3 = _hand_drill_last_bite_center
-		var span := bite_center - last_center
-		var step := maxf(radius * 0.5, 0.01)
-		var count := clampi(ceili(span.length() / step), 1, 8)
-		for index: int in range(count):
-			var sweep := _excavation.excavate(
-				_voxel_tool,
-				{
-					"stamp_kind": &"sphere",
-					"terrain": _terrain,
-					"center": last_center + span * (
-						float(index + 1) / float(count)
-					),
-					"radius": radius,
-					"sdf_scale": sdf_scale,
-				}
-			)
-			total_removed_m3 += float(sweep["removed_volume_m3"])
-	var excavation := _excavation.excavate(
-		_voxel_tool,
-		{
-			"stamp_kind": &"sphere",
-			"terrain": _terrain,
-			"center": bite_center,
-			"radius": radius,
-			"sdf_scale": sdf_scale,
-		}
-	)
-	total_removed_m3 += float(excavation["removed_volume_m3"])
-	if total_removed_m3 > 0.000001:
-		_hand_drill_last_bite_center = bite_center
-		_hand_drill_last_bite_msec = now_msec
-		_notify_terrain_modified(total_removed_m3, bite_center, radius, direction)
-		if not _replaying_remote_dig:
-			_maybe_separate_floating_chunks(bite_center, total_removed_m3, radius)
-	else:
-		_hand_drill_last_bite_center = null
-	var removed_m3 := total_removed_m3
-	# Excavation mode discards the yield: rock is cleared but nothing is mined.
-	var discard_yield := bool(parameters.get("discard_yield", false))
-	if removed_m3 > 0.000001 and not discard_yield:
-		var material_id := _material_field.material_id_at_world(
-			contact_point,
-			_hand_drill_spawn_world
-		)
-		_route_hand_drill_yield(
-			contact_point,
-			_material_source.yield_for_excavation(
-				removed_m3,
-				{material_id: 1.0}
-			)
-		)
-	# Path-sweep can remove volume even if the last bite hits a block that has
-	# not streamed to LOD0 yet (`terrain_unavailable`). Report success whenever
-	# anything was carved so the HUD does not flash a false failure.
-	var status := StringName(excavation["status"])
-	if removed_m3 > 0.000001:
-		status = &"ok"
-	return _result(
-		status,
-		{
-			"point": target["point"],
-			"removed_volume_m3": removed_m3,
-		}
-	)
+	return GatewayTerrainDigService._remove_voxel(self, command, target)
 
 
 ## Shove loose material out of the bit's cylinder without collecting any. The
@@ -525,12 +364,7 @@ func _remove_voxel(
 ## the world (ringed on the rim by `plow_spoil`) rather than counting as yield.
 ## No-op when the scene has no volumetric granular world.
 func _plow_hand_drill_loose(world_point: Vector3, radius_m: float) -> void:
-	if radius_m <= 0.0:
-		return
-	var granular := _granular_world()
-	if granular == null or not granular.has_method(&"plow_spoil"):
-		return
-	granular.call(&"plow_spoil", world_point, radius_m, HAND_DRILL_PLOW_SHARE)
+	GatewayTerrainDigService._plow_hand_drill_loose(self, world_point, radius_m)
 
 
 ## Retired: the drill no longer scoops loose material (see `_remove_voxel`, which
@@ -544,41 +378,7 @@ func _remove_granular(
 	command: Dictionary,
 	target: Dictionary
 ) -> Dictionary:
-	# Found by group and called by name rather than by type: the height-field
-	# implementation and the volumetric one both answer `dig_spoil`, and which
-	# is live is a scene decision, not this node's business.
-	var granular := get_tree().get_first_node_in_group(&"granular_world")
-	if granular == null or not granular.has_method(&"dig_spoil"):
-		return _result(&"not_ready")
-	var parameters: Dictionary = command.get("parameters", {})
-	var radius := clampf(
-		float(
-			parameters.get(
-				"radius",
-				IndustryArchetypeProfile.hand_drill_carve_radius_m()
-			)
-		),
-		0.05,
-		4.0
-	)
-	var contact_point := Vector3(target["point"])
-	var removed_m3 := float(granular.call(&"dig_spoil", contact_point, radius))
-	if removed_m3 <= 0.000001:
-		return _result(&"no_target", {"point": contact_point})
-	# Excavation mode discards the yield: spoil is cleared but nothing is mined.
-	if not bool(parameters.get("discard_yield", false)):
-		var material_id := _material_field.material_id_at_world(
-			contact_point,
-			_hand_drill_spawn_world
-		)
-		_route_hand_drill_yield(
-			contact_point,
-			_material_source.yield_for_excavation(removed_m3, {material_id: 1.0})
-		)
-	return _result(
-		&"ok",
-		{"point": contact_point, "removed_volume_m3": removed_m3}
-	)
+	return GatewayTerrainDigService._remove_granular(self, command, target)
 
 
 ## Fill a carried scoop from a heap. Reports the volume taken so the tool can
@@ -592,24 +392,7 @@ func _scoop_spoil(
 	command: Dictionary,
 	target: Dictionary
 ) -> Dictionary:
-	var granular := get_tree().get_first_node_in_group(&"granular_world")
-	if granular == null or not granular.has_method(&"scoop_spoil"):
-		return _result(&"not_ready")
-	var parameters: Dictionary = command.get("parameters", {})
-	var radius := clampf(float(parameters.get("radius", 0.5)), 0.05, 2.0)
-	var capacity := maxf(float(parameters.get("max_volume_m3", 0.0)), 0.0)
-	if capacity <= 0.000001:
-		return _result(&"no_capacity", {"scooped_volume_m3": 0.0})
-	var contact_point := Vector3(target["point"])
-	var taken := float(
-		granular.call(&"scoop_spoil", contact_point, radius, capacity)
-	)
-	if taken <= 0.000001:
-		return _result(&"no_target", {"point": contact_point})
-	return _result(
-		&"ok",
-		{"point": contact_point, "scooped_volume_m3": taken}
-	)
+	return GatewayTerrainDigService._scoop_spoil(self, command, target)
 
 
 ## Tip a carried load back out. Reports what the world accepted — the caller
@@ -619,19 +402,7 @@ func _dump_scoop(
 	command: Dictionary,
 	target: Dictionary
 ) -> Dictionary:
-	var granular := get_tree().get_first_node_in_group(&"granular_world")
-	if granular == null or not granular.has_method(&"dump_load"):
-		return _result(&"not_ready")
-	var parameters: Dictionary = command.get("parameters", {})
-	var volume := maxf(float(parameters.get("volume_m3", 0.0)), 0.0)
-	if volume <= 0.000001:
-		return _result(&"no_target", {"dumped_volume_m3": 0.0})
-	var contact_point := Vector3(target["point"])
-	var accepted := float(granular.call(&"dump_load", contact_point, volume))
-	return _result(
-		&"ok",
-		{"point": contact_point, "dumped_volume_m3": accepted}
-	)
+	return GatewayTerrainDigService._dump_scoop(self, command, target)
 
 
 ## Debug: conjure loose material at the aim point, out of nothing.
@@ -645,69 +416,14 @@ func _debug_spawn_spoil(
 	command: Dictionary,
 	target: Dictionary
 ) -> Dictionary:
-	var granular := get_tree().get_first_node_in_group(&"granular_world")
-	if granular == null or not granular.has_method(&"dump_load"):
-		return _result(&"not_ready")
-	var parameters: Dictionary = command.get("parameters", {})
-	var volume := maxf(float(parameters.get("volume_m3", 0.0)), 0.0)
-	if volume <= 0.000001:
-		return _result(&"no_target", {"spawned_volume_m3": 0.0})
-	var contact_point := Vector3(target["point"])
-	var accepted := float(granular.call(&"dump_load", contact_point, volume))
-	return _result(
-		&"ok",
-		{"point": contact_point, "spawned_volume_m3": accepted}
-	)
+	return GatewayTerrainDigService._debug_spawn_spoil(self, command, target)
 
 
 func _dig_terrain_debris(
 	_command: Dictionary,
 	target: Dictionary
 ) -> Dictionary:
-	if StringName(target.get("target_kind", &"")) != InteractionHit.KIND_TERRAIN_DEBRIS:
-		return _result(&"invalid_target")
-	var body := target.get("collider") as RigidBody3D
-	if body == null or not is_instance_valid(body):
-		return _result(&"no_target")
-	if not body.is_in_group(&"terrain_floating_debris"):
-		return _result(&"invalid_target")
-	var dig_hp := float(body.get_meta(&"dig_hp", body.mass))
-	var dig_hp_max := float(body.get_meta(&"dig_hp_max", maxf(body.mass, 1.0)))
-	var dig_mass_kg := float(body.get_meta(&"dig_mass_kg", body.mass))
-	if dig_hp_max <= 0.0001:
-		dig_hp_max = 1.0
-	# One turbo bite ≈ 25–40% of a typical chunk; small rocks die in 1–2 ticks.
-	var damage := maxf(dig_hp_max * 0.35, dig_hp_max * 0.08)
-	var removed_frac := minf(damage, dig_hp) / dig_hp_max
-	dig_hp = maxf(dig_hp - damage, 0.0)
-	body.set_meta(&"dig_hp", dig_hp)
-	var contact := Vector3(target.get("point", body.global_position))
-	var removed_mass := dig_mass_kg * removed_frac
-	if removed_mass > 0.000001:
-		# Map mass→volume with regolith density proxy so yield path stays shared.
-		var removed_m3 := removed_mass / 1600.0
-		var material_id := _material_field.material_id_at_world(
-			contact,
-			_hand_drill_spawn_world
-		)
-		_route_hand_drill_yield(
-			contact,
-			_material_source.yield_for_excavation(
-				removed_m3,
-				{material_id: 1.0}
-			)
-		)
-	if dig_hp > 0.0001:
-		var scale_t := clampf(dig_hp / dig_hp_max, 0.35, 1.0)
-		body.scale = Vector3.ONE * scale_t
-		body.mass = maxf(dig_mass_kg * scale_t, 4.0)
-		body.sleeping = false
-		body.apply_central_impulse(
-			-Vector3(target.get("normal", Vector3.UP)).normalized() * (8.0 + damage)
-		)
-		return _result(&"ok", {"point": contact, "dig_hp": dig_hp})
-	body.queue_free()
-	return _result(&"ok", {"point": contact, "destroyed": true})
+	return GatewayTerrainDigService._dig_terrain_debris(self, _command, target)
 
 
 ## Drop what the drill freed on the ground. Nothing goes straight into the
@@ -722,91 +438,29 @@ func _route_hand_drill_yield(
 	center: Vector3,
 	yields: Array[Dictionary]
 ) -> void:
-	if _session == null or _session.world == null:
-		return
-	for yield_entry: Dictionary in yields:
-		var resource_id := String(yield_entry.get("resource_id", ""))
-		var mass_kg := float(yield_entry.get("mass_kg", 0.0))
-		if resource_id.is_empty() or mass_kg <= 0.000001:
-			continue
-		var pending := mass_kg + float(
-			_hand_drill_yield_buffer.get(resource_id, 0.0)
-		)
-		var quantum_kg := _hand_drill_emit_quantum_kg(resource_id)
-		if quantum_kg <= 0.000001:
-			# Nothing to quantise by — a resource with no mass or volume per
-			# unit. Drop it rather than accumulate it forever.
-			_session.world.add_world_loot_pile(center, resource_id, pending)
-			pending = 0.0
-		else:
-			while pending >= quantum_kg:
-				_session.world.add_world_loot_pile(
-					center,
-					resource_id,
-					quantum_kg
-				)
-				pending -= quantum_kg
-		_hand_drill_yield_buffer[resource_id] = pending
+	GatewayTerrainDigService._route_hand_drill_yield(self, center, yields)
 
 
 ## Mass of `resource_id` that has to accumulate before a chunk drops. The
 ## balance value is a volume, so chunks are a consistent size on the ground;
 ## this converts it with the resource's own density.
 func _hand_drill_emit_quantum_kg(resource_id: String) -> float:
-	var unit_volume_l := ResourceCatalog.volume_per_unit_l(resource_id)
-	var unit_mass_kg := ResourceCatalog.mass_per_unit_kg(resource_id)
-	if unit_volume_l <= 0.000001 or unit_mass_kg <= 0.000001:
-		return 0.0
-	return (
-		IndustryArchetypeProfile.hand_drill_loot_emit_volume_l()
-		* unit_mass_kg
-		/ unit_volume_l
-	)
+	return GatewayTerrainDigService._hand_drill_emit_quantum_kg(self, resource_id)
 
 
 func apply_terrain_carve(
 	op: Dictionary,
 	volume_budget_m3: float = INF
 ) -> float:
-	if _voxel_tool == null or _excavation == null or _terrain == null:
-		push_warning("WorldCommandGateway.apply_terrain_carve: not ready")
-		return 0.0
-	var request := op.duplicate(true)
-	request["terrain"] = _terrain
-	request["volume_budget_m3"] = volume_budget_m3
-	if not request.has("sdf_scale"):
-		request["sdf_scale"] = TerrainExcavationService.DEFAULT_SDF_SCALE
-	var removed := float(
-		_excavation.excavate(_voxel_tool, request).get("removed_volume_m3", 0.0)
-	)
-	if removed > 0.000001:
-		var dig_center := _dig_center_from_request(request)
-		var dig_radius := _dig_radius_from_request(request)
-		_notify_terrain_modified(removed, dig_center, dig_radius)
-		_maybe_separate_floating_chunks(dig_center, removed, dig_radius)
-	return removed
+	return GatewayTerrainDigService.apply_terrain_carve(self, op, volume_budget_m3)
 
 
 func _dig_center_from_request(request: Dictionary) -> Vector3:
-	match StringName(request.get("stamp_kind", &"sphere")):
-		&"path":
-			var points: PackedVector3Array = request.get("points", PackedVector3Array())
-			if points.is_empty():
-				return Vector3.ZERO
-			return points[points.size() - 1]
-		_:
-			return request.get("center", Vector3.ZERO)
+	return GatewayTerrainDigService._dig_center_from_request(self, request)
 
 
 func _dig_radius_from_request(request: Dictionary) -> float:
-	match StringName(request.get("stamp_kind", &"sphere")):
-		&"path":
-			var radii: PackedFloat32Array = request.get("radii", PackedFloat32Array())
-			if radii.is_empty():
-				return 0.0
-			return float(radii[radii.size() - 1])
-		_:
-			return float(request.get("radius", 0.0))
+	return GatewayTerrainDigService._dig_radius_from_request(self, request)
 
 
 ## Announce that loose material was sintered into the rock SDF, so the dig
@@ -817,7 +471,7 @@ func mark_terrain_deposited(
 	deposit_center: Vector3 = Vector3.ZERO,
 	deposit_radius_m: float = 0.0
 ) -> void:
-	terrain_deposited.emit(deposit_center, deposit_radius_m)
+	GatewayTerrainDigService.mark_terrain_deposited(self, deposit_center, deposit_radius_m)
 
 
 func _notify_terrain_modified(
@@ -826,16 +480,11 @@ func _notify_terrain_modified(
 	dig_radius_m: float = 0.0,
 	dig_direction: Vector3 = Vector3.ZERO
 ) -> void:
-	terrain_modified.emit(
-		removed_volume_m3, dig_center, dig_radius_m, dig_direction
-	)
-	# A frozen parked rover must re-settle if the ground under it is dug away.
-	if _session != null and _session.projection != null and dig_radius_m > 0.0:
-		_session.projection.wake_frozen_near(dig_center, dig_radius_m)
+	GatewayTerrainDigService._notify_terrain_modified(self, removed_volume_m3, dig_center, dig_radius_m, dig_direction)
 
 
 func stationary_drill_has_terrain_contact(element_id: int) -> bool:
-	return not _stationary_drill_contact(element_id).is_empty()
+	return GatewayTerrainDigService.stationary_drill_has_terrain_contact(self, element_id)
 
 
 ## World-space point the drill's last carve worked, for material sampling. The
@@ -843,53 +492,11 @@ func stationary_drill_has_terrain_contact(element_id: int) -> bool:
 ## cached centre is the one it just cut. Falls back to a fresh contact resolve
 ## when nothing is cached yet (first tick / cache miss).
 func stationary_drill_carve_point(element_id: int) -> Vector3:
-	if _stationary_drill_carve_points.has(element_id):
-		return _stationary_drill_carve_points[element_id]
-	var contact := _stationary_drill_contact(element_id)
-	if contact.is_empty():
-		return Vector3.ZERO
-	var radius := IndustryArchetypeProfile.drill_carve_radius_m()
-	var direction: Vector3 = contact["direction"]
-	return (
-		contact["point"]
-		+ direction
-		* radius
-		* IndustryArchetypeProfile.drill_carve_center_offset_factor()
-	)
+	return GatewayTerrainDigService.stationary_drill_carve_point(self, element_id)
 
 
 func carve_stationary_drill(element_id: int) -> float:
-	var contact := _stationary_drill_contact(element_id)
-	if contact.is_empty():
-		return 0.0
-	var radius := IndustryArchetypeProfile.drill_carve_radius_m()
-	var direction: Vector3 = contact["direction"]
-	var center: Vector3 = (
-		contact["point"]
-		+ direction
-		* radius
-		* IndustryArchetypeProfile.drill_carve_center_offset_factor()
-	)
-	# Remember where this bit is cutting so `stationary_drill_carve_point` can
-	# report it back for material sampling — without it the drill service reads
-	# the material at the world origin and only ever yields mare regolith.
-	_stationary_drill_carve_points[element_id] = center
-	var removed := float(
-		_excavation.excavate(
-			_voxel_tool,
-			{
-				"stamp_kind": &"sphere",
-				"terrain": _terrain,
-				"center": center,
-				"radius": radius,
-				"sdf_scale": IndustryArchetypeProfile.hand_drill_sdf_scale(),
-			}
-		).get("removed_volume_m3", 0.0)
-	)
-	if removed > 0.000001:
-		_notify_terrain_modified(removed, center, radius, direction)
-		_maybe_separate_floating_chunks(center, removed, radius)
-	return removed
+	return GatewayTerrainDigService.carve_stationary_drill(self, element_id)
 
 
 func _maybe_separate_floating_chunks(
@@ -897,146 +504,32 @@ func _maybe_separate_floating_chunks(
 	removed_m3: float,
 	dig_radius_m: float
 ) -> void:
-	var spawned := _floating_debris.try_separate_after_dig(
-		_terrain,
-		_voxel_tool,
-		world_center,
-		removed_m3,
-		_ensure_floating_debris_parent()
-	)
-	if spawned <= 0:
-		return
-	# Separation edits SDF again — mark dig stream dirty for persistence.
-	_notify_terrain_modified(0.0, world_center, dig_radius_m)
+	GatewayTerrainDigService._maybe_separate_floating_chunks(self, world_center, removed_m3, dig_radius_m)
 
 
 func _ensure_floating_debris_parent() -> Node3D:
-	if _floating_debris_parent != null and is_instance_valid(_floating_debris_parent):
-		return _floating_debris_parent
-	_floating_debris_parent = Node3D.new()
-	_floating_debris_parent.name = "TerrainFloatingDebris"
-	var host: Node = get_parent()
-	if host == null:
-		host = self
-	host.add_child(_floating_debris_parent)
-	return _floating_debris_parent
+	return GatewayTerrainDigService._ensure_floating_debris_parent(self)
 
 
 func _stationary_drill_contact(element_id: int) -> Dictionary:
-	if _session == null or _session.world == null or _voxel_tool == null:
-		return {}
-	var element := _session.world.get_element(element_id)
-	if element == null or element.archetype_id != "stationary_drill":
-		return {}
-	var working_frame := _stationary_drill_working_frame(element)
-	if working_frame == Transform3D.IDENTITY:
-		return {}
-	# The authored working face is local +X. Presentation uses the same axis.
-	var local_direction := OrientationUtil.rotate_direction(
-		Vector3i.RIGHT,
-		element.orientation_index
-	)
-	var direction := (
-		working_frame.basis * Vector3(local_direction)
-	).normalized()
-	var local_tip := (
-		GridPoseUtil.oriented_footprint_pivot(
-			element.get_archetype(),
-			element.origin_cell,
-			element.orientation_index
-		)
-		+ Vector3(local_direction)
-		* IndustryArchetypeProfile.drill_head_offset_m()
-	)
-	var tip := working_frame * local_tip
-	var sdf_hit := _stationary_drill_sdf_contact_along_axis(tip, direction)
-	if not sdf_hit.is_empty():
-		return sdf_hit
-	var probe_start := tip - direction * 0.08
-	var reach := IndustryArchetypeProfile.drill_contact_reach_m() + 0.08
-	var physics_hit := TerrainAnchorProbe.raycast_terrain(
-		_physics_space_state(),
-		_terrain,
-		probe_start,
-		direction,
-		reach
-	)
-	if not physics_hit.is_empty():
-		return {
-			"point": physics_hit["position"],
-			"direction": direction,
-		}
-	var back_hit := TerrainAnchorProbe.raycast_terrain(
-		_physics_space_state(),
-		_terrain,
-		tip,
-		-direction,
-		0.35
-	)
-	if not back_hit.is_empty():
-		return {
-			"point": back_hit["position"],
-			"direction": direction,
-		}
-	var hit: VoxelRaycastResult = VoxelSpaceUtil.raycast_world(
-		_voxel_tool,
-		_terrain,
-		probe_start,
-		direction,
-		reach
-	)
-	if hit == null:
-		return {}
-	return {
-		"point": VoxelSpaceUtil.raycast_hit_world_point(
-			_terrain,
-			probe_start,
-			direction,
-			hit
-		),
-		"direction": direction,
-	}
+	return GatewayTerrainDigService._stationary_drill_contact(self, element_id)
 
 
 func _stationary_drill_working_frame(element: SimulationElement) -> Transform3D:
-	var body := _stationary_drill_physics_body(element)
-	if body != null:
-		return body.global_transform
-	if _session == null or _session.world == null or element == null:
-		return Transform3D.IDENTITY
-	return _session.world.element_group_transform(element.element_id)
+	return GatewayTerrainDigService._stationary_drill_working_frame(self, element)
 
 
 func _stationary_drill_physics_body(
 	element: SimulationElement
 ) -> PhysicsBody3D:
-	if _session == null or _session.projection == null:
-		return null
-	var record: Dictionary = _session.projection.get_element_projection(
-		element.element_id
-	)
-	return record.get("body") as PhysicsBody3D
+	return GatewayTerrainDigService._stationary_drill_physics_body(self, element)
 
 
 func _stationary_drill_sdf_contact_along_axis(
 	tip: Vector3,
 	direction: Vector3
 ) -> Dictionary:
-	var axis := direction.normalized()
-	for along_m: float in [0.0, -0.12, -0.25, 0.12, 0.25]:
-		var sample := tip + axis * along_m
-		var sample_cell: Vector3i = VoxelSpaceUtil.world_cell_from_point(
-			_terrain,
-			sample
-		)
-		if (
-			TerrainExcavationService.sdf_occupancy(
-				_voxel_tool.get_voxel_f(sample_cell)
-			)
-			> 0.0
-		):
-			return {"point": sample, "direction": direction}
-	return {}
+	return GatewayTerrainDigService._stationary_drill_sdf_contact_along_axis(self, tip, direction)
 
 
 # --- Dozer blade (mounted) terrain hooks -------------------------------------
@@ -1049,113 +542,34 @@ func _stationary_drill_sdf_contact_along_axis(
 
 
 func _granular_world() -> Node:
-	return get_tree().get_first_node_in_group(&"granular_world")
+	return GatewayTerrainDigService._granular_world(self)
 
 
 func dozer_blade_has_terrain_contact(element_id: int) -> bool:
-	return not _dozer_blade_contact(element_id).is_empty()
+	return GatewayTerrainDigService.dozer_blade_has_terrain_contact(self, element_id)
 
 
 ## World point the blade last worked, for material sampling. Falls back to a
 ## fresh contact resolve when nothing is cached (first tick / cache miss).
 func dozer_blade_contact_point(element_id: int) -> Vector3:
-	if _dozer_blade_contact_points.has(element_id):
-		return _dozer_blade_contact_points[element_id]
-	var contact := _dozer_blade_contact(element_id)
-	if contact.is_empty():
-		return Vector3.ZERO
-	return contact["point"]
+	return GatewayTerrainDigService.dozer_blade_contact_point(self, element_id)
 
 
 ## Load up to `budget_m3` of loose material under the blade into the tool,
 ## returning the volume actually taken. The world loses that volume here; the
 ## service credits it as yield.
 func dozer_blade_load(element_id: int, budget_m3: float) -> float:
-	var granular := _granular_world()
-	if granular == null or not granular.has_method(&"scoop_spoil"):
-		return 0.0
-	var contact := _dozer_blade_contact(element_id)
-	if contact.is_empty():
-		return 0.0
-	var point: Vector3 = contact["point"]
-	_dozer_blade_contact_points[element_id] = point
-	var radius := IndustryArchetypeProfile.dozer_blade_push_radius_m()
-	return float(
-		granular.call(&"scoop_spoil", point, radius, maxf(budget_m3, 0.0))
-	)
+	return GatewayTerrainDigService.dozer_blade_load(self, element_id, budget_m3)
 
 
 ## Shove loose material aside without collecting any (buffer full). Returns the
 ## volume moved; it stays in the world.
 func dozer_blade_plow(element_id: int) -> float:
-	var granular := _granular_world()
-	if granular == null or not granular.has_method(&"plow_spoil"):
-		return 0.0
-	var contact := _dozer_blade_contact(element_id)
-	if contact.is_empty():
-		return 0.0
-	var point: Vector3 = contact["point"]
-	_dozer_blade_contact_points[element_id] = point
-	var radius := IndustryArchetypeProfile.dozer_blade_push_radius_m()
-	var share := IndustryArchetypeProfile.dozer_blade_push_share()
-	return float(granular.call(&"plow_spoil", point, radius, share))
+	return GatewayTerrainDigService.dozer_blade_plow(self, element_id)
 
 
 func _dozer_blade_contact(element_id: int) -> Dictionary:
-	if _session == null or _session.world == null:
-		return {}
-	var element := _session.world.get_element(element_id)
-	if element == null or element.archetype_id != "dozer_blade":
-		return {}
-	var granular := _granular_world()
-	if granular == null or not granular.has_method(&"raycast_dust"):
-		return {}
-	var working_frame := _stationary_drill_working_frame(element)
-	if working_frame == Transform3D.IDENTITY:
-		return {}
-	# Authored working face is local +X — presentation and the drill share it.
-	var local_direction := OrientationUtil.rotate_direction(
-		Vector3i.RIGHT,
-		element.orientation_index
-	)
-	# A blade works the material under its cutting edge, not the air in front of
-	# its middle. Drop the probe to the edge and tilt it down, or it only ever
-	# registers a heap standing taller than half the blade — and drops it again
-	# the moment the rover climbs its own spoil.
-	var local_down := OrientationUtil.rotate_direction(
-		Vector3i.DOWN,
-		element.orientation_index
-	)
-	var forward := (
-		working_frame.basis * Vector3(local_direction)
-	).normalized()
-	var down := (working_frame.basis * Vector3(local_down)).normalized()
-	var pitch := deg_to_rad(
-		IndustryArchetypeProfile.dozer_blade_probe_pitch_deg()
-	)
-	var direction := (forward * cos(pitch) + down * sin(pitch)).normalized()
-	var local_tip := (
-		GridPoseUtil.oriented_footprint_pivot(
-			element.get_archetype(),
-			element.origin_cell,
-			element.orientation_index
-		)
-		+ Vector3(local_direction)
-		* IndustryArchetypeProfile.dozer_blade_head_offset_m()
-		+ Vector3(local_down)
-		* IndustryArchetypeProfile.dozer_blade_edge_drop_m()
-	)
-	var tip := working_frame * local_tip
-	var reach := IndustryArchetypeProfile.dozer_blade_contact_reach_m()
-	var hit: Dictionary = granular.call(
-		&"raycast_dust",
-		tip - direction * 0.1,
-		direction,
-		reach + 0.1
-	)
-	if hit.is_empty():
-		return {}
-	return {"point": hit["point"], "direction": direction}
+	return GatewayTerrainDigService._dozer_blade_contact(self, element_id)
 
 
 func get_voxel_tool() -> VoxelTool:
@@ -1197,45 +611,7 @@ func damage_player_suit(
 ## Authoritative hold-interact path. Identity and cadence are server-owned:
 ## callers provide only the normal current-hit snapshot and source node.
 func _oxygen_refill(command_data: Dictionary, target: Dictionary) -> Dictionary:
-	if _session == null or actor_uid.is_empty():
-		return _result(&"not_ready")
-	if (
-		StringName(target.get("target_kind", &""))
-		!= InteractionHit.KIND_SIMULATION_ELEMENT
-	):
-		return _result(&"invalid_target")
-	var source := command_data.get("source") as Node3D
-	var point: Vector3 = target.get("point", Vector3(INF, INF, INF))
-	var hit_distance := float(target.get("distance", INF))
-	if (
-		source == null
-		or not is_instance_valid(source)
-		or not point.is_finite()
-		or not is_finite(hit_distance)
-		or hit_distance < 0.0
-		or hit_distance > INTERACTION_RANGE_M
-		or source.global_position.distance_to(point)
-		> INTERACTION_RANGE_M + INTERACTION_SOURCE_MARGIN_M
-	):
-		return _result(&"out_of_range")
-	var module_element_id := InteractionHit.element_id_from(target)
-	var module := _session.world.get_element(module_element_id)
-	if module == null or not IndustryStoreService.is_oxygen_module(module):
-		return _result(&"invalid_target")
-	# Bind the claimed id to the aimed world point as well as the snapshot kind;
-	# a peer cannot pair a nearby hit with a known remote module id.
-	# Reach uses collider AABB (not origin→max-footprint-cell): multi-cell tanks
-	# have far corners beyond that old radius while still being valid hits.
-	if not _oxygen_module_hit_in_reach(module, point):
-		return _result(&"invalid_target")
-	var command := OxygenRefillCommand.new()
-	command.player_id = actor_uid
-	command.module_element_id = module_element_id
-	var result := _session.apply_oxygen_refill(command)
-	return _result(
-		StringName(result.get("reason", &"invalid_target")),
-		result
-	)
+	return GatewayMachineCommandService._oxygen_refill(self, command_data, target)
 
 
 ## True when `point` lies on/near any authored collider of the module.
@@ -1243,48 +619,14 @@ func _oxygen_module_hit_in_reach(
 	module: SimulationElement,
 	point: Vector3
 ) -> bool:
-	if module == null or not point.is_finite():
-		return false
-	var archetype := module.get_archetype()
-	if archetype == null:
-		return false
-	var group_tf := _session.world.element_group_transform(module.element_id)
-	if archetype.colliders.is_empty():
-		var origin := _session.world.element_world_transform(
-			module.element_id
-		).origin
-		return origin.distance_to(point) <= (
-			GridMetric.CELL_SIZE_M + _OXYGEN_MODULE_HIT_MARGIN_M
-		)
-	for collider: ColliderDefinition in archetype.colliders:
-		if collider == null:
-			continue
-		var bounds := GridPoseUtil.collider_world_aabb(
-			group_tf,
-			module.origin_cell,
-			module.orientation_index,
-			collider
-		).grow(_OXYGEN_MODULE_HIT_MARGIN_M)
-		if bounds.has_point(point):
-			return true
-	return false
+	return GatewayMachineCommandService._oxygen_module_hit_in_reach(self, module, point)
 
 
 func _place_block(
 	command: Dictionary,
 	target: Dictionary
 ) -> Dictionary:
-	var source: Node3D = command.get("source")
-	if source == null:
-		return _result(&"not_ready")
-	var cell: Vector3i = _placed_blocks.call(
-		"placement_cell_from_hit",
-		Vector3(target["point"]),
-		Vector3(target["normal"])
-	)
-	if not _placed_blocks.call("try_place", cell, source):
-		return _result(&"blocked", {"cell": cell})
-	return _result(&"ok", {"cell": cell})
+	return GatewayConstructionService._place_block(self, command, target)
 
 
 func _toggle_control_seat(
@@ -2115,248 +1457,75 @@ func preview_construction(
 	held_ground_pivot: Vector3 = Vector3(INF, INF, INF),
 	held_attach_pivot: Vector3 = Vector3(INF, INF, INF)
 ) -> Dictionary:
-	if _session == null:
-		return {
-			"valid": false,
-			"reason": &"not_ready",
-		}
-	var archetype := _get_archetype(archetype_id)
-	return _guard_placement_collision(
-		_seat_ground_plan(
-			ConstructionPlacement.plan(
-				_session.world,
-				target,
-				archetype,
-				orientation_index,
-				PlayerIdentity.store_id(actor_uid),
-				held_ground_pivot,
-				held_attach_pivot
-			)
-		)
-	)
+	return GatewayConstructionService.preview_construction(self, target, archetype_id, orientation_index, held_ground_pivot, held_attach_pivot)
 
 
 func baseline_ground_pivot(
 	target: Dictionary,
 	archetype_id: String
 ) -> Vector3:
-	if _session == null:
-		return Vector3(INF, INF, INF)
-	return ConstructionPlacement.baseline_ground_pivot(
-		_session.world,
-		target,
-		_get_archetype(archetype_id),
-		PlayerIdentity.store_id(actor_uid)
-	)
+	return GatewayConstructionService.baseline_ground_pivot(self, target, archetype_id)
 
 
 func resolve_construction_placement(params: Dictionary) -> Dictionary:
-	var archetype_id := str(params.get("archetype_id", "frame"))
-	var orientation_index := int(params.get("orientation_index", 0))
-	var direct_hit: Dictionary = params.get("direct_hit", {})
-	var manual_index := int(params.get("manual_candidate_index", -1))
-	var held_ground_pivot: Vector3 = params.get(
-		"held_ground_pivot",
-		Vector3(INF, INF, INF)
-	)
-	var held_attach_pivot: Vector3 = params.get(
-		"held_attach_pivot",
-		Vector3(INF, INF, INF)
-	)
-	if _session == null:
-		var plan := preview_construction(
-			direct_hit,
-			archetype_id,
-			orientation_index,
-			held_ground_pivot,
-			held_attach_pivot
-		)
-		var selected_index := 0 if bool(plan.get("valid", false)) else -1
-		return {
-			"candidates": [],
-			"selected_index": selected_index,
-			"selected_target": (
-				direct_hit if selected_index >= 0 else {}
-			),
-			"selected_plan": plan,
-			"sticky_key": "",
-			"stats": ConstructionSnapResolver._empty_stats(),
-		}
-	# No result cache here: ConstructionPreview already reuses results via its
-	# quantized context key, and deep-copying the resolve payload every physics
-	# frame cost more than it saved.
-	var archetype := _get_archetype(archetype_id)
-	var t_snap := ConstructionPerf.begin()
-	var result := _snap_resolver.resolve({
-		"world": _session.world,
-		"archetype": archetype,
-		"orientation_index": orientation_index,
-		"store_id": PlayerIdentity.store_id(actor_uid),
-		"ray_origin": params.get("ray_origin", Vector3.ZERO),
-		"ray_direction": params.get("ray_direction", Vector3.FORWARD),
-		"camera": params.get("camera"),
-		"direct_hit": direct_hit,
-		"manual_candidate_index": manual_index,
-		"held_ground_pivot": held_ground_pivot,
-		"held_attach_pivot": held_attach_pivot,
-	})
-	var snap_us := ConstructionPerf.end(&"snap_us", t_snap)
-	var t_seat := ConstructionPerf.begin()
-	var seated := _seat_ground_plan(result.get("selected_plan", {}))
-	var seat_us := ConstructionPerf.end(&"seat_us", t_seat)
-	var t_collision := ConstructionPerf.begin()
-	result["selected_plan"] = _guard_placement_collision(seated)
-	var collision_us := ConstructionPerf.end(&"collision_us", t_collision)
-	var stats: Dictionary = result.get("stats", {})
-	stats["snap_us"] = snap_us
-	stats["seat_us"] = seat_us
-	stats["collision_us"] = collision_us
-	result["stats"] = stats
-	return result
+	return GatewayConstructionService.resolve_construction_placement(self, params)
 
 
 ## Cheap staleness token for preview resolve reuse: any structural mutation
 ## bumps it. Motion/parking flips are covered by the preview's resolve
 ## heartbeat, not by this counter.
 func snap_context_revision() -> int:
-	if _session == null or _session.world == null:
-		return 0
-	return _session.world.topology_generation
+	return GatewayConstructionService.snap_context_revision(self)
 
 
 func snap_resolve_stats() -> Dictionary:
-	var stats := _snap_resolver.last_stats.duplicate(true)
-	stats.merge(ConstructionPerf.last_stats_timings())
-	return stats
+	return GatewayConstructionService.snap_resolve_stats(self)
 
 
 func reset_construction_snap() -> void:
-	_snap_resolver.reset_sticky()
+	GatewayConstructionService.reset_construction_snap(self)
 
 
-## Player carry load for the toolbar fill bar: the same volume the terminal
-## panel shows (stacks + tool instances), without building the entry list.
 func player_carry_load() -> Dictionary:
-	var capacity_l := IndustryStoreService.player_carry_capacity_l()
-	if _session == null or _session.world == null:
-		return {"used_l": 0.0, "capacity_l": capacity_l, "valid": false}
-	var store := _session.world.get_resource_store(
-		PlayerIdentity.store_id(actor_uid)
-	)
-	var used_l := store.volume_l() if store != null else 0.0
-	var registry := _session.world.ensure_player_inventory(actor_uid)
-	if registry != null:
-		used_l += registry.volume_l()
-	return {"used_l": used_l, "capacity_l": capacity_l, "valid": true}
+	return GatewayReadModelService.player_carry_load(self)
 
 
-## Read-only accessor for presentation (HUD Inventory / StoreView). Returns the
-## authoritative store so the HUD can render its amounts; the HUD only reads it
-## and never mutates simulation state (see docs/specs/HUD-UI-01.md).
 func resource_store(store_id: String) -> SimulationResourceStore:
-	if _session == null:
-		return null
-	return _session.world.get_resource_store(store_id)
+	return GatewayReadModelService.resource_store(self, store_id)
 
 
-## Authoritative terminal inventory snapshot (INDUSTRY-V1 § Terminal inventory).
-## Resolves player store, keyed element stores, and internal buffers. Unknown or
-## unresolved ids return `{"valid": false, "reason": ...}` without mutating state.
 func store_snapshot(store_id: String) -> Dictionary:
-	if _session == null or _session.world == null:
-		return StoreSnapshotBuilder.failure(&"not_ready")
-	return StoreSnapshotBuilder.build(_session.world, store_id)
+	return GatewayReadModelService.store_snapshot(self, store_id)
 
 
-## Cabin power read model for seated transport HUD (charge + trip ETA).
-## `assembly_id` 0 → currently seated rover assembly when available.
 func vehicle_power_snapshot(assembly_id: int = 0) -> Dictionary:
-	if _session == null or _session.world == null:
-		return VehiclePowerSnapshotBuilder.failure(&"not_ready")
-	var resolved_id := assembly_id
-	if resolved_id <= 0:
-		resolved_id = _resolve_active_rover_assembly_id()
-	if resolved_id <= 0:
-		return VehiclePowerSnapshotBuilder.failure(&"not_seated")
-	return VehiclePowerSnapshotBuilder.build(_session.world, resolved_id)
+	return GatewayReadModelService.vehicle_power_snapshot(self, assembly_id)
 
 
-## Снапшот сборки для терминала управления (CONTROL-ACTIONS-V0).
-## Резолв цели: сидя — своя сборка; иначе — сборка наведённого элемента
-## (panel передаёт element_id из InteractionQuery).
 func control_terminal_snapshot(
 	assembly_id: int = 0,
 	hint_element_id: int = 0
 ) -> Dictionary:
-	if _session == null or _session.world == null:
-		return ControlTerminalSnapshotBuilder.failure(&"not_ready")
-	var resolved_id := assembly_id
-	# host_hint — сиденье / pin / прицел. Явный ControlSeat всегда побеждает.
-	# Non-seat hint на той же сборке (K с рамы) билдер резолвит в детерминированный
-	# ControlSeat той же сборки; без hint / вне сборки — host=0 (не silent
-	# lowest-seat). Резолвится ВСЕГДА: hud кэширует assembly_id после первого
-	# тика, и если hint гасить под `resolved_id <= 0`, со 2-го тика host=0.
-	var resolved := _resolve_control_terminal_target(assembly_id, hint_element_id)
-	if int(resolved["assembly_id"]) <= 0:
-		return ControlTerminalSnapshotBuilder.failure(&"no_target")
-	return ControlTerminalSnapshotBuilder.build(
-		_session.world,
-		int(resolved["assembly_id"]),
-		int(resolved["host_hint"])
+	return GatewayReadModelService.control_terminal_snapshot(
+		self, assembly_id, hint_element_id
 	)
 
 
-## Дешёвый снапшот пульта для ЗАКРЫТОГО окна: только хост + привязки бара, без
-## обхода всей сборки/тревог/энергоблока. Полный control_terminal_snapshot нужен
-## лишь открытому окну; закрытый пульт кормит компактную ленту этим.
 func control_terminal_bar_snapshot(
 	assembly_id: int = 0,
 	hint_element_id: int = 0
 ) -> Dictionary:
-	if _session == null or _session.world == null:
-		return ControlTerminalSnapshotBuilder.failure(&"not_ready")
-	var resolved := _resolve_control_terminal_target(assembly_id, hint_element_id)
-	if int(resolved["assembly_id"]) <= 0:
-		return ControlTerminalSnapshotBuilder.failure(&"no_target")
-	return ControlTerminalSnapshotBuilder.build_bar_only(
-		_session.world,
-		int(resolved["assembly_id"]),
-		int(resolved["host_hint"])
+	return GatewayReadModelService.control_terminal_bar_snapshot(
+		self, assembly_id, hint_element_id
 	)
 
 
-## Резолв цели пульта: сидя — своя сборка/сиденье; иначе — сборка наведённого
-## элемента (seat или non-seat). Occupied seat / pin остаётся host_hint;
-## non-seat hint передаётся билдеру как есть — он выберет детерминированный
-## ControlSeat той же сборки. host_hint резолвится всегда (кэш assembly_id).
-func _resolve_control_terminal_target(
-	assembly_id: int,
-	hint_element_id: int
-) -> Dictionary:
-	var resolved_id := assembly_id
-	var host_hint := _rover_seat_element_id
-	if resolved_id <= 0:
-		if host_hint > 0:
-			resolved_id = _resolve_active_rover_assembly_id()
-		if resolved_id <= 0 and hint_element_id > 0:
-			var element := _session.world.get_element(hint_element_id)
-			if element != null:
-				resolved_id = element.assembly_id
-	if host_hint <= 0:
-		host_hint = hint_element_id
-	return {"assembly_id": resolved_id, "host_hint": host_hint}
-
-
 func player_inventory() -> PlayerInventoryRegistry:
-	if _session == null or _session.world == null or actor_uid.is_empty():
-		return null
-	return _session.world.ensure_player_inventory(actor_uid)
+	return GatewayReadModelService.player_inventory(self)
 
 
 func player_inventory_revision() -> int:
-	if _session == null or _session.world == null:
-		return 0
-	return _session.world.get_player_inventory_revision()
+	return GatewayReadModelService.player_inventory_revision(self)
 
 
 ## Presentation entry for hotbar rebind. Always goes through submit() so coop
@@ -2389,76 +1558,22 @@ func assign_player_hotbar_instance(
 
 
 func construction_archetype(archetype_id: String) -> ElementArchetype:
-	return _get_archetype(archetype_id)
+	return GatewayReadModelService.construction_archetype(self, archetype_id)
 
 
 func archetype_display_name(archetype_id: String) -> String:
-	var archetype := _get_archetype(archetype_id)
-	var gateway_name := ""
-	if archetype != null and not archetype.display_name.is_empty():
-		gateway_name = archetype.display_name
-	return HudTokens.archetype_label(archetype_id, gateway_name)
+	return GatewayReadModelService.archetype_display_name(self, archetype_id)
 
 
-## Read-only map overlay rows for MapPanel (docs/specs/MAP-UI-01.md).
-## Presentation only: never mutates simulation state.
 func map_overlay_entries() -> Array[Dictionary]:
-	var rows: Array[Dictionary] = []
-	if _session == null or _session.world == null:
-		return rows
-	var world := _session.world
-	for pile: Dictionary in world.list_world_loot_piles():
-		var pile_pos: Vector3 = SnapshotCodec.vector3_from_variant(
-			pile.get("position", Vector3.ZERO)
-		)
-		if not pile_pos.is_finite():
-			continue
-		var resource_id := str(pile.get("resource_id", ""))
-		rows.append({
-			"kind": "loot",
-			"id": "loot:%d" % int(pile.get("pile_id", 0)),
-			"resource_id": resource_id,
-			"amount_kg": float(pile.get("amount_kg", 0.0)),
-			"position": pile_pos,
-		})
-	for element: SimulationElement in world.list_elements():
-		if element == null:
-			continue
-		if not MAP_STRUCTURE_ARCHETYPES.has(element.archetype_id):
-			continue
-		var pos := IndustryElectricBudget.element_world_position(world, element)
-		if not pos.is_finite():
-			continue
-		rows.append({
-			"kind": "structure",
-			"id": "el:%d" % element.element_id,
-			"archetype_id": element.archetype_id,
-			"element_id": element.element_id,
-			"position": pos,
-		})
-	return rows
+	return GatewayReadModelService.map_overlay_entries(self)
 
 
 func _damage_element(
 	command: Dictionary,
 	target: Dictionary
 ) -> Dictionary:
-	if (
-		_session == null
-		or StringName(target.get("target_kind", &""))
-		!= InteractionHit.KIND_SIMULATION_ELEMENT
-	):
-		return _result(&"invalid_target")
-	var element_id := InteractionHit.element_id_from(target)
-	var parameters: Dictionary = command.get("parameters", {})
-	var amount := float(parameters.get("damage", 0.0))
-	var refund_fraction := float(parameters.get("refund_fraction_on_destroy", 0.0))
-	# Empty store = no refund at all (plain drill damage). Only a command that
-	# asks for a refund gets one, and it always goes to the actor.
-	var store_id := ""
-	if bool(parameters.get("refund_to_actor", false)):
-		store_id = PlayerIdentity.store_id(actor_uid)
-	return apply_damage(element_id, amount, refund_fraction, store_id)
+	return GatewayMachineCommandService._damage_element(self, command, target)
 
 
 func apply_damage(
@@ -2467,158 +1582,25 @@ func apply_damage(
 	refund_fraction_on_destroy: float = 0.0,
 	store_id: String = ""
 ) -> Dictionary:
-	if _session == null:
-		return _result(&"not_ready")
-	var element := _session.world.get_element(element_id)
-	if element == null:
-		return _result(&"invalid_target")
-	var command := DamageElementCommand.new()
-	command.element_id = element_id
-	command.expected_state_revision = element.state_revision
-	command.damage = amount
-	command.refund_fraction_on_destroy = refund_fraction_on_destroy
-	command.store_id = store_id
-	return _structural_result(
-		_session.world.apply_structural_command_now(command)
-	)
+	return GatewayMachineCommandService.apply_damage(self, element_id, amount, refund_fraction_on_destroy, store_id)
 
 
 func _construction_apply(
 	command: Dictionary,
 	target: Dictionary
 ) -> Dictionary:
-	if _session == null:
-		return _place_block(command, target)
-	var parameters: Dictionary = command.get("parameters", {})
-	var target_kind := StringName(target.get("target_kind", &""))
-	var construction_mode := StringName(
-		parameters.get("construction_mode", &"context")
-	)
-	var archetype_id := str(parameters.get("archetype_id", "frame"))
-	var orientation_index := int(parameters.get("orientation_index", 0))
-	var placement_plan: Dictionary = parameters.get("placement_plan", {})
-
-	if (
-		construction_mode == &"place"
-		and not placement_plan.is_empty()
-	):
-		if bool(placement_plan.get("valid", false)):
-			return _apply_place_plan(placement_plan)
-		return _result(
-			_map_structural_reason(
-				StringName(placement_plan.get("reason", &"invalid_target"))
-			),
-			placement_plan.get("data", {})
-		)
-
-	if target_kind == InteractionHit.KIND_SIMULATION_ELEMENT:
-		var element := _session.world.get_element(
-			InteractionHit.element_id_from(target)
-		)
-		if element == null:
-			return _result(&"invalid_target")
-		if (
-			construction_mode == &"repair"
-			or (
-				construction_mode == &"context"
-				and (
-					element.is_broken()
-					or (
-						element.get_archetype() != null
-						and element.integrity
-						< element.get_archetype().max_integrity
-					)
-				)
-			)
-		):
-			var repair := RepairElementCommand.new()
-			repair.element_id = element.element_id
-			repair.expected_state_revision = element.state_revision
-			repair.store_id = PlayerIdentity.store_id(actor_uid)
-			repair.max_material_amount = 1.0
-			return _structural_result(
-				_session.world.apply_structural_command_now(repair)
-			)
-		var place_plan := preview_construction(
-			target,
-			archetype_id,
-			orientation_index
-		)
-		if bool(place_plan.get("valid", false)):
-			return _apply_place_plan(place_plan)
-		if construction_mode == &"repair":
-			return _result(&"not_damaged")
-		return _result(
-			_map_structural_reason(
-				StringName(place_plan.get("reason", &"invalid_target"))
-			),
-			place_plan.get("data", {})
-		)
-
-	var plan := preview_construction(
-		target,
-		archetype_id,
-		orientation_index
-	)
-	if not bool(plan.get("valid", false)):
-		return _result(
-			_map_structural_reason(
-				StringName(plan.get("reason", &"invalid_target"))
-			),
-			plan.get("data", {})
-		)
-	return _apply_place_plan(plan)
+	return GatewayConstructionService._construction_apply(self, command, target)
 
 
 func _weld_element(
 	_command: Dictionary,
 	target: Dictionary
 ) -> Dictionary:
-	if (
-		_session == null
-		or StringName(target.get("target_kind", &""))
-		!= InteractionHit.KIND_SIMULATION_ELEMENT
-	):
-		return _result(&"invalid_target")
-	var element := _session.world.get_element(
-		InteractionHit.element_id_from(target)
-	)
-	if element == null:
-		return _result(&"invalid_target")
-	if element.is_complete():
-		return _result(&"already_complete")
-	if element.is_broken():
-		return _result(&"element_broken")
-	var weld := WeldElementCommand.new()
-	weld.element_id = element.element_id
-	weld.expected_state_revision = element.state_revision
-	weld.store_id = PlayerIdentity.store_id(actor_uid)
-	weld.max_material_amount = 1.0
-	return _structural_result(
-		_session.world.apply_structural_command_now(weld)
-	)
+	return GatewayConstructionService._weld_element(self, _command, target)
 
 
 func _apply_place_plan(plan: Dictionary) -> Dictionary:
-	# Authoritative re-check: the plan was validated at preview time, but a
-	# dynamic assembly or the player may have moved into the footprint since. The
-	# grid kernel cannot see either, so the physics guard runs once more here
-	# before the placement is committed.
-	var guarded := _guard_placement_collision(plan)
-	if not bool(guarded.get("valid", false)):
-		return _result(
-			_map_structural_reason(
-				StringName(guarded.get("reason", &"invalid_target"))
-			),
-			guarded.get("data", {})
-		)
-	var place := guarded.get("command") as PlaceElementCommand
-	# The plan was built client-side, so its owner is a suggestion. Re-stamp it:
-	# a peer must not be able to spend someone else's materials by sending a
-	# plan that names their store.
-	place.store_id = PlayerIdentity.store_id(actor_uid)
-	var result := _session.world.apply_structural_command_now(place)
-	return _structural_result(result)
+	return GatewayConstructionService._apply_place_plan(self, plan)
 
 
 ## Reseats a first-on-ground placement so its footprint rests on the lowest
@@ -2626,121 +1608,7 @@ func _apply_place_plan(plan: Dictionary) -> Dictionary:
 ## the discrete grid frame (topology) is untouched. Non-ground plans (attaching
 ## to an existing assembly) and invalid plans pass through unchanged.
 func _seat_ground_plan(plan: Dictionary) -> Dictionary:
-	if _voxel_tool == null or not bool(plan.get("valid", false)):
-		return plan
-	var command := plan.get("command") as PlaceElementCommand
-	if command == null or command.assembly_id != 0:
-		return plan
-	var archetype := plan.get("archetype") as ElementArchetype
-	if archetype == null:
-		return plan
-	var root: Transform3D = plan.get(
-		"assembly_world_transform", Transform3D.IDENTITY
-	)
-	var origin_cell: Vector3i = plan.get("origin_cell", Vector3i.ZERO)
-	var orientation_index := int(plan.get("orientation_index", 0))
-	# Exact oriented corners, not a world-axis AABB: on a radial field the
-	# block basis is tilted against world axes, an axis-aligned AABB inflates
-	# downward and the block seats on a phantom corner — floating above the
-	# ground by the inflation amount. Corner support is exact for any tilt.
-	var corners := PackedVector3Array()
-	var center := Vector3.ZERO
-	for collider: ColliderDefinition in archetype.colliders:
-		var collider_transform := GridPoseUtil.collider_world_transform(
-			root, origin_cell, orientation_index, collider
-		)
-		var half: Vector3 = collider.aabb_half_extents()
-		for sx: int in [-1, 1]:
-			for sy: int in [-1, 1]:
-				for sz: int in [-1, 1]:
-					var corner: Vector3 = collider_transform * Vector3(
-						half.x * sx,
-						half.y * sy,
-						half.z * sz
-					)
-					corners.append(corner)
-					center += corner
-	if corners.is_empty():
-		return plan
-	center /= float(corners.size())
-	var up := GravityField.resolve_up(self, center)
-	var down := -up
-	var field := GravityField.find_in_tree(self)
-	var frame: Basis = (
-		field.tangent_basis_at(center)
-		if field != null
-		else Basis.looking_at(Vector3.FORWARD, Vector3.UP)
-	)
-	var bottom_along_up := INF
-	var top_along_up := -INF
-	var extent_x := 0.0
-	var extent_z := 0.0
-	for corner: Vector3 in corners:
-		bottom_along_up = minf(bottom_along_up, corner.dot(up))
-		top_along_up = maxf(top_along_up, corner.dot(up))
-		extent_x = maxf(extent_x, absf((corner - center).dot(frame.x)))
-		extent_z = maxf(extent_z, absf((corner - center).dot(frame.z)))
-	var probe_top := top_along_up + 1.0
-	var probe_distance := probe_top - bottom_along_up + 4.0
-	var lowest_along_up := INF
-	for sample: Vector2 in _GROUND_SEAT_SAMPLES:
-		var sample_point := (
-			center
-			+ frame.x * (sample.x * extent_x)
-			+ frame.z * (sample.y * extent_z)
-		)
-		var probe_from := (
-			sample_point
-			+ up * (probe_top - sample_point.dot(up))
-		)
-		var physics_point := VoxelSpaceUtil.physics_surface_along_ray(
-			_physics_space_state(),
-			probe_from,
-			down,
-			probe_distance
-		)
-		if (
-			is_finite(physics_point.x)
-			and is_finite(physics_point.y)
-			and is_finite(physics_point.z)
-		):
-			lowest_along_up = minf(lowest_along_up, physics_point.dot(up))
-			continue
-		var hit: VoxelRaycastResult = VoxelSpaceUtil.raycast_world(
-			_voxel_tool,
-			_terrain,
-			probe_from,
-			down,
-			probe_distance
-		)
-		if hit == null:
-			continue
-		var sdf_point := VoxelSpaceUtil.raycast_hit_world_point(
-			_terrain,
-			probe_from,
-			down,
-			hit
-		)
-		lowest_along_up = minf(lowest_along_up, sdf_point.dot(up))
-	if is_inf(lowest_along_up):
-		return plan
-	var delta := (lowest_along_up - GROUND_SEAT_EMBED) - bottom_along_up
-	if absf(delta) < 0.0001:
-		return plan
-	var shift := up * delta
-	var seated := plan.duplicate(true)
-	var seated_root := root.translated(shift)
-	seated["assembly_world_transform"] = seated_root
-	seated["preview_root_transform"] = seated_root
-	var seated_command := seated.get("command") as PlaceElementCommand
-	if seated_command != null:
-		seated_command.initial_motion = AssemblyMotionState.new()
-		seated_command.initial_motion.transform = seated_root
-	var world_transform: Transform3D = plan.get(
-		"world_transform", root
-	)
-	seated["world_transform"] = world_transform.translated(shift)
-	return seated
+	return GatewayConstructionService._seat_ground_plan(self, plan)
 
 
 func _physics_space_state() -> PhysicsDirectSpaceState3D:
@@ -2754,34 +1622,7 @@ func _physics_space_state() -> PhysicsDirectSpaceState3D:
 ## checks the grid kernel cannot make. Invalid plans and plans without physics
 ## context pass through untouched.
 func _guard_placement_collision(plan: Dictionary) -> Dictionary:
-	if not bool(plan.get("valid", false)):
-		return plan
-	var space_state := _physics_space_state()
-	if space_state == null:
-		return plan
-	var archetype := plan.get("archetype") as ElementArchetype
-	var command := plan.get("command") as PlaceElementCommand
-	if archetype == null or command == null:
-		return plan
-	var root: Transform3D = plan.get(
-		"preview_root_transform",
-		plan.get("assembly_world_transform", Transform3D.IDENTITY)
-	)
-	var reason := ConstructionPlacementCollision.evaluate(
-		space_state,
-		archetype,
-		root,
-		command.origin_cell,
-		command.orientation_index,
-		command.assembly_id,
-		_terrain
-	)
-	if reason == &"":
-		return plan
-	var blocked := plan.duplicate()
-	blocked["valid"] = false
-	blocked["reason"] = reason
-	return blocked
+	return GatewayConstructionService._guard_placement_collision(self, plan)
 
 
 func _get_archetype(archetype_id: String) -> ElementArchetype:
@@ -2795,18 +1636,7 @@ func _get_archetype(archetype_id: String) -> ElementArchetype:
 
 
 func apply_transfer_resource(command: TransferResourceCommand) -> Dictionary:
-	if _session == null or command == null:
-		return _result(&"not_ready")
-	var result := _session.apply_transfer_resource(command)
-	return _result(
-		StringName(result.get("reason", &"invalid_target")),
-		{
-			"amount": float(result.get("amount", 0.0)),
-			"from_store_id": command.from_store_id,
-			"to_store_id": command.to_store_id,
-			"resource_id": command.resource_id,
-		}
-	)
+	return GatewayMachineCommandService.apply_transfer_resource(self, command)
 
 
 func apply_connect_network(
@@ -2817,53 +1647,7 @@ func apply_connect_network(
 	waypoints: PackedVector3Array = PackedVector3Array(),
 	waypoint_anchors: PackedInt32Array = PackedInt32Array()
 ) -> Dictionary:
-	if _session == null:
-		return _result(&"not_ready")
-	var diagnosis := IndustryElectricPortUtil.diagnose_electric_pair(
-		_session.world,
-		element_a_id,
-		element_b_id,
-		port_a_id,
-		port_b_id,
-		waypoints
-	)
-	var pair: Dictionary = diagnosis.get("pair", {})
-	if pair.is_empty():
-		var reason: StringName = diagnosis.get("reason", &"incompatible_connection")
-		if reason == &"ok":
-			reason = &"incompatible_connection"
-		return _result(reason)
-	var resolved_a := int(pair.get("element_a_id", element_a_id))
-	var resolved_b := int(pair.get("element_b_id", element_b_id))
-	var resolved_port_a := (
-		port_a_id if not port_a_id.is_empty() else str(pair["port_a_id"])
-	)
-	var resolved_port_b := (
-		port_b_id if not port_b_id.is_empty() else str(pair["port_b_id"])
-	)
-	var element_a := _session.world.get_element(resolved_a)
-	var element_b := _session.world.get_element(resolved_b)
-	if element_a == null or element_b == null:
-		return _result(&"invalid_target")
-	var assembly_a := _session.world.get_assembly(element_a.assembly_id)
-	var assembly_b := _session.world.get_assembly(element_b.assembly_id)
-	var command := ConnectNetworkCommand.new()
-	command.element_a_id = resolved_a
-	command.port_a_id = resolved_port_a
-	command.element_b_id = resolved_b
-	command.port_b_id = resolved_port_b
-	command.waypoints = waypoints
-	command.waypoint_anchors = waypoint_anchors
-	if assembly_a != null:
-		command.expected_revision_a = assembly_a.topology_revision
-	if assembly_b != null:
-		command.expected_revision_b = assembly_b.topology_revision
-	var result := _session.world.apply_structural_command_now(command)
-	if result == null:
-		return _result(&"not_ready")
-	if result.is_ok():
-		return _result(&"ok", result.data)
-	return _result(_connect_failure_reason(result.reason), result.data)
+	return GatewayMachineCommandService.apply_connect_network(self, element_a_id, element_b_id, port_a_id, port_b_id, waypoints, waypoint_anchors)
 
 
 ## Rope form: both ends are free attach points in world space. An end with
@@ -2883,55 +1667,14 @@ func apply_connect_rope(
 	stake_up: Vector3 = Vector3.UP,
 	link_kind: int = IndustryElectricLink.Kind.ELECTRIC
 ) -> Dictionary:
-	if _session == null:
-		return _result(&"not_ready")
-	var command := ConnectNetworkCommand.new()
-	command.element_a_id = element_a_id
-	command.element_b_id = element_b_id
-	command.port_a_id = ""
-	command.port_b_id = ""
-	command.attach_a = attach_a
-	command.attach_b = attach_b
-	command.slack = slack
-	command.routed_m = maxf(routed_m, 0.0) if is_finite(routed_m) else 0.0
-	command.stake_up = stake_up
-	command.link_kind = link_kind
-	var result := _session.world.apply_structural_command_now(command)
-	if result == null:
-		return _result(&"not_ready")
-	if result.is_ok():
-		return _result(&"ok", result.data)
-	return _result(_connect_failure_reason(result.reason), result.data)
+	return GatewayMachineCommandService.apply_connect_rope(self, element_a_id, attach_a, element_b_id, attach_b, slack, routed_m, stake_up, link_kind)
 
 
 func _connect_network(
 	command: Dictionary,
 	_target: Dictionary
 ) -> Dictionary:
-	var parameters: Dictionary = command.get("parameters", {})
-	if bool(parameters.get("rope", false)):
-		return apply_connect_rope(
-			int(parameters.get("element_a_id", 0)),
-			parameters.get("attach_a", Vector3.ZERO),
-			int(parameters.get("element_b_id", 0)),
-			parameters.get("attach_b", Vector3.ZERO),
-			float(parameters.get("slack", CableAnchorUtil.DEFAULT_SLACK)),
-			float(parameters.get("routed_m", 0.0)),
-			parameters.get("stake_up", Vector3.UP),
-			(
-				IndustryElectricLink.Kind.MECHANICAL
-				if bool(parameters.get("mechanical", false))
-				else IndustryElectricLink.Kind.ELECTRIC
-			)
-		)
-	return apply_connect_network(
-		int(parameters.get("element_a_id", 0)),
-		int(parameters.get("element_b_id", 0)),
-		str(parameters.get("port_a_id", "")),
-		str(parameters.get("port_b_id", "")),
-		PackedVector3Array(parameters.get("waypoints", PackedVector3Array())),
-		PackedInt32Array(parameters.get("waypoint_anchors", PackedInt32Array()))
-	)
+	return GatewayMachineCommandService._connect_network(self, command, _target)
 
 
 func _connect_failure_reason(reason: StringName) -> StringName:
@@ -2956,36 +1699,14 @@ func _disconnect_network(
 	command: Dictionary,
 	target: Dictionary
 ) -> Dictionary:
-	if _session == null:
-		return _result(&"not_ready")
-	var parameters: Dictionary = command.get("parameters", {})
-	var link_id := int(
-		parameters.get(
-			"link_id",
-			InteractionHit.electric_link_id_from(target)
-		)
-	)
-	if link_id <= 0:
-		return _result(&"invalid_target")
-	return _structural_result(
-		_session.world.disconnect_network(0, "", 0, "", link_id)
-	)
+	return GatewayMachineCommandService._disconnect_network(self, command, target)
 
 
 func _transfer_resource(
 	command: Dictionary,
 	_target: Dictionary
 ) -> Dictionary:
-	if _session == null:
-		return _result(&"not_ready")
-	var parameters: Dictionary = command.get("parameters", {})
-	var transfer := TransferResourceCommand.new()
-	transfer.from_store_id = str(parameters.get("from_store_id", ""))
-	transfer.to_store_id = str(parameters.get("to_store_id", ""))
-	transfer.resource_id = str(parameters.get("resource_id", ""))
-	transfer.amount = float(parameters.get("amount", 0.0))
-	transfer.instance_id = str(parameters.get("instance_id", ""))
-	return apply_transfer_resource(transfer)
+	return GatewayMachineCommandService._transfer_resource(self, command, _target)
 
 
 ## Host-authoritative hotbar rebind for the current actor_uid (COOP-HOST-V0).
@@ -2994,30 +1715,7 @@ func _assign_hotbar_instance(
 	command: Dictionary,
 	_target: Dictionary
 ) -> Dictionary:
-	if _session == null or _session.world == null or actor_uid.is_empty():
-		return _result(&"not_ready")
-	var parameters: Dictionary = command.get("parameters", {})
-	var page := int(parameters.get("page", -1))
-	var slot := int(parameters.get("slot", -1))
-	var instance_id := str(parameters.get("instance_id", ""))
-	if page < 0 or slot < 0:
-		return _result(&"invalid_target")
-	if not instance_id.is_empty():
-		var registry := player_inventory()
-		if registry == null or not registry.has_instance(instance_id):
-			return _result(&"invalid_target")
-	if not _session.world.assign_player_hotbar_instance(
-		actor_uid,
-		page,
-		slot,
-		instance_id
-	):
-		return _result(&"invalid_target")
-	return _result(&"ok", {
-		"page": page,
-		"slot": slot,
-		"instance_id": instance_id,
-	})
+	return GatewayMachineCommandService._assign_hotbar_instance(self, command, _target)
 
 
 ## Переименование узла из терминала управления. Надёжная команда, но не
@@ -3026,25 +1724,7 @@ func _set_element_name(
 	command: Dictionary,
 	target: Dictionary
 ) -> Dictionary:
-	if _session == null:
-		return _result(&"not_ready")
-	var parameters: Dictionary = command.get("parameters", {})
-	var rename := SetElementNameCommand.new()
-	rename.element_id = int(
-		parameters.get(
-			"element_id",
-			InteractionHit.element_id_from(target)
-		)
-	)
-	rename.element_name = str(parameters.get("element_name", ""))
-	var result := _session.apply_set_element_name(rename)
-	return _result(
-		StringName(result.get("reason", &"invalid_target")),
-		{
-			"element_id": rename.element_id,
-			"custom_name": result.get("custom_name", ""),
-		}
-	)
+	return GatewayMachineCommandService._set_element_name(self, command, target)
 
 
 ## Право бить по слотам бара — только текущий occupant хоста (CONTROL-ACTIONS-V0
@@ -3056,358 +1736,74 @@ func _configure_action_slot(
 	command: Dictionary,
 	target: Dictionary
 ) -> Dictionary:
-	if _session == null:
-		return _result(&"not_ready")
-	var parameters: Dictionary = command.get("parameters", {})
-	var configure := ConfigureActionSlotCommand.new()
-	configure.host_element_id = int(
-		parameters.get(
-			"host_element_id",
-			InteractionHit.element_id_from(target)
-		)
-	)
-	configure.page = int(parameters.get("page", 0))
-	configure.index = int(parameters.get("index", 0))
-	var payload_variant: Variant = parameters.get("payload", {})
-	configure.payload = payload_variant if payload_variant is Dictionary else {}
-	if not _seat_host_command_allowed(configure.host_element_id):
-		return _result(&"blocked")
-	var result := _session.apply_configure_action_slot(configure)
-	return _result(
-		StringName(result.get("reason", &"invalid_target")),
-		{
-			"host_element_id": configure.host_element_id,
-			"page": configure.page,
-			"index": configure.index,
-		}
-	)
+	return GatewayMachineCommandService._configure_action_slot(self, command, target)
 
 
 func _configure_seat_controls(
 	command: Dictionary,
 	target: Dictionary
 ) -> Dictionary:
-	if _session == null:
-		return _result(&"not_ready")
-	var parameters: Dictionary = command.get("parameters", {})
-	var configure := ConfigureSeatControlsCommand.new()
-	configure.seat_element_id = int(
-		parameters.get(
-			"seat_element_id",
-			InteractionHit.element_id_from(target)
-		)
-	)
-	if parameters.has("control_wheels"):
-		configure.control_wheels = bool(parameters.get("control_wheels"))
-	if parameters.has("control_thrusters"):
-		configure.control_thrusters = bool(parameters.get("control_thrusters"))
-	if parameters.has("control_gyros"):
-		configure.control_gyros = bool(parameters.get("control_gyros"))
-	if not _seat_host_command_allowed(configure.seat_element_id):
-		return _result(&"blocked")
-	var result := _session.apply_configure_seat_controls(configure)
-	if StringName(result.get("reason", &"")) == &"ok":
-		# ensure_ created/updated the row — refresh occupied-seat cache.
-		if _rover_seat_element_id == configure.seat_element_id:
-			_rover_seat_policy = _session.world.get_seat_control_state_ref(
-				configure.seat_element_id
-			)
-		if (
-			_rover_seat_element_id == configure.seat_element_id
-			and _rover_seat_player != null
-		):
-			_sync_seat_mouse_attitude(
-				_rover_seat_player,
-				configure.seat_element_id
-			)
-			# Apply updated frame immediately so toggle OFF clears stale channels.
-			tick_rover_locomotion_input()
-	return _result(
-		StringName(result.get("reason", &"invalid_target")),
-		{
-			"seat_element_id": int(result.get("seat_element_id", configure.seat_element_id)),
-			"control_wheels": bool(result.get("control_wheels", true)),
-			"control_thrusters": bool(result.get("control_thrusters", false)),
-			"control_gyros": bool(result.get("control_gyros", true)),
-		}
-	)
+	return GatewayMachineCommandService._configure_seat_controls(self, command, target)
 
 
 func _set_machine_enabled(
 	command: Dictionary,
 	target: Dictionary
 ) -> Dictionary:
-	if _session == null:
-		return _result(&"not_ready")
-	var parameters: Dictionary = command.get("parameters", {})
-	var machine := SetMachineEnabledCommand.new()
-	machine.element_id = int(
-		parameters.get(
-			"element_id",
-			InteractionHit.element_id_from(target)
-		)
-	)
-	machine.enabled = bool(parameters.get("enabled", true))
-	var result := _session.apply_set_machine_enabled(machine)
-	return _result(
-		StringName(result.get("reason", &"invalid_target")),
-		{"element_id": machine.element_id, "enabled": machine.enabled}
-	)
+	return GatewayMachineCommandService._set_machine_enabled(self, command, target)
 
 
 func _enqueue_recipe(
 	command: Dictionary,
 	target: Dictionary
 ) -> Dictionary:
-	if _session == null:
-		return _result(&"not_ready")
-	var parameters: Dictionary = command.get("parameters", {})
-	var recipe := EnqueueRecipeCommand.new()
-	recipe.element_id = int(
-		parameters.get(
-			"element_id",
-			InteractionHit.element_id_from(target)
-		)
-	)
-	recipe.recipe_id = str(parameters.get("recipe_id", ""))
-	recipe.count = maxi(1, int(parameters.get("count", 1)))
-	var result := _session.apply_enqueue_recipe(recipe)
-	return _result(
-		StringName(result.get("reason", &"invalid_target")),
-		{"element_id": recipe.element_id, "recipe_id": recipe.recipe_id}
-	)
+	return GatewayMachineCommandService._enqueue_recipe(self, command, target)
 
 
 func _dequeue_recipe(
 	command: Dictionary,
 	target: Dictionary
 ) -> Dictionary:
-	if _session == null:
-		return _result(&"not_ready")
-	var parameters: Dictionary = command.get("parameters", {})
-	var dequeue := DequeueRecipeCommand.new()
-	dequeue.element_id = int(
-		parameters.get(
-			"element_id",
-			InteractionHit.element_id_from(target)
-		)
-	)
-	dequeue.index = maxi(0, int(parameters.get("index", 0)))
-	dequeue.count = maxi(1, int(parameters.get("count", 1)))
-	var result := _session.apply_dequeue_recipe(dequeue)
-	return _result(
-		StringName(result.get("reason", &"invalid_target")),
-		{"element_id": dequeue.element_id}
-	)
+	return GatewayMachineCommandService._dequeue_recipe(self, command, target)
 
 
 func _set_actuator_target(
 	command: Dictionary,
 	target: Dictionary
 ) -> Dictionary:
-	if _session == null:
-		return _result(&"not_ready")
-	var parameters: Dictionary = command.get("parameters", {})
-	var keys := _target_card_keys(target)
-	var actuator := SetActuatorTargetCommand.new()
-	actuator.joint_id = int(
-		parameters.get(
-			"joint_id",
-			HudActuatorTuneUtil.joint_id(keys)
-		)
-	)
-	actuator.mode = int(
-		parameters.get(
-			"mode",
-			SimulationMotorState.ControlMode.STOP
-		)
-	) as SimulationMotorState.ControlMode
-	actuator.target_position_m = float(
-		parameters.get("target_position_m", 0.0)
-	)
-	actuator.target_velocity_mps = float(
-		parameters.get("target_velocity_mps", 0.0)
-	)
-	actuator.speed_limit_mps = float(
-		parameters.get("speed_limit_mps", -1.0)
-	)
-	actuator.enabled = bool(parameters.get("enabled", true))
-	var result := _session.apply_set_actuator_target(actuator)
-	return _result(
-		StringName(result.get("reason", &"invalid_target")),
-		{
-			"joint_id": actuator.joint_id,
-			"status_name": result.get("status_name", &""),
-		}
-	)
+	return GatewayMachineCommandService._set_actuator_target(self, command, target)
 
 
 func _configure_actuator(
 	command: Dictionary,
 	target: Dictionary
 ) -> Dictionary:
-	if _session == null:
-		return _result(&"not_ready")
-	var parameters: Dictionary = command.get("parameters", {})
-	var keys := _target_card_keys(target)
-	var configure := ConfigureActuatorCommand.new()
-	configure.joint_id = int(
-		parameters.get(
-			"joint_id",
-			HudActuatorTuneUtil.joint_id(keys)
-		)
-	)
-	configure.extend_velocity_mps = float(
-		parameters.get("extend_velocity_mps", -1.0)
-	)
-	configure.retract_velocity_mps = float(
-		parameters.get("retract_velocity_mps", -1.0)
-	)
-	configure.force_limit_n = float(parameters.get("force_limit_n", -1.0))
-	configure.lower_limit_m = float(parameters.get("lower_limit_m", -1.0))
-	configure.upper_limit_m = float(parameters.get("upper_limit_m", -1.0))
-	configure.lower_limit_set = parameters.has("lower_limit_m")
-	configure.upper_limit_set = parameters.has("upper_limit_m")
-	var result := _session.apply_configure_actuator(configure)
-	return _result(
-		StringName(result.get("reason", &"invalid_target")),
-		{
-			"joint_id": configure.joint_id,
-			"status_name": result.get("status_name", &""),
-		}
-	)
+	return GatewayMachineCommandService._configure_actuator(self, command, target)
 
 
 func _configure_wheel(
 	command: Dictionary,
 	target: Dictionary
 ) -> Dictionary:
-	if _session == null:
-		return _result(&"not_ready")
-	var parameters: Dictionary = command.get("parameters", {})
-	var keys := _target_card_keys(target)
-	var configure := ConfigureWheelCommand.new()
-	configure.wheel_element_id = int(
-		parameters.get(
-			"wheel_element_id",
-			keys.get("wheel_element_id", InteractionHit.element_id_from(target))
-		)
-	)
-	if parameters.has("steerable"):
-		configure.steerable_set = true
-		configure.steerable = bool(parameters["steerable"])
-	if parameters.has("invert_drive"):
-		configure.invert_drive_set = true
-		configure.invert_drive = bool(parameters["invert_drive"])
-	if parameters.has("drive_torque_scale"):
-		configure.drive_torque_scale = float(
-			parameters["drive_torque_scale"]
-		)
-	if parameters.has("brake_torque_n_m"):
-		configure.brake_torque_n_m = float(parameters["brake_torque_n_m"])
-	if parameters.has("max_steering_angle_rad"):
-		configure.max_steering_angle_rad = float(
-			parameters["max_steering_angle_rad"]
-		)
-	if parameters.has("grip_scale"):
-		configure.grip_scale = float(parameters["grip_scale"])
-	var result := _session.apply_configure_wheel(configure)
-	return _result(
-		StringName(result.get("reason", &"invalid_target")),
-		{
-			"wheel_element_id": configure.wheel_element_id,
-		}
-	)
+	return GatewayMachineCommandService._configure_wheel(self, command, target)
 
 
 func _configure_suspension(
 	command: Dictionary,
 	target: Dictionary
 ) -> Dictionary:
-	if _session == null:
-		return _result(&"not_ready")
-	var parameters: Dictionary = command.get("parameters", {})
-	var keys := _target_card_keys(target)
-	var configure := ConfigureSuspensionCommand.new()
-	configure.suspension_element_id = int(
-		parameters.get(
-			"suspension_element_id",
-			keys.get(
-				"suspension_element_id",
-				InteractionHit.element_id_from(target)
-			)
-		)
-	)
-	if parameters.has("travel_m"):
-		configure.travel_m = float(parameters["travel_m"])
-	if parameters.has("spring_stiffness_n_per_m"):
-		configure.spring_stiffness_n_per_m = float(
-			parameters["spring_stiffness_n_per_m"]
-		)
-	if parameters.has("spring_damping_n_s_per_m"):
-		configure.spring_damping_n_s_per_m = float(
-			parameters["spring_damping_n_s_per_m"]
-		)
-	var result := _session.apply_configure_suspension(configure)
-	return _result(
-		StringName(result.get("reason", &"invalid_target")),
-		{
-			"suspension_element_id": configure.suspension_element_id,
-		}
-	)
+	return GatewayMachineCommandService._configure_suspension(self, command, target)
 
 
 func _collect_world_loot(command: Dictionary) -> Dictionary:
-	if _session == null:
-		return _result(&"not_ready")
-	var parameters: Dictionary = command.get("parameters", {})
-	var pile_id := int(parameters.get("pile_id", 0))
-	var to_store_id := str(
-		parameters.get(
-			"to_store_id",
-			PlayerIdentity.store_id(actor_uid)
-		)
-	)
-	var result := _session.world.collect_world_loot_pile(
-		pile_id,
-		to_store_id
-	)
-	return _result(
-		StringName(result.get("reason", &"invalid_target")),
-		{
-			"pile_id": pile_id,
-			"to_store_id": to_store_id,
-			"resource_id": str(result.get("resource_id", "")),
-			"amount": float(result.get("amount", 0.0)),
-		}
-	)
+	return GatewayMachineCommandService._collect_world_loot(self, command)
 
 
 func _dismantle_element(
 	_command: Dictionary,
 	target: Dictionary
 ) -> Dictionary:
-	if (
-		_session == null
-		or StringName(target.get("target_kind", &""))
-		!= InteractionHit.KIND_SIMULATION_ELEMENT
-	):
-		return _result(&"invalid_target")
-	var element := _session.world.get_element(
-		InteractionHit.element_id_from(target)
-	)
-	if element == null:
-		return _result(&"invalid_target")
-	var assembly := _session.world.get_assembly(element.assembly_id)
-	if assembly == null:
-		return _result(&"invalid_target")
-	var dismantle := DismantleElementCommand.new()
-	dismantle.element_id = element.element_id
-	dismantle.expected_assembly_revision = assembly.topology_revision
-	dismantle.store_id = PlayerIdentity.store_id(actor_uid)
-	return _structural_result(
-		_session.world.apply_structural_command_now(dismantle)
-	)
+	return GatewayConstructionService._dismantle_element(self, _command, target)
 
 
 func _structural_result(

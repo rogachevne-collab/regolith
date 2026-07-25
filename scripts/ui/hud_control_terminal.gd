@@ -65,9 +65,36 @@ class DragSource:
 	var _normal_style: StyleBox
 	var _hover_style: StyleBox
 
+	## Хост-пульт: нужен, чтобы на press выставить `_faceplate_press_active`.
+	var terminal: Node = null
+	## Если задан — короткий клик (DnD не стартовал) вызывает его на отпускании.
+	## ± уставок: они же DragSource на клавишу. Чипы «КОМАНДЫ» не ставят.
+	var click_action: Callable = Callable()
+	var _drag_emitted: bool = false
+
+	func _gui_input(event: InputEvent) -> void:
+		if not event is InputEventMouseButton:
+			return
+		var mouse: InputEventMouseButton = event
+		if mouse.button_index != MOUSE_BUTTON_LEFT:
+			return
+		if mouse.pressed:
+			_drag_emitted = false
+			if click_action.is_valid() and terminal != null:
+				terminal.set("_faceplate_press_active", true)
+		elif click_action.is_valid() and not _drag_emitted:
+			# DnD не стартовал → это клик (порог DnD у viewport выше).
+			if terminal != null:
+				terminal.set("_faceplate_press_active", false)
+			click_action.call()
+
 	func _get_drag_data(_at_position: Vector2) -> Variant:
 		if payload.is_empty():
 			return null
+		# Уже ушли в DnD — клик на отпускании не стреляем; снимаем press-guard.
+		_drag_emitted = true
+		if terminal != null:
+			terminal.set("_faceplate_press_active", false)
 		var preview := Label.new()
 		preview.text = str(payload.get("label", "—"))
 		preview.add_theme_color_override("font_color", Color(0.114, 0.133, 0.157))
@@ -170,10 +197,7 @@ var _query: Node
 var _player: Node
 var _open := false
 
-## Обновление живых значений — 10 Гц (окно модальное, чаще не нужно).
-const REFRESH_S := 0.1
-## Полный snapshot/list audit: ловит аварии без topology bump (Phase 3).
-const FULL_AUDIT_S := 1.0
+## Таймеры/частота refresh — TerminalSnapshotController (REFRESH_S / FULL_AUDIT_S).
 var _refresh_left := 0.0
 var _full_audit_left := 0.0
 ## Dirty-signature: не пересобирать список/аварии и не гонять полный snap зря.
@@ -209,6 +233,10 @@ var _seg_row: HBoxContainer
 ## жеста).
 var _slider_rows: Dictionary = {}
 var _slider_drag_active := false
+## Пока ЛКМ зажата на кликабельном контроле фейсплейта/фильтров (`_on_click`),
+## live-пересборка фейсплейта паузится — иначе 10 Гц `_fill_faceplate` убивает
+## нажатый узел до отпускания, и «огонь на release» никогда не срабатывает.
+var _faceplate_press_active := false
 ## Сборка, к которой прицепился пульт при открытии. Держим защёлку: после
 ## открытия курсор свободен, прицел больше не двигается, и перерезолв по
 ## наведению просто гасил бы панель.
@@ -470,290 +498,43 @@ func _process(delta: float) -> void:
 		if _fault_left <= 0.0:
 			_fault_text = ""
 			_update_fault_cell()
-	_refresh_left = maxf(_refresh_left - delta, 0.0)
-	_full_audit_left = maxf(_full_audit_left - delta, 0.0)
-	if _refresh_left > 0.0:
-		return
-	_refresh_left = REFRESH_S
-	_refresh()
+	TerminalSnapshotController.advance_and_refresh(self, delta)
 
 
 ## Живые данные: сидя — своя сборка, иначе — сборка наведённого элемента.
 ## Без гейтвея (изолированная сцена вёрстки) остаются mock-данные.
 func _refresh() -> void:
-	if _gateway == null or not _gateway.has_method("control_terminal_snapshot"):
-		return
-	# Пока тащат (drag-drop или протяг ползунка) — не перестраиваем: иначе
-	# drag-источник освободится под курсором либо SliderTrack посреди жеста
-	# уедет вместе со своим захватом мыши.
-	if get_viewport().gui_is_dragging() or _slider_drag_active:
-		return
-	# Закрытое окно кормит только компактную ленту — берём дешёвый bar-only
-	# снапшот (хост + привязки), а не полный обход сборки/тревог/энергоблока на
-	# ~16 мс. Полный снапшот строим лишь когда окно открыто и его видно.
-	if not _open:
-		_refresh_bar_closed()
-		return
-	_refresh_open()
-
+	TerminalSnapshotController.refresh(self)
 
 func _snapshot_host_hint() -> int:
-	return ControlTerminalSnapshotBuilder.host_hint_for_refresh(
-		_pinned_host_element_id,
-		_aimed_element_id()
-	)
-
+	return TerminalSnapshotController.snapshot_host_hint(self)
 
 func _refresh_bar_closed() -> void:
-	if not _gateway.has_method("control_terminal_bar_snapshot"):
-		return
-	var bar_snap: Dictionary = _gateway.call(
-		"control_terminal_bar_snapshot",
-		_target_assembly,
-		_snapshot_host_hint()
-	)
-	if not bool(bar_snap.get("valid", false)):
-		_set_target_assembly(0)
-		_apply_bar_snapshot(0, [])
-		_last_bar_sig = ""
-		return
-	if _target_assembly <= 0:
-		_set_target_assembly(int(bar_snap.get("assembly_id", 0)))
-	var host_id := int(bar_snap.get("control_seat_element_id", 0))
-	var closed_bar: Dictionary = bar_snap.get("action_bar", {})
-	var pages: Array = closed_bar.get("pages", [])
-	var bar_sig := "%d|%d" % [host_id, hash(pages)]
-	if bar_sig == _last_bar_sig:
-		return
-	_last_bar_sig = bar_sig
-	_apply_bar_snapshot(host_id, pages)
+	TerminalSnapshotController.refresh_bar_closed(self)
 
-
-## Phase 3: полный snapshot+list rebuild только при structural dirty / audit;
-## иначе — O(1) live выбранного узла + power.
 func _refresh_open() -> void:
-	var world: SimulationWorld = null
-	if _gateway.has_method("get_world"):
-		world = _gateway.call("get_world") as SimulationWorld
-	var assembly_id := _target_assembly
-	if assembly_id <= 0:
-		assembly_id = _assembly_id_from_aim()
-	var structure_key := _open_structure_key(world, assembly_id)
-	var need_full := (
-		structure_key != _last_structure_key
-		or _full_audit_left <= 0.0
-		or _nodes.is_empty()
-	)
-	if not need_full:
-		_refresh_open_live_only(world, assembly_id)
-		return
-	_full_audit_left = FULL_AUDIT_S
-	_last_structure_key = structure_key
-	var snap: Dictionary = _gateway.call(
-		"control_terminal_snapshot",
-		_target_assembly,
-		_snapshot_host_hint()
-	)
-	if not bool(snap.get("valid", false)):
-		# Keep pin / host while open — look-away must not wipe the terminal.
-		_fill_unit(snap)
-		_fill_nodes([])
-		_fill_alarms([])
-		_last_structure_sig = ""
-		_last_live_sig = ""
-		_last_structure_key = ""
-		return
-	if _target_assembly <= 0:
-		_set_target_assembly(int(snap.get("assembly_id", 0)))
-	var host_id := int(snap.get("control_seat_element_id", 0))
-	if _open and host_id > 0:
-		_pinned_host_element_id = host_id
-	var bar: Dictionary = snap.get("action_bar", {})
-	_apply_bar_snapshot(host_id, bar.get("pages", []))
-	_fill_unit(snap)
-	var nodes: Array = snap.get("nodes", [])
-	var alarms: Array = snap.get("alarms", [])
-	var structure_sig := _structure_sig_from_lists(nodes, alarms)
-	var live_sig := _live_sig_from_snap(snap, nodes)
-	if structure_sig != _last_structure_sig:
-		_fill_nodes(nodes)
-		_fill_alarms(alarms)
-		_last_structure_sig = structure_sig
-	else:
-		# Список тот же — только данные + фейсплейт при live change.
-		_nodes = nodes
-		if live_sig != _last_live_sig:
-			_fill_faceplate()
-	_last_live_sig = live_sig
-
+	TerminalSnapshotController.refresh_open(self)
 
 func _refresh_open_live_only(world: SimulationWorld, assembly_id: int) -> void:
-	if world == null or assembly_id <= 0:
-		return
-	var power := VehiclePowerSnapshotBuilder.build(world, assembly_id)
-	_fill_unit({
-		"valid": true,
-		"assembly_id": assembly_id,
-		"element_count": (
-			world.get_assembly_raw(assembly_id).element_ids.size()
-			if world.get_assembly_raw(assembly_id) != null
-			else 0
-		),
-		"power": power,
-	})
-	if _selected_element_id <= 0:
-		return
-	if not _patch_selected_node_live(world):
-		return
-	var live_sig := _live_sig_from_node(_selected_node(), power)
-	if live_sig == _last_live_sig:
-		return
-	_last_live_sig = live_sig
-	_fill_faceplate()
-
+	TerminalSnapshotController.refresh_open_live_only(self, world, assembly_id)
 
 func _open_structure_key(world: SimulationWorld, assembly_id: int) -> String:
-	var topo := 0
-	if world != null and assembly_id > 0:
-		var assembly := world.get_assembly_raw(assembly_id)
-		if assembly != null:
-			topo = assembly.topology_revision
-	return "%d|%d|%d|%s|%s" % [
-		assembly_id,
-		topo,
-		_host_element_id,
-		_filter,
-		_search,
-	]
-
+	return TerminalSnapshotController.open_structure_key(self, world, assembly_id)
 
 func _assembly_id_from_aim() -> int:
-	var hint := _aimed_element_id()
-	if hint <= 0 or _gateway == null or not _gateway.has_method("get_world"):
-		return 0
-	var world: SimulationWorld = _gateway.call("get_world") as SimulationWorld
-	if world == null:
-		return 0
-	var element := world.get_element(hint)
-	return element.assembly_id if element != null else 0
-
+	return TerminalSnapshotController.assembly_id_from_aim(self)
 
 func _structure_sig_from_lists(nodes: Array, alarms: Array) -> String:
-	var parts: PackedStringArray = PackedStringArray()
-	for node_variant: Variant in nodes:
-		if not node_variant is Dictionary:
-			continue
-		var node: Dictionary = node_variant
-		parts.append(
-			"%d:%s:%s:%s" % [
-				int(node.get("element_id", 0)),
-				str(node.get("archetype_id", "")),
-				str(node.get("severity", "")),
-				str(node.get("status", "")),
-			]
-		)
-	parts.append("a%d" % alarms.size())
-	for alarm_variant: Variant in alarms:
-		if not alarm_variant is Dictionary:
-			continue
-		var alarm: Dictionary = alarm_variant
-		parts.append(
-			"A%d:%s" % [
-				int(alarm.get("element_id", 0)),
-				str(alarm.get("status", "")),
-			]
-		)
-	return "|".join(parts)
-
+	return TerminalSnapshotController.structure_sig_from_lists(nodes, alarms)
 
 func _live_sig_from_snap(snap: Dictionary, nodes: Array) -> String:
-	var power: Dictionary = snap.get("power", {})
-	var selected: Dictionary = {}
-	for node_variant: Variant in nodes:
-		if not node_variant is Dictionary:
-			continue
-		var node: Dictionary = node_variant
-		if int(node.get("element_id", -1)) == _selected_element_id:
-			selected = node
-			break
-	return _live_sig_from_node(selected, power)
-
+	return TerminalSnapshotController.live_sig_from_snap(self, snap, nodes)
 
 func _live_sig_from_node(node: Dictionary, power: Dictionary) -> String:
-	var detail: Dictionary = node.get("detail", {}) if not node.is_empty() else {}
-	return "%d|%s|%.4f|%s|%s|%s|%s|%.3f|%.3f|%s" % [
-		_selected_element_id,
-		str(node.get("status", "")),
-		float(node.get("value", 0.0)),
-		str(detail.get("enabled", "")),
-		str(detail.get("control_wheels", "")),
-		str(detail.get("control_thrusters", "")),
-		str(detail.get("control_gyros", "")),
-		float(power.get("demand_w", 0.0)),
-		float(power.get("battery_fraction", 0.0)),
-		str(power.get("powered", "")),
-	]
-
+	return TerminalSnapshotController.live_sig_from_node(self, node, power)
 
 func _patch_selected_node_live(world: SimulationWorld) -> bool:
-	var element := world.get_element(_selected_element_id)
-	if element == null:
-		return false
-	var card := world.get_interaction_card(_selected_element_id)
-	if card == null:
-		return false
-	for i: int in range(_nodes.size()):
-		if not _nodes[i] is Dictionary:
-			continue
-		var node: Dictionary = _nodes[i]
-		if int(node.get("element_id", -1)) != _selected_element_id:
-			continue
-		node["status"] = card.keys.get(
-			"actuator_status",
-			card.keys.get("status_reason", node.get("status", &"ok"))
-		)
-		node["severity"] = (
-			"ok"
-			if StringName(node["status"]) in [&"ok", &"idle", &"standby", &"moving"]
-			else str(node.get("severity", "warn"))
-		)
-		if card.keys.has("piston_observed_position_m"):
-			node["value"] = float(card.keys["piston_observed_position_m"])
-		elif card.keys.has("rotor_observed_angle_rad"):
-			node["value"] = float(card.keys["rotor_observed_angle_rad"])
-		elif card.keys.has("hinge_observed_angle_rad"):
-			node["value"] = float(card.keys["hinge_observed_angle_rad"])
-		var detail: Dictionary = node.get("detail", {})
-		if detail is Dictionary:
-			if card.keys.has("piston_motor_enabled"):
-				detail["enabled"] = bool(card.keys["piston_motor_enabled"])
-			elif card.keys.has("rotor_motor_enabled"):
-				detail["enabled"] = bool(card.keys["rotor_motor_enabled"])
-			elif card.keys.has("hinge_motor_enabled"):
-				detail["enabled"] = bool(card.keys["hinge_motor_enabled"])
-			if card.keys.has("control_wheels"):
-				detail["control_wheels"] = bool(card.keys["control_wheels"])
-			if card.keys.has("control_thrusters"):
-				detail["control_thrusters"] = bool(card.keys["control_thrusters"])
-			if card.keys.has("control_gyros"):
-				detail["control_gyros"] = bool(card.keys["control_gyros"])
-			var joint_id := int(node.get("joint_id", 0))
-			if joint_id > 0:
-				var joint := world.get_joint(joint_id)
-				if joint != null and joint.motor != null:
-					detail["observed"] = joint.motor.observed_position_m
-					detail["observed_velocity"] = joint.motor.observed_velocity_mps
-					detail["target_position_m"] = joint.motor.target_position_m
-					detail["power_draw_w"] = joint.motor.power_draw_w
-			node["detail"] = detail
-		_nodes[i] = node
-		return true
-	return false
-
-
-# ---------- компактная лента (hud_compact_action_bar.gd) ----------
-# Читает и стреляет через тот же бар и ту же _fire_slot, что и полное окно —
-# не копия логики, один источник правды на оба поверхности пульта.
+	return TerminalSnapshotController.patch_selected_node_live(self, world)
 
 func active_page_slots() -> Array:
 	return _page_slots()
@@ -868,13 +649,19 @@ func _unhandled_input(event: InputEvent) -> void:
 ## отпускания (viewport забирает мышь под DnD) — то есть клик просто не
 ## сработает, ровно как нужно. Огонь на нажатии стрелял бы всегда, ещё до
 ## того, как понятно, тащит игрок или кликает.
+##
+## Нажатие ставит `_faceplate_press_active`: live-refresh не должен
+## `queue_free` нажатый контрол до отпускания (см. TerminalSnapshotController.refresh).
 func _on_click(event: InputEvent, action: Callable) -> void:
-	if (
-		event is InputEventMouseButton
-		and not event.pressed
-		and event.button_index == MOUSE_BUTTON_LEFT
-	):
-		action.call()
+	if not event is InputEventMouseButton:
+		return
+	if event.button_index != MOUSE_BUTTON_LEFT:
+		return
+	if event.pressed:
+		_faceplate_press_active = true
+		return
+	_faceplate_press_active = false
+	action.call()
 
 
 ## Единственная точка отправки параметра в симуляцию: её используют и клик по ±,
@@ -978,6 +765,8 @@ func _apply_param_step(param_id: String, direction: int) -> void:
 		int(node.get("element_id", 0)),
 		int(node.get("joint_id", 0))
 	)
+	if not field.is_empty():
+		_patch_selected_detail({field: value})
 
 
 ## Живое состояние цели из последнего снапшота. Инверсия тумблера и
@@ -1053,43 +842,46 @@ func _run_action(spec: Dictionary, pressed: bool) -> void:
 		return
 	match action:
 		"wheel.steerable_toggle":
+			var next_steerable: bool = not bool(
+				_live_detail(element_id, 0).get("steerable", false)
+			)
 			_submit("configure_wheel", element_id, {
 				"wheel_element_id": element_id,
-				"steerable": not bool(
-					_live_detail(element_id, 0).get("steerable", false)
-				),
+				"steerable": next_steerable,
 			})
+			_patch_selected_detail({"steerable": next_steerable})
 		"wheel.invert_drive_toggle":
+			var next_invert: bool = not bool(
+				_live_detail(element_id, 0).get("drive_inverted", false)
+			)
 			_submit("configure_wheel", element_id, {
 				"wheel_element_id": element_id,
-				"invert_drive": not bool(
-					_live_detail(element_id, 0).get("drive_inverted", false)
-				),
+				"invert_drive": next_invert,
 			})
+			_patch_selected_detail({"drive_inverted": next_invert})
 		"seat.control_wheels_toggle":
+			var next_wheels: bool = not _seat_route_flag(element_id, "control_wheels")
 			_submit("configure_seat_controls", element_id, {
 				"seat_element_id": element_id,
-				"control_wheels": not _seat_route_flag(
-					element_id,
-					"control_wheels"
-				),
+				"control_wheels": next_wheels,
 			})
+			_patch_selected_detail({"control_wheels": next_wheels})
 		"seat.control_thrusters_toggle":
+			var next_thrusters: bool = not _seat_route_flag(
+				element_id, "control_thrusters"
+			)
 			_submit("configure_seat_controls", element_id, {
 				"seat_element_id": element_id,
-				"control_thrusters": not _seat_route_flag(
-					element_id,
-					"control_thrusters"
-				),
+				"control_thrusters": next_thrusters,
 			})
+			_patch_selected_detail({"control_thrusters": next_thrusters})
 		"seat.control_gyros_toggle":
+			var next_gyros: bool = not _seat_route_flag(element_id, "control_gyros")
 			_submit("configure_seat_controls", element_id, {
 				"seat_element_id": element_id,
-				"control_gyros": not _seat_route_flag(
-					element_id,
-					"control_gyros"
-				),
+				"control_gyros": next_gyros,
 			})
+			_patch_selected_detail({"control_gyros": next_gyros})
 		"machine.toggle", "machine.enable", "machine.disable":
 			var enabled_now := bool(
 				_live_detail(element_id, 0).get("machine_enabled", true)
@@ -1105,6 +897,7 @@ func _run_action(spec: Dictionary, pressed: bool) -> void:
 				"element_id": element_id,
 				"enabled": next_enabled,
 			})
+			_patch_selected_detail({"machine_enabled": next_enabled})
 		"actuator.stop":
 			_submit("set_actuator_target", element_id, {
 				"joint_id": joint_id,
@@ -1261,104 +1054,42 @@ func _release_holds() -> void:
 		_run_action(spec, false)
 
 
-func _load_icon_font() -> void:
-	if not FileAccess.file_exists(ICON_TTF):
-		return
-	_icon_font = FontFile.new()
-	_icon_font.data = FileAccess.get_file_as_bytes(ICON_TTF)
 
+func _new_drag_source() -> DragSource:
+	return DragSource.new()
+
+func _new_slider_track() -> SliderTrack:
+	return SliderTrack.new()
+
+func _load_icon_font() -> void:
+	TerminalWidgetKit.load_icon_font(self)
 
 func _icon(key: String, col: Color, size := 15) -> Control:
-	var l := Label.new()
-	if _icon_font != null and GLYPHS.has(key):
-		l.text = String.chr(int(GLYPHS[key]))
-		l.add_theme_font_override("font", _icon_font)
-	l.add_theme_font_size_override("font_size", size)
-	l.add_theme_color_override("font_color", col)
-	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	return l
-
-
-# ---------- style helpers ----------
+	return TerminalWidgetKit.icon(self, key, col, size)
 
 func _sbox(bg: Color, bl := 0, bt := 0, br := 0, bb := 0, bc := LINE) -> StyleBoxFlat:
-	var s := StyleBoxFlat.new()
-	s.anti_aliasing = false
-	s.bg_color = bg
-	s.border_color = bc
-	s.border_width_left = bl
-	s.border_width_top = bt
-	s.border_width_right = br
-	s.border_width_bottom = bb
-	s.content_margin_left = 0
-	s.content_margin_right = 0
-	s.content_margin_top = 0
-	s.content_margin_bottom = 0
-	return s
-
+	return TerminalWidgetKit.sbox(self, bg, bl, bt, br, bb, bc)
 
 func _panel(bg: Color, bl := 0, bt := 0, br := 0, bb := 0, bc := LINE) -> PanelContainer:
-	var p := PanelContainer.new()
-	p.add_theme_stylebox_override("panel", _sbox(bg, bl, bt, br, bb, bc))
-	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	return p
-
+	return TerminalWidgetKit.panel(self, bg, bl, bt, br, bb, bc)
 
 func _lbl(text: String, col: Color, size := 13, halign := HORIZONTAL_ALIGNMENT_LEFT) -> Label:
-	var l := Label.new()
-	l.text = text
-	l.add_theme_color_override("font_color", col)
-	l.add_theme_font_size_override("font_size", size)
-	l.horizontal_alignment = halign
-	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	return l
-
+	return TerminalWidgetKit.lbl(self, text, col, size, halign)
 
 func _vbox(sep := 0) -> VBoxContainer:
-	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", sep)
-	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	return v
-
+	return TerminalWidgetKit.vbox(self, sep)
 
 func _hbox(sep := 0) -> HBoxContainer:
-	var h := HBoxContainer.new()
-	h.add_theme_constant_override("separation", sep)
-	h.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	return h
-
+	return TerminalWidgetKit.hbox(self, sep)
 
 func _vrule() -> Panel:
-	var p := Panel.new()
-	p.add_theme_stylebox_override("panel", _sbox(LINE))
-	p.custom_minimum_size = Vector2(1, 0)
-	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	return p
-
+	return TerminalWidgetKit.vrule(self)
 
 func _hrule() -> Panel:
-	var p := Panel.new()
-	p.add_theme_stylebox_override("panel", _sbox(LINE))
-	p.custom_minimum_size = Vector2(0, 1)
-	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	return p
-
+	return TerminalWidgetKit.hrule(self)
 
 func _pad(node: Control, l := 0, t := 0, r := 0, b := 0) -> MarginContainer:
-	var m := MarginContainer.new()
-	m.add_theme_constant_override("margin_left", l)
-	m.add_theme_constant_override("margin_right", r)
-	m.add_theme_constant_override("margin_top", t)
-	m.add_theme_constant_override("margin_bottom", b)
-	m.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	m.add_child(node)
-	return m
-
-
-# ---------- build ----------
+	return TerminalWidgetKit.pad(self, node, l, t, r, b)
 
 func _build() -> void:
 	# Пульт занимает весь экран: это рабочий терминал, а не всплывающее окошко.
@@ -1440,21 +1171,10 @@ func _fill_unit(snap: Dictionary) -> void:
 
 
 func _pad_col(node: Control, l: int, t: int, r: int, b: int, _x: int, br_w: int) -> Control:
-	var wrap := _panel(Color(0, 0, 0, 0), 0, 0, br_w, 0)
-	wrap.add_child(_pad(node, l, t, r, b))
-	return wrap
-
+	return TerminalWidgetKit.pad_col(self, node, l, t, r, b, _x, br_w)
 
 func _kv(k: String, v: String, vcol: Color) -> Control:
-	var wrap := _panel(Color(0, 0, 0, 0), 1, 0, 0, 0)
-	var col := _vbox(1)
-	col.custom_minimum_size = Vector2(100, 0)
-	col.add_child(_lbl(k, DIM, 10))
-	_last_kv_value = _lbl(v, vcol, 13)
-	col.add_child(_last_kv_value)
-	wrap.add_child(_pad(col, 14, 8, 14, 8))
-	return wrap
-
+	return TerminalWidgetKit.kv(self, k, v, vcol)
 
 func _build_body() -> Control:
 	var h := _hbox(0)
@@ -1478,768 +1198,144 @@ func _build_body() -> Control:
 # ---------- left: equipment ----------
 
 func _build_equipment() -> Control:
-	var v := _vbox(0)
-
-	_seg_row = _hbox(0)
-	var seg_wrap := _panel(PANEL, 0, 0, 0, 1)
-	seg_wrap.add_child(_seg_row)
-	v.add_child(seg_wrap)
-	_fill_filters()
-
-	v.add_child(_build_search())
-
-	# header row
-	v.add_child(_eq_head())
-
-	_list_box = _vbox(0)
-	_list_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_list_scroll = _scroll(_list_box)
-	v.add_child(_list_scroll)
-	_fill_nodes(_mock_nodes())
-	return v
-
+	return TerminalEquipmentList.build_equipment(self)
 
 func _fill_filters() -> void:
-	if _seg_row == null:
-		return
-	for child: Node in _seg_row.get_children():
-		_seg_row.remove_child(child)
-		child.queue_free()
-	for entry_variant: Variant in FILTERS:
-		var entry: Array = entry_variant
-		var id := str(entry[0])
-		_seg_row.add_child(_seg_btn(str(entry[1]), id, id == "alarm"))
-
+	TerminalEquipmentList.fill_filters(self)
 
 func _set_filter(id: String) -> void:
-	if _filter == id:
-		return
-	_filter = id
-	_fill_filters()
-	_rebuild_list()
+	TerminalEquipmentList.set_filter(self, id)
 
-
-## Поиск по имени и тегу узла. Строка живёт вне перестройки списка, иначе
-## обновление 10 Гц забирало бы фокус на каждом кадре.
 func _build_search() -> Control:
-	var wrap := _panel(PANEL, 0, 0, 0, 1)
-	wrap.mouse_filter = Control.MOUSE_FILTER_STOP
-	var h := _hbox(6)
-	h.add_child(_icon("search", DIM, 13))
-	_search_edit = LineEdit.new()
-	_search_edit.placeholder_text = "поиск узла…"
-	_search_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_style_edit(_search_edit)
-	_search_edit.text_changed.connect(_on_search_changed)
-	h.add_child(_search_edit)
-	wrap.add_child(_pad(h, 12, 4, 12, 4))
-	return wrap
+	return TerminalEquipmentList.build_search(self)
 
-
-## Поле ввода в приборной палитре: рамки нет, фон плоский — строка должна
-## читаться как ячейка таблицы, а не как виджет игрового HUD.
 func _style_edit(edit: LineEdit) -> void:
-	edit.add_theme_stylebox_override("normal", _sbox(Color(0, 0, 0, 0)))
-	edit.add_theme_stylebox_override("focus", _sbox(FLD, 0, 0, 0, 1, TXT2))
-	edit.add_theme_color_override("font_color", TXT)
-	edit.add_theme_color_override("font_placeholder_color", DIM)
-	edit.add_theme_color_override("caret_color", TXT)
-	edit.add_theme_color_override("font_selected_color", TXT)
-	edit.add_theme_color_override("selection_color", SEL)
-	edit.add_theme_font_size_override("font_size", 12)
-
+	TerminalWidgetKit.style_edit(self, edit)
 
 func _on_search_changed(text: String) -> void:
-	_search = text.strip_edges().to_lower()
-	_rebuild_list()
+	TerminalEquipmentList.on_search_changed(self, text)
 
-
-## Срез списка под фильтр и поиск. Полный `_nodes` при этом не режем: живые
-## значения слотов и фейсплейта читаются из него независимо от того, что видно.
 func _visible_nodes() -> Array:
-	var rows: Array = []
-	for node_variant: Variant in _nodes:
-		if not node_variant is Dictionary:
-			continue
-		var node: Dictionary = node_variant
-		match _filter:
-			"alarm":
-				if str(node.get("severity", "ok")) == "ok":
-					continue
-			"all":
-				pass
-			_:
-				if str(node.get("category", "other")) != _filter:
-					continue
-		if not _search.is_empty():
-			var haystack := "%s %s" % [_node_name(node), _node_tag(node)]
-			if not haystack.to_lower().contains(_search):
-				continue
-		rows.append(node)
-	return rows
+	return TerminalEquipmentList.visible_nodes(self)
 
-
-## Вертикальная прокрутка для длинных списков (сборка легко даёт сотню узлов).
 func _scroll(content: Control) -> ScrollContainer:
-	var sc := ScrollContainer.new()
-	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	sc.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	sc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	sc.add_child(content)
-	return sc
+	return TerminalWidgetKit.scroll(self, content)
 
-
-## Fallback-данные, пока нет живого снапшота (изолированная сцена вёрстки).
-static func _mock_nodes() -> Array:
-	var piston_detail := {
-		"observed": 0.82, "observed_velocity": 0.30, "target_position_m": 1.20,
-		"power_draw_w": 120.0, "extend_velocity_mps": 0.50,
-		"retract_velocity_mps": 0.50, "force_limit_n": 8000.0,
-		"lower_limit_m": 0.0, "upper_limit_m": 1.20,
-	}
-	var rotor_detail := {
-		"observed": 0.21, "observed_velocity": 0.21, "target_position_m": 0.0,
-		"power_draw_w": 90.0, "extend_velocity_mps": 1.0,
-		"retract_velocity_mps": 1.0, "force_limit_n": 6000.0,
-	}
-	return [
-		{"element_id": 1, "joint_id": 1, "category": "actuator",
-			"archetype_id": "piston_base", "ordinal": 1, "custom_name": "",
-			"kind": "piston", "detail": piston_detail,
-			"value_text": "0.82 м", "status": &"moving", "severity": "ok"},
-		{"element_id": 2, "joint_id": 2, "category": "actuator",
-			"archetype_id": "piston_base", "ordinal": 2, "custom_name": "",
-			"kind": "piston", "detail": piston_detail,
-			"value_text": "0.00 м", "status": &"idle", "severity": "ok"},
-		{"element_id": 3, "joint_id": 3, "category": "actuator",
-			"archetype_id": "rotor_base", "ordinal": 1, "custom_name": "",
-			"kind": "rotor", "detail": rotor_detail,
-			"value_text": "12.0 °/с", "status": &"moving", "severity": "ok"},
-		{"element_id": 4, "joint_id": 4, "category": "actuator",
-			"archetype_id": "hinge_base", "ordinal": 1, "custom_name": "",
-			"kind": "hinge", "detail": {
-				"observed": 0.77, "observed_velocity": 0.0,
-				"target_position_m": 0.77, "power_draw_w": 40.0,
-				"extend_velocity_mps": 0.8, "retract_velocity_mps": 0.8,
-				"force_limit_n": 5000.0, "lower_limit_m": -0.79,
-				"upper_limit_m": 0.79,
-			},
-			"value_text": "44 °", "status": &"joint_limit", "severity": "warn"},
-		{"archetype_id": "drive_wheel", "ordinal": 1, "custom_name": "",
-			"kind": "wheel", "detail": {
-				"steerable": true, "drive_inverted": false,
-				"drive_torque_scale": 0.8, "brake_torque_n_m": 180.0,
-				"max_steering_angle_rad": 0.4887,
-				"authored_max_steering_angle_rad": 0.4887,
-			},
-			"value_text": "", "status": &"ok", "severity": "ok"},
-		{"archetype_id": "stationary_drill", "ordinal": 1, "custom_name": "",
-			"value_text": "", "status": &"no_power", "severity": "warn"},
-		{"archetype_id": "processor", "ordinal": 1, "custom_name": "",
-			"value_text": "62 %", "status": &"ok", "severity": "ok"},
-		{"archetype_id": "rotor_base", "ordinal": 2, "custom_name": "",
-			"kind": "rotor", "detail": rotor_detail,
-			"value_text": "", "status": &"actuator_broken", "severity": "fault"},
-		{"archetype_id": "power_battery", "ordinal": 1, "custom_name": "",
-			"value_text": "70 %", "status": &"ok", "severity": "ok"},
-		{"archetype_id": "cargo_store", "ordinal": 1, "custom_name": "",
-			"value_text": "340/500", "status": &"ok", "severity": "ok"},
-	]
-
+func _mock_nodes() -> Array:
+	return TerminalEquipmentList.mock_nodes(self)
 
 func _seg_btn(text: String, id: String, alarm: bool) -> Control:
-	var on := _filter == id
-	var col := AMBER if alarm else (TXT if on else DIM)
-	var bg := SEL if on else Color(0, 0, 0, 0)
-	var b := _panel(bg, 0, 0, 1, 0)
-	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	b.mouse_filter = Control.MOUSE_FILTER_STOP
-	b.gui_input.connect(_on_click.bind(_set_filter.bind(id)))
-	b.add_child(_pad(_lbl(text, col, 11, HORIZONTAL_ALIGNMENT_CENTER), 4, 6, 4, 6))
-	return b
-
+	return TerminalEquipmentList.seg_btn(self, text, id, alarm)
 
 func _eq_head() -> Control:
-	var wrap := _panel(CELLALT, 0, 0, 0, 1)
-	var h := _hbox(0)
-	var m := MarginContainer.new()
-	m.add_theme_constant_override("margin_left", 12)
-	m.add_theme_constant_override("margin_right", 12)
-	m.add_theme_constant_override("margin_top", 5)
-	m.add_theme_constant_override("margin_bottom", 5)
-	m.add_child(h)
-	var st := _lbl("", DIM, 10)
-	st.custom_minimum_size = Vector2(20, 0)
-	h.add_child(st)
-	var nm := _lbl("УЗЕЛ", DIM, 10)
-	nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	h.add_child(nm)
-	h.add_child(_lbl("ЗНАЧЕНИЕ", DIM, 10, HORIZONTAL_ALIGNMENT_RIGHT))
-	wrap.add_child(m)
-	return wrap
+	return TerminalEquipmentList.eq_head(self)
 
-
-## Заполнение списка узлов из снапшота (или mock).
 func _fill_nodes(nodes: Array) -> void:
-	_nodes = nodes
-	if _nodes_count != null:
-		_nodes_count.text = str(nodes.size())
-	_rebuild_list()
+	TerminalEquipmentList.fill_nodes(self, nodes)
 
-
-## Перестройка строк из уже полученных данных: её же зовут фильтр и поиск.
 func _rebuild_list() -> void:
-	if _list_box == null:
-		return
-	for child: Node in _list_box.get_children():
-		_list_box.remove_child(child)
-		child.queue_free()
-	var visible_nodes := _visible_nodes()
-	# Узел мог уехать из снапшота (разобрали, сменили цель) — тогда садимся на
-	# первый видимый, а не показываем пустой фейсплейт.
-	if _selected_node().is_empty() and not visible_nodes.is_empty():
-		_selected_element_id = int(
-			(visible_nodes[0] as Dictionary).get("element_id", 0)
-		)
-	# Перестройка сбрасывает прокрутку — возвращаем её, иначе длинный список
-	# при обновлении 10 Гц просто невозможно листать.
-	var keep_scroll := 0
-	if _list_scroll != null:
-		keep_scroll = _list_scroll.scroll_vertical
-	var idx := 0
-	for node_variant: Variant in visible_nodes:
-		var node: Dictionary = node_variant
-		var element_id := int(node.get("element_id", 0))
-		_list_box.add_child(
-			_eq_row(node, idx, element_id == _selected_element_id)
-		)
-		idx += 1
-	if idx == 0:
-		var empty := _panel(PANEL)
-		empty.add_child(_pad(
-			_lbl(_empty_list_text(), FAINT, 12),
-			12, 14, 12, 14
-		))
-		_list_box.add_child(empty)
-	if _list_scroll != null and keep_scroll > 0:
-		_restore_scroll.call_deferred(keep_scroll)
-	_fill_faceplate()
-
+	TerminalEquipmentList.rebuild_list(self)
 
 func _empty_list_text() -> String:
-	if _nodes.is_empty():
-		return "Нет цели — наведись на технику и открой пульт"
-	if not _search.is_empty():
-		return "Ничего не найдено"
-	return "В этом срезе узлов нет"
-
+	return TerminalEquipmentList.empty_list_text(self)
 
 func _restore_scroll(value: int) -> void:
-	if _list_scroll != null:
-		_list_scroll.scroll_vertical = value
-
+	TerminalEquipmentList.restore_scroll(self, value)
 
 func _on_row_input(event: InputEvent, element_id: int) -> void:
-	if (
-		event is InputEventMouseButton
-		and event.pressed
-		and event.button_index == MOUSE_BUTTON_LEFT
-		and element_id != _selected_element_id
-	):
-		select_element(element_id)
+	TerminalEquipmentList.on_row_input(self, event, element_id)
 
-
-## Выбор узла (клик по строке списка либо по строке аварии).
 func select_element(element_id: int) -> void:
-	if element_id == _selected_element_id:
-		return
-	_selected_element_id = element_id
-	_last_live_sig = ""
-	_cancel_rename()
-	_rebuild_list()
+	TerminalEquipmentList.select_element(self, element_id)
 
-
-## Выбор узла по позиции в видимом списке (дев-харнес вёрстки).
 func select_index(index: int) -> void:
-	var visible_nodes := _visible_nodes()
-	if index < 0 or index >= visible_nodes.size():
-		return
-	select_element(int((visible_nodes[index] as Dictionary).get("element_id", 0)))
-
+	TerminalEquipmentList.select_index(self, index)
 
 func _selected_node() -> Dictionary:
-	for node_variant: Variant in _nodes:
-		if not node_variant is Dictionary:
-			continue
-		var node: Dictionary = node_variant
-		if int(node.get("element_id", -1)) == _selected_element_id:
-			return node
-	return {}
-
+	return TerminalEquipmentList.selected_node(self)
 
 func _node_name(node: Dictionary) -> String:
-	var custom := str(node.get("custom_name", ""))
-	if not custom.is_empty():
-		return custom
-	var label := HudTokens.archetype_label(str(node.get("archetype_id", "")))
-	return "%s %02d" % [label.capitalize(), int(node.get("ordinal", 1))]
-
+	return TerminalEquipmentList.node_name(self, node)
 
 func _node_tag(node: Dictionary) -> String:
-	return "%s%d" % [
-		HudTokens.tool_code(str(node.get("archetype_id", ""))),
-		int(node.get("ordinal", 1)),
-	]
+	return TerminalEquipmentList.node_tag(self, node)
 
-
-## Значение колонки: явный текст (mock) → форматирование по value_kind → статус.
 func _node_value_text(node: Dictionary) -> String:
-	var explicit := str(node.get("value_text", ""))
-	if not explicit.is_empty():
-		return explicit
-	var value := float(node.get("value", 0.0))
-	match str(node.get("value_kind", "none")):
-		"length_m":
-			return "%.2f м" % value
-		"angle_rad":
-			return "%.0f °" % rad_to_deg(value)
-		"fraction":
-			return "%.0f %%" % (value * 100.0)
-	return HudTokens.status_label(StringName(node.get("status", &"ok"))).to_lower()
-
+	return TerminalEquipmentList.node_value_text(self, node)
 
 func _severity_color(severity: String) -> Color:
-	match severity:
-		"fault":
-			return RED
-		"warn":
-			return AMBER
-	return TXT
-
+	return TerminalEquipmentList.severity_color(self, severity)
 
 func _severity_mark(severity: String) -> String:
-	match severity:
-		"fault":
-			return "■"
-		"warn":
-			return "▲"
-	return "●"
-
+	return TerminalEquipmentList.severity_mark(self, severity)
 
 func _eq_row(node: Dictionary, idx: int, selected: bool) -> Control:
-	var severity := str(node.get("severity", "ok"))
-	var mark := _severity_mark(severity)
-	var name := _node_name(node)
-	var tag := _node_tag(node)
-	var val := _node_value_text(node)
-	var vcol := _severity_color(severity)
-	var bg := SEL if selected else (CELL if idx % 2 == 0 else CELLALT)
-	var wrap := _panel(bg, (2 if selected else 0), 0, 0, 1, TXT2)
-	wrap.mouse_filter = Control.MOUSE_FILTER_STOP
-	wrap.gui_input.connect(
-		_on_row_input.bind(int(node.get("element_id", 0)))
-	)
-	# Наведение — не только курсор меняется, ряд обязан подсветиться: это
-	# кликабельная таблица, а не статичный текст.
-	if not selected:
-		var hover_sbox := _sbox(_hover_bg(bg), 0, 0, 0, 1, TXT2)
-		var normal_sbox := _sbox(bg, 0, 0, 0, 1, TXT2)
-		wrap.mouse_entered.connect(
-			func(): wrap.add_theme_stylebox_override("panel", hover_sbox)
-		)
-		wrap.mouse_exited.connect(
-			func(): wrap.add_theme_stylebox_override("panel", normal_sbox)
-		)
-	var h := _hbox(0)
-	var m := MarginContainer.new()
-	m.add_theme_constant_override("margin_left", 12)
-	m.add_theme_constant_override("margin_right", 12)
-	m.add_theme_constant_override("margin_top", 6)
-	m.add_theme_constant_override("margin_bottom", 6)
-	m.add_child(h)
-
-	var mk_col := AMBER if mark == "▲" else (RED if mark == "■" else (TXT2 if mark == "●" else FAINT))
-	var mk := _lbl(mark, mk_col, 9)
-	mk.custom_minimum_size = Vector2(20, 0)
-	h.add_child(mk)
-
-	var nm := _lbl(name, TXT, 13)
-	h.add_child(nm)
-	var tg := _lbl("  " + tag, FAINT, 11)
-	h.add_child(tg)
-
-	var sp := Control.new()
-	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	h.add_child(sp)
-
-	h.add_child(_lbl(val, vcol, 12, HORIZONTAL_ALIGNMENT_RIGHT))
-	wrap.add_child(m)
-	return wrap
-
-
-# ---------- center: faceplate ----------
+	return TerminalEquipmentList.eq_row(self, node, idx, selected)
 
 func _build_faceplate() -> Control:
-	_fp_box = _vbox(0)
-	_fill_faceplate()
-	return _fp_box
+	return TerminalFaceplateBuilder.build_faceplate(self)
 
-
-## Перестройка фейсплейта под выбранный узел: шапка, показания, параметры (по
-## ParameterCatalog для вида узла), команды. Для колеса параметры начинаются с
-## булевых тумблеров (поворотность и направление привода).
 func _fill_faceplate() -> void:
-	if _fp_box == null:
+	# Единая точка: жест ввода блокирует любую пересборку (refresh, rebuild_list, rename).
+	if (
+		_faceplate_press_active
+		or _slider_drag_active
+		or get_viewport().gui_is_dragging()
+	):
 		return
-	# Пока переименовывают — фейсплейт не трогаем: перестройка 10 Гц иначе
-	# забирает фокус и стирает набранное.
-	if _rename_edit != null:
+	TerminalFaceplateBuilder.fill_faceplate(self)
+
+
+## Оптимистично пишет поля в detail выбранного узла и пересобирает фейсплейт.
+## Нужно потому, что live-patch не тащил steerable/уставки колеса — клик
+## доходил до submit, а тумблер/± на экране оставались со старым detail.
+func _patch_selected_detail(fields: Dictionary) -> void:
+	if fields.is_empty() or _selected_element_id <= 0:
 		return
-	for child: Node in _fp_box.get_children():
-		_fp_box.remove_child(child)
-		child.queue_free()
-	_slider_rows.clear()
-
-	var node := _selected_node()
-	if node.is_empty():
-		var empty := _panel(PANEL)
-		empty.add_child(_pad(_lbl("Узел не выбран", FAINT, 12), 14, 16, 14, 16))
-		_fp_box.add_child(empty)
-		return
-
-	var kind := str(node.get("kind", "other"))
-	var detail: Dictionary = node.get("detail", {})
-	_fp_box.add_child(_fp_head(node))
-	_fp_box.add_child(_fp_section("ПОКАЗАНИЯ", _fp_readings(node, kind, detail)))
-
-	var setpoints := _fp_setpoints(kind, detail)
-	if setpoints != null:
-		_fp_box.add_child(_fp_section(
-			"ПАРАМЕТРЫ · ПЕРЕТАЩИ СТРОКУ НА КЛАВИШУ (УСТАНОВИТЬ / ±ШАГ)",
-			setpoints
-		))
-
-	var commands := _fp_commands(kind)
-	if commands != null:
-		_fp_box.add_child(_fp_section(
-			"КОМАНДЫ · ПЕРЕТАЩИ НА КЛАВИШУ ПУЛЬТА ↓",
-			commands
-		))
-
+	for i: int in range(_nodes.size()):
+		if not _nodes[i] is Dictionary:
+			continue
+		var node: Dictionary = _nodes[i]
+		if int(node.get("element_id", -1)) != _selected_element_id:
+			continue
+		var detail: Dictionary = node.get("detail", {})
+		if not detail is Dictionary:
+			detail = {}
+		for key: Variant in fields.keys():
+			detail[str(key)] = fields[key]
+		node["detail"] = detail
+		_nodes[i] = node
+		break
+	_last_live_sig = ""
+	_fill_faceplate()
 
 func _fp_head(node: Dictionary) -> Control:
-	var severity := str(node.get("severity", "ok"))
-	var head := _panel(PANEL, 0, 0, 0, 1)
-	var hh := _hbox(9)
-	if _renaming:
-		hh.add_child(_build_rename_edit(node))
-	else:
-		hh.add_child(_lbl(_node_name(node), TXT, 15))
-		hh.add_child(_rename_button())
-	hh.add_child(_lbl(_node_tag(node), DIM, 11))
-	var stmk := Panel.new()
-	stmk.add_theme_stylebox_override("panel", _sbox(
-		NOM if severity == "ok" else _severity_color(severity)
-	))
-	stmk.custom_minimum_size = Vector2(8, 8)
-	stmk.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	hh.add_child(_pad(stmk, 6, 0, 0, 0))
-	hh.add_child(_lbl(
-		HudTokens.status_label(StringName(node.get("status", &"ok"))).capitalize(),
-		TXT2,
-		12
-	))
-	var sp := Control.new()
-	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	hh.add_child(sp)
-	hh.add_child(_lbl("Режим", DIM, 11))
-	hh.add_child(_mode_toggle())
-	head.add_child(_pad(hh, 14, 10, 14, 10))
-	return head
+	return TerminalFaceplateBuilder.fp_head(self, node)
 
-
-## Переименование узла оператором. Имя — per-instance override в снапшоте
-## (SetElementNameCommand); пустая строка возвращает авто-подпись архетипа.
 func _rename_button() -> Control:
-	var b := _panel(Color(0, 0, 0, 0))
-	b.mouse_filter = Control.MOUSE_FILTER_STOP
-	b.tooltip_text = "Переименовать узел"
-	b.gui_input.connect(_on_click.bind(_begin_rename))
-	b.add_child(_icon("pencil", FAINT, 13))
-	return b
-
+	return TerminalFaceplateBuilder.rename_button(self)
 
 func _build_rename_edit(node: Dictionary) -> Control:
-	_rename_edit = LineEdit.new()
-	_rename_edit.text = str(node.get("custom_name", ""))
-	_rename_edit.placeholder_text = _node_name(node)
-	_rename_edit.max_length = SetElementNameCommand.MAX_LENGTH
-	_rename_edit.custom_minimum_size = Vector2(240, 0)
-	_style_edit(_rename_edit)
-	_rename_edit.add_theme_font_size_override("font_size", 15)
-	_rename_edit.text_submitted.connect(_on_rename_submitted)
-	_rename_edit.grab_focus.call_deferred()
-	return _rename_edit
-
+	return TerminalFaceplateBuilder.build_rename_edit(self, node)
 
 func _begin_rename() -> void:
-	if _renaming or _selected_node().is_empty():
-		return
-	_renaming = true
-	_fill_faceplate()
-
+	TerminalFaceplateBuilder.begin_rename(self)
 
 func _cancel_rename() -> void:
-	if not _renaming:
-		return
-	_renaming = false
-	_rename_edit = null
-	_fill_faceplate()
-
+	TerminalFaceplateBuilder.cancel_rename(self)
 
 func _on_rename_submitted(text: String) -> void:
-	var element_id := int(_selected_node().get("element_id", 0))
-	_renaming = false
-	_rename_edit = null
-	if element_id > 0:
-		_submit("set_element_name", element_id, {
-			"element_id": element_id,
-			"element_name": text,
-		})
-	_fill_faceplate()
-
+	TerminalFaceplateBuilder.on_rename_submitted(self, text)
 
 func _fp_readings(node: Dictionary, kind: String, detail: Dictionary) -> Control:
-	var v := _vbox(0)
-	if kind == "wheel":
-		# Поворотность/направление уже показаны тумблерами в «Уставках» ниже —
-		# дублировать те же два бита здесь нечем, тут только то, чего там нет:
-		# живая телеметрия контакта с грунтом.
-		v.add_child(_pv_row(
-			"Питание", "есть" if bool(detail.get("powered", false)) else "нет", ""
-		))
-		v.add_child(_pv_row(
-			"Опора", "на грунте" if bool(detail.get("grounded", false)) else "в воздухе", ""
-		))
-		v.add_child(_pv_row(
-			"Пробуксовка",
-			"%.2f" % float(detail.get("slip_speed_mps", 0.0)),
-			"м/с"
-		))
-		return v
-	if kind == "control_seat":
-		v.add_child(_pv_row(
-			"Колёса",
-			"вкл" if bool(detail.get("control_wheels", true)) else "выкл",
-			""
-		))
-		v.add_child(_pv_row(
-			"Тяга",
-			"вкл" if bool(detail.get("control_thrusters", false)) else "выкл",
-			""
-		))
-		v.add_child(_pv_row(
-			"Гирои",
-			"вкл" if bool(detail.get("control_gyros", true)) else "выкл",
-			""
-		))
-		return v
-	if kind == "suspension":
-		# «Ход» тут был бы тем же числом, что «Ход подвески» в параметрах ниже —
-		# живой телеметрии сжатия у подвески нет, дублировать нечего.
-		v.add_child(_pv_row(
-			"Допустимый ход",
-			"%.2f…%.2f" % [
-				float(detail.get("min_travel_m", 0.0)),
-				float(detail.get("max_travel_m", 0.0)),
-			],
-			"м"
-		))
-		return v
-	if kind == "oxygen_module":
-		v.add_child(_pv_row(
-			"O₂",
-			"%.1f / %.1f" % [
-				float(detail.get("oxygen_current_l", 0.0)),
-				float(detail.get("oxygen_capacity_l", 0.0)),
-			],
-			"л"
-		))
-		v.add_child(_pv_row(
-			"Питание",
-			"есть" if bool(detail.get("powered", false)) else "нет",
-			""
-		))
-		v.add_child(_pv_row(
-			"Машина",
-			"вкл" if bool(detail.get("machine_enabled", true)) else "выкл",
-			""
-		))
-		v.add_child(_pv_row(
-			"Нагрузка",
-			"%.0f" % float(detail.get("demand_w", 0.0)),
-			"Вт"
-		))
-		v.add_child(_pv_row(
-			"Простой / актив",
-			"%.0f / %.0f" % [
-				float(detail.get("idle_w", 0.0)),
-				float(detail.get("active_w", 0.0)),
-			],
-			"Вт"
-		))
-		return v
-	if kind in ["piston", "rotor", "hinge"]:
-		var angular := kind != "piston"
-		v.add_child(_pv_row(
-			"Скорость",
-			"%.2f" % float(detail.get("observed_velocity", 0.0)),
-			"рад/с" if angular else "м/с"
-		))
-		v.add_child(_pv_row(
-			"Цель",
-			"%.2f" % float(detail.get("target_position_m", 0.0)),
-			"рад" if angular else "м"
-		))
-		v.add_child(_pv_row(
-			"Питание", "%.0f" % float(detail.get("power_draw_w", 0.0)), "Вт"
-		))
-		v.add_child(_pv_row(
-			"Мотор",
-			"вкл" if bool(detail.get("enabled", true)) else "выкл",
-			""
-		))
-		var trow := _hbox(10)
-		trow.custom_minimum_size = Vector2(0, 30)
-		var k := _lbl("Угол" if angular else "Ход", DIM, 13)
-		k.custom_minimum_size = Vector2(96, 0)
-		trow.add_child(k)
-		trow.add_child(_sparkline())
-		trow.add_child(_lbl(_node_value_text(node), TXT, 15))
-		v.add_child(trow)
-		return v
-	v.add_child(_pv_row("Значение", _node_value_text(node), ""))
-	return v
-
+	return TerminalFaceplateBuilder.fp_readings(self, node, kind, detail)
 
 func _fp_setpoints(kind: String, detail: Dictionary) -> Control:
-	var ids: Array = SETPOINTS.get(kind, [])
-	if (
-		kind != "wheel"
-		and kind != "control_seat"
-		and kind != "oxygen_module"
-		and ids.is_empty()
-	):
-		return null
-	var v := _vbox(9)
-	if kind == "wheel":
-		v.add_child(_sw_row(
-			"Поворотное",
-			bool(detail.get("steerable", false)),
-			"Да",
-			"Нет",
-			"wheel.steerable_toggle"
-		))
-		v.add_child(_sw_row(
-			"Направление",
-			bool(detail.get("drive_inverted", false)),
-			"Назад",
-			"Вперёд",
-			"wheel.invert_drive_toggle"
-		))
-	elif kind == "oxygen_module":
-		v.add_child(_sw_row(
-			"Питание модуля",
-			bool(detail.get("machine_enabled", true)),
-			"Вкл",
-			"Выкл",
-			"machine.toggle"
-		))
-	elif kind == "control_seat":
-		v.add_child(_sw_row(
-			"Control Wheels",
-			bool(detail.get("control_wheels", true)),
-			"Вкл",
-			"Выкл",
-			"seat.control_wheels_toggle"
-		))
-		v.add_child(_sw_row(
-			"Control Thrusters",
-			bool(detail.get("control_thrusters", false)),
-			"Вкл",
-			"Выкл",
-			"seat.control_thrusters_toggle"
-		))
-		v.add_child(_sw_row(
-			"Control Gyros",
-			bool(detail.get("control_gyros", true)),
-			"Вкл",
-			"Выкл",
-			"seat.control_gyros_toggle"
-		))
-	for param_variant: Variant in ids:
-		var row := _sp_row_from(str(param_variant), detail)
-		if row != null:
-			v.add_child(row)
-	return v
+	return TerminalFaceplateBuilder.fp_setpoints(self, kind, detail)
 
-
-## Строка параметра из ParameterCatalog: живое значение из detail, шаг/подпись/
-## единица/точность — из баланса, положение ползунка — по soft-диапазону.
 func _sp_row_from(param_id: String, detail: Dictionary) -> Control:
-	var entry := GameBalance.parameter_entry(param_id)
-	if entry.is_empty():
-		return null
-	var field := str(entry.get("field", ""))
-	var raw := float(detail.get(field, 0.0))
-	var scale := float(entry.get("display_scale", 1.0))
-	var bounds := _effective_bounds(param_id, detail, entry)
-	var lo := bounds.x
-	var hi := bounds.y
-	var ratio := 0.0
-	if hi - lo > 0.000001:
-		ratio = clampf((raw - lo) / (hi - lo), 0.0, 1.0)
-	var precision := int(entry.get("precision", 2))
-	var label := str(entry.get("label", param_id))
-	var unit := str(entry.get("unit", ""))
-	var step := float(entry.get("step", 0.0))
-	var node := _selected_node()
-	var shown := String.num(raw * scale, precision)
+	return TerminalFaceplateBuilder.sp_row_from(self, param_id, detail)
 
-	var base := {
-		"kind": "control_param",
-		"param_id": param_id,
-		"node_kind": str(node.get("kind", "other")),
-		"element_id": int(node.get("element_id", 0)),
-		"joint_id": int(node.get("joint_id", 0)),
-		"node_name": _node_name(node),
-		"node_tag": _node_tag(node),
-	}
-	var payload_set := base.duplicate()
-	payload_set["action_id"] = "param.set"
-	payload_set["value"] = raw
-	payload_set["glyph"] = "equal"
-	payload_set["label"] = "%s %s %s" % [label, shown, unit]
-	var payload_inc := base.duplicate()
-	payload_inc["action_id"] = "param.increase"
-	payload_inc["delta"] = step
-	payload_inc["glyph"] = "plus"
-	payload_inc["label"] = "%s +%s" % [label, String.num(step * scale, precision)]
-	var payload_dec := base.duplicate()
-	payload_dec["action_id"] = "param.decrease"
-	payload_dec["delta"] = step
-	payload_dec["glyph"] = "minus"
-	payload_dec["label"] = "%s −%s" % [label, String.num(step * scale, precision)]
-
-	return _sp_row(label, ratio, shown, unit, false, {
-		"set": payload_set,
-		"inc": payload_inc,
-		"dec": payload_dec,
-	}, param_id)
-
-
-## Булев параметр (поворотность, направление): двухсегментный тумблер вместо
-## ползунка — это не число, шаг к нему неприменим.
 func _sw_row(
 	label: String,
 	is_on: bool,
@@ -2247,137 +1343,22 @@ func _sw_row(
 	off_text: String,
 	action_id: String = ""
 ) -> Control:
-	var node := _selected_node()
-	var h := _hbox(9)
-	var grip := _drag_panel(Color(0, 0, 0, 0), 0, 0, 0, 0, LINE2, {} if action_id.is_empty() else {
-		"kind": "control_action",
-		"action_id": action_id,
-		"glyph": "sliders" if action_id.ends_with("steerable_toggle") else "reverse",
-		"label": label,
-		"node_kind": str(node.get("kind", "other")),
-		"element_id": int(node.get("element_id", 0)),
-		"joint_id": int(node.get("joint_id", 0)),
-		"node_name": _node_name(node),
-		"node_tag": _node_tag(node),
-	})
-	grip.add_child(_icon("grip", FAINT, 13))
-	h.add_child(grip)
-	var kl := _lbl(label, DIM, 13)
-	kl.custom_minimum_size = Vector2(90, 0)
-	h.add_child(kl)
-	var sp := Control.new()
-	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	h.add_child(sp)
-	var box := _panel(Color(0, 0, 0, 0), 1, 1, 1, 1, LINE2)
-	var seg := _hbox(0)
-	var off_seg := _panel(
-		Color(0, 0, 0, 0) if is_on else DARKCHIP, 0, 0, 1, 0, LINE2
-	)
-	off_seg.add_child(_pad(_lbl(
-		off_text, DIM if is_on else Color(0.929, 0.937, 0.945), 11
-	), 10, 3, 10, 3))
-	seg.add_child(off_seg)
-	var on_seg := _panel(DARKCHIP if is_on else Color(0, 0, 0, 0))
-	on_seg.add_child(_pad(_lbl(
-		on_text, Color(0.929, 0.937, 0.945) if is_on else DIM, 11
-	), 10, 3, 10, 3))
-	seg.add_child(on_seg)
-	box.add_child(seg)
-	if not action_id.is_empty():
-		box.mouse_filter = Control.MOUSE_FILTER_STOP
-		box.gui_input.connect(_on_click.bind(_run_action.bind({
-			"action_id": action_id,
-			"element_id": int(node.get("element_id", 0)),
-			"joint_id": int(node.get("joint_id", 0)),
-			"node_kind": str(node.get("kind", "other")),
-		}, true)))
-	h.add_child(box)
-	return h
-
+	return TerminalFaceplateBuilder.sw_row(self, label, is_on, on_text, off_text, action_id)
 
 func _fp_commands(kind: String) -> Control:
-	var rows: Array = COMMANDS.get(kind, [])
-	if rows.is_empty():
-		return null
-	var node := _selected_node()
-	var h := HFlowContainer.new()
-	h.add_theme_constant_override("h_separation", 7)
-	h.add_theme_constant_override("v_separation", 7)
-	for row_variant: Variant in rows:
-		var row: Array = row_variant
-		h.add_child(_cmd(str(row[1]), str(row[2]), str(row[3]), {
-			"kind": "control_action",
-			"action_id": str(row[0]),
-			"glyph": str(row[1]),
-			"label": str(row[2]),
-			"input_kind": str(row[3]),
-			"node_kind": kind,
-			"element_id": int(node.get("element_id", 0)),
-			"joint_id": int(node.get("joint_id", 0)),
-			"node_name": _node_name(node),
-			"node_tag": _node_tag(node),
-		}))
-	return h
+	return TerminalFaceplateBuilder.fp_commands(self, kind)
 
-
-## Пока автоматической половины Binding нет (Control Graph), «Авто» — не
-## переключатель, а честно погашенная позиция: врать активной кнопкой нельзя.
 func _mode_toggle() -> Control:
-	var box := _panel(Color(0, 0, 0, 0), 1, 1, 1, 1, LINE2)
-	box.tooltip_text = "Автоматика появится вместе со схемой управления"
-	var h := _hbox(0)
-	var a := _panel(Color(0, 0, 0, 0), 0, 0, 1, 0, LINE2)
-	a.add_child(_pad(_lbl("Авто", FAINT, 11), 10, 3, 10, 3))
-	h.add_child(a)
-	var m := _panel(DARKCHIP)
-	m.add_child(_pad(_lbl("Ручн", Color(0.929, 0.937, 0.945), 11), 10, 3, 10, 3))
-	h.add_child(m)
-	box.add_child(h)
-	return box
-
+	return TerminalFaceplateBuilder.mode_toggle(self)
 
 func _fp_section(title: String, content: Control) -> Control:
-	var wrap := _panel(PANEL, 0, 0, 0, 1)
-	var v := _vbox(9)
-	v.add_child(_lbl(title, TXT2, 11))
-	v.add_child(content)
-	wrap.add_child(_pad(v, 14, 11, 14, 11))
-	return wrap
-
+	return TerminalFaceplateBuilder.fp_section(self, title, content)
 
 func _pv_row(k: String, val: String, unit: String) -> Control:
-	var wrap := _panel(PANEL, 0, 0, 0, 1)
-	var h := _hbox(0)
-	var kl := _lbl(k, DIM, 13)
-	kl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	h.add_child(kl)
-	h.add_child(_lbl(val, TXT, 13, HORIZONTAL_ALIGNMENT_RIGHT))
-	var ul := _lbl("  " + unit, DIM, 11)
-	ul.custom_minimum_size = Vector2(40, 0)
-	h.add_child(ul)
-	wrap.add_child(_pad(h, 0, 4, 0, 4))
-	return wrap
-
+	return TerminalFaceplateBuilder.pv_row(self, k, val, unit)
 
 func _sparkline() -> Control:
-	var box := Control.new()
-	box.custom_minimum_size = Vector2(150, 26)
-	var line := Line2D.new()
-	line.width = 1.2
-	line.default_color = Color(0.337, 0.376, 0.412)
-	line.points = PackedVector2Array([
-		Vector2(0, 22), Vector2(18, 21), Vector2(34, 18), Vector2(52, 17),
-		Vector2(70, 13), Vector2(88, 12), Vector2(104, 9), Vector2(120, 8),
-		Vector2(136, 6), Vector2(150, 6),
-	])
-	box.add_child(line)
-	var base := Line2D.new()
-	base.width = 1.0
-	base.default_color = LINE
-	base.points = PackedVector2Array([Vector2(0, 25), Vector2(150, 25)])
-	box.add_child(base)
-	return box
-
+	return TerminalFaceplateBuilder.sparkline(self)
 
 func _sp_row(
 	k: String,
@@ -2388,117 +1369,20 @@ func _sp_row(
 	payloads: Dictionary = {},
 	param_id: String = ""
 ) -> Control:
-	var h := _hbox(9)
-	h.add_child(_icon("grip", FAINT, 13))
-	var kl := _lbl(k, DIM, 13)
-	kl.custom_minimum_size = Vector2(90, 0)
-	h.add_child(kl)
-	h.add_child(_slider(ratio, param_id))
-	h.add_child(_edit_field(val, unit, focus, payloads, param_id))
-	return h
+	return TerminalFaceplateBuilder.sp_row(self, k, ratio, val, unit, focus, payloads, param_id)
 
-
-## Живой трек: клик/протяг по нему пишет абсолютное значение через
-## `_apply_slider_ratio` (см. класс SliderTrack). Дочерние Panel — только
-## отрисовка, поэтому все — MOUSE_FILTER_IGNORE, иначе они бы сами глотали
-## клик поверх трека и он бы никогда не доходил до `_gui_input`.
 func _slider(ratio: float, param_id: String = "") -> Control:
-	var box := SliderTrack.new()
-	box.terminal = self
-	box.param_id = param_id
-	box.custom_minimum_size = Vector2(0, 16)
-	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	box.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	box.mouse_filter = Control.MOUSE_FILTER_STOP
-	if not param_id.is_empty():
-		box.mouse_default_cursor_shape = Control.CURSOR_HSPLIT
+	return TerminalFaceplateBuilder.slider(self, ratio, param_id)
 
-	var track := Panel.new()
-	track.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	track.add_theme_stylebox_override("panel", _sbox(LINE))
-	track.set_anchors_preset(Control.PRESET_CENTER_LEFT)
-	track.anchor_right = 1.0
-	track.offset_left = 0
-	track.offset_right = 0
-	track.offset_top = -1
-	track.offset_bottom = 2
-	box.add_child(track)
-
-	var fill := Panel.new()
-	fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	fill.add_theme_stylebox_override("panel", _sbox(TXT2))
-	fill.anchor_left = 0.0
-	fill.anchor_right = ratio
-	fill.anchor_top = 0.5
-	fill.anchor_bottom = 0.5
-	fill.offset_top = -1
-	fill.offset_bottom = 2
-	box.add_child(fill)
-
-	var knob := Panel.new()
-	knob.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	knob.add_theme_stylebox_override("panel", _sbox(TXT))
-	knob.anchor_left = ratio
-	knob.anchor_right = ratio
-	knob.anchor_top = 0.5
-	knob.anchor_bottom = 0.5
-	knob.offset_left = -4
-	knob.offset_right = 5
-	knob.offset_top = -4
-	knob.offset_bottom = 5
-	box.add_child(knob)
-
-	if not param_id.is_empty():
-		_slider_rows[param_id] = {"fill": fill, "knob": knob}
-	return box
-
-
-## Ратио → значение → команда, вызывается на каждое движение SliderTrack (не
-## только на отпускание) — шкала обязана ехать вместе с курсором, как у
-## настоящего прибора. Значение и подпись поля обновляются тут же, без
-## ожидания следующего тика снапшота (тот всё равно подавлен, см. _refresh).
 func _apply_slider_ratio(param_id: String, ratio: float) -> void:
-	_slider_drag_active = true
-	var entry := GameBalance.parameter_entry(param_id)
-	if entry.is_empty():
-		return
-	var node := _selected_node()
-	var detail: Dictionary = node.get("detail", {})
-	var bounds := _effective_bounds(param_id, detail, entry)
-	var value := lerpf(bounds.x, bounds.y, ratio)
-	_submit_param(
-		param_id, value, int(node.get("element_id", 0)), int(node.get("joint_id", 0))
-	)
-	var row: Dictionary = _slider_rows.get(param_id, {})
-	if row.is_empty():
-		return
-	var fill: Panel = row.get("fill")
-	if fill != null:
-		fill.anchor_right = ratio
-	var knob: Panel = row.get("knob")
-	if knob != null:
-		knob.anchor_left = ratio
-		knob.anchor_right = ratio
-	var value_label: Label = row.get("value")
-	if value_label != null:
-		value_label.text = String.num(
-			value * float(entry.get("display_scale", 1.0)),
-			int(entry.get("precision", 2))
-		)
-
+	TerminalFaceplateBuilder.apply_slider_ratio(self, param_id, ratio)
 
 func _end_slider_drag() -> void:
-	_slider_drag_active = false
+	TerminalFaceplateBuilder.end_slider_drag(self)
 
-
-## Более тёплый оттенок в сторону цвета выделения — единственный сигнал
-## «сюда можно бросить» теперь, когда клик по этим панелям больше не стреляет
-## командой напрямую (см. _on_click).
 func _hover_bg(base: Color) -> Color:
-	return base.lerp(SEL, 0.6)
+	return TerminalWidgetKit.hover_bg(self, base)
 
-
-## PanelContainer, который можно утащить на клавишу пульта.
 func _drag_panel(
 	bg: Color,
 	bl: int,
@@ -2508,19 +1392,8 @@ func _drag_panel(
 	bc: Color,
 	payload: Dictionary
 ) -> DragSource:
-	var p := DragSource.new()
-	p.payload = payload
-	p.mouse_filter = Control.MOUSE_FILTER_STOP
-	p.set_hover_style(
-		_sbox(bg, bl, bt, br, bb, bc),
-		_sbox(_hover_bg(bg), bl, bt, br, bb, bc)
-	)
-	return p
+	return TerminalWidgetKit.drag_panel(self, bg, bl, bt, br, bb, bc, payload) as DragSource
 
-
-## Поле параметра — три независимых drag-источника: «−шаг», «установить текущее»,
-## «+шаг». Так игрок тащит на клавишу ровно тот вариант, который хочет, без
-## всплывающего выбора после броска.
 func _edit_field(
 	val: String,
 	unit: String,
@@ -2528,155 +1401,23 @@ func _edit_field(
 	payloads: Dictionary = {},
 	param_id: String = ""
 ) -> Control:
-	var box := _panel(Color(0, 0, 0, 0), 1, 1, 1, 1, TXT2 if focus else LINE2)
-	var h := _hbox(0)
-	var minus := _drag_panel(FLD, 0, 0, 1, 0, LINE2, payloads.get("dec", {}))
-	minus.add_child(_pad(_lbl("−", DIM, 14), 6, 1, 6, 1))
-	if not param_id.is_empty():
-		minus.gui_input.connect(
-			_on_click.bind(_apply_param_step.bind(param_id, -1))
-		)
-	h.add_child(minus)
-	var fld := _drag_panel(FLD, 0, 0, 0, 0, LINE2, payloads.get("set", {}))
-	fld.custom_minimum_size = Vector2(62, 0)
-	var fh := _hbox(4)
-	var vl := _lbl(val, TXT, 12, HORIZONTAL_ALIGNMENT_RIGHT)
-	vl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	fh.add_child(vl)
-	fh.add_child(_lbl(unit, FAINT, 10))
-	fld.add_child(_pad(fh, 8, 2, 8, 2))
-	h.add_child(fld)
-	var plus := _drag_panel(FLD, 1, 0, 0, 0, LINE2, payloads.get("inc", {}))
-	plus.add_child(_pad(_lbl("+", DIM, 14), 6, 1, 6, 1))
-	if not param_id.is_empty():
-		plus.gui_input.connect(
-			_on_click.bind(_apply_param_step.bind(param_id, 1))
-		)
-	h.add_child(plus)
-	box.add_child(h)
-	if not param_id.is_empty():
-		if not _slider_rows.has(param_id):
-			_slider_rows[param_id] = {}
-		_slider_rows[param_id]["value"] = vl
-	return box
+	return TerminalFaceplateBuilder.edit_field(self, val, unit, focus, payloads, param_id)
 
-
-## Чистый drag-источник — эта кнопка НЕ исполняется кликом (глагол пробуется
-## только через слот пульта, куда её перетащили). Клик-и-старт-жеста иначе
-## конфликтует с началом перетаскивания: нажатие уходило бы в исполнение
-## раньше, чем Godot успеет понять, что это drag. Подсветка при наведении —
-## единственный сигнал «это можно перетащить».
 func _cmd(glyph: String, text: String, kind: String, payload: Dictionary = {}) -> Control:
-	var normal := StyleBoxFlat.new()
-	normal.anti_aliasing = false
-	normal.bg_color = CELL
-	normal.border_color = LINE2
-	normal.set_border_width_all(1)
-	normal.content_margin_left = 10
-	normal.content_margin_right = 10
-	normal.content_margin_top = 6
-	normal.content_margin_bottom = 6
-	var hover := normal.duplicate() as StyleBoxFlat
-	hover.bg_color = _hover_bg(CELL)
-	var box := DragSource.new()
-	box.payload = payload
-	box.mouse_filter = Control.MOUSE_FILTER_STOP
-	box.custom_minimum_size = Vector2(0, 34)
-	box.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	box.set_hover_style(normal, hover)
-	var h := _hbox(7)
-	h.alignment = BoxContainer.ALIGNMENT_CENTER
-	h.add_child(_icon(glyph, TXT2, 15))
-	h.add_child(_lbl(text, TXT, 13))
-	var tag := _panel(Color(0, 0, 0, 0), 1, 1, 1, 1, LINE2)
-	tag.add_child(_pad(_lbl(kind, DIM, 9), 3, 1, 3, 1))
-	h.add_child(tag)
-	box.add_child(h)
-	return box
-
-
-# ---------- right: alarms ----------
+	return TerminalWidgetKit.cmd(self, glyph, text, kind, payload)
 
 func _build_alarms() -> Control:
-	var v := _vbox(0)
+	return TerminalAlarmsPanel.build_alarms(self)
 
-	var head := _panel(HEAD, 0, 0, 0, 1)
-	var hh := _hbox(0)
-	var title := _lbl("АВАРИИ", TXT2, 11)
-	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	hh.add_child(title)
-	_alarms_count = _lbl("—", DIM, 11)
-	hh.add_child(_alarms_count)
-	head.add_child(_pad(hh, 12, 7, 12, 7))
-	v.add_child(head)
+func _mock_alarms() -> Array:
+	return TerminalAlarmsPanel.mock_alarms(self)
 
-	_alarm_box = _vbox(0)
-	_alarm_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	v.add_child(_scroll(_alarm_box))
-	_fill_alarms(_mock_alarms())
-
-	v.add_child(_sechead("ГРУППЫ", ""))
-	var e := _panel(PANEL)
-	e.add_child(_pad(_lbl("Группа из выделенных — скоро", FAINT, 11), 12, 14, 12, 14))
-	v.add_child(e)
-	return v
-
-
-static func _mock_alarms() -> Array:
-	var alarms: Array = []
-	for node_variant: Variant in _mock_nodes():
-		var node: Dictionary = node_variant
-		if str(node.get("severity", "ok")) != "ok":
-			alarms.append(node)
-	return alarms
-
-
-## Заполнение ленты аварий. Порядок задаёт билдер (отказы вперёд).
 func _fill_alarms(alarms: Array) -> void:
-	if _alarm_box == null:
-		return
-	for child: Node in _alarm_box.get_children():
-		_alarm_box.remove_child(child)
-		child.queue_free()
-	var count := 0
-	for alarm_variant: Variant in alarms:
-		if not alarm_variant is Dictionary:
-			continue
-		var alarm: Dictionary = alarm_variant
-		var severity := str(alarm.get("severity", "warn"))
-		_alarm_box.add_child(_alarm_row(
-			_node_name(alarm),
-			_node_tag(alarm),
-			HudTokens.status_label(StringName(alarm.get("status", &"ok"))).to_lower(),
-			"",
-			_severity_color(severity),
-			int(alarm.get("element_id", 0))
-		))
-		count += 1
-	if _alarms_count != null:
-		_alarms_count.text = "%d актив." % count
-	if _alarms_head != null:
-		_alarms_head.text = str(count)
-		_alarms_head.add_theme_color_override(
-			"font_color",
-			AMBER if count > 0 else DIM
-		)
-
+	TerminalAlarmsPanel.fill_alarms(self, alarms)
 
 func _sechead(title: String, right: String) -> Control:
-	var wrap := _panel(HEAD, 0, 0, 0, 1)
-	var h := _hbox(0)
-	var t := _lbl(title, TXT2, 11)
-	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	h.add_child(t)
-	if right != "":
-		h.add_child(_lbl(right, DIM, 11))
-	wrap.add_child(_pad(h, 12, 7, 12, 7))
-	return wrap
+	return TerminalWidgetKit.sechead(self, title, right)
 
-
-## Строка аварии — кратчайший путь к отказавшему узлу: клик открывает его
-## фейсплейт, не заставляя искать его же в списке слева.
 func _alarm_row(
 	name: String,
 	tag: String,
@@ -2685,30 +1426,7 @@ func _alarm_row(
 	col: Color,
 	element_id := 0
 ) -> Control:
-	var wrap := _panel(PANEL, 0, 0, 0, 1)
-	if element_id > 0:
-		wrap.mouse_filter = Control.MOUSE_FILTER_STOP
-		wrap.gui_input.connect(_on_click.bind(select_element.bind(element_id)))
-	var h := _hbox(8)
-	var mk := Panel.new()
-	mk.add_theme_stylebox_override("panel", _sbox(col))
-	mk.custom_minimum_size = Vector2(8, 8)
-	mk.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	h.add_child(mk)
-	var col_v := _vbox(2)
-	var top := _hbox(6)
-	top.add_child(_lbl(name, col, 12))
-	top.add_child(_lbl(tag, DIM, 10))
-	col_v.add_child(top)
-	col_v.add_child(_lbl(desc, TXT2, 11))
-	if not time.is_empty():
-		col_v.add_child(_lbl(time, DIM, 10))
-	h.add_child(col_v)
-	wrap.add_child(_pad(h, 10, 7, 10, 7))
-	return wrap
-
-
-# ---------- bottom: soft keys ----------
+	return TerminalAlarmsPanel.alarm_row(self, name, tag, desc, time, col, element_id)
 
 func _build_softbar() -> Control:
 	var wrap := _panel(HEAD, 0, 1, 0, 0, LINE2)
