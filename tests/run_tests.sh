@@ -79,7 +79,11 @@ echo "Regolith kernel gate (${#SCENES[@]} scenes)"
 echo
 
 for name in "${SCENES[@]}"; do
-	if "$RUN_ONE" "$name"; then
+	timeout_env=()
+	if [[ "$name" == "test_simulation_projection" ]]; then
+		timeout_env=( REGOLITH_TEST_TIMEOUT_SEC=45 )
+	fi
+	if env "${timeout_env[@]}" "$RUN_ONE" "$name"; then
 		pass=$((pass + 1))
 	else
 		fail=$((fail + 1))

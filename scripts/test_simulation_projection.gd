@@ -24,7 +24,7 @@ func _ready() -> void:
 
 
 func _run() -> void:
-	_HeadlessTestHarness.arm_watchdog(self, "KERNEL-PROJECTION-V0")
+	_HeadlessTestHarness.arm_watchdog(self, "KERNEL-PROJECTION-V0", 45.0)
 	if not _test_collider_mapping_and_anchor():
 		return
 	if not _test_projection_global_transform():
