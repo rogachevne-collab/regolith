@@ -162,6 +162,18 @@ func _build_fake_settings_overlay() -> CanvasLayer:
 	var fov_value := Label.new()
 	fov_value.name = "Value"
 	fov_row.add_child(fov_value)
+	var rt_shadows_row := Control.new()
+	rt_shadows_row.name = "RtShadows"
+	content.add_child(rt_shadows_row)
+	var rt_shadows_check := CheckBox.new()
+	rt_shadows_check.name = "Check"
+	rt_shadows_row.add_child(rt_shadows_check)
+	var soft_penumbra_row := Control.new()
+	soft_penumbra_row.name = "SoftPenumbra"
+	content.add_child(soft_penumbra_row)
+	var soft_penumbra_check := CheckBox.new()
+	soft_penumbra_check.name = "Check"
+	soft_penumbra_row.add_child(soft_penumbra_check)
 	var close_button := Button.new()
 	close_button.name = "Close"
 	content.add_child(close_button)

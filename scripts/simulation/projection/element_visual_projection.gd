@@ -69,24 +69,54 @@ func _process(delta: float) -> void:
 		if running:
 			rotor.rotate_x(DRILL_SPIN_SPEED * delta)
 
-## Physics may replace StaticBody→RigidBody (rover activate) without a
-## structural event; visuals were children of the freed body.
+## Physics may replace StaticBody→RigidBody (rover activate) or recreate
+## multibody actuators without a structural event; visuals were children of
+## the freed body.
 func _resync_replaced_bodies() -> void:
 	if _physics_projection == null:
 		return
 	var stale: Array[int] = []
 	for assembly_id_variant: Variant in _known_bodies.keys():
 		var assembly_id := int(assembly_id_variant)
-		var known: Variant = _known_bodies.get(assembly_id)
-		var current := _physics_projection.get_physics_body(assembly_id)
-		if (
-			current == null
-			or not is_instance_valid(known)
-			or known != current
-		):
+		if _assembly_element_bodies_stale(assembly_id):
 			stale.append(assembly_id)
 	for assembly_id: int in stale:
 		_rebuild_assembly(assembly_id)
+
+
+func _assembly_element_bodies_stale(assembly_id: int) -> bool:
+	if _physics_projection == null or _world == null:
+		return false
+	var known: Variant = _known_bodies.get(assembly_id)
+	var root := _physics_projection.get_physics_body(assembly_id)
+	if (
+		root == null
+		or not is_instance_valid(known)
+		or known != root
+	):
+		return true
+	var live_bodies: Dictionary = {}
+	for body: PhysicsBody3D in (
+		_physics_projection.list_assembly_physics_bodies(assembly_id)
+	):
+		if body != null and is_instance_valid(body):
+			live_bodies[body.get_instance_id()] = true
+	var assembly := _world.get_assembly_raw(assembly_id)
+	if assembly == null or assembly.tombstoned:
+		return false
+	for element_id: int in assembly.element_ids:
+		var element := _world.get_element(element_id)
+		if element == null or PistonVisual.is_piston_element(element.archetype_id):
+			continue
+		var expected := _body_for_element(element_id)
+		if expected == null or not is_instance_valid(expected):
+			continue
+		if not live_bodies.has(expected.get_instance_id()):
+			return true
+		var visual_body := _find_body_with_element_visual(assembly_id, element_id)
+		if visual_body != null and visual_body != expected:
+			return true
+	return false
 
 func _stationary_drill_spinning(element: SimulationElement) -> bool:
 	if element == null or not element.is_operational():
@@ -182,13 +212,7 @@ func _try_append_placed_element(
 ) -> bool:
 	if _world == null or _physics_projection == null or element_id <= 0:
 		return false
-	var root_body := _physics_projection.get_physics_body(assembly_id)
-	var known: Variant = _known_bodies.get(assembly_id)
-	if (
-		root_body == null
-		or not is_instance_valid(known)
-		or known != root_body
-	):
+	if _assembly_element_bodies_stale(assembly_id):
 		return false
 	var assembly := _world.get_assembly_raw(assembly_id)
 	var element := _world.get_element(element_id)
@@ -239,13 +263,7 @@ func _try_remove_projected_element(
 ) -> bool:
 	if _world == null or _physics_projection == null or element_id <= 0:
 		return false
-	var root_body := _physics_projection.get_physics_body(assembly_id)
-	var known: Variant = _known_bodies.get(assembly_id)
-	if (
-		root_body == null
-		or not is_instance_valid(known)
-		or known != root_body
-	):
+	if _assembly_element_bodies_stale(assembly_id):
 		return false
 	var assembly := _world.get_assembly_raw(assembly_id)
 	if assembly == null or assembly.tombstoned:
@@ -733,8 +751,18 @@ func _clear_assembly_visuals(assembly_id: int) -> void:
 	if assembly == null:
 		return
 	var cleared: Dictionary = {}
+	for body: PhysicsBody3D in (
+		_physics_projection.list_assembly_physics_bodies(assembly_id)
+	):
+		if body == null or not is_instance_valid(body):
+			continue
+		var body_id := body.get_instance_id()
+		if cleared.has(body_id):
+			continue
+		_clear_visuals(body, assembly_id)
+		cleared[body_id] = true
 	for element_id: int in assembly.element_ids:
-		var body := _body_for_element(element_id)
+		var body := _find_body_with_element_visual(assembly_id, element_id)
 		if body == null:
 			continue
 		var body_id := body.get_instance_id()

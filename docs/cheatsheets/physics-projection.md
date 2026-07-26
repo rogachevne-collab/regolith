@@ -10,12 +10,12 @@
 Только authoritative world (`_world.authoritative`). Порядок заморожен:
 
 1. `_ensure_tick_key_caches()` — PERF-H03 ключи `_bodies` / `_wheel_constraints`
-2. `_tick_rotor_actuators(delta)` → `ActuatorPhysicsTickCoordinator`
-3. `_tick_piston_actuators(delta)` → `ActuatorPhysicsTickCoordinator`
-4. `_tick_wheel_bodies(delta)` → `WheelPhysicsTickCoordinator`
+2. `ActuatorPhysicsTickCoordinator.tick_rotor_actuators`
+3. `ActuatorPhysicsTickCoordinator.tick_piston_actuators`
+4. `WheelPhysicsTickCoordinator.tick_wheel_bodies`
    (внутри: parking freeze scan → `AssemblyParkingFreezeCoordinator`, затем per-wheel)
-5. `_tick_thrusters(delta)` → `ActuatorPhysicsTickCoordinator`
-6. `_tick_cable_ropes(delta)` → `_tick_cable_tension(delta)` → `_tick_cable_anchors(delta)`
+5. `ActuatorPhysicsTickCoordinator.tick_thrusters`
+6. `CablePhysicsTickCoordinator.tick_cable_ropes` → `tick_cable_tension` → `tick_cable_anchors`
 7. `PhysicsMotionSyncCoordinator.sync_live_assembly_motions` — Jolt → kernel
    motion read-back (скип frozen assemblies)
 8. запись `_last_tick_breakdown_us` (+ `tick_seq`, `native_gap_since_prev_tick`)
@@ -24,7 +24,11 @@
 
 | Задача | Файл |
 |---|---|
-| facade: bind/rebuild, проекция тел, публичный API, канаты | `scripts/simulation/projection/simulation_physics_projection.gd` |
+| facade: bind/rebuild, orchestration, публичный API, state | `scripts/simulation/projection/simulation_physics_projection.gd` |
+| single/multibody project, joints at bind | `scripts/simulation/projection/assembly_projection_coordinator.gd` |
+| body create, colliders attach, mass/COM | `scripts/simulation/projection/assembly_body_build_coordinator.gd` |
+| teardown, driver evacuate/restore | `scripts/simulation/projection/assembly_teardown_coordinator.gd` |
+| cable/rope tick (XPBD, freeze, tension, anchors) | `scripts/simulation/projection/cable_physics_tick_coordinator.gd` |
 | structural events: place / dismantle / split / merge | `scripts/simulation/projection/structural_event_coordinator.gd` |
 | motion capture / sync (live read-back, pre-teardown snapshot) | `scripts/simulation/projection/physics_motion_sync_coordinator.gd` |
 | parking freeze / wake | `scripts/simulation/projection/assembly_parking_freeze_coordinator.gd` |
@@ -58,16 +62,12 @@ split (`handle_split`, `project_split_child`, `seed_motion_for_split_child`) и
 merge (`handle_merge`, `compute_merged_motion` — бывший `_merged_motion`,
 переименован чтобы не затеняться локальной `merged_motion`).
 
-**Осталось в монолите:** `bind_world`/`unbind_world`, `rebuild_all`,
-`_project_assembly` и обе ветки (`_project_assembly_single`,
-`_project_assembly_multibody`), `_remove_body`, `_restore_evacuated_drivers`,
-`_capture_*`, `_body_mass`, `_body_center_of_mass_world`,
-`_estimate_body_inertia`, `_compile_assembly_groups`,
-`_attach_colliders_to_body`, `_sync_wheel_loco_body_physics`, всё состояние
-(`_bodies`, `_element_records`, `_assembly_group_bodies`, `_*_constraints`,
-`_root_group_ids`, `_projected_revision`, `_mounted_bodies`) и весь канатный
-код. Координатор читает и мутирует поля владельца напрямую
-(`projection._element_records.erase(...)`).
+**Осталось в монолите:** `bind_world`/`unbind_world`, `rebuild_all`, `_on_structural_event`,
+`_physics_process` orchestration (прямые вызовы координаторов), `_ensure_tick_key_caches`,
+публичные `is_rope_frozen` / `rope_path` / `wake_*` / accessors, всё состояние
+(`_bodies`, `_rope_states`, `_element_records`, `_*_constraints`, …). Координаторы
+читают и мутируют поля владельца напрямую (`projection._element_records.erase(...)`).
+Общий util `AssemblyTeardownCoordinator.sorted_int_keys` — сортировка ключей dict.
 
 **Правило обёртки сигнала.** `_on_structural_event(event)` обязана остаться
 обычным (не `static`) методом узла и той же самой `Callable`, что в
@@ -112,7 +112,8 @@ merge (`handle_merge`, `compute_merged_motion` — бывший `_merged_motion`
   (нетипизирован — защита от цикла `class_name`). Значения от `projection`
   объявлять с явным типом (`var body: PhysicsBody3D = ...`), не `:=`.
   Мутации state — через поля/методы projection, не service→service.
-- Публичные сигнатуры монолита не ломать (обёртки → координатор).
+- Публичные сигнатуры монолита не ломать; координаторы вызываются напрямую из
+  `_physics_process` и из других координаторов (без прокладок-обёрток).
 - `_last_tick_breakdown_us` живёт в монолите; колёса пишут в него через
   `projection._last_tick_breakdown_us`.
 
@@ -121,3 +122,13 @@ merge (`handle_merge`, `compute_merged_motion` — бывший `_merged_motion`
 - Граница владения: `docs/PHYSICAL-LANGUAGE.md` (индекс → «Граница владения»)
 - Контракт extract: `docs/plans/ANTIGOD-CONTRACT-FREEZE.md`
 - Jolt: [Using Jolt Physics](https://docs.godotengine.org/en/stable/tutorials/physics/using_jolt_physics.html)
+
+## Line counts (волна P)
+
+| Файл | строк |
+|---|---:|
+| `simulation_physics_projection.gd` | 319 |
+| `assembly_projection_coordinator.gd` | 707 |
+| `assembly_body_build_coordinator.gd` | 201 |
+| `cable_physics_tick_coordinator.gd` | 698 |
+| `assembly_teardown_coordinator.gd` | 184 |

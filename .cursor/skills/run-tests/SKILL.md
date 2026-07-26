@@ -19,9 +19,25 @@ Gameplay/HUD/presentation changes are NOT verified here — run the game
 
 ## Prerequisites
 
-- Godot 4.8 (`/Applications/Godot.app`, `$GODOT`, `PATH`; Windows: `Y:\Godot\Godot_v4.8-stable_win64*.exe` via `run.ps1` / `run.sh`)
+- Godot 4.8 — macOS: `/Applications/Godot.app`, `$GODOT`, `PATH`.
+  **Windows (this machine):** `Y:\godot-engine\bin\` — custom double build
+  (`godot.windows.editor.double.x86_64.console.exe` для headless,
+  `.exe` без `.console` для редактора). `run.ps1` / `run.sh` ищут его первым;
+  fallback — stock `Y:\Godot\Godot_v4.8-stable_win64*.exe`, затем `$GODOT` / `PATH`.
 - Voxel GDExtension present: `addons/zylann.voxel/voxel.gdextension`
 - First clone: `./run.sh --headless --import` or `.\run.ps1 --headless --import` once
+
+## Windows без bash
+
+Если `bash` недоступен, один тест напрямую:
+
+```powershell
+cd Y:\regolith
+& Y:\godot-engine\bin\godot.windows.editor.double.x86_64.console.exe `
+  --path Y:\regolith --headless res://scenes/test_<name>.tscn
+```
+
+Или через лаунчер: `.\run.ps1 --headless res://scenes/test_<name>.tscn`
 
 ## Commands
 

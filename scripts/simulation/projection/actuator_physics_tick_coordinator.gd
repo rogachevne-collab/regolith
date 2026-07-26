@@ -12,14 +12,14 @@ const SUSTAINED_V_EPS := 0.05
 static func tick_thrusters(projection, delta: float) -> void:
 	if projection._world == null or delta <= 0.0:
 		return
-	for assembly_id: int in projection._sorted_int_keys(projection._bodies):
+	for assembly_id: int in AssemblyTeardownCoordinator.sorted_int_keys(projection._bodies):
 		# Activated first: avoid element walks for parked / inactive assemblies.
 		# Thruster and gyro consumers are independent — gyro must tick without
 		# thruster presence (CONTROL-AXES-V0 / semantic seat routing).
 		var locomotion: AssemblyLocomotionController = projection._world.get_locomotion_controller(assembly_id)
 		if locomotion == null or not locomotion.is_activated():
 			continue
-		if projection._is_assembly_frozen(assembly_id):
+		if AssemblyParkingFreezeCoordinator.is_assembly_frozen(projection, assembly_id):
 			continue
 		var need_thrust: bool = locomotion.is_thrusters_route_enabled()
 		var need_gyro: bool = locomotion.is_gyros_route_enabled()
@@ -135,11 +135,11 @@ static func apply_gyro_torque(
 static func tick_rotor_actuators(projection, delta: float) -> void:
 	if projection._world == null or delta <= 0.0:
 		return
-	for assembly_id: int in projection._sorted_int_keys(projection._rotor_constraints):
+	for assembly_id: int in AssemblyTeardownCoordinator.sorted_int_keys(projection._rotor_constraints):
 		var assembly: SimulationAssembly = projection._world.get_assembly_raw(assembly_id)
 		if assembly == null or assembly.tombstoned:
 			continue
-		if projection._is_assembly_frozen(assembly_id):
+		if AssemblyParkingFreezeCoordinator.is_assembly_frozen(projection, assembly_id):
 			continue
 		for record_variant: Variant in projection._rotor_constraints[assembly_id]:
 			if not record_variant is Dictionary:
@@ -259,11 +259,11 @@ static func tick_piston_actuators(projection, delta: float) -> void:
 	if projection._world == null or delta <= 0.0:
 		return
 	var any_live_piston: bool = false
-	for assembly_id: int in projection._sorted_int_keys(projection._piston_constraints):
+	for assembly_id: int in AssemblyTeardownCoordinator.sorted_int_keys(projection._piston_constraints):
 		var assembly: SimulationAssembly = projection._world.get_assembly_raw(assembly_id)
 		if assembly == null or assembly.tombstoned:
 			continue
-		if projection._is_assembly_frozen(assembly_id):
+		if AssemblyParkingFreezeCoordinator.is_assembly_frozen(projection, assembly_id):
 			continue
 		var records: Variant = projection._piston_constraints[assembly_id]
 		if records is Array and (records as Array).is_empty():
@@ -392,7 +392,10 @@ static func tick_piston_actuators(projection, delta: float) -> void:
 				)
 	# Kernel motor integrate while any projected piston/rotor assembly is live.
 	# Wheel-only yards (empty actuator maps) must not walk joints each tick.
-	if any_live_piston or projection._has_live_actuator_assembly(projection._rotor_constraints):
+	if any_live_piston or AssemblyParkingFreezeCoordinator.has_live_actuator_assembly(
+		projection,
+		projection._rotor_constraints
+	):
 		projection._world.tick_actuators(delta)
 
 static func refresh_piston_constraint_config(
@@ -528,22 +531,3 @@ static func carriage_touches_terrain(
 		):
 			return true
 	return false
-
-static func clear_piston_constraints(projection, assembly_id: int) -> void:
-	for constraints: Dictionary in [
-		projection._piston_constraints,
-		projection._rotor_constraints,
-		projection._wheel_constraints,
-	]:
-		var records: Variant = constraints.get(assembly_id, [])
-		if records is Array:
-			for record_variant: Variant in records:
-				if not record_variant is Dictionary:
-					continue
-				var constraint: Generic6DOFJoint3D = (
-					record_variant.get("constraint") as Generic6DOFJoint3D
-				)
-				if constraint != null and is_instance_valid(constraint):
-					constraint.queue_free()
-		constraints.erase(assembly_id)
-	projection._root_group_ids.erase(assembly_id)

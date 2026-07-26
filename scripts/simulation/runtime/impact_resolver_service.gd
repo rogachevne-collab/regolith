@@ -731,6 +731,11 @@ func _snap_contact_to_terrain_surface(
 	terrain: Node3D,
 	striker_body: PhysicsBody3D = null
 ) -> Vector3:
+	# Sustained/manifold guesses can sit on or below the striker face while the
+	# surface ray lands above; snapping in that case moves the stamp off the
+	# penetration point so volume is removed elsewhere and SDF probes miss it.
+	if _contact_already_at_terrain(contact_world, terrain):
+		return contact_world
 	return _probe_terrain_surface_world(
 		contact_world + Vector3.UP * 1.25,
 		Vector3.DOWN,
@@ -738,6 +743,22 @@ func _snap_contact_to_terrain_surface(
 		striker_body,
 		4.0
 	)
+
+
+func _contact_already_at_terrain(
+	contact_world: Vector3,
+	terrain: Node3D
+) -> bool:
+	if terrain == null or _gateway == null:
+		return false
+	var tool: VoxelTool = _gateway.get_voxel_tool()
+	if tool == null:
+		return false
+	tool.channel = VoxelBuffer.CHANNEL_SDF
+	var cell := VoxelSpaceUtil.world_cell_from_point(terrain, contact_world)
+	if not tool.is_area_editable(AABB(cell, Vector3.ONE)):
+		return false
+	return tool.get_voxel_f(cell) <= 0.05
 
 
 func _probe_terrain_surface_world(

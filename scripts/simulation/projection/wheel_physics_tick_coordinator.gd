@@ -54,7 +54,7 @@ static func build_wheel_constraints(
 	groups_map: Dictionary
 ) -> Array[Dictionary]:
 	var records: Array[Dictionary] = []
-	for group_id: int in projection._sorted_int_keys(wheel_groups):
+	for group_id: int in AssemblyTeardownCoordinator.sorted_int_keys(wheel_groups):
 		var wheel_group: Dictionary = wheel_groups[group_id]
 		var spec: Dictionary = wheel_group["spec"]
 		var frame: Dictionary = wheel_group["frame"]
@@ -208,7 +208,7 @@ static func tick_wheel_bodies(projection, delta: float) -> void:
 	var t0: int = Time.get_ticks_usec()
 	projection._ensure_tick_key_caches()
 	for assembly_id: int in projection._bodies_keys_cache:
-		projection._update_parking_freeze(assembly_id)
+		AssemblyParkingFreezeCoordinator.update_parking_freeze(projection, assembly_id)
 	var t_freeze: int = Time.get_ticks_usec()
 	var wheel_records_ticked: int = 0
 	for assembly_id: int in projection._wheel_constraints_keys_cache:
@@ -597,7 +597,9 @@ static func apply_locomotive_rigid_tuning(
 	):
 		return
 	rigid.continuous_cd = false
-	rigid.physics_material_override = projection._get_locomotive_physics_material()
+	rigid.physics_material_override = AssemblyBodyBuildCoordinator.get_locomotive_physics_material(
+		projection
+	)
 	rigid.collision_layer = COLLISION_LAYER_ASSEMBLY
 	rigid.collision_mask = COLLISION_MASK_WHEEL_LOCOMOTIVE
 	rigid.set_meta("wheel_loco_terrain_exempt", true)
@@ -621,5 +623,7 @@ static func sync_wheel_loco_body_physics(
 		return
 	rigid.collision_layer = COLLISION_LAYER_ASSEMBLY
 	rigid.collision_mask = COLLISION_MASK_ASSEMBLY
-	rigid.physics_material_override = projection._get_assembly_physics_material()
+	rigid.physics_material_override = AssemblyBodyBuildCoordinator.get_assembly_physics_material(
+		projection
+	)
 	rigid.remove_meta("wheel_loco_terrain_exempt")

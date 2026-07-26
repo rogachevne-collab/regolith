@@ -9,6 +9,15 @@ var _world: SimulationWorld
 var _physics_projection: SimulationPhysicsProjection
 var _records_by_assembly: Dictionary = {}
 
+const ACTUATOR_ARCHETYPE_IDS: Array[StringName] = [
+	&"rotor_base",
+	&"rotor_top",
+	&"rotor_base_large",
+	&"rotor_top_large",
+	&"hinge_base",
+	&"hinge_top",
+]
+
 
 func bind(
 	world: SimulationWorld,
@@ -42,8 +51,15 @@ func rebuild_assembly(assembly_id: int) -> void:
 func _process(_delta: float) -> void:
 	if _world == null or _physics_projection == null:
 		return
+	var stale: Array[int] = []
 	for assembly_id: int in _records_by_assembly.keys():
-		_sync_assembly(int(assembly_id))
+		var assembly_id_int := int(assembly_id)
+		if _assembly_piston_bodies_stale(assembly_id_int):
+			stale.append(assembly_id_int)
+		else:
+			_sync_assembly(assembly_id_int)
+	for assembly_id: int in stale:
+		_rebuild_assembly(assembly_id)
 
 
 func _on_structural_event(event: Dictionary) -> void:
@@ -53,10 +69,11 @@ func _on_structural_event(event: Dictionary) -> void:
 		&"assembly_spawned":
 			call_deferred("_rebuild_assembly", int(event["assembly_id"]))
 		&"assembly_changed":
-			# Frame place/dismantle on a rover must not tear down every piston
-			# visual — only rebuild when a piston half or joint is involved.
+			var assembly_id := int(event["assembly_id"])
 			if _event_touches_piston_visuals(event):
-				call_deferred("_rebuild_assembly", int(event["assembly_id"]))
+				call_deferred("_rebuild_assembly", assembly_id)
+			else:
+				call_deferred("_rebuild_assembly_if_stale", assembly_id)
 		&"assembly_removed":
 			_clear_assembly(int(event["assembly_id"]))
 		&"assembly_split":
@@ -80,15 +97,69 @@ func _event_touches_piston_visuals(event: Dictionary) -> bool:
 	var removed_element_id := int(event.get("removed_element_id", 0))
 	if placed_element_id > 0:
 		var placed := _world.get_element(placed_element_id)
-		if (
-			placed != null
-			and PistonVisualScript.is_piston_element(placed.archetype_id)
-		):
+		if placed != null and _is_actuator_element(placed.archetype_id):
 			return true
 		return false
 	if removed_element_id > 0:
-		return _records_reference_element(assembly_id, removed_element_id)
+		if _records_reference_element(assembly_id, removed_element_id):
+			return true
+		var removed := _world.get_element(removed_element_id)
+		if removed != null and _is_actuator_element(removed.archetype_id):
+			return true
+		return not _physics_projection.list_piston_constraint_records(
+			assembly_id
+		).is_empty()
 	return true
+
+
+static func _is_actuator_element(archetype_id: String) -> bool:
+	if PistonVisualScript.is_piston_element(archetype_id):
+		return true
+	return ACTUATOR_ARCHETYPE_IDS.has(StringName(archetype_id))
+
+
+func _rebuild_assembly_if_stale(assembly_id: int) -> void:
+	if _assembly_piston_bodies_stale(assembly_id):
+		_rebuild_assembly(assembly_id)
+
+
+func _assembly_piston_bodies_stale(assembly_id: int) -> bool:
+	var records_variant: Variant = _records_by_assembly.get(assembly_id, [])
+	if not records_variant is Array:
+		return false
+	var records: Array = records_variant
+	if records.is_empty():
+		return false
+	for record_variant: Variant in records:
+		if not record_variant is Dictionary:
+			continue
+		if not _record_bodies_match_projection(record_variant as Dictionary):
+			return true
+	return false
+
+
+func _record_bodies_match_projection(record: Dictionary) -> bool:
+	var base_body: PhysicsBody3D = _find_body_for_record(record, "base_root")
+	var head_body: PhysicsBody3D = _find_body_for_record(record, "head_root")
+	if (
+		base_body == null
+		or head_body == null
+		or not is_instance_valid(base_body)
+		or not is_instance_valid(head_body)
+	):
+		return false
+	var sim_joint: SimulationJoint = record.get("sim_joint")
+	if sim_joint == null:
+		return true
+	var base_record: Dictionary = _physics_projection.get_element_projection(
+		sim_joint.element_a_id
+	)
+	var head_record: Dictionary = _physics_projection.get_element_projection(
+		sim_joint.element_b_id
+	)
+	var expected_base: PhysicsBody3D = base_record.get("body") as PhysicsBody3D
+	var expected_head: PhysicsBody3D = head_record.get("body") as PhysicsBody3D
+	return expected_base == base_body and expected_head == head_body
 
 
 func _records_reference_element(assembly_id: int, element_id: int) -> bool:

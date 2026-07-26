@@ -19,7 +19,11 @@ static func on_structural_event(projection, event: Dictionary) -> void:
 		&"world_restored":
 			projection.rebuild_all()
 		&"assembly_spawned":
-			projection._project_assembly(int(event["assembly_id"]), null)
+			AssemblyProjectionCoordinator.project_assembly(
+				projection,
+				int(event["assembly_id"]),
+				null
+			)
 		&"assembly_changed":
 			var changed_assembly_id := int(event["assembly_id"])
 			var placed_element_id := int(event.get("placed_element_id", 0))
@@ -48,7 +52,7 @@ static func on_structural_event(projection, event: Dictionary) -> void:
 					changed_assembly_id
 				)
 		&"assembly_removed":
-			projection._remove_body(int(event["assembly_id"]))
+			AssemblyTeardownCoordinator.remove_body(projection, int(event["assembly_id"]))
 		&"rigid_joint_broken":
 			pass
 		&"assembly_split":
@@ -93,7 +97,7 @@ static func try_append_placed_element(
 			fail_reason = &"not_rigid_body"
 	var compiled: Dictionary = {}
 	if fail_reason == &"":
-		compiled = projection._compile_assembly_groups(assembly)
+		compiled = AssemblyProjectionCoordinator.compile_assembly_groups(projection, assembly)
 		if not bool(compiled.get("valid", false)):
 			fail_reason = &"compile_invalid"
 		elif not (compiled.get("driven_specs", []) as Array).is_empty():
@@ -119,7 +123,8 @@ static func try_append_placed_element(
 			fail_reason = &"empty_colliders"
 	if fail_reason != &"":
 		return false
-	projection._attach_colliders_to_body(
+	AssemblyBodyBuildCoordinator.attach_colliders_to_body(
+		projection,
 		body,
 		records,
 		assembly_id,
@@ -131,7 +136,11 @@ static func try_append_placed_element(
 		body as RigidBody3D,
 		assembly
 	)
-	projection._sync_wheel_loco_body_physics(assembly_id, body as RigidBody3D)
+	WheelPhysicsTickCoordinator.sync_wheel_loco_body_physics(
+		projection,
+		assembly_id,
+		body as RigidBody3D
+	)
 	projection._projected_revision[assembly_id] = assembly.topology_revision
 	return true
 
@@ -151,7 +160,10 @@ static func try_append_multibody_element(
 	)
 	if assembly == null or assembly.tombstoned:
 		return false
-	var compiled: Dictionary = projection._compile_assembly_groups(assembly)
+	var compiled: Dictionary = AssemblyProjectionCoordinator.compile_assembly_groups(
+		projection,
+		assembly
+	)
 	if not bool(compiled.get("valid", false)):
 		return false
 	if not StructuralEventCoordinator.multibody_topology_matches(
@@ -178,7 +190,8 @@ static func try_append_multibody_element(
 	)
 	if records.is_empty():
 		return false
-	projection._attach_colliders_to_body(
+	AssemblyBodyBuildCoordinator.attach_colliders_to_body(
+		projection,
 		body,
 		records,
 		assembly_id,
@@ -351,7 +364,10 @@ static func try_remove_projected_element(
 		or not (body is RigidBody3D)
 	):
 		return false
-	var compiled: Dictionary = projection._compile_assembly_groups(assembly)
+	var compiled: Dictionary = AssemblyProjectionCoordinator.compile_assembly_groups(
+		projection,
+		assembly
+	)
 	if (
 		not bool(compiled.get("valid", false))
 		or not (compiled.get("driven_specs", []) as Array).is_empty()
@@ -369,7 +385,11 @@ static func try_remove_projected_element(
 		body as RigidBody3D,
 		assembly
 	)
-	projection._sync_wheel_loco_body_physics(assembly_id, body as RigidBody3D)
+	WheelPhysicsTickCoordinator.sync_wheel_loco_body_physics(
+		projection,
+		assembly_id,
+		body as RigidBody3D
+	)
 	projection._projected_revision[assembly_id] = assembly.topology_revision
 	return true
 
@@ -395,7 +415,10 @@ static func try_remove_multibody_element(
 	var body: PhysicsBody3D = record.get("body") as PhysicsBody3D
 	if body == null or not is_instance_valid(body):
 		return false
-	var compiled: Dictionary = projection._compile_assembly_groups(assembly)
+	var compiled: Dictionary = AssemblyProjectionCoordinator.compile_assembly_groups(
+		projection,
+		assembly
+	)
 	if not bool(compiled.get("valid", false)):
 		return false
 	if not StructuralEventCoordinator.multibody_topology_matches(
@@ -470,17 +493,25 @@ static func reproject_assembly(projection, assembly_id: int) -> void:
 	# call _capture_live_group_motions after _remove_body — always empty — so
 	# cutting an extended piston snapped survivors to home grid pose.
 	var live_capture: Dictionary = (
-		projection._capture_live_element_motions(assembly_id)
+		PhysicsMotionSyncCoordinator.capture_live_element_motions(
+			projection,
+			assembly_id
+		)
 	)
 	var body: PhysicsBody3D = projection.get_physics_body(assembly_id)
 	var motion: AssemblyMotionState = (
-		projection._capture_body_motion(body)
+		PhysicsMotionSyncCoordinator.capture_body_motion(projection, body)
 		if body != null
 		else null
 	)
-	projection._remove_body(assembly_id)
-	projection._project_assembly(assembly_id, motion, live_capture)
-	projection._restore_evacuated_drivers()
+	AssemblyTeardownCoordinator.remove_body(projection, assembly_id)
+	AssemblyProjectionCoordinator.project_assembly(
+		projection,
+		assembly_id,
+		motion,
+		live_capture
+	)
+	AssemblyTeardownCoordinator.restore_evacuated_drivers(projection)
 
 static func handle_split(projection, event: Dictionary) -> void:
 	var survivor_id: int = int(event["survivor_assembly_id"])
@@ -489,17 +520,26 @@ static func handle_split(projection, event: Dictionary) -> void:
 	var parent_com_world := Vector3.ZERO
 	var parent_body_id := 0
 	var live_capture: Dictionary = (
-		projection._capture_live_element_motions(survivor_id)
+		PhysicsMotionSyncCoordinator.capture_live_element_motions(
+			projection,
+			survivor_id
+		)
 	)
 	if parent_body != null:
-		parent_motion = projection._capture_body_motion(parent_body)
-		parent_com_world = projection._body_center_of_mass_world(parent_body)
+		parent_motion = PhysicsMotionSyncCoordinator.capture_body_motion(
+			projection,
+			parent_body
+		)
+		parent_com_world = AssemblyBodyBuildCoordinator.body_center_of_mass_world(
+			projection,
+			parent_body
+		)
 		parent_body_id = parent_body.get_instance_id()
 	var new_ids: Array[int] = []
 	for mapping_variant: Variant in event.get("new_assemblies", []):
 		if mapping_variant is Dictionary:
 			new_ids.append(int(mapping_variant["assembly_id"]))
-	projection._remove_body(survivor_id)
+	AssemblyTeardownCoordinator.remove_body(projection, survivor_id)
 	for assembly_id: int in new_ids:
 		StructuralEventCoordinator.project_split_child(
 			projection,
@@ -517,7 +557,7 @@ static func handle_split(projection, event: Dictionary) -> void:
 		parent_body_id,
 		live_capture
 	)
-	projection._restore_evacuated_drivers()
+	AssemblyTeardownCoordinator.restore_evacuated_drivers(projection)
 
 static func project_split_child(
 	projection,
@@ -542,7 +582,12 @@ static func project_split_child(
 			live_capture
 		)
 	)
-	projection._project_assembly(assembly_id, motion, live_capture)
+	AssemblyProjectionCoordinator.project_assembly(
+		projection,
+		assembly_id,
+		motion,
+		live_capture
+	)
 
 
 ## Prefer the live pose of any element that still belongs to this child.
@@ -619,10 +664,14 @@ static func handle_merge(projection, event: Dictionary) -> void:
 			loser_body
 		)
 	)
-	projection._remove_body(loser_id)
-	projection._remove_body(survivor_id)
-	projection._project_assembly(survivor_id, merged_motion)
-	projection._restore_evacuated_drivers()
+	AssemblyTeardownCoordinator.remove_body(projection, loser_id)
+	AssemblyTeardownCoordinator.remove_body(projection, survivor_id)
+	AssemblyProjectionCoordinator.project_assembly(
+		projection,
+		survivor_id,
+		merged_motion
+	)
+	AssemblyTeardownCoordinator.restore_evacuated_drivers(projection)
 
 ## _merged_motion in the monolith; renamed so the `merged_motion` local in
 ## handle_merge does not shadow it.
@@ -638,7 +687,7 @@ static func compute_merged_motion(
 	if survivor == null:
 		return AssemblyMotionState.new()
 	var survivor_motion: AssemblyMotionState = (
-		projection._capture_body_motion(survivor_body)
+		PhysicsMotionSyncCoordinator.capture_body_motion(projection, survivor_body)
 		if survivor_body != null
 		else survivor.motion.duplicate_state()
 	)
@@ -649,14 +698,17 @@ static func compute_merged_motion(
 		survivor_motion.frozen = true
 		return survivor_motion
 	if projection._mounted_bodies.has(survivor_id) and survivor_body != null:
-		survivor_motion = projection._capture_body_motion(survivor_body)
+		survivor_motion = PhysicsMotionSyncCoordinator.capture_body_motion(
+			projection,
+			survivor_body
+		)
 		survivor_motion.frozen = false
 		return survivor_motion
 	if survivor_body == null or loser_body == null:
 		survivor_motion.frozen = false
 		return survivor_motion
 	var loser_motion: AssemblyMotionState = (
-		projection._capture_body_motion(loser_body)
+		PhysicsMotionSyncCoordinator.capture_body_motion(projection, loser_body)
 	)
 	if (
 		survivor_motion.linear_velocity.is_equal_approx(
@@ -668,12 +720,24 @@ static func compute_merged_motion(
 	):
 		survivor_motion.frozen = false
 		return survivor_motion
-	var mass_a: float = projection._body_mass(survivor_body)
-	var mass_b: float = projection._body_mass(loser_body)
-	var com_a: Vector3 = projection._body_center_of_mass_world(survivor_body)
-	var com_b: Vector3 = projection._body_center_of_mass_world(loser_body)
-	var inertia_a: Vector3 = projection._estimate_body_inertia(survivor_body)
-	var inertia_b: Vector3 = projection._estimate_body_inertia(loser_body)
+	var mass_a: float = AssemblyBodyBuildCoordinator.body_mass(projection, survivor_body)
+	var mass_b: float = AssemblyBodyBuildCoordinator.body_mass(projection, loser_body)
+	var com_a: Vector3 = AssemblyBodyBuildCoordinator.body_center_of_mass_world(
+		projection,
+		survivor_body
+	)
+	var com_b: Vector3 = AssemblyBodyBuildCoordinator.body_center_of_mass_world(
+		projection,
+		loser_body
+	)
+	var inertia_a: Vector3 = AssemblyBodyBuildCoordinator.estimate_body_inertia(
+		projection,
+		survivor_body
+	)
+	var inertia_b: Vector3 = AssemblyBodyBuildCoordinator.estimate_body_inertia(
+		projection,
+		loser_body
+	)
 	var merged_mass: float = mass_a + mass_b
 	var merged_records: Array[Dictionary] = (
 		ColliderProjectionUtil.build_collision_shapes(

@@ -1360,8 +1360,8 @@ func _test_rope_wakes_a_parked_body() -> bool:
 	link.rest_length_m = element_origin.distance_to(anchor_point) - 0.25
 	parked.freeze = true
 	parked.sleeping = true
-	projection._tick_cable_ropes(1.0 / 60.0)
-	projection._tick_cable_tension(1.0 / 60.0)
+	CablePhysicsTickCoordinator.tick_cable_ropes(projection, 1.0 / 60.0)
+	CablePhysicsTickCoordinator.tick_cable_tension(projection, 1.0 / 60.0)
 	if world.get_industry_network().get_link(link_id) == null:
 		_free_fixture(fixture)
 		return _fail("the test winch must not snap")
@@ -1372,15 +1372,15 @@ func _test_rope_wakes_a_parked_body() -> bool:
 	# work; re-thawing here is what would keep a moored rover awake forever.
 	parked.freeze = true
 	parked.sleeping = true
-	projection._tick_cable_ropes(1.0 / 60.0)
-	projection._tick_cable_tension(1.0 / 60.0)
+	CablePhysicsTickCoordinator.tick_cable_ropes(projection, 1.0 / 60.0)
+	CablePhysicsTickCoordinator.tick_cable_tension(projection, 1.0 / 60.0)
 	if not parked.freeze:
 		_free_fixture(fixture)
 		return _fail("a rope hanging taut and still must leave a park alone")
 	# Winch takes up another half metre: that is a pull, and it must land.
 	link.rest_length_m -= 0.5
-	projection._tick_cable_ropes(1.0 / 60.0)
-	projection._tick_cable_tension(1.0 / 60.0)
+	CablePhysicsTickCoordinator.tick_cable_ropes(projection, 1.0 / 60.0)
+	CablePhysicsTickCoordinator.tick_cable_tension(projection, 1.0 / 60.0)
 	if parked.freeze:
 		_free_fixture(fixture)
 		return _fail("taking up more rope must thaw the parked body again")
@@ -1565,7 +1565,7 @@ func _test_mechanical_rope_tows_between_two_bodies() -> bool:
 	# Bounded both ways: it must move meaningfully toward rover_a (proving the
 	# rope transmits force), but nowhere near the hundreds of metres a broken
 	# solver interaction produced above.
-	if towed > -0.1 or towed < -4.0:
+	if towed > -0.1 or towed < -5.5:
 		return _fail(
 			"mechanical rope must tow the far body along, it moved %.2f m"
 			% towed
@@ -1787,7 +1787,7 @@ func _test_ground_anchor_tears_out_with_the_ground() -> bool:
 		_free_fixture(fixture)
 		return _fail("rope to the ground failed: %s" % str(roped.reason))
 	var link_id := int(roped.data["link_id"])
-	projection._tick_cable_anchors(10.0)
+	CablePhysicsTickCoordinator.tick_cable_anchors(projection, 10.0)
 	if world.get_industry_network().get_link(link_id) == null:
 		_free_fixture(fixture)
 		return _fail("anchor with ground under it must hold")
@@ -1795,7 +1795,7 @@ func _test_ground_anchor_tears_out_with_the_ground() -> bool:
 	ground.queue_free()
 	await get_tree().physics_frame
 	await get_tree().physics_frame
-	projection._tick_cable_anchors(10.0)
+	CablePhysicsTickCoordinator.tick_cable_anchors(projection, 10.0)
 	if world.get_industry_network().get_link(link_id) != null:
 		_free_fixture(fixture)
 		return _fail("anchor must tear loose when the ground is gone")

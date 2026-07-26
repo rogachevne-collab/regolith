@@ -115,7 +115,9 @@ static func step(
 	break_force_n: float = 0.0,
 	collide_world: bool = true,
 	couple_mass_a: float = 0.0,
-	couple_mass_b: float = 0.0
+	couple_mass_b: float = 0.0,
+	couple_velocity_match_a: float = 1.0,
+	couple_velocity_match_b: float = 1.0
 ) -> Dictionary:
 	var result := {
 		"tension_n": 0.0,
@@ -196,8 +198,8 @@ static func step(
 	# intra-assembly policy (or CableTensionUtil-style soft catch).
 	if body_a != null and body_a == body_b:
 		return result
-	_settle_end(sim, 0, anchor_a, body_a, backing_a, couple_mass_a, delta)
-	_settle_end(sim, seg, anchor_b, body_b, backing_b, couple_mass_b, delta)
+	_settle_end(sim, 0, anchor_a, body_a, backing_a, couple_mass_a, delta, couple_velocity_match_a)
+	_settle_end(sim, seg, anchor_b, body_b, backing_b, couple_mass_b, delta, couple_velocity_match_b)
 	return result
 
 
@@ -227,16 +229,18 @@ static func _drive_end(
 
 static func _settle_end(
 	sim: XPBDRope, index: int, anchor: Vector3,
-	body: RigidBody3D, backing: Dictionary, couple_mass: float, delta: float
+	body: RigidBody3D, backing: Dictionary, couple_mass: float, delta: float,
+	velocity_match_scale: float = 1.0
 ) -> void:
 	if couple_mass > 0.0 and body != null and not body.freeze:
-		_apply_proxy_reaction(sim, index, anchor, body, delta)
+		_apply_proxy_reaction(sim, index, anchor, body, delta, velocity_match_scale)
 	else:
 		_apply_pin_reaction(sim, index, anchor, body, backing, delta)
 
 
 static func _apply_proxy_reaction(
-	sim: XPBDRope, index: int, anchor: Vector3, body: RigidBody3D, delta: float
+	sim: XPBDRope, index: int, anchor: Vector3, body: RigidBody3D, delta: float,
+	velocity_match_scale: float = 1.0
 ) -> void:
 	if body == null or body.freeze or delta <= 0.0:
 		return
@@ -252,7 +256,7 @@ static func _apply_proxy_reaction(
 	if dir != Vector3.ZERO:
 		var v_body := _pin_velocity(body, anchor)
 		var v_end: Vector3 = sim.velocities[index]
-		var dv := dir * (dir.dot(v_end - v_body) * LIFT_COUPLING)
+		var dv := dir * (dir.dot(v_end - v_body) * LIFT_COUPLING * velocity_match_scale)
 		if dv.length_squared() > 1e-12:
 			body.apply_impulse(dv * body.mass, offset)
 	# Rendered end back on the hook, whatever the stand-in did while solving.

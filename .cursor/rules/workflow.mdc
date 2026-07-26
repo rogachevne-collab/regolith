@@ -10,4 +10,6 @@ PR: только по запросу, через `gh`. Перед create — sta
 
 Код: минимальный diff, существующие конвенции. Реальная среда — команды выполняй сам.
 
+Windows Godot: `Y:\godot-engine\bin\` (double build; см. `run.ps1`, skill `run-tests`).
+
 Общение: коротко. Code citations — ` ```startLine:endLine:path ` `. Ссылки полные.

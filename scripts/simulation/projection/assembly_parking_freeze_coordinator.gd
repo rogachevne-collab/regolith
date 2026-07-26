@@ -154,7 +154,7 @@ static func wake_frozen_near(
 	center: Vector3,
 	radius: float
 ) -> void:
-	for assembly_id: int in projection._sorted_int_keys(projection._bodies):
+	for assembly_id: int in AssemblyTeardownCoordinator.sorted_int_keys(projection._bodies):
 		var body: PhysicsBody3D = projection.get_physics_body(assembly_id)
 		if body is not RigidBody3D:
 			continue
@@ -185,7 +185,7 @@ static func has_live_actuator_assembly(
 ) -> bool:
 	if projection._world == null or constraints.is_empty():
 		return false
-	for assembly_id: int in projection._sorted_int_keys(constraints):
+	for assembly_id: int in AssemblyTeardownCoordinator.sorted_int_keys(constraints):
 		var assembly: SimulationAssembly = (
 			projection._world.get_assembly_raw(assembly_id)
 		)

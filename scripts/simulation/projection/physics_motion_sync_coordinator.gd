@@ -50,7 +50,7 @@ static func sync_live_assembly_motions(projection) -> void:
 		if assembly == null or assembly.tombstoned:
 			continue
 		# Parked settle-freeze: pose is static — skip per-frame motion capture.
-		if projection._is_assembly_frozen(assembly_id):
+		if AssemblyParkingFreezeCoordinator.is_assembly_frozen(projection, assembly_id):
 			continue
 		var group_bodies: Variant = (
 			projection._assembly_group_bodies.get(assembly_id)

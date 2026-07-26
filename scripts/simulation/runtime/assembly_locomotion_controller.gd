@@ -23,7 +23,7 @@ var roll_command: float = 0.0
 var dampeners: bool = true
 ## Effective seat-route gates from the active writer's SeatInputFrame this tick.
 ## Consumers must suppress manual + dampening force/torque when their gate is off.
-var wheels_route_enabled: bool = false
+var wheels_route_enabled: bool = true
 var thrusters_route_enabled: bool = false
 var gyros_route_enabled: bool = false
 
