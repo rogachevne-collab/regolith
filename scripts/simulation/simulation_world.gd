@@ -295,6 +295,51 @@ func sync_element_industry_buffers(buffers: Dictionary) -> void:
 		if buffer != null:
 			element.industry_buffer = buffer
 
+
+## Sanctioned replica write: mirror host electric/runtime fields (`powered`,
+## battery, machine_enabled) so owner-sim wheel torque gates match host truth
+## without a second IndustryElectricBudget on the client.
+## `runtimes` is element_id → IndustryElementRuntime.to_dict().
+func sync_industry_element_runtimes(runtimes: Dictionary) -> void:
+	if authoritative:
+		push_error(
+			"SimulationWorld authoritative rejected sync_industry_element_runtimes (host owns industry)"
+		)
+		return
+	for element_id_variant: Variant in runtimes:
+		var element_id := int(element_id_variant)
+		if element_id <= 0 or get_element(element_id) == null:
+			continue
+		var row: Variant = runtimes[element_id_variant]
+		if not row is Dictionary:
+			continue
+		var incoming := IndustryElementRuntime.from_dict(row)
+		var runtime := ensure_industry_element_runtime(element_id)
+		runtime.machine_enabled = incoming.machine_enabled
+		runtime.battery_kwh = incoming.battery_kwh
+		runtime.battery_initialized = incoming.battery_initialized
+		runtime.active_recipe_power_w = incoming.active_recipe_power_w
+		runtime.powered = incoming.powered
+		runtime.power_reason = incoming.power_reason
+		if incoming.machine_state != null:
+			runtime.machine_state = incoming.machine_state
+
+
+## Host helper: pack industry runtimes for every element on an assembly
+## (seat-enter seed + interim coop sync).
+func capture_assembly_industry_runtimes(assembly_id: int) -> Dictionary:
+	var out: Dictionary = {}
+	var assembly := get_assembly_raw(assembly_id)
+	if assembly == null or assembly.tombstoned:
+		return out
+	for element_id: int in assembly.element_ids:
+		var runtime := get_industry_element_runtime(element_id)
+		if runtime == null:
+			continue
+		out[element_id] = runtime.to_dict()
+	return out
+
+
 ## Sanctioned replica write (COOP-HOST-V0 stage 5 interim): mirror per-peer
 ## tool/hotbar registries. `inventories` is player_uid → registry.to_dict().
 func sync_player_inventories(inventories: Dictionary) -> void:

@@ -651,12 +651,21 @@ static func _enter_rover_seat(
 			return gateway._result(&"blocked", {"detail": &"seat_context_rejected"})
 		if not passenger:
 			_prepare_rover_for_drive(gateway, assembly_id)
-		return gateway._result(&"ok", {
+		var ok_data := {
 			"seated": true,
 			"assembly_id": assembly_id,
 			"element_id": element_id,
 			"passenger": passenger,
-		})
+		}
+		# Owner-sim guest needs host electric truth immediately (powered is
+		# transient and not applied by a replica industry tick).
+		if not passenger and assembly_id > 0:
+			ok_data["industry_runtimes"] = (
+				gateway._session.world.capture_assembly_industry_runtimes(
+					assembly_id
+				)
+			)
+		return gateway._result(&"ok", ok_data)
 	var body: PhysicsBody3D = (
 		gateway._session.projection.get_element_projection(element_id).get("body")
 		as PhysicsBody3D

@@ -49,6 +49,12 @@ var _tick_key_structure_rev := 0
 var _tick_key_cache_rev := -1
 var _bodies_keys_cache: Array[int] = []
 var _wheel_constraints_keys_cache: Array[int] = []
+## Co-op owner-authoritative locomotion: assemblies this peer simulates with
+## full Jolt (wheel joints) even when `world.authoritative` is false (guest
+## driver). Host keeps guest-owned assemblies in `_ghost_assemblies` as
+## kinematic receivers of the owner's state stream.
+var _local_sim_assemblies: Dictionary = {}
+var _ghost_assemblies: Dictionary = {}
 
 ## Diagnostic only (PERF-COOP-REGRESS): Performance.TIME_PHYSICS_PROCESS
 ## measures the whole engine iteration — PhysicsServer3D::sync/flush_queries,
@@ -84,6 +90,56 @@ var _tick_seq := 0
 
 func get_last_tick_breakdown_us() -> Dictionary:
 	return _last_tick_breakdown_us
+
+
+## True when this peer should build wheel/actuator joints and integrate Jolt
+## for the assembly (host world, or guest driving locally).
+func simulates_assembly_physics(assembly_id: int) -> bool:
+	if assembly_id <= 0:
+		return false
+	if _ghost_assemblies.has(assembly_id):
+		return false
+	if _world != null and _world.authoritative:
+		return true
+	return _local_sim_assemblies.has(assembly_id)
+
+
+func begin_local_assembly_sim(assembly_id: int) -> void:
+	if assembly_id <= 0 or _local_sim_assemblies.has(assembly_id):
+		return
+	_local_sim_assemblies[assembly_id] = true
+	StructuralEventCoordinator.reproject_assembly(self, assembly_id)
+	wake_assembly_bodies(assembly_id)
+
+
+## Drop-and-rebuild local sim after snapshot restore (bodies were cleared;
+## the flag alone would leave begin_local_assembly_sim as a no-op).
+func rebind_local_assembly_sim(assembly_id: int) -> void:
+	if assembly_id <= 0:
+		return
+	_local_sim_assemblies.erase(assembly_id)
+	begin_local_assembly_sim(assembly_id)
+
+
+func end_local_assembly_sim(assembly_id: int) -> void:
+	if assembly_id <= 0 or not _local_sim_assemblies.has(assembly_id):
+		return
+	_local_sim_assemblies.erase(assembly_id)
+	StructuralEventCoordinator.reproject_assembly(self, assembly_id)
+
+
+func set_assembly_network_ghost(assembly_id: int, ghost: bool) -> void:
+	if assembly_id <= 0:
+		return
+	var was_ghost := _ghost_assemblies.has(assembly_id)
+	if ghost:
+		_ghost_assemblies[assembly_id] = true
+	else:
+		_ghost_assemblies.erase(assembly_id)
+	if was_ghost == ghost:
+		return
+	StructuralEventCoordinator.reproject_assembly(self, assembly_id)
+
 
 func _ensure_tick_key_caches() -> void:
 	if _tick_key_cache_rev == _tick_key_structure_rev:
@@ -297,9 +353,12 @@ func rope_path(link_id: int) -> PackedVector3Array:
 	return PackedVector3Array()
 
 func _physics_process(delta: float) -> void:
-	# Replica worlds (COOP-HOST-V0): no actuator ticks, no Jolt pose read-back
-	# — poses arrive over the network via sync_assembly_motion instead.
-	if _world == null or not _world.authoritative:
+	# Replica: skip unless a local driver owns an assembly (owner-authoritative
+	# locomotion). Ghost assemblies on the host stay frozen and are skipped by
+	# wheel/parking gates via simulates_assembly_physics / freeze.
+	if _world == null:
+		return
+	if not _world.authoritative and _local_sim_assemblies.is_empty():
 		return
 	var t0 := Time.get_ticks_usec()
 	var native_gap_us := (t0 - _prev_tick_end_us) if _prev_tick_end_us >= 0 else -1
@@ -313,9 +372,11 @@ func _physics_process(delta: float) -> void:
 	var t_thruster := Time.get_ticks_usec()
 	ActuatorPhysicsTickCoordinator.tick_thrusters(self, delta)
 	var t_rope := Time.get_ticks_usec()
-	CablePhysicsTickCoordinator.tick_cable_ropes(self, delta)
-	CablePhysicsTickCoordinator.tick_cable_tension(self, delta)
-	CablePhysicsTickCoordinator.tick_cable_anchors(self, delta)
+	# Ropes stay host-authoritative — replica owner-sim is locomotion only.
+	if _world.authoritative:
+		CablePhysicsTickCoordinator.tick_cable_ropes(self, delta)
+		CablePhysicsTickCoordinator.tick_cable_tension(self, delta)
+		CablePhysicsTickCoordinator.tick_cable_anchors(self, delta)
 	var t_sync := Time.get_ticks_usec()
 	PhysicsMotionSyncCoordinator.sync_live_assembly_motions(self)
 	var t_end := Time.get_ticks_usec()

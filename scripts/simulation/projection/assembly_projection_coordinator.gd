@@ -217,8 +217,8 @@ static func project_assembly_single(
 			rigid.freeze = false if motion_override != null else motion.frozen
 		else:
 			rigid.freeze = motion.frozen
-		if not projection._world.authoritative:
-			# Replica bodies never simulate: the network sets their poses.
+		if not projection.simulates_assembly_physics(assembly_id):
+			# Observer / ghost: network sets poses (no local Jolt).
 			rigid.freeze_mode = RigidBody3D.FREEZE_MODE_KINEMATIC
 			rigid.freeze = true
 		if (
@@ -436,8 +436,8 @@ static func project_assembly_multibody(
 					projection._impact_service.configure_impact_body(rigid, impact_mode)
 				if not is_wheel_group:
 					AssemblyBodyBuildCoordinator.apply_locomotive_rigid_tuning(projection, assembly_id, rigid)
-			if not projection._world.authoritative:
-				# Replica bodies never simulate: the network sets their poses.
+			if not projection.simulates_assembly_physics(assembly_id):
+				# Observer / ghost: network sets poses (no local Jolt).
 				rigid.freeze_mode = RigidBody3D.FREEZE_MODE_KINEMATIC
 				rigid.freeze = true
 		projection.add_child(body)
@@ -458,10 +458,11 @@ static func project_assembly_multibody(
 
 	var piston_records: Array[Dictionary] = []
 	var rotor_records: Array[Dictionary] = []
-	# Replica: no Jolt constraints between kinematic bodies — the network sets
-	# every group pose; joints would only add solver noise.
+	# Observer/ghost: no Jolt constraints — network sets every group pose.
 	var driven_specs: Array = (
-		compiled.get("driven_specs", []) if projection._world.authoritative else []
+		compiled.get("driven_specs", [])
+		if projection.simulates_assembly_physics(assembly_id)
+		else []
 	)
 	for spec_variant: Variant in driven_specs:
 		if not spec_variant is Dictionary:
@@ -700,7 +701,7 @@ static func project_assembly_multibody(
 		projection._rotor_constraints.erase(assembly_id)
 	else:
 		projection._rotor_constraints[assembly_id] = rotor_records
-	if projection._world.authoritative:
+	if projection.simulates_assembly_physics(assembly_id):
 		projection._wheel_constraints[assembly_id] = WheelPhysicsTickCoordinator.build_wheel_constraints(
 			projection,
 			assembly_id,

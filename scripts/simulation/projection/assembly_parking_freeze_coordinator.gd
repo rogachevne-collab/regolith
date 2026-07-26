@@ -26,6 +26,11 @@ static func update_parking_freeze(projection, assembly_id: int) -> void:
 		)
 	):
 		return
+	# Coop kinematic ghost: owner peers stream poses; host mirrors drive_command
+	# for electric budget only. Never thaw — that drops jointless rigids into
+	# live Jolt and fights the blend (owner-loco regression).
+	if projection._ghost_assemblies.has(assembly_id):
+		return
 	var body: PhysicsBody3D = projection.get_physics_body(assembly_id)
 	if body is not RigidBody3D:
 		return

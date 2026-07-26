@@ -28,6 +28,7 @@ candidate» (глазная приёмка ещё открыта).
 | результаты аудита gateway-монополии | «Аудит: состояние кодовой базы» |
 | как команда доезжает до хоста | «Транспорт команд» |
 | join, снапшот, догон | «Join / снапшот» |
+| lobby, как подключиться | «Join / снапшот»; «Границы» |
 | правки террейна по сети | «Terrain replication» |
 | позы ровера, тряска, double precision | «Physics replication» |
 | игрок на ровере, кресло | «Игрок на движущемся теле» |
@@ -45,7 +46,8 @@ candidate» (глазная приёмка ещё открыта).
 **Входит в v0:**
 
 - listen-server: хост играет и одновременно держит авторитетное состояние;
-- 2–4 peer'а, ENet, `SceneMultiplayer`, LAN + прямой IP (без релея/lobby);
+- 2–4 peer'а, ENet, `SceneMultiplayer`, LAN + прямой IP; подключение через
+  консоль `host` / `join <ip>` (LimboConsole), без lobby UI;
 - общий мир: террейн, постройки, машины, индустрия, лут;
 - ходьба, бур, строительство, инвентарь, панели HUD у всех;
 - сейв у хоста, per-peer позиция и инвентарь в одном файле;
@@ -58,10 +60,11 @@ candidate» (глазная приёмка ещё открыта).
 - client-side prediction для собственного персонажа сложнее, чем локальное
   движение + мягкая коррекция от хоста;
 - ходьба по движущейся платформе (стоя на едущем ровере) — см. «Риски»;
-- копка / инструменты / K-панель из пассажирского кресла (PAX = sit + look
-  only; co-pilot / permissions — позже; инвентарь из кресла — ок);
+- lobby UI / browser сессий / matchmaking — только IP + консоль; UI invite /
+  список игр — отдельная веха поверх `CoopSession` (обсуждалось, не в v0);
+- co-pilot seat / расширенные permissions в `passenger_seat` — позже;
 - репликация летающих обломков террейна (`dig_terrain_debris`) — far future;
-- NAT punchthrough, Steam/EOS транспорт;
+- NAT punchthrough, Steam/EOS транспорт, relay;
 - миграция хоста при выходе хоста (хост выходит → сессия кончилась).
 
 ## Модель авторитета
@@ -249,6 +252,14 @@ gateway.submit_networked(cmd)  # → rpc_id(1, "_remote_submit", cmd)
 
 ## Join / снапшот
 
+**Подключение (v0).** Lobby UI / browser сессий **нет** — только прямой IP и
+консоль LimboConsole: `host [port=7777]`, `join <ip> [port]`, `leave`,
+`coop_status`. Локальная отладка: `tools/coop_two_windows.bat` или флаги
+`--coop-autohost` / `--coop-sandbox=guest --coop-autojoin`. **Lobby** (список
+открытых игр, invite flow, опционально relay/NAT) обсуждался как следующий
+UX-слой поверх того же `CoopSession` — host-authoritative модель не меняется;
+в v0 не реализован.
+
 При подключении peer'а хост шлёт **один** payload:
 
 ```gdscript
@@ -320,24 +331,46 @@ Godot RPC пакует `Vector3` как **float32** → ошибка поряд�
 
 ## Physics replication
 
-Хост — единственный, кто гоняет Jolt. Клиент не симулирует сборки вообще:
-`SimulationPhysicsProjection` на клиенте создаёт тела как `FREEZE_MODE_KINEMATIC`
-и только ставит им позы из сети.
+**Модель v0 (owner-authoritative locomotion):**
 
-Пакет поз, `unreliable_ordered`, 20 Гц, только для сборок в радиусе
-интереса peer'а (~200 м):
+- **Мир** (террейн, dig, стройка, сейв, припаркованные сборки) — всегда
+  хост. Инвариант C1 для команд мира не меняется.
+- **Едущий ровер / корабль**, пока peer в кресле **водителя** — считает
+  **тот peer, кто рулит** (полный Jolt + wheel joints локально).
+- **Остальные** (включая хоста, если рулит гость) держат kinematic ghost и
+  берут сглаженный state stream.
 
-```gdscript
-{"a": assembly_id, "p": PackedFloat64Array(3), "q": Quaternion, "v": Vector3, "w": Vector3}
-```
+Исторический эскиз «только хост Jolt, клиент никогда не симулирует» —
+superseded для **локомотивных** сборок с живым водителем. Пассажир /
+пешком / стоящие машины по-прежнему без client Jolt.
 
-- позиция — **f64** (см. T2), ориентация — кватернион f32 (точности хватает);
-- клиент интерполирует между пакетами с буфером ~100 мс;
-- `v`/`w` нужны для экстраполяции при потере пакета.
+**Стрим observers** (`_cli_assembly_motion`, CH_STREAM, ~15 Гц,
+`unreliable_ordered`):
 
-Актуаторы (поршни/роторы/шарниры) — состояние мотора едет в общем пакете
-сборки как массив углов/вылетов; клиент проецирует визуал существующими
-`*_projection_util.gd`, не пересчитывая физику.
+- корень + не-колёсные body groups — world pose + velocity (как сейчас);
+- **колёса не интерполируются независимо в world space** (это давало орбиты
+  вокруг стойки): relative-to-strut blend и/или скаляры
+  (`compression_m`, `steering_angle_rad`, `wheel_speed`) из
+  `get_wheel_runtime`;
+- клиентский буфер ~120 мс (как `RemotePlayer`).
+
+Гость-водитель шлёт state на хост (`_srv_assembly_motion`); хост применяет к
+ghost и ретранслирует зрителям. Руль гостя применяется **локально** у
+водителя (не петля `_srv_control_input` → хост → стрим назад). Команды мира
+(dig/build) по-прежнему через gateway на хосте.
+
+**Инварианты owner-sim (playtest regressions):**
+
+- upload `_srv_assembly_motion` не зависит от observer stream buffer (гость
+  один за рулём → buffer пуст; иначе хост-ghost никогда не двигается);
+- `toggle_control_seat` в `NO_BROADCAST_KINDS` — seat-ok / ownership без
+  full snapshot mid-drive;
+- host parking-freeze **не** thaw'ит `_ghost_assemblies` (mirrored
+  `drive_command` иначе снимает freeze с jointless ghost → ragdoll);
+- перед unghost / seat-exit last streamed pose коммитится в kernel motion.
+
+Актуаторы (поршни/роторы) на observers — позы групп из стрима / snapshot;
+полная client-side actuator sim — вне этой вехи.
 
 ## Игрок на движущемся теле
 
@@ -349,18 +382,21 @@ Godot RPC пакует `Vector3` как **float32** → ошибка поряд�
   occupancy-only — клиент сам зовёт `apply_local_seat_attach` на своей
   реплике. В позе едет `"seat": element_id`, аватар садится на локальную
   реплику кресла (без интерполяции `p`);
-- управление водителя-гостя — НЕ команда гейтвея, а `_srv_control_input`
-  на CH_INPUT 20 Гц → `apply_remote_driver_input` (команда на 20 Гц
-  устроила бы snapshot-шторм через `_on_host_command_completed`). Хост
-  по-прежнему тикает свой руль через `tick_rover_locomotion_input()`;
+- управление водителя — локально у того, кто в кресле (`tick_rover_locomotion_input`
+  / `apply_driver_frame` на его машине). Гость больше не гоняет руль через
+  `_srv_control_input` на хост ради ощущений езды; хост получает **state**
+  сборки и держит kinematic ghost. (Legacy `_srv_control_input` может
+  остаться как фолбэк до land owner-sim — не критерий приёмки.);
 - выход из кресла — release occupancy + `clear_driver_input`; клиент
   зовёт `release_local_seat_attach`. Сломанное кресло: `seat_occupant_evicted`
   → force-eject + `_cli_force_seat_release`; клиентский фолбэк если
   элемент/body исчезли из реплики.
 
-Пассажирское кресло (спайк D, `passenger_seat`): **sit + look only** — freelook,
-без руля / `_srv_control_input`, без копки и инструментов, без K-панели
-(co-pilot seat / permissions — позже). Инвентарь из кресла — ок.
+Пассажирское кресло (спайк D, `passenger_seat`): **только freelook** —
+вращение камеры, без руля / `_srv_control_input`. Строительный тулбар и
+compact action bar скрыты (`is_in_vehicle` + `controls_permitted() == false`);
+из кресла нельзя переключать инструменты и слать игровые команды. Co-pilot
+seat / permissions — позже.
 
 Хождение **стоя** на едущем ровере в v0 не поддерживается: клиент локально
 предсказывает свой `CharacterBody3D`, а платформа приезжает с лагом →
@@ -499,8 +535,8 @@ dev-файлы, поэтому `save_version` просто поднимаетс�
 | 3 | Транспорт: ENet, host/join, `_remote_submit`, join-снапшот, спавн N игроков (`bootstrap.gd`, per-peer `VoxelViewer`) | ✅ (`db36f54`, `35c0e70`) — см. «Что уже работает»; host per-peer collision-only `VoxelViewer` (R-COOP-7) | два инстанса, видим друг друга, ходим; guest dig far from host |
 | 4 | Terrain replication (session dig_ops + SQLite/granular bulk на join) | частично (спайк B + join `dig_ops` + RC `terrain_bulk`; без debris) | session digs live; late join — session tail + cold SQLite holes |
 | 5 | Дельты состояния мира + HUD у клиента | interim: 1 Гц `_cli_stores` (changed stores/buffers/inventories); полный snapshot — топология; полные дельты — later | копаем/крафтим/transfer — HUD сторов у клиента оживает ≤1 с без snapshot-storm |
-| 6 | Physics replication (позы сборок, f64) | частично (спайк C: `_cli_assembly_motion` 15 Гц, без f64-пакета спеки) | ровер едет — обоим видно гладко; цель — паритет ощущений хост ≈ гость |
-| 7 | Кресло: `seated`, ввод водителя, выход, PAX | частично (спайк C+D: occupancy + `toggle_control_seat` + `_srv_control_input` + `passenger_seat`; без ходьбы на платформе) | водитель (cockpit, хост или гость) ведёт; PAX = sit + look only |
+| 6 | Physics replication (owner loco + observer stream) | в работе: relative wheels + owner-authoritative driver Jolt; observers kinematic | водитель (хост или гость) едет как в одиночке; зрители без орбит колёс |
+| 7 | Кресло: `seated`, ввод водителя, выход, PAX | частично (спайк C+D: occupancy + `toggle_control_seat` + `_srv_control_input` + `passenger_seat`; без ходьбы на платформе) | водитель (cockpit, хост или гость) ведёт; PAX — только freelook, тулбар скрыт |
 
 Этапы 0–2 не требовали сети и были полезны сами по себе. Этап 3 + спайк
 A–D в коде — кооп играбелен для пробного забега; глазная приёмка A–D ещё
@@ -519,8 +555,7 @@ A–D в коде — кооп играбелен для пробного заб
   seed → join reseat);
 - водитель (хост или гость в cockpit) ведёт ровер; второй peer в
   пассажирском кресле едет без рывков на ~100 мс RTT, freelook, без руля;
-  пассажир **не** копает, **не** использует инструменты и **не** открывает
-  K-панель из кресла (sit + look only; инвентарь — ок);
+  у пассажира **нет тулбара** — только вращение камеры;
 - паритет ощущений езды хост ≈ гость — продуктовая цель (не «гость гладкий
   достаточно»);
 - отключение клиента не роняет хоста; отключение хоста корректно
@@ -538,7 +573,8 @@ slip-brake. Глазная приёмка обязательна; headless gate 
 
 **Locked (не пересматривать в RC-коммите):**
 
-- PAX = sit + look only; без копки / инструментов / K-панели; инвентарь ок
+- PAX = только freelook; строительный тулбар скрыт, игровые команды из кресла
+  не шлются
 - Acceptance digs = session digs после `host` **и** cold SQLite/granular bulk
   на join (не через `capture_snapshot`)
 - Hotbar в сейве — только после реального per-uid inventory (не фейкать поле)
@@ -550,7 +586,7 @@ slip-brake. Глазная приёмка обязательна; headless gate 
 | # | Проверка | Как | Статус |
 |---|---|---|---|
 | RC-1 | Eyeball A–D | два окна / Tailscale: tool в руках + взгляд; live dig виден обоим; водитель ведёт (хост↔гость); пассажир на `passenger_seat` | ⬜ human |
-| RC-2 | PAX policy | в кресле: freelook ок; ЛКМ/ПКМ tools / dig / K — no-op; инвентарь открывается | ⬜ human |
+| RC-2 | PAX policy | в `passenger_seat`: freelook ок; тулбар / compact bar скрыты; только камера | ⬜ human |
 | RC-3 | R7 far dig | гость копает далеко от хоста (proxy `VoxelViewer`); soft-retry / toast «Грунт ещё загружается», затем яма у обоих | ⬜ human |
 | RC-4 | Brakes | service brake на грунте — slip-limited (как drive TC); нет сильной тряски колёс у хоста при торможении гостем-водителем | ⬜ human |
 | RC-5 | Late join | session digs + **cold** digs до `host` / после рестарта (`terrain_bulk`) | ⬜ human |

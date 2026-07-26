@@ -69,11 +69,16 @@ func demand_w(element: SimulationElement) -> float:
 
 
 func to_dict() -> Dictionary:
+	# `powered` / `power_reason` are computed by host IndustryElectricBudget;
+	# they ride snapshots + coop interim sync so owner-sim replicas can gate
+	# wheel torque without running a second electric solver (C1).
 	var row := {
 		"machine_enabled": machine_enabled,
 		"battery_kwh": battery_kwh,
 		"battery_initialized": battery_initialized,
 		"active_recipe_power_w": active_recipe_power_w,
+		"powered": powered,
+		"power_reason": String(power_reason),
 	}
 	if machine_state != null:
 		row["machine_state"] = machine_state.to_dict()
@@ -95,6 +100,8 @@ static func from_dict(data: Dictionary) -> IndustryElementRuntime:
 	)
 	runtime.dynamic_power_w = 0.0
 	runtime.oxygen_manual_dispensed_since_tick = false
+	runtime.powered = bool(data.get("powered", false))
+	runtime.power_reason = StringName(str(data.get("power_reason", &"ok")))
 	var machine_row: Variant = data.get("machine_state", {})
 	if machine_row is Dictionary and not machine_row.is_empty():
 		runtime.machine_state = IndustryMachineState.from_dict(machine_row)
