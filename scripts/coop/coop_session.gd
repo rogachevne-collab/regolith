@@ -1199,40 +1199,15 @@ func resolve_seat_world_transform(element_id: int) -> Variant:
 # ------------------------------------------------------------------ avatars/teardown
 
 func _spawn_avatar(uid: String, nick: String) -> RemotePlayer:
-	if _avatars.has(uid):
-		var existing := _avatars[uid] as RemotePlayer
-		_flush_pose_inbox_to(uid, existing)
-		return existing
-	var avatar := RemotePlayerScene.instantiate() as RemotePlayer
-	avatar.setup(uid, nick)
-	avatar.set_seat_transform_resolver(resolve_seat_world_transform)
-	_avatars_root.add_child(avatar)
-	_avatars[uid] = avatar
-	_flush_pose_inbox_to(uid, avatar)
-	# R-COOP-7: host must stream terrain around remote diggers (guest dig far
-	# from host player → is_area_editable). Clients keep only the local viewer.
-	if _mode == Mode.HOST:
-		avatar.enable_host_stream_proxy()
-	return avatar
+	return CoopAvatarService.spawn_avatar(self, uid, nick)
 
 
 func _flush_pose_inbox_to(uid: String, avatar: RemotePlayer) -> void:
-	if avatar == null or not _pose_inbox.has(uid):
-		return
-	var pose: Variant = _pose_inbox[uid]
-	_pose_inbox.erase(uid)
-	if pose is Dictionary:
-		avatar.push_pose(pose)
+	CoopAvatarService.flush_pose_inbox_to(self, uid, avatar)
 
 
 func _despawn_avatar(uid: String) -> void:
-	if not _avatars.has(uid):
-		return
-	var avatar := _avatars[uid] as RemotePlayer
-	if is_instance_valid(avatar):
-		avatar.queue_free()
-	_avatars.erase(uid)
-	_pose_inbox.erase(uid)
+	CoopAvatarService.despawn_avatar(self, uid)
 
 
 func _teardown_host() -> void:
