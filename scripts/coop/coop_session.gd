@@ -309,19 +309,11 @@ func _apply_instance_disambiguation() -> void:
 
 
 func _load_nick() -> String:
-	if FileAccess.file_exists(NICK_PATH):
-		var file := FileAccess.open(NICK_PATH, FileAccess.READ)
-		if file != null:
-			var stored := file.get_as_text().strip_edges()
-			if not stored.is_empty():
-				return stored
-	return _local_uid.substr(0, 6)
+	return CoopSessionConsoleUtil.load_nick(self)
 
 
 func _save_nick(nick: String) -> void:
-	var file := FileAccess.open(NICK_PATH, FileAccess.WRITE)
-	if file != null:
-		file.store_string(nick)
+	CoopSessionConsoleUtil.save_nick(self, nick)
 
 
 func _register_console_commands() -> void:
@@ -351,155 +343,41 @@ func peer_count() -> int:
 ## world ready (host refuses joiners with host_not_ready until then), then
 ## reuses the same paths as console `host` / `join`. Autojoin retries.
 func _kickoff_cmdline_autostart() -> void:
-	var want_autohost := false
-	var want_autojoin := false
-	var join_ip := "127.0.0.1"
-	var join_port := PORT_DEFAULT
-	for arg: String in OS.get_cmdline_user_args():
-		if arg == "--coop-autohost":
-			want_autohost = true
-		elif arg == "--coop-autojoin":
-			want_autojoin = true
-		elif arg.begins_with("--coop-autojoin="):
-			want_autojoin = true
-			var spec := arg.substr("--coop-autojoin=".length()).strip_edges()
-			if not spec.is_empty():
-				var sep := spec.rfind(":")
-				if sep > 0 and spec.substr(sep + 1).is_valid_int():
-					join_ip = spec.substr(0, sep)
-					join_port = int(spec.substr(sep + 1))
-				else:
-					join_ip = spec
-	if want_autohost:
-		print("CoopSession: autohost armed (port %d)" % PORT_DEFAULT)
-		_autohost_when_ready()
-	if want_autojoin:
-		print("CoopSession: autojoin armed → %s:%d" % [join_ip, join_port])
-		_autojoin_when_ready(join_ip, join_port)
+	CoopSessionConsoleUtil.kickoff_cmdline_autostart(self)
 
 
 func _await_world_ready() -> void:
-	while _bootstrap == null or not _bootstrap.is_world_ready():
-		await get_tree().process_frame
+	await CoopSessionConsoleUtil.await_world_ready(self)
 
 
 func _autohost_when_ready() -> void:
-	await _await_world_ready()
-	print("CoopSession: autohost — world ready, hosting")
-	_cmd_host()
+	await CoopSessionConsoleUtil.autohost_when_ready(self)
 
 
 func _autojoin_when_ready(ip: String, port: int) -> void:
-	await _await_world_ready()
-	print("CoopSession: autojoin — world ready, connecting to %s:%d" % [ip, port])
-	var attempt := 0
-	while attempt < AUTOJOIN_MAX_ATTEMPTS:
-		if _autojoin_admitted:
-			print("CoopSession: autojoin succeeded")
-			return
-		if _mode == Mode.OFFLINE:
-			attempt += 1
-			print(
-				"CoopSession: autojoin attempt %d/%d → %s:%d"
-				% [attempt, AUTOJOIN_MAX_ATTEMPTS, ip, port]
-			)
-			_cmd_join(ip, port)
-		await get_tree().create_timer(AUTOJOIN_INTERVAL_SEC).timeout
-	if _autojoin_admitted:
-		print("CoopSession: autojoin succeeded")
-		return
-	print(
-		"CoopSession: autojoin gave up after %d attempts → %s:%d"
-		% [AUTOJOIN_MAX_ATTEMPTS, ip, port]
-	)
+	await CoopSessionConsoleUtil.autojoin_when_ready(self, ip, port)
 
 
 # --------------------------------------------------------------- console commands
 
 func _cmd_host(port: int = PORT_DEFAULT) -> void:
-	if _mode != Mode.OFFLINE:
-		_err("already in a coop session — leave first")
-		return
-	if _bootstrap == null or not _bootstrap.is_world_ready():
-		_err("world is still loading; try again in a moment")
-		return
-	var peer := ENetMultiplayerPeer.new()
-	var err := peer.create_server(port, MAX_PEERS, CHANNELS)
-	if err != OK:
-		_err("could not host on port %d (error %d)" % [port, err])
-		return
-	multiplayer.multiplayer_peer = peer
-	_mode = Mode.HOST
-	_replica_ready = true
-	_registry = CoopPeerRegistry.new()
-	_pending_results.clear()
-	_guest_dig_retries.clear()
-	_dig_ops.clear()
-	_last_poses.clear()
-	_pose_inbox.clear()
-	_seed_last_poses_from_cold()
-	_clear_store_wire_cache()
-	_connect_host_hooks()
-	_info("hosting on port %d as '%s' — share your Tailscale IP" % [port, _local_nick])
+	CoopSessionConsoleUtil.cmd_host(self, port)
 
 
 func _cmd_join(ip: String, port: int = PORT_DEFAULT) -> void:
-	if _mode != Mode.OFFLINE:
-		_err("already in a coop session — leave first")
-		return
-	if _bootstrap == null or not _bootstrap.is_world_ready():
-		_err("world is still loading; try again in a moment")
-		return
-	var peer := ENetMultiplayerPeer.new()
-	var err := peer.create_client(ip, port, CHANNELS)
-	if err != OK:
-		_err("could not reach %s:%d (error %d)" % [ip, port, err])
-		return
-	multiplayer.multiplayer_peer = peer
-	_mode = Mode.CLIENT
-	# Snapshot + terrain bulk land later; ignore loco/stream until then.
-	_replica_ready = false
-	_pose_inbox.clear()
-	_assembly_streams.clear()
-	_observer_wheel_spin.clear()
-	_observer_wheel_mounts.clear()
-	_info("connecting to %s:%d ..." % [ip, port])
+	CoopSessionConsoleUtil.cmd_join(self, ip, port)
 
 
 func _cmd_leave() -> void:
-	if _mode == Mode.OFFLINE:
-		_info("not in a coop session")
-		return
-	if _mode == Mode.HOST:
-		_teardown_host()
-	else:
-		_teardown_client_and_reload()
+	CoopSessionConsoleUtil.cmd_leave(self)
 
 
 func _cmd_nick(new_name: String) -> void:
-	var clean := new_name.strip_edges()
-	if clean.is_empty():
-		_err("nick cannot be empty")
-		return
-	_local_nick = clean
-	_save_nick(clean)
-	_info("nick set to '%s'" % clean)
-	if _mode == Mode.CLIENT:
-		rpc_id(1, "_srv_set_nick", clean)
-	elif _mode == Mode.HOST:
-		rpc("_cli_peer_nick", _local_uid, clean)
+	CoopSessionConsoleUtil.cmd_nick(self, new_name)
 
 
 func _cmd_coop_status() -> void:
-	match _mode:
-		Mode.OFFLINE:
-			_info("coop: offline")
-		Mode.HOST:
-			_info("coop: HOSTING, %d peer(s)" % _registry.peer_ids().size())
-			for peer_id: int in _registry.peer_ids():
-				_info("  #%d %s (%s)" % [peer_id, _registry.nick_of(peer_id), _registry.uid_of(peer_id).substr(0, 6)])
-		Mode.CLIENT:
-			_info("coop: CLIENT, %d other avatar(s)" % _avatars.size())
+	CoopSessionConsoleUtil.cmd_coop_status(self)
 
 
 # ------------------------------------------------------------------- host: join
