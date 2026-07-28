@@ -739,93 +739,21 @@ func _cli_peer_nick(uid: String, nick: String) -> void:
 ## Installed as the gateway's client hook. Blocked kinds fail locally; the rest
 ## go to the host, stripped of live Objects.
 func _on_local_submit(local_id: int, command: Dictionary) -> void:
-	var kind := StringName(command.get("kind", &""))
-	if CoopCommandCodec.is_kind_blocked(kind):
-		_gateway.call_deferred("complete_remote", local_id, {
-			"status": &"failed",
-			"reason": &"not_in_coop_yet",
-			"data": {},
-			"command_kind": kind,
-		})
-		return
-	rpc_id(1, "_srv_submit", local_id, CoopCommandCodec.sanitize_command(command))
+	CoopCommandRouteService.on_local_submit(self, local_id, command)
 
 
 @rpc("any_peer", "call_remote", "reliable", CH_MAIN)
 func _srv_submit(local_id: int, command: Dictionary) -> void:
-	if _mode != Mode.HOST:
-		return
-	var peer := multiplayer.get_remote_sender_id()
-	if not _registry.has_peer(peer):
-		return
-	var kind := StringName(command.get("kind", &""))
-	if CoopCommandCodec.is_kind_blocked(kind):
-		rpc_id(peer, "_cli_result", local_id, {
-			"status": &"failed", "reason": &"not_in_coop_yet",
-			"data": {}, "command_kind": kind,
-		})
-		return
-	_route_guest_submit(peer, local_id, command, 0)
+	CoopCommandRouteService.srv_submit(self, local_id, command)
 
 
 @rpc("authority", "call_remote", "reliable", CH_MAIN)
 func _cli_result(local_id: int, result: Dictionary) -> void:
-	if (
-		_gateway != null
-		and StringName(result.get("command_kind", &"")) == &"toggle_control_seat"
-		and StringName(result.get("status", &"")) == &"ok"
-	):
-		var data: Dictionary = result.get("data", {})
-		if bool(data.get("seated", false)):
-			var assembly_id := int(data.get("assembly_id", 0))
-			var passenger := bool(data.get("passenger", false))
-			var runtimes: Variant = data.get("industry_runtimes", {})
-			if runtimes is Dictionary and not (runtimes as Dictionary).is_empty():
-				var world := _world()
-				if world != null:
-					world.sync_industry_element_runtimes(runtimes)
-			_gateway.apply_local_seat_attach(
-				_player,
-				int(data.get("element_id", 0)),
-				assembly_id,
-				passenger
-			)
-			if not passenger and assembly_id > 0:
-				_begin_local_driver_physics(assembly_id)
-		else:
-			_end_local_driver_physics()
-			_gateway.release_local_seat_attach()
-	_gateway.complete_remote(local_id, result)
+	CoopCommandRouteService.cli_result(self, local_id, result)
 
 
 func _on_host_command_completed(command_id: int, result: Dictionary) -> void:
-	var seat_peer := 0
-	var seat_uid := ""
-	if _pending_results.has(command_id):
-		var route: Array = _pending_results[command_id]
-		_pending_results.erase(command_id)
-		var peer := int(route[0])
-		var local_id := int(route[1])
-		var command: Dictionary = route[2]
-		var attempts := int(route[3])
-		seat_peer = peer
-		seat_uid = _registry.uid_of(peer)
-		if CoopDigRelayUtil.should_soft_retry_guest_dig(self, result, attempts):
-			_guest_dig_retries.append({
-				"peer": peer,
-				"local_id": local_id,
-				"command": command,
-				"attempts": attempts + 1,
-				"wait": GUEST_DIG_RETRY_INTERVAL,
-			})
-			return
-		rpc_id(peer, "_cli_result", local_id, CoopCommandCodec.sanitize_result(result))
-	_host_update_physics_ownership_from_seat(result, seat_peer, seat_uid)
-	if StringName(result.get("status", &"")) != &"ok":
-		return
-	if NO_BROADCAST_KINDS.has(StringName(result.get("command_kind", &""))):
-		return
-	_mark_snapshot_dirty()
+	CoopCommandRouteService.on_host_command_completed(self, command_id, result)
 
 
 ## Guest driver → ghost on host; host driver → clear any guest claim on that assembly.
@@ -1489,14 +1417,7 @@ func _route_guest_submit(
 	command: Dictionary,
 	attempts: int
 ) -> void:
-	if not _registry.has_peer(peer) or _gateway == null:
-		return
-	var host_id := _gateway.submit_as(
-		_registry.uid_of(peer),
-		command,
-		_registry.avatar_of(peer)
-	)
-	_pending_results[host_id] = [peer, local_id, command, attempts]
+	CoopCommandRouteService.route_guest_submit(self, peer, local_id, command, attempts)
 
 
 func _should_soft_retry_guest_dig(result: Dictionary, attempts: int) -> bool:
