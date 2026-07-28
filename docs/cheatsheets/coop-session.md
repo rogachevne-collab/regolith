@@ -15,6 +15,7 @@ snapshot re-broadcast, console `host`/`join`/`leave`, gateway client hook.
 | dig relay | `scripts/coop/coop_dig_relay_util.gd` | guest dig soft-retry, pending join replay, `dig_ops` ring truncate |
 | snapshot | `scripts/coop/coop_snapshot_broadcast_util.gd` | `_mark_snapshot_dirty`, `_tick_snapshot_broadcast` debounce/floor |
 | join | `scripts/coop/coop_join_service.gd` | host terrain bulk prep/send, `_seed_joiner`, client `_apply_join` / terrain bulk / roster / reseat |
+| assembly stream | `scripts/coop/coop_assembly_stream_service.gd` | motion broadcast/ingest/blend, ghost wheels, physics ownership, owner upload |
 
 Паттерн сервиса: `class_name … extends RefCounted`, только `static func`, первый
 аргумент нетипизированный `session` (узел `CoopSession`). Значения с `session` /
@@ -38,6 +39,7 @@ snapshot re-broadcast, console `host`/`join`/`leave`, gateway client hook.
 | `_on_host_command_executed` → ring append | `CoopDigRelayUtil.append_dig_op` |
 | `_mark_snapshot_dirty` / `_tick_snapshot_broadcast` | `CoopSnapshotBroadcastUtil` |
 | `_prepare_join_terrain_bulk` / `_send_terrain_bulk_chunks` / `_seed_joiner` / `_apply_join` / `_apply_join_terrain_bulk` / `_replay_fallback_dig_ops` / `_wait_terrain_bulk_chunks` / `_clear_terrain_bulk_state` / `_spawn_join_roster_avatars` / `_finish_apply_join` | `CoopJoinService` |
+| `_broadcast_assembly_motion` / `_cli_assembly_motion` / `_srv_assembly_motion` / `_ingest_assembly_motion_batch` / `_sync_ghost_wheel_kernel_motions` / `_tick_assembly_stream_blend` / `_apply_assembly_blend` / `_apply_observer_wheel_scalars` / `_forget_observer_assembly` / `_write_blended_body_pose` / `_commit_streamed_assembly_pose` / `_begin_local_driver_physics` / `_end_local_driver_physics` / `_host_update_physics_ownership_from_seat` / `_set_remote_physics_owner*` / `_clear_remote_physics_owner*` / `_tick_local_owner_motion_upload` | `CoopAssemblyStreamService` |
 
 ## Что остаётся в монолите
 
@@ -45,7 +47,6 @@ snapshot re-broadcast, console `host`/`join`/`leave`, gateway client hook.
 |---|---|
 | Join/leave / hello / terrain bulk | orchestration + `@rpc` (bodies → `CoopJoinService`) |
 | Command submit / `_route_guest_submit` | gateway hook + pending results |
-| Assembly motion broadcast/ingest/blend | следующая волна extract |
 | Seat control stream | отдельный кластер |
 | Avatars / teardown / host hooks | lifecycle |
 
@@ -66,3 +67,4 @@ snapshot re-broadcast, console `host`/`join`/`leave`, gateway client hook.
 | `test_coop_bug_regressions` | `_prepare_join_terrain_bulk`, `_compute_store_broadcast_payload` (обёртки на узле) |
 | `test_coop_dig_replay` | dig relay |
 | `test_coop_seat` | seat / owner-sim |
+| `test_coop_rope_projection` | assembly stream / projection seam |
