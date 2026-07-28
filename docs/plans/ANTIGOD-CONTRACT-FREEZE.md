@@ -156,6 +156,15 @@ Extract'ы — по волнам; внутри волны полосы **не п
 
 **ToolController:** extract'ы **не** класть в `scripts/tools/` — там уже dev-скрипты (`environment_tuner.gd`, `bake_moon_boulder_assets.gd`).
 
+### Волна 4 — Control Terminal remainder + CoopSession
+
+| Полоса | Файлы / каталоги |
+|---|---|
+| **U2** | `scripts/ui/hud_control_terminal.gd` + `scripts/ui/control_terminal/` + `docs/cheatsheets/control-terminal.md` (commands / action bar / shell; open-close и DragSource/DropKey/SliderTrack остаются на узле) |
+| **Co** | `scripts/coop/coop_session.gd` + новые `scripts/coop/coop_*.gd` + `docs/cheatsheets/coop-session.md` |
+
+**Co — только после чистой базы** (нет чужого in-flight diff в `coop_session.gd`). Все `@rpc` и Callable endpoints (`_on_local_submit`, `resolve_seat_world_transform`, `_notify_remote_seat_force_release`) остаются методами узла. Заморожены: `replay_remote_dig`, `submit_as`, seat-input frames 20 Hz / CH_INPUT, порядок side-effects в `_physics_process` / join apply.
+
 ## 5. Верификация (Windows / PowerShell)
 
 Bash не в PATH — вызывать явно:

@@ -667,39 +667,15 @@ func _on_click(event: InputEvent, action: Callable) -> void:
 ## Единственная точка отправки параметра в симуляцию: её используют и клик по ±,
 ## и слот `param.*`, и будущий ввод числа с клавиатуры.
 func _submit(command_kind: String, element_id: int, params: Dictionary) -> void:
-	if _gateway == null or command_kind.is_empty():
-		return
-	var command_id: int = _gateway.call("submit", {
-		"kind": StringName(command_kind),
-		"source": self,
-		"target": {
-			"valid": true,
-			"target_kind": InteractionHit.KIND_SIMULATION_ELEMENT,
-			"element_id": element_id,
-		},
-		"parameters": params,
-	})
-	_pending_commands[command_id] = true
+	TerminalCommandExecutor.submit(self, command_kind, element_id, params)
 
 
-## Диагностика без логов (спека §Диагностика): отказ команды пульта выводится
-## причиной в статус-баре, а не молчит. Успех ничего не пишет.
 func _on_command_completed(command_id: int, result: Dictionary) -> void:
-	if not _pending_commands.erase(command_id):
-		return
-	var reason := StringName(result.get("reason", &"ok"))
-	if reason == &"ok":
-		return
-	_fault_text = HudTokens.status_label(reason).to_lower()
-	_fault_left = FAULT_HOLD_S
-	_update_fault_cell()
+	TerminalCommandExecutor.on_command_completed(self, command_id, result)
 
 
 func _update_fault_cell() -> void:
-	if _fault_cell == null:
-		return
-	_fault_cell.text = _fault_text
-	_fault_cell.visible = not _fault_text.is_empty()
+	TerminalCommandExecutor.update_fault_cell(self)
 
 
 func _submit_param(
@@ -708,350 +684,68 @@ func _submit_param(
 	element_id: int,
 	joint_id: int
 ) -> void:
-	var entry := GameBalance.parameter_entry(param_id)
-	if entry.is_empty():
-		return
-	var command_kind := str(entry.get("command", ""))
-	var params := {str(entry.get("field", "")): value}
-	match str(entry.get("target", "element")):
-		"joint":
-			params["joint_id"] = joint_id
-		_:
-			if command_kind == "configure_wheel":
-				params["wheel_element_id"] = element_id
-			else:
-				params["suspension_element_id"] = element_id
-	_submit(command_kind, element_id, params)
+	TerminalCommandExecutor.submit_param(self, param_id, value, element_id, joint_id)
 
 
-## Часть уставок клампится не постоянным диапазоном каталога, а фактическим
-## паспортом конкретного узла (предел хода этой подвески, тормозной момент
-## этой модели колеса) — каталог даёт разумный дефолт, живой снапшот, если
-## несёт точные границы этого экземпляра, их переопределяет. Без этого шаг
-## либо упирался бы в чужой лимит раньше времени, либо разрешал то, что
-## authoritative-сторона всё равно отклонит.
 func _effective_bounds(param_id: String, detail: Dictionary, entry: Dictionary) -> Vector2:
-	var lo := float(entry.get("soft_min", 0.0))
-	var hi := float(entry.get("soft_max", 1.0))
-	match param_id:
-		"suspension.travel":
-			lo = float(detail.get("min_travel_m", lo))
-			hi = float(detail.get("max_travel_m", hi))
-		"wheel.brake_torque":
-			hi = float(detail.get("max_brake_torque_n_m", hi))
-		"wheel.steering_angle":
-			hi = float(detail.get("authored_max_steering_angle_rad", hi))
-	return Vector2(lo, hi)
+	return TerminalCommandExecutor.effective_bounds(param_id, detail, entry)
 
 
-## Клик по «−»/«+»: шаг из каталога от текущего живого значения, кламп по
-## soft-диапазону. Авторитетный кламп всё равно за симуляцией.
 func _apply_param_step(param_id: String, direction: int) -> void:
-	var entry := GameBalance.parameter_entry(param_id)
-	if entry.is_empty():
-		return
-	var node := _selected_node()
-	var detail: Dictionary = node.get("detail", {})
-	var field := str(entry.get("field", ""))
-	var bounds := _effective_bounds(param_id, detail, entry)
-	var value := clampf(
-		float(detail.get(field, 0.0)) + float(entry.get("step", 0.0)) * direction,
-		bounds.x,
-		bounds.y
-	)
-	_submit_param(
-		param_id,
-		value,
-		int(node.get("element_id", 0)),
-		int(node.get("joint_id", 0))
-	)
-	if not field.is_empty():
-		_patch_selected_detail({field: value})
+	TerminalCommandExecutor.apply_param_step(self, param_id, direction)
 
 
-## Живое состояние цели из последнего снапшота. Инверсия тумблера и
-## относительный шаг обязаны считаться от того, что сейчас в симуляции, а не от
-## того, что запомнил слот при привязке.
 func _live_detail(element_id: int, joint_id: int) -> Dictionary:
-	for node_variant: Variant in _nodes:
-		if not node_variant is Dictionary:
-			continue
-		var node: Dictionary = node_variant
-		var matches := (
-			(joint_id > 0 and int(node.get("joint_id", 0)) == joint_id)
-			or (joint_id <= 0 and int(node.get("element_id", -1)) == element_id)
-		)
-		if matches:
-			var detail: Variant = node.get("detail", {})
-			return detail if detail is Dictionary else {}
-	return {}
+	return TerminalCommandExecutor.live_detail(self, element_id, joint_id)
 
 
-## Seat route flags for toggle invert. Closed compact bar has empty `_nodes` —
-## read InteractionCard / authoritative SeatControlState, never assume default
-## true (that would make OFF→ON stick and never toggle OFF).
 func _seat_route_flag(element_id: int, key: String) -> bool:
-	var detail := _live_detail(element_id, 0)
-	if detail.has(key):
-		return bool(detail[key])
-	if _gateway != null and _gateway.has_method("get_world"):
-		var world: SimulationWorld = _gateway.call("get_world") as SimulationWorld
-		if world != null:
-			var card := world.get_interaction_card(element_id)
-			if card != null and card.keys.has(key):
-				return bool(card.keys[key])
-			return SeatControlState.flag_of(
-				world.get_seat_control_state_ref(element_id),
-				key
-			)
-	return true
+	return TerminalCommandExecutor.seat_route_flag(self, element_id, key)
 
 
-static func _is_momentary(action_id: String) -> bool:
-	return action_id in MOMENTARY_ACTIONS
+func _is_momentary(action_id: String) -> bool:
+	return TerminalCommandExecutor.is_momentary(self, action_id)
 
 
-## Вид узла для глагола: у ротора цель — скорость, у поршня/шарнира — позиция.
-static func _spec_kind(spec: Dictionary) -> String:
-	var kind := str(spec.get("node_kind", ""))
-	if not kind.is_empty():
-		return kind
-	return str(spec.get("action_id", "")).split(".")[0]
+func _spec_kind(spec: Dictionary) -> String:
+	return TerminalCommandExecutor.spec_kind(spec)
 
 
-## Единственный исполнитель глаголов: и клавиша пульта, и кнопка в фейсплейте
-## идут сюда. `pressed=false` приходит на отпускании — только для «удерж».
-## Пульт ничего не мутирует сам: собирает существующую команду гейтвея.
 func _run_action(spec: Dictionary, pressed: bool) -> void:
-	if _gateway == null or spec.is_empty():
-		return
-	var action := str(spec.get("action_id", ""))
-	if action.is_empty():
-		return
-	var element_id := int(spec.get("element_id", 0))
-	var joint_id := int(spec.get("joint_id", 0))
-	if not pressed:
-		if _is_momentary(action):
-			_submit("set_actuator_target", element_id, {
-				"joint_id": joint_id,
-				"mode": SimulationMotorState.ControlMode.STOP,
-			})
-		return
-	if action.begins_with("param."):
-		_run_param_action(spec, element_id, joint_id)
-		return
-	match action:
-		"wheel.steerable_toggle":
-			var next_steerable: bool = not bool(
-				_live_detail(element_id, 0).get("steerable", false)
-			)
-			_submit("configure_wheel", element_id, {
-				"wheel_element_id": element_id,
-				"steerable": next_steerable,
-			})
-			_patch_selected_detail({"steerable": next_steerable})
-		"wheel.invert_drive_toggle":
-			var next_invert: bool = not bool(
-				_live_detail(element_id, 0).get("drive_inverted", false)
-			)
-			_submit("configure_wheel", element_id, {
-				"wheel_element_id": element_id,
-				"invert_drive": next_invert,
-			})
-			_patch_selected_detail({"drive_inverted": next_invert})
-		"seat.control_wheels_toggle":
-			var next_wheels: bool = not _seat_route_flag(element_id, "control_wheels")
-			_submit("configure_seat_controls", element_id, {
-				"seat_element_id": element_id,
-				"control_wheels": next_wheels,
-			})
-			_patch_selected_detail({"control_wheels": next_wheels})
-		"seat.control_thrusters_toggle":
-			var next_thrusters: bool = not _seat_route_flag(
-				element_id, "control_thrusters"
-			)
-			_submit("configure_seat_controls", element_id, {
-				"seat_element_id": element_id,
-				"control_thrusters": next_thrusters,
-			})
-			_patch_selected_detail({"control_thrusters": next_thrusters})
-		"seat.control_gyros_toggle":
-			var next_gyros: bool = not _seat_route_flag(element_id, "control_gyros")
-			_submit("configure_seat_controls", element_id, {
-				"seat_element_id": element_id,
-				"control_gyros": next_gyros,
-			})
-			_patch_selected_detail({"control_gyros": next_gyros})
-		"machine.toggle", "machine.enable", "machine.disable":
-			var enabled_now := bool(
-				_live_detail(element_id, 0).get("machine_enabled", true)
-			)
-			var next_enabled := enabled_now
-			if action == "machine.toggle":
-				next_enabled = not enabled_now
-			elif action == "machine.enable":
-				next_enabled = true
-			else:
-				next_enabled = false
-			_submit("set_machine_enabled", element_id, {
-				"element_id": element_id,
-				"enabled": next_enabled,
-			})
-			_patch_selected_detail({"machine_enabled": next_enabled})
-		"actuator.stop":
-			_submit("set_actuator_target", element_id, {
-				"joint_id": joint_id,
-				"mode": SimulationMotorState.ControlMode.STOP,
-			})
-		"actuator.motor_toggle":
-			# Мотор включается/выключается только через set_actuator_target:
-			# у configure_actuator поля `enabled` нет.
-			_submit("set_actuator_target", element_id, {
-				"joint_id": joint_id,
-				"mode": SimulationMotorState.ControlMode.STOP,
-				"enabled": not bool(
-					_live_detail(element_id, joint_id).get("enabled", true)
-				),
-			})
-		"actuator.reverse":
-			_submit(
-				"set_actuator_target",
-				element_id,
-				_reverse_params(spec, element_id, joint_id)
-			)
-		"piston.extend", "hinge.extend", "rotor.spin_cw":
-			_submit(
-				"set_actuator_target",
-				element_id,
-				_drive_params(spec, element_id, joint_id, true)
-			)
-		"piston.retract", "hinge.retract", "rotor.spin_ccw":
-			_submit(
-				"set_actuator_target",
-				element_id,
-				_drive_params(spec, element_id, joint_id, false)
-			)
+	TerminalCommandExecutor.run_action(self, spec, pressed)
 
 
-## `param.set` пишет абсолютное значение, `increase/decrease` — относительный
-## шаг от живого значения с клампом по soft-диапазону каталога.
 func _run_param_action(spec: Dictionary, element_id: int, joint_id: int) -> void:
-	var param_id := str(spec.get("param_id", ""))
-	var entry := GameBalance.parameter_entry(param_id)
-	if entry.is_empty():
-		return
-	var action := str(spec.get("action_id", ""))
-	var value := float(spec.get("value", 0.0))
-	if action != "param.set":
-		var detail := _live_detail(element_id, joint_id)
-		var delta := float(spec.get("delta", 0.0))
-		if action == "param.decrease":
-			delta = -delta
-		var field := str(entry.get("field", ""))
-		var bounds := _effective_bounds(param_id, detail, entry)
-		value = clampf(
-			float(detail.get(field, 0.0)) + delta,
-			bounds.x,
-			bounds.y
-		)
-	_submit_param(param_id, value, element_id, joint_id)
+	TerminalCommandExecutor.run_param_action(self, spec, element_id, joint_id)
 
 
-## Поршень/шарнир идут на предел хода, ротор — на скорость: у него ход не задан.
 func _drive_params(
 	spec: Dictionary,
 	element_id: int,
 	joint_id: int,
 	forward: bool
 ) -> Dictionary:
-	var detail := _live_detail(element_id, joint_id)
-	if _spec_kind(spec) == "rotor":
-		var speed := float(detail.get(
-			"extend_velocity_mps" if forward else "retract_velocity_mps",
-			0.0
-		))
-		return {
-			"joint_id": joint_id,
-			"mode": SimulationMotorState.ControlMode.VELOCITY,
-			"target_velocity_mps": speed if forward else -speed,
-		}
-	return {
-		"joint_id": joint_id,
-		"mode": SimulationMotorState.ControlMode.POSITION,
-		"target_position_m": float(detail.get(
-			"upper_limit_m" if forward else "lower_limit_m",
-			0.0
-		)),
-	}
+	return TerminalCommandExecutor.drive_params(self, spec, element_id, joint_id, forward)
 
 
-## Зеркало текущей цели (спека: «reverse читает текущий mode/target и шлёт
-## зеркальный»). Ротор — знак скорости, поршень/шарнир — дальний предел хода.
 func _reverse_params(
 	spec: Dictionary,
 	element_id: int,
 	joint_id: int
 ) -> Dictionary:
-	var detail := _live_detail(element_id, joint_id)
-	if _spec_kind(spec) == "rotor":
-		var velocity := float(detail.get("target_velocity_mps", 0.0))
-		if absf(velocity) < 0.000001:
-			velocity = float(detail.get("observed_velocity", 0.0))
-		if absf(velocity) < 0.000001:
-			velocity = float(detail.get("extend_velocity_mps", 0.0))
-		return {
-			"joint_id": joint_id,
-			"mode": SimulationMotorState.ControlMode.VELOCITY,
-			"target_velocity_mps": -velocity,
-		}
-	var lower := float(detail.get("lower_limit_m", 0.0))
-	var upper := float(detail.get("upper_limit_m", 0.0))
-	var target := float(detail.get("target_position_m", 0.0))
-	var to_lower := absf(target - lower) > absf(target - upper)
-	return {
-		"joint_id": joint_id,
-		"mode": SimulationMotorState.ControlMode.POSITION,
-		"target_position_m": lower if to_lower else upper,
-	}
+	return TerminalCommandExecutor.reverse_params(self, spec, element_id, joint_id)
 
 
-# ---------- удержание ----------
-
-## Нажатие «удерж» регистрируется здесь, чтобы отпускание нашлось даже когда
-## событие до окна не дошло: курсор ушёл с кнопки, начался drag, окно закрылось.
-## Иначе поршень уезжает в предел и остаётся там.
 func _begin_hold(source: String, spec: Dictionary) -> void:
-	if _is_momentary(str(spec.get("action_id", ""))):
-		_held[source] = spec.duplicate(true)
+	TerminalCommandExecutor.begin_hold(self, source, spec)
 
 
 func _release_stale_holds() -> void:
-	for source: Variant in _held.keys():
-		var key := str(source)
-		var alive := false
-		if key == "mouse":
-			alive = Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
-		elif key.begins_with("slot:"):
-			# Не гейтуем на _open: тот же хоткей держит слот и через окно
-			# (открыто), и через компактную ленту (окно закрыто, сидя) —
-			# живо, пока физически зажата клавиша, а не пока видно окно.
-			var index := int(key.substr(5))
-			alive = (
-				index >= 0
-				and index < SLOT_ACTIONS.size()
-				and Input.is_action_pressed(SLOT_ACTIONS[index])
-			)
-		if not alive:
-			var spec: Dictionary = _held[key]
-			_held.erase(key)
-			_run_action(spec, false)
+	TerminalCommandExecutor.release_stale_holds(self)
 
 
 func _release_holds() -> void:
-	for source: Variant in _held.keys():
-		var spec: Dictionary = _held[source]
-		_held.erase(source)
-		_run_action(spec, false)
+	TerminalCommandExecutor.release_holds(self)
 
 
 
