@@ -14,6 +14,7 @@ snapshot re-broadcast, console `host`/`join`/`leave`, gateway client hook.
 | assembly pack | `scripts/coop/coop_assembly_motion_util.gd` | pack/unpack motion stream entries, wheel scalars, `_motion_is_live` |
 | dig relay | `scripts/coop/coop_dig_relay_util.gd` | guest dig soft-retry, pending join replay, `dig_ops` ring truncate |
 | snapshot | `scripts/coop/coop_snapshot_broadcast_util.gd` | `_mark_snapshot_dirty`, `_tick_snapshot_broadcast` debounce/floor |
+| join | `scripts/coop/coop_join_service.gd` | host terrain bulk prep/send, `_seed_joiner`, client `_apply_join` / terrain bulk / roster / reseat |
 
 Паттерн сервиса: `class_name … extends RefCounted`, только `static func`, первый
 аргумент нетипизированный `session` (узел `CoopSession`). Значения с `session` /
@@ -36,12 +37,13 @@ snapshot re-broadcast, console `host`/`join`/`leave`, gateway client hook.
 | `_should_soft_retry_guest_dig` / `_tick_guest_dig_retries` / `_tick_pending_dig_reapply` | `CoopDigRelayUtil` |
 | `_on_host_command_executed` → ring append | `CoopDigRelayUtil.append_dig_op` |
 | `_mark_snapshot_dirty` / `_tick_snapshot_broadcast` | `CoopSnapshotBroadcastUtil` |
+| `_prepare_join_terrain_bulk` / `_send_terrain_bulk_chunks` / `_seed_joiner` / `_apply_join` / `_apply_join_terrain_bulk` / `_replay_fallback_dig_ops` / `_wait_terrain_bulk_chunks` / `_clear_terrain_bulk_state` / `_spawn_join_roster_avatars` / `_finish_apply_join` | `CoopJoinService` |
 
 ## Что остаётся в монолите
 
 | Блок | Почему |
 |---|---|
-| Join/leave / hello / terrain bulk | orchestration + `@rpc` |
+| Join/leave / hello / terrain bulk | orchestration + `@rpc` (bodies → `CoopJoinService`) |
 | Command submit / `_route_guest_submit` | gateway hook + pending results |
 | Assembly motion broadcast/ingest/blend | следующая волна extract |
 | Seat control stream | отдельный кластер |
