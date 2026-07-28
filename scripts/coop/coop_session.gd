@@ -973,7 +973,7 @@ func _on_host_command_completed(command_id: int, result: Dictionary) -> void:
 		var attempts := int(route[3])
 		seat_peer = peer
 		seat_uid = _registry.uid_of(peer)
-		if _should_soft_retry_guest_dig(result, attempts):
+		if CoopDigRelayUtil.should_soft_retry_guest_dig(self, result, attempts):
 			_guest_dig_retries.append({
 				"peer": peer,
 				"local_id": local_id,
@@ -1136,16 +1136,7 @@ func _on_host_command_executed(command: Dictionary, result: Dictionary) -> void:
 	if StringName(result.get("status", &"")) != &"ok":
 		return
 	var op := CoopCommandCodec.build_dig_op(command, result)
-	_dig_ops.append(op)
-	var truncated := 0
-	while _dig_ops.size() > MAX_DIG_OPS:
-		_dig_ops.pop_front()
-		truncated += 1
-	if truncated > 0:
-		push_warning(
-			"Coop: dig_ops ring truncated — dropped %d oldest (cap %d); late joiners miss early digs"
-			% [truncated, MAX_DIG_OPS]
-		)
+	CoopDigRelayUtil.append_dig_op(self, op)
 	if _registry.peer_ids().is_empty():
 		return
 	rpc("_cli_dig_op", op)
@@ -1171,29 +1162,11 @@ func _on_host_structural_event(event: Dictionary) -> void:
 # ------------------------------------------------------------ snapshot broadcast
 
 func _mark_snapshot_dirty() -> void:
-	# Same-frame structural_event + command_completed for one mutate: keep a
-	# single debounce start. Later frames still refresh debounce (burst coalesce).
-	var frame := Engine.get_process_frames()
-	if _snapshot_dirty and _snapshot_dirty_frame == frame:
-		return
-	_snapshot_dirty = true
-	_snapshot_dirty_frame = frame
-	_snapshot_debounce = SNAPSHOT_DEBOUNCE
+	CoopSnapshotBroadcastUtil.mark_snapshot_dirty(self)
 
 
 func _tick_snapshot_broadcast(delta: float) -> void:
-	if not _snapshot_dirty:
-		return
-	_snapshot_debounce -= delta
-	if _snapshot_debounce > 0.0:
-		return
-	if Time.get_ticks_msec() - _last_broadcast_ms < SNAPSHOT_FLOOR_MS:
-		return
-	_snapshot_dirty = false
-	if _registry.peer_ids().is_empty():
-		return
-	_last_broadcast_ms = Time.get_ticks_msec()
-	rpc("_cli_apply_snapshot", _world().capture_snapshot())
+	CoopSnapshotBroadcastUtil.tick_snapshot_broadcast(self, delta)
 
 
 @rpc("authority", "call_remote", "reliable", CH_BULK)
@@ -2120,64 +2093,19 @@ func _route_guest_submit(
 
 
 func _should_soft_retry_guest_dig(result: Dictionary, attempts: int) -> bool:
-	if attempts >= GUEST_DIG_RETRY_MAX:
-		return false
-	if not DIG_OP_KINDS.has(StringName(result.get("command_kind", &""))):
-		return false
-	return StringName(result.get("reason", &"")) == &"terrain_unavailable"
+	return CoopDigRelayUtil.should_soft_retry_guest_dig(self, result, attempts)
 
 
 ## Host: re-run guest digs that failed while Clipbox loaded the proxy shell.
 ## Interval backoff — not every physics tick (R9); no extra client RPCs.
 func _tick_guest_dig_retries(delta: float) -> void:
-	if _guest_dig_retries.is_empty():
-		return
-	var remaining: Array = []
-	for entry_variant: Variant in _guest_dig_retries:
-		if not (entry_variant is Dictionary):
-			continue
-		var entry: Dictionary = entry_variant
-		var wait := float(entry.get("wait", 0.0)) - delta
-		if wait > 0.0:
-			entry["wait"] = wait
-			remaining.append(entry)
-			continue
-		var peer := int(entry.get("peer", 0))
-		if not _registry.has_peer(peer):
-			continue
-		_route_guest_submit(
-			peer,
-			int(entry.get("local_id", 0)),
-			entry.get("command", {}),
-			int(entry.get("attempts", 0))
-		)
-	_guest_dig_retries = remaining
+	CoopDigRelayUtil.tick_guest_dig_retries(self, delta)
 
 
 ## Retry join dig_ops that failed while the local chunk was not editable.
 ## Light interval — not every physics tick (R9).
 func _tick_pending_dig_reapply(delta: float) -> void:
-	if _pending_dig_ops.is_empty() or _gateway == null:
-		return
-	_pending_dig_accum += delta
-	if _pending_dig_accum < PENDING_DIG_RETRY_INTERVAL:
-		return
-	_pending_dig_accum = 0.0
-	var remaining: Array = []
-	var recovered := 0
-	for op_variant: Variant in _pending_dig_ops:
-		if op_variant is Dictionary and _gateway.replay_remote_dig(op_variant):
-			recovered += 1
-		else:
-			remaining.append(op_variant)
-	_pending_dig_ops = remaining
-	if recovered > 0 and _pending_dig_ops.is_empty():
-		_info("join dig replay: recovered %d pending op(s)" % recovered)
-	elif recovered > 0:
-		push_warning(
-			"join dig replay: recovered %d, %d still pending"
-			% [recovered, _pending_dig_ops.size()]
-		)
+	CoopDigRelayUtil.tick_pending_dig_reapply(self, delta)
 
 
 ## A point `dist` metres to the side of `world_pos` along the local surface, so
