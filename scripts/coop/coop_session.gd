@@ -1823,22 +1823,13 @@ func _write_blended_body_pose(
 ## Cold `players{}` extras for WorldPersistence.save (host only). Relay pose
 ## dicts keyed by uid — persistence normalizes to position/yaw rows.
 func export_cold_poses() -> Dictionary:
-	if _mode != Mode.HOST:
-		return {}
-	return _last_poses.duplicate(true)
+	return CoopPoseRelayUtil.export_cold_poses(self)
 
 
 ## After host restart: session last-pose cache starts empty; seed from cold
 ## save so rejoin `you_pose` works without a prior live relay this session.
 func _seed_last_poses_from_cold() -> void:
-	var cold := WorldPersistence.cold_relay_poses()
-	for uid_variant: Variant in cold.keys():
-		var uid := str(uid_variant)
-		if uid.is_empty() or uid == _local_uid:
-			continue
-		var pose: Variant = cold[uid_variant]
-		if pose is Dictionary and (pose as Dictionary).has("p"):
-			_last_poses[uid] = pose
+	CoopPoseRelayUtil.seed_last_poses_from_cold(self)
 
 
 func _send_local_pose() -> void:
@@ -1846,7 +1837,7 @@ func _send_local_pose() -> void:
 		return
 	if _player.has_method("is_spawn_settled") and not _player.call("is_spawn_settled"):
 		return
-	var pose := _local_pose()
+	var pose := CoopPoseRelayUtil.local_pose(self)
 	if _mode == Mode.CLIENT:
 		rpc_id(1, "_srv_pose", pose)
 	elif _mode == Mode.HOST:
@@ -1881,28 +1872,7 @@ func _cli_pose(uid: String, pose: Dictionary) -> void:
 
 
 func _local_pose() -> Dictionary:
-	var body_basis := _player.global_transform.basis.orthonormalized()
-	var head_basis := body_basis
-	var camera := _player.get_node_or_null("Camera") as Node3D
-	if camera != null:
-		head_basis = camera.global_transform.basis.orthonormalized()
-	var lamp := _player.get_node_or_null("Camera/MiningLight") as Node3D
-	var velocity := Vector3.ZERO
-	if "velocity" in _player:
-		velocity = _player.get("velocity")
-	var seat_id := 0
-	if _gateway != null:
-		seat_id = _gateway.get_local_seat_element_id()
-	return {
-		"p": _player.global_position,
-		"q": Quaternion(body_basis),
-		"qh": Quaternion(head_basis),
-		"l": lamp != null and lamp.visible,
-		"v": velocity,
-		"tool": _tools.active_tool if _tools != null else StringName(),
-		"ta": _tools != null and _tools.is_drill_excavating(),
-		"seat": seat_id,
-	}
+	return CoopPoseRelayUtil.local_pose(self)
 
 
 # ---------------------------------------------------------- seat control stream
@@ -2206,7 +2176,7 @@ func _disconnect_host_hooks() -> void:
 # ----------------------------------------------------------------------- helpers
 
 func _pose_position(pose: Dictionary) -> Vector3:
-	return pose.get("p", Vector3.ZERO)
+	return CoopPoseRelayUtil.pose_position(pose)
 
 
 func _route_guest_submit(
@@ -2289,11 +2259,7 @@ func _tick_pending_dig_reapply(delta: float) -> void:
 ## A point `dist` metres to the side of `world_pos` along the local surface, so
 ## the joining client does not spawn inside the host's view.
 func _tangent_offset(world_pos: Vector3, dist: float) -> Vector3:
-	var up := world_pos.normalized()
-	var tangent := up.cross(Vector3.RIGHT)
-	if tangent.length_squared() < 0.01:
-		tangent = up.cross(Vector3.FORWARD)
-	return tangent.normalized() * dist
+	return CoopPoseRelayUtil.tangent_offset(world_pos, dist)
 
 
 func _info(message: String) -> void:
