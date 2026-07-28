@@ -770,82 +770,15 @@ func _pad(node: Control, l := 0, t := 0, r := 0, b := 0) -> MarginContainer:
 	return TerminalWidgetKit.pad(self, node, l, t, r, b)
 
 func _build() -> void:
-	# Пульт занимает весь экран: это рабочий терминал, а не всплывающее окошко.
-	# Фиксированный размер резал контент на широких экранах и оставлял поля.
-	_frame = _panel(PANEL, 1, 1, 1, 1, LINE2)
-	_frame.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_frame.mouse_filter = Control.MOUSE_FILTER_STOP
-	add_child(_frame)
-
-	var root := _vbox(0)
-	_frame.add_child(root)
-
-	root.add_child(_build_topbar())
-	root.add_child(_hrule())
-
-	var body := _build_body()
-	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	root.add_child(body)
-
-	root.add_child(_build_softbar())
-	root.add_child(_build_statusbar())
+	TerminalShellBuilder.build(self)
 
 
 func _build_topbar() -> Control:
-	var bar := _panel(HEAD)
-	var h := _hbox(0)
-	bar.add_child(h)
-
-	var unit := _vbox(1)
-	_unit_name = _lbl("Нет цели", TXT, 14)
-	unit.add_child(_unit_name)
-	_unit_tag = _lbl("наведись на технику", DIM, 11)
-	unit.add_child(_unit_tag)
-	h.add_child(_pad_col(unit, 14, 8, 14, 8, 0, 1))
-
-	var spacer := Control.new()
-	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	h.add_child(spacer)
-
-	h.add_child(_kv("Питание", "—", TXT))
-	_power_value = _last_kv_value
-	h.add_child(_kv("Узлов", "0", TXT))
-	_nodes_count = _last_kv_value
-	h.add_child(_kv("Аварии", "0", DIM))
-	_alarms_head = _last_kv_value
-	return bar
+	return TerminalShellBuilder.build_topbar(self)
 
 
-## Шапка из живого снапшота: тег сборки, потребление против выработки, счётчики.
-## Красный «нет питания» — единственный цвет, который здесь допустим.
 func _fill_unit(snap: Dictionary) -> void:
-	var valid := bool(snap.get("valid", false))
-	var assembly_id := int(snap.get("assembly_id", 0))
-	if _unit_name != null:
-		_unit_name.text = "Сборка %02d" % assembly_id if valid else "Нет цели"
-	if _unit_tag != null:
-		_unit_tag.text = (
-			"ASM‑%02d · %d элем." % [assembly_id, int(snap.get("element_count", 0))]
-			if valid
-			else "наведись на технику и открой пульт"
-		)
-	if _power_value == null:
-		return
-	var power: Dictionary = snap.get("power", {})
-	if not valid or not bool(power.get("valid", false)):
-		_power_value.text = "—"
-		_power_value.add_theme_color_override("font_color", DIM)
-		return
-	# Генераторов на сборке может не быть вовсе — тогда «0.0 кВт выработки» не
-	# отказ, а норма: питание идёт из АКБ. Показываем расход и заряд.
-	_power_value.text = "%.2f кВт · АКБ %.0f %%" % [
-		float(power.get("demand_w", 0.0)) * 0.001,
-		float(power.get("battery_fraction", 0.0)) * 100.0,
-	]
-	_power_value.add_theme_color_override(
-		"font_color",
-		TXT if bool(power.get("powered", false)) else RED
-	)
+	TerminalShellBuilder.fill_unit(self, snap)
 
 
 func _pad_col(node: Control, l: int, t: int, r: int, b: int, _x: int, br_w: int) -> Control:
@@ -855,22 +788,7 @@ func _kv(k: String, v: String, vcol: Color) -> Control:
 	return TerminalWidgetKit.kv(self, k, v, vcol)
 
 func _build_body() -> Control:
-	var h := _hbox(0)
-
-	var left := _build_equipment()
-	left.custom_minimum_size = Vector2(COL_L, 0)
-	h.add_child(left)
-	h.add_child(_vrule())
-
-	var center := _build_faceplate()
-	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	h.add_child(center)
-	h.add_child(_vrule())
-
-	var right := _build_alarms()
-	right.custom_minimum_size = Vector2(COL_R, 0)
-	h.add_child(right)
-	return h
+	return TerminalShellBuilder.build_body(self)
 
 
 # ---------- left: equipment ----------
@@ -1172,32 +1090,8 @@ func _on_slot_input(event: InputEvent, index: int) -> void:
 # ---------- bottom: status bar ----------
 
 func _build_statusbar() -> Control:
-	var wrap := _panel(HEAD, 0, 1, 0, 0, LINE2)
-	var h := _hbox(0)
-	h.add_child(_status_cell("Оператор", "", true))
-	h.add_child(_status_cell("Режим: ", "Ручн", true))
-	h.add_child(_status_cell("Связь: ", "ОК", true))
-	var fault_wrap := _panel(Color(0, 0, 0, 0), 0, 0, 1, 0)
-	_fault_cell = _lbl("", RED, 11)
-	_fault_cell.visible = false
-	fault_wrap.add_child(_pad(_fault_cell, 12, 5, 12, 5))
-	h.add_child(fault_wrap)
-	var sp := Control.new()
-	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	h.add_child(sp)
-	h.add_child(_status_cell("ЛКМ выбрать · ПКМ снять клавишу", "", true))
-	h.add_child(_status_cell("перетащи команду на клавишу", "", true))
-	h.add_child(_status_cell("1–9 клавиша · [ ] стр.", "", true))
-	h.add_child(_status_cell("K / Esc закрыть", "", false))
-	wrap.add_child(h)
-	return wrap
+	return TerminalShellBuilder.build_statusbar(self)
 
 
 func _status_cell(text: String, strong: String, border: bool) -> Control:
-	var wrap := _panel(Color(0, 0, 0, 0), 0, 0, (1 if border else 0), 0)
-	var h := _hbox(0)
-	h.add_child(_lbl(text, DIM, 11))
-	if strong != "":
-		h.add_child(_lbl(strong, TXT2, 11))
-	wrap.add_child(_pad(h, 12, 5, 12, 5))
-	return wrap
+	return TerminalShellBuilder.status_cell(self, text, strong, border)

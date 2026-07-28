@@ -11,10 +11,14 @@ K-пульт — **view**: читает снапшоты у `WorldCommandGateway
 | список оборудования и фильтры (all/actuator/machine/alarm, поиск) | `scripts/ui/control_terminal/terminal_equipment_list.gd` |
 | фейсплейт и уставки (ParameterCatalog / SETPOINTS, слайдеры, rename) | `scripts/ui/control_terminal/terminal_faceplate_builder.gd` |
 | панель аварий | `scripts/ui/control_terminal/terminal_alarms_panel.gd` |
-| слоты быстрых действий (бар 9×9, bind/fire, компактная лента) | `scripts/ui/hud_control_terminal.gd`; лента — `hud_compact_action_bar.gd` |
+| gateway submit / глаголы / hold | `scripts/ui/control_terminal/terminal_command_executor.gd` |
+| слоты быстрых действий (бар 9×9, bind/fire, snapshot) | `scripts/ui/control_terminal/terminal_action_bar.gd`; компактная лента — `hud_compact_action_bar.gd` |
+| chrome (frame / topbar / body / statusbar) | `scripts/ui/control_terminal/terminal_shell_builder.gd` |
 | цикл снапшотов (10 Гц poll, dirty-сигнатура, live-patch узла) | `scripts/ui/control_terminal/terminal_snapshot_controller.gd` |
 | построение снапшота (read-model) | `scripts/presentation/control_terminal_snapshot_builder.gd` через gateway |
-| жизненный цикл / публичный API узла | `scripts/ui/hud_control_terminal.gd` |
+| open/close / input / catalogs / DragSource·DropKey·SliderTrack / публичный API | `scripts/ui/hud_control_terminal.gd` (~1100 строк после волны U2) |
+
+**Долг (вне волны):** inner-классы `DragSource` / `DropKey` / `SliderTrack` остаются на узле — у скрипта нет `class_name`, вынос потребовал бы preload и ручной проверки DnD.
 
 ## Данные и команды
 
@@ -101,3 +105,12 @@ K-пульт — **view**: читает снапшоты у `WorldCommandGateway
 Сузить `live_sig` (убрать дрейф вроде `demand_w` / `battery_fraction` из
 структурной пересборки) и обновлять показания точечным патчем лейблов/шкал
 без `queue_free` всего фейсплейта 10 Гц.
+
+## Line counts (после волны U2)
+
+| Файл | строк |
+|---|---:|
+| `hud_control_terminal.gd` | ~1100 |
+| `terminal_command_executor.gd` | ~420 |
+| `terminal_action_bar.gd` | ~260 |
+| `terminal_shell_builder.gd` | ~145 |
