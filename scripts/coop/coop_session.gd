@@ -1133,59 +1133,7 @@ func _local_pose() -> Dictionary:
 ## Client: while seated as driver with local owner-sim, apply locomotion here
 ## (host is a kinematic ghost). PAX / missing-seat fallbacks unchanged.
 func _tick_client_control_input(delta: float) -> void:
-	if _gateway == null:
-		_control_input_accum = 0.0
-		_seat_edge_dampeners = false
-		_seat_edge_parking_brake = false
-		return
-	var seat_id := _gateway.get_local_seat_element_id()
-	if seat_id <= 0:
-		_control_input_accum = 0.0
-		_seat_edge_dampeners = false
-		_seat_edge_parking_brake = false
-		return
-	# Cheap while-seated fallback: seat element or body gone → detach locally
-	# (covers a lost force-release RPC after the host destroyed the cockpit).
-	if not _client_seat_replica_ok(seat_id):
-		_end_local_driver_physics()
-		_gateway.release_local_seat_attach()
-		_control_input_accum = 0.0
-		_seat_edge_dampeners = false
-		_seat_edge_parking_brake = false
-		return
-	_gateway.ensure_local_seat_binding()
-	if not _gateway.is_local_seat_driver():
-		_control_input_accum = 0.0
-		_seat_edge_dampeners = false
-		_seat_edge_parking_brake = false
-		return
-	# Owner-authoritative: drive locally; state upload is separate.
-	if _local_physics_assembly_id > 0:
-		_gateway.tick_rover_locomotion_input()
-		return
-	# Legacy fallback if local sim failed to start — keep host input relay.
-	var modal_blocks := (
-		_player != null
-		and _player.has_method("is_gameplay_input_enabled")
-		and not bool(_player.call("is_gameplay_input_enabled"))
-	)
-	if not modal_blocks:
-		if Input.is_action_just_pressed(&"toggle_dampeners"):
-			_seat_edge_dampeners = true
-		if Input.is_action_just_pressed(&"toggle_parking_brake"):
-			_seat_edge_parking_brake = true
-	_control_input_accum += delta
-	if _control_input_accum < CONTROL_INPUT_INTERVAL:
-		return
-	_control_input_accum = 0.0
-	var raw := _gateway.collect_seat_raw_input(modal_blocks)
-	var edges := {
-		"toggle_dampeners": _seat_edge_dampeners,
-		"toggle_parking_brake": _seat_edge_parking_brake,
-	}
-	_seat_edge_dampeners = false
-	_seat_edge_parking_brake = false
-	rpc_id(1, "_srv_control_input", raw, edges)
+	CoopSeatControlRelayUtil.tick_client_control_input(self, delta)
 
 
 func _tick_local_owner_motion_upload(delta: float) -> void:
@@ -1193,34 +1141,12 @@ func _tick_local_owner_motion_upload(delta: float) -> void:
 
 
 func _client_seat_replica_ok(element_id: int) -> bool:
-	if element_id <= 0 or _session == null or _session.world == null:
-		return false
-	var element := _session.world.get_element(element_id)
-	if element == null or not element.is_operational():
-		return false
-	if _session.projection == null:
-		return false
-	var body := (
-		_session.projection.get_element_projection(element_id).get("body")
-		as PhysicsBody3D
-	)
-	return body != null and is_instance_valid(body)
+	return CoopSeatControlRelayUtil.client_seat_replica_ok(self, element_id)
 
 
 @rpc("any_peer", "call_remote", "unreliable_ordered", CH_INPUT)
 func _srv_control_input(raw: Dictionary, edges: Dictionary) -> void:
-	if _mode != Mode.HOST or _gateway == null:
-		return
-	var peer := multiplayer.get_remote_sender_id()
-	var uid := _registry.uid_of(peer)
-	if uid.is_empty():
-		return
-	# Owner-sim guest already integrates loco locally; ignore stale input relay.
-	for assembly_id_variant: Variant in _remote_physics_owners.keys():
-		if str(_remote_physics_owners[assembly_id_variant]) == uid:
-			return
-	_remote_driver_last_input_ms[uid] = Time.get_ticks_msec()
-	_gateway.apply_remote_driver_input(uid, raw, edges)
+	CoopSeatControlRelayUtil.srv_control_input(self, raw, edges)
 
 
 ## Host → seated guest: seat destroyed / non-operational. Reliable on CH_MAIN.
@@ -1229,47 +1155,22 @@ func _notify_remote_seat_force_release(
 	_seat_element_id: int,
 	_assembly_id: int
 ) -> void:
-	if _mode != Mode.HOST or player_id.is_empty():
-		return
-	var peer := _registry.peer_of(player_id)
-	if peer <= 0:
-		return
-	_remote_driver_last_input_ms.erase(player_id)
-	_clear_remote_physics_owner_for_uid(player_id)
-	rpc_id(peer, "_cli_force_seat_release")
+	CoopSeatControlRelayUtil.notify_remote_seat_force_release(
+		self, player_id, _seat_element_id, _assembly_id
+	)
 
 
 @rpc("authority", "call_remote", "reliable", CH_MAIN)
 func _cli_force_seat_release() -> void:
-	if _mode != Mode.CLIENT or _gateway == null:
-		return
-	_end_local_driver_physics()
-	_gateway.release_local_seat_attach()
-	_control_input_accum = 0.0
-	_seat_edge_dampeners = false
-	_seat_edge_parking_brake = false
+	CoopSeatControlRelayUtil.cli_force_seat_release(self)
 
 
 func _tick_remote_driver_watchdog() -> void:
-	if _gateway == null or _remote_driver_last_input_ms.is_empty():
-		return
-	var now := Time.get_ticks_msec()
-	var stale: Array[String] = []
-	for uid: String in _remote_driver_last_input_ms.keys():
-		if now - int(_remote_driver_last_input_ms[uid]) > CONTROL_INPUT_STALE_MS:
-			stale.append(uid)
-	for uid: String in stale:
-		_gateway.clear_remote_driver_input(uid)
-		_remote_driver_last_input_ms.erase(uid)
+	CoopSeatControlRelayUtil.tick_remote_driver_watchdog(self)
 
 
 func _clear_remote_driver(uid: String) -> void:
-	if uid.is_empty() or _gateway == null:
-		return
-	_gateway.clear_remote_driver_input(uid)
-	if _session != null and _session.world != null:
-		_session.world.clear_player_seat_context(uid)
-	_remote_driver_last_input_ms.erase(uid)
+	CoopSeatControlRelayUtil.clear_remote_driver(self, uid)
 
 
 ## Resolve a ControlSeat element to its world transform on this peer's replica
