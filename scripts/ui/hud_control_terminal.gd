@@ -556,31 +556,12 @@ func set_active_page(index: int) -> void:
 	_set_page(index)
 
 
-## Бар приезжает целиком из снапшота — это хостовое авторитетное состояние,
-## не то, что рисует сама панель. Смена хоста (в т.ч. на «нет хоста») сбрасывает
-## текущую страницу: чужая страница №7 на новом хосте ничего не значит.
 func _apply_bar_snapshot(host_element_id: int, pages: Array) -> void:
-	var host_changed := host_element_id != _host_element_id
-	_host_element_id = host_element_id
-	_bar_pages = pages if not pages.is_empty() else _empty_bar_pages()
-	if host_changed:
-		_page = 0
-	# Полоса пульта — часть закрытого окна (_frame.visible=false), пока
-	# не открыто перестраивать её незачем: данные (_bar_pages) для компактной
-	# ленты уже свежие вне зависимости от этого.
-	if _open:
-		_fill_pages()
-		_fill_slots()
+	TerminalActionBar.apply_bar_snapshot(self, host_element_id, pages)
 
 
-static func _empty_bar_pages() -> Array:
-	var pages: Array = []
-	for _page_index in range(PAGE_COUNT):
-		var slots: Array = []
-		for _slot_index in range(SLOTS_PER_PAGE):
-			slots.append({})
-		pages.append(slots)
-	return pages
+func _empty_bar_pages() -> Array:
+	return TerminalActionBar.empty_bar_pages(self)
 
 
 ## Смена цели тянет за собой бар: клавиши принадлежат технике, а не игроку,
@@ -754,6 +735,9 @@ func _new_drag_source() -> DragSource:
 
 func _new_slider_track() -> SliderTrack:
 	return SliderTrack.new()
+
+func _new_drop_key() -> DropKey:
+	return DropKey.new()
 
 func _load_icon_font() -> void:
 	TerminalWidgetKit.load_icon_font(self)
@@ -1123,221 +1107,55 @@ func _alarm_row(
 	return TerminalAlarmsPanel.alarm_row(self, name, tag, desc, time, col, element_id)
 
 func _build_softbar() -> Control:
-	var wrap := _panel(HEAD, 0, 1, 0, 0, LINE2)
-	var v := _vbox(0)
-
-	var sh := _hbox(12)
-	sh.add_child(_lbl("ПУЛЬТ ДЕЙСТВИЙ", TXT2, 11))
-	_page_row = _hbox(4)
-	var sp := Control.new()
-	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	sh.add_child(sp)
-	sh.add_child(_page_row)
-	var shwrap := _panel(HEAD, 0, 0, 0, 1)
-	shwrap.add_child(_pad(sh, 12, 6, 12, 6))
-	v.add_child(shwrap)
-	_fill_pages()
-
-	_strip = _hbox(0)
-	_fill_slots()
-	v.add_child(_strip)
-	wrap.add_child(v)
-	return wrap
+	return TerminalActionBar.build_softbar(self)
 
 
 func _fill_pages() -> void:
-	if _page_row == null:
-		return
-	for child: Node in _page_row.get_children():
-		_page_row.remove_child(child)
-		child.queue_free()
-	for i in range(PAGE_COUNT):
-		_page_row.add_child(_page_btn(i))
+	TerminalActionBar.fill_pages(self)
 
 
 func _page_btn(index: int) -> Control:
-	var on := index == _page
-	var b := _panel(DARKCHIP if on else Color(0, 0, 0, 0), 1, 1, 1, 1, LINE2)
-	b.custom_minimum_size = Vector2(20, 18)
-	b.mouse_filter = Control.MOUSE_FILTER_STOP
-	b.gui_input.connect(_on_click.bind(_set_page.bind(index)))
-	# Занятая страница читается тёмным номером: иначе понять, где что лежит,
-	# можно только пролистав все девять.
-	var c := Color(0.929, 0.937, 0.945) if on else (
-		TXT2 if _page_has_bindings(index) else DIM
-	)
-	b.add_child(_lbl(str(index + 1), c, 11, HORIZONTAL_ALIGNMENT_CENTER))
-	return b
+	return TerminalActionBar.page_btn(self, index)
 
 
-## Листание страниц по кругу — как в строительном тулбаре.
 func _set_page(index: int) -> void:
-	var next := wrapi(index, 0, PAGE_COUNT)
-	if next == _page:
-		return
-	_release_holds()
-	_page = next
-	if _open:
-		_fill_pages()
-		_fill_slots()
+	TerminalActionBar.set_page(self, index)
 
 
 func _page_slots(page := -1) -> Array:
-	var page_index := _page if page < 0 else wrapi(page, 0, PAGE_COUNT)
-	if page_index >= 0 and page_index < _bar_pages.size():
-		return _bar_pages[page_index]
-	return [{}, {}, {}, {}, {}, {}, {}, {}, {}]
+	return TerminalActionBar.page_slots(self, page)
 
 
 func _page_has_bindings(page: int) -> bool:
-	for slot_variant: Variant in _page_slots(page):
-		if not (slot_variant as Dictionary).is_empty():
-			return true
-	return false
+	return TerminalActionBar.page_has_bindings(self, page)
 
 
-## Перерисовка полосы пульта из модели слотов.
 func _fill_slots() -> void:
-	if _strip == null:
-		return
-	for child: Node in _strip.get_children():
-		_strip.remove_child(child)
-		child.queue_free()
-	var slots := _page_slots()
-	for i in range(slots.size()):
-		var key := _soft_key(i, slots[i])
-		key.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		_strip.add_child(key)
-		if i < slots.size() - 1:
-			_strip.add_child(_vrule())
+	TerminalActionBar.fill_slots(self)
 
 
-## Привязка брошенной команды/параметра к клавише — идёт командой в
-## симуляцию (`configure_action_slot`), не мутирует бар напрямую: бар —
-## авторитетное состояние хоста, не локальный UI-стейт (CONTROL-ACTIONS-V0
-## «Persistence и кооп»). Слот на экране обновится из следующего снапшота
-## (до ~100 мс), тот же принцип, что и у остальных команд пульта.
 func bind_slot(index: int, payload: Dictionary) -> void:
-	if index < 0 or index >= SLOTS_PER_PAGE or payload.is_empty():
-		return
-	_submit_action_slot(index, payload)
+	TerminalActionBar.bind_slot(self, index, payload)
 
 
 func clear_slot(index: int) -> void:
-	if index < 0 or index >= SLOTS_PER_PAGE:
-		return
-	_submit_action_slot(index, {})
+	TerminalActionBar.clear_slot(self, index)
 
 
-## Пустой payload = снять клавишу (тот же приём, что пустое имя в
-## SetElementNameCommand сбрасывает custom_name).
 func _submit_action_slot(index: int, payload: Dictionary) -> void:
-	if _gateway == null or not _gateway.has_method("submit"):
-		# Изолированная сцена вёрстки (scenes/ui/test_control_terminal.tscn) —
-		# гейтвея нет, но бар обязан оставаться кликабельным для проверки
-		# вёрстки. _page_slots() без гейтвея возвращает новый пустой Array на
-		# каждый вызов (_bar_pages никогда не заполняется), поэтому мутировать
-		# нужно ЕГО ЖЕ элемент _bar_pages напрямую, а не то, что вернул
-		# _page_slots() — иначе правка тут же теряется.
-		_ensure_local_bar_pages()
-		var page_index := wrapi(_page, 0, PAGE_COUNT)
-		if index >= 0 and index < SLOTS_PER_PAGE and page_index < _bar_pages.size():
-			_bar_pages[page_index][index] = payload.duplicate(true)
-			_fill_slots()
-			_fill_pages()
-		return
-	if _host_element_id <= 0:
-		return
-	var command_id: int = _gateway.call("submit", {
-		"kind": &"configure_action_slot",
-		# Источник — игрок, не панель: гейтвей сверяет его с текущим occupant
-		# хоста (единственная команда пульта, для которой это важно).
-		"source": _player,
-		"target": {
-			"valid": true,
-			"target_kind": InteractionHit.KIND_SIMULATION_ELEMENT,
-			"element_id": _host_element_id,
-		},
-		"parameters": {
-			"host_element_id": _host_element_id,
-			"page": _page,
-			"index": index,
-			"payload": payload,
-		},
-	})
-	# Без этого отказ (occupant не тот / хост неполный) молчал бы — статус-бар
-	# получает reason только для команд, зарегистрированных здесь.
-	_pending_commands[command_id] = true
+	TerminalActionBar.submit_action_slot(self, index, payload)
 
 
-## Только для фолбэка без гейтвея (см. _submit_action_slot) — держит
-## _bar_pages настоящим 9×9-массивом, чтобы мутация клавиши не терялась.
 func _ensure_local_bar_pages() -> void:
-	if _bar_pages.size() != PAGE_COUNT:
-		_bar_pages = _empty_bar_pages()
+	TerminalActionBar.ensure_local_bar_pages(self)
 
 
-## Клавиша пульта → глагол. Пустой слот молчит. `source` различает удержание
-## хоткея и удержание мышью: снимаются они по разным признакам.
 func _fire_slot(index: int, pressed: bool, source := "") -> void:
-	if index < 0 or index >= SLOTS_PER_PAGE:
-		return
-	var slot: Dictionary = _page_slots()[index]
-	if slot.is_empty():
-		return
-	var hold_source := source if not source.is_empty() else "slot:%d" % index
-	if pressed:
-		_begin_hold(hold_source, slot)
-	else:
-		_held.erase(hold_source)
-	_run_action(slot, pressed)
+	TerminalActionBar.fire_slot(self, index, pressed, source)
 
 
 func _soft_key(index: int, slot: Dictionary) -> Control:
-	var empty := slot.is_empty()
-	var box := DropKey.new()
-	box.terminal = self
-	box.slot_index = index
-	box.add_theme_stylebox_override("panel", _sbox(
-		PANEL,
-		0, 0, 0, 0,
-		LINE
-	))
-	box.custom_minimum_size = Vector2(0, 56)
-	box.mouse_filter = Control.MOUSE_FILTER_STOP
-	box.tooltip_text = (
-		"Перетащи сюда команду или параметр"
-		if empty
-		else "%s · %s\nЛКМ или клавиша %d — выполнить, ПКМ — снять" % [
-			str(slot.get("label", "")), str(slot.get("node_name", "")), index + 1
-		]
-	)
-	box.gui_input.connect(_on_slot_input.bind(index))
-
-	var v := _vbox(0)
-	var top := _hbox(0)
-	top.add_child(_lbl(str(index + 1), DIM, 11))
-	var sp := Control.new()
-	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	top.add_child(sp)
-	if not empty:
-		top.add_child(_icon(str(slot.get("glyph", "")), DIM, 14))
-	v.add_child(top)
-	var sp2 := Control.new()
-	sp2.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	v.add_child(sp2)
-	v.add_child(_lbl(
-		"—" if empty else str(slot.get("label", "")),
-		FAINT if empty else TXT,
-		12
-	))
-	v.add_child(_lbl(
-		"свободно" if empty else str(slot.get("node_tag", "")),
-		FAINT if empty else DIM,
-		10
-	))
-	box.add_child(_pad(v, 10, 8, 10, 8))
-	return box
+	return TerminalActionBar.soft_key(self, index, slot)
 
 
 func _on_slot_input(event: InputEvent, index: int) -> void:
