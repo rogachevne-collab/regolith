@@ -18,6 +18,7 @@ ADR. Интеграция в Erebus — через Erebus Lite addon, когда
 | Machine compose (буровой манипулятор по фразе) | `specs/MACHINE-COMPOSE-V0.md`; cheatsheet `machine-compose` |
 | Body, Field, Surface | «Примитивы» → одноимённые разделы |
 | Actuator, Wheel | «Примитивы» → «Actuator», «Wheel»; `specs/ROVER-MODULES-V1.md` |
+| Гигантская палуба / Platform Ø4.5 м колёса | `specs/PLATFORM-WHEELS-V0.md` |
 | Thruster, Gyro (flight hop) | «Примитивы» → «Actuator»; `specs/POC-THRUSTERS-V0.md` |
 | Landing leg (посадочная нога) | «Примитивы» → роли `Support`; `specs/POC-THRUSTERS-V0.md` |
 | Cable / Tether, Sensor | «Примитивы» → одноимённые разделы |

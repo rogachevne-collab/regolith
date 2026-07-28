@@ -4,7 +4,9 @@ extends RefCounted
 ## Must match bootstrap.gd constants.
 const DEMO_ROVER_OFFSET_M := 32.0
 const DEBUG_ROVER_SPAWN_OFFSET_M := 6.0
+const DEBUG_PLATFORM_SPAWN_OFFSET_M := 18.0
 const DEMO_HOPPER_OFFSET_M := 68.0
+const _PlatformComposer := preload("res://scripts/authoring/platform_composer.gd")
 const LAMP_POLE_SCENE := preload("res://scenes/props/lamp_pole.tscn")
 const LAMP_POLE_OFFSETS_M: Array[Vector3] = [
 	Vector3(6.0, 0.0, 4.0),
@@ -111,6 +113,118 @@ static func spawn_debug_rover_near_player(bootstrap) -> void:
 	var hint: Vector3 = debug_rover_spawn_hint(bootstrap)
 	await spawn_rover_at_hint(bootstrap, hint, "Debug rover (U)", true)
 	bootstrap._debug_rover_spawn_busy = false
+
+
+static func spawn_debug_platform_near_player(bootstrap) -> void:
+	if bootstrap._debug_platform_spawn_busy:
+		return
+	bootstrap._debug_platform_spawn_busy = true
+	print("MoonExperiment: , → spawn debug platform…")
+	set_debug_spawn_status(bootstrap, ",: собираю платформу 6×8…")
+	var hint: Vector3 = debug_platform_spawn_hint(bootstrap)
+	await spawn_platform_at_hint(bootstrap, hint, "Debug platform (,)")
+	bootstrap._debug_platform_spawn_busy = false
+
+
+static func debug_platform_spawn_hint(bootstrap) -> Vector3:
+	var origin: Vector3 = bootstrap._player.global_position
+	var forward: Vector3 = player_flat_forward(bootstrap)
+	var camera: Camera3D = bootstrap._player.get_node_or_null("Camera") as Camera3D
+	if camera != null and camera.has_method("aim_transform"):
+		var aim: Transform3D = camera.call("aim_transform")
+		origin = aim.origin
+		forward = -aim.basis.z
+		if bootstrap._gravity_field != null:
+			var up: Vector3 = bootstrap._gravity_field.up_at(origin)
+			forward = (forward - up * forward.dot(up)).normalized()
+			if forward.length_squared() <= 0.000001:
+				forward = player_flat_forward(bootstrap)
+	return origin + forward * DEBUG_PLATFORM_SPAWN_OFFSET_M
+
+
+static func spawn_platform_at_hint(
+	bootstrap,
+	hint: Vector3,
+	label: String
+) -> void:
+	if bootstrap._session == null:
+		push_warning("%s spawn failed: no session" % label)
+		return
+	var tool: VoxelTool = TerrainCompat.get_voxel_tool(bootstrap._terrain)
+	if tool == null:
+		push_warning("%s spawn failed: no voxel tool" % label)
+		set_debug_spawn_status(bootstrap, "%s: нет voxel tool" % label)
+		return
+	tool.channel = VoxelBuffer.CHANNEL_SDF
+	var space: PhysicsDirectSpaceState3D = bootstrap._physics_space_state()
+	var surface_variant: Variant = RoverDemoSpawn._ground_point_along_field(
+		bootstrap._terrain,
+		tool,
+		space,
+		hint
+	)
+	var ground: Vector3 = (
+		surface_variant as Vector3 if surface_variant is Vector3 else hint
+	)
+	ground = await bootstrap._await_physics_ground_at(ground, label)
+	if not bootstrap._is_finite_vec3(ground):
+		set_debug_spawn_status(
+			bootstrap, "%s: нет physics-коллизии под точкой спавна" % label
+		)
+		return
+	var t0 := Time.get_ticks_msec()
+	var result: Dictionary = _PlatformComposer.spawn_on_terrain(
+		bootstrap._session,
+		ground,
+		RoverDemoSpawn.STORE_ID,
+		bootstrap._terrain,
+		tool,
+		space
+	)
+	var assembly_id := int(result.get("assembly_id", 0))
+	var body_pos := Vector3(NAN, NAN, NAN)
+	if (
+		bool(result.get("ok", false))
+		and assembly_id > 0
+		and bootstrap._session.projection != null
+	):
+		var body: RigidBody3D = bootstrap._session.projection.get_physics_body(
+			assembly_id
+		)
+		if body != null:
+			body_pos = body.global_position
+	var dist: float = (
+		bootstrap._player.global_position.distance_to(body_pos)
+		if bootstrap._is_finite_vec3(body_pos) and bootstrap._player != null
+		else -1.0
+	)
+	if not bool(result.get("ok", false)):
+		push_warning(
+			"%s spawn failed: %s"
+			% [label, str(result.get("error", "unknown"))]
+		)
+		set_debug_spawn_status(
+			bootstrap, "%s FAIL: %s" % [label, str(result.get("error", "unknown"))]
+		)
+	else:
+		print(
+			(
+				"MoonExperiment: %s spawned assembly_id=%d body=%s "
+				+ "dist=%.1fm compose=%dms"
+			)
+			% [
+				label,
+				assembly_id,
+				str(body_pos),
+				dist,
+				Time.get_ticks_msec() - t0,
+			]
+		)
+		set_debug_spawn_status(
+			bootstrap,
+			",: платформа #%d рядом (%.0fm). Собиралась %dms."
+			% [assembly_id, dist, Time.get_ticks_msec() - t0]
+		)
 
 
 static func player_flat_forward(bootstrap) -> Vector3:

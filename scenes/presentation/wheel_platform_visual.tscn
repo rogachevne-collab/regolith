@@ -1,0 +1,8 @@
+[gd_scene format=3 uid="uid://b8wheelplatform01"]
+
+[ext_resource type="PackedScene" uid="uid://dor6ihexf41m7" path="res://resources/models/wheel_med.fbx" id="1_wheel"]
+
+[node name="WheelPlatformVisual" type="Node3D"]
+
+[node name="Model" parent="." instance=ExtResource("1_wheel")]
+transform = Transform3D(3, 0, 0, 0, 3, 0, 0, 0, 3, 0, 0, 0)

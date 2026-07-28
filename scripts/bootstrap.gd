@@ -140,6 +140,7 @@ var _player_spawn_hint := Vector3.UP
 var _player_spawn_pos := Vector3.ZERO
 var _world_ready := false
 var _debug_rover_spawn_busy := false
+var _debug_platform_spawn_busy := false
 var _autosave_accum := 0.0
 var _last_save_ms := 0
 var _save_load_attempted := false
@@ -306,6 +307,11 @@ func _process(delta: float) -> void:
 			and Input.is_action_just_pressed(&"spawn_debug_rover")
 		):
 			BootstrapDemoSpawnService.spawn_debug_rover_near_player(self)
+		if (
+			not _debug_platform_spawn_busy
+			and Input.is_action_just_pressed(&"spawn_debug_platform")
+		):
+			BootstrapDemoSpawnService.spawn_debug_platform_near_player(self)
 	if not debug_overlay:
 		return
 	var player_position: Vector3 = _player.global_position

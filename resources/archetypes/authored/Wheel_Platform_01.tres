@@ -1,0 +1,57 @@
+[gd_resource type="Resource" script_class="ElementArchetype" format=3]
+
+[ext_resource type="Script" path="res://scripts/simulation/resources/build_requirement.gd" id="1_fndbt"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/collider_definition.gd" id="2_eu0p1"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/element_archetype.gd" id="5_x3aj8"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/structural_mount_pad.gd" id="6_alwsx"]
+[ext_resource type="Script" path="res://scripts/simulation/resources/wheel_definition.gd" id="7_w1jtj"]
+
+[sub_resource type="Resource" id="Resource_fndbt"]
+script = ExtResource("1_fndbt")
+resource_id = "mechanism"
+amount = 12.0
+
+[sub_resource type="Resource" id="Resource_eu0p1"]
+script = ExtResource("2_eu0p1")
+local_cell = Vector3i(3, 3, 3)
+size = Vector3(1.125, 1.125, 1.125)
+
+[sub_resource type="Resource" id="Resource_xdnt2"]
+script = ExtResource("6_alwsx")
+local_cell = Vector3i(3, 3, 3)
+socket_tag = "wheel_plug"
+exact_point = true
+local_position = Vector3(2.2032970735751457, 2.250054065744619, 2.2140010711473405)
+
+[sub_resource type="Resource" id="Resource_e1bhg"]
+script = ExtResource("7_w1jtj")
+radius_m = 2.25
+width_m = 2.202
+hub_local_authored = true
+hub_local = Vector3(0.9195237471358077, 2.250054065744619, 2.2140010711473405)
+drive_torque_n_m = 150000.0
+brake_torque_n_m = 200000.0
+longitudinal_grip = 2.5
+lateral_grip = 1.8
+slip_stiffness = 1500.0
+lateral_stiffness = 2000.0
+max_steering_angle_rad = 0.35
+forward_axis_face = 5
+power_draw_w = 600.0
+idle_w = 40.0
+
+[resource]
+script = ExtResource("5_x3aj8")
+archetype_id = "Wheel_Platform_01"
+display_name = "Колесо платформы Ø4.5"
+roles = PackedStringArray("Support", "Actuator")
+mass_kg = 1000.0
+footprint_cells = Array[Vector3i]([Vector3i(3, 3, 3)])
+colliders = Array[ExtResource("2_eu0p1")]([SubResource("Resource_eu0p1")])
+structural_surface_policy = 2
+structural_mount_pads = Array[ExtResource("6_alwsx")]([SubResource("Resource_xdnt2")])
+build_requirements = Array[ExtResource("1_fndbt")]([SubResource("Resource_fndbt")])
+wheel_definition = SubResource("Resource_e1bhg")
+default_orientation_index = 16
+visual_scene_path = "res://scenes/presentation/wheel_platform_visual.tscn"
+visual_offset = Vector3(2.19832998096647, 2.25000003837792, 2.215817413330078)

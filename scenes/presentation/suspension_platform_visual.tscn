@@ -1,0 +1,8 @@
+[gd_scene format=3 uid="uid://b8susplatform01"]
+
+[ext_resource type="PackedScene" uid="uid://v2pofduopg6d" path="res://resources/models/suspension_small.fbx" id="1_susp"]
+
+[node name="SuspensionPlatformVisual" type="Node3D"]
+
+[node name="Model" parent="." instance=ExtResource("1_susp")]
+transform = Transform3D(3, 0, 0, 0, 3, 0, 0, 0, 3, 0, 0, 0)
