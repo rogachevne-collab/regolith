@@ -128,7 +128,7 @@ input, aim raycast, HUD         SimulationWorld (авторитет)
 | A3 | Один игрок захардкожен: спавн, settle, `VoxelViewer` | `bootstrap.gd` (`_player`, `_ensure_player_viewer_for_planet`, `_find_voxel_viewer`) | нужен per-peer спавн и свой `VoxelViewer` на каждого | частично: локальный игрок каждого клиента спавнится/settle'ится как раньше; на хосте у `RemotePlayer` — collision-only `VoxelViewer` proxy (R-COOP-7) для dig far from host |
 | A4 | `SuitState` — Node на сцене игрока, вне `SimulationWorld` | `suit_state.gd` | не реплицируется, не сохраняется per-peer. **Решено переносить в мир** — см. «Per-peer player state» | ✅ этап 1b |
 | A5 | Правки террейна применяются локально и никуда не публикуются | `terrain_excavation_service.gd`, `terrain_impact_carver.gd` | клиент не увидит выкопанное | частично: спайк B — live `_cli_dig_op` + session `_dig_ops` на join; RC — cold dig SQLite+granular bulk (`terrain_bulk` / CH_BULK); `dig_terrain_debris` far future; форма `terrain_edits` **superseded** |
-| A6 | Позы сборок живут только в Jolt на хосте | `simulation_physics_projection.gd`, `assembly_motion_state.gd` | клиент не увидит движение | частично: спайк C — `_cli_assembly_motion` 15 Гц + kinematic interp; без interest / f64-пакета исходной спеки |
+| A6 | Позы сборок живут только в Jolt на хосте | `simulation_physics_projection.gd`, `assembly_motion_state.gd` | клиент не увидит движение | частично: спайк C — `_cli_assembly_motion` 30 Гц + kinematic interp; колёса — scalar reconstruct; без interest / f64-пакета исходной спеки |
 
 A1 — не архитектурная проблема, а дефолтное значение параметра: `store_id`
 уже параметризован везде. Достаточно убрать дефолты и проставлять
@@ -275,6 +275,12 @@ UX-слой поверх того же `CoopSession` — host-authoritative мо
 }
 ```
 
+Join UX: roster-аватары (хост + peers) спавнятся у гостя сразу после
+`restore_snapshot`, **до** ожидания `terrain_bulk`; позы буферятся в
+`_pose_inbox`, пока RemotePlayer ещё нет. Иначе гость 15–20 с не видит
+хоста (bulk / kick viewers), хотя хост гостя уже видит. Assembly-motion
+на клиенте принимается только после `_replica_ready` (конец join).
+
 Планируемое поле `terrain_edits` из ранней спеки **superseded** формой
 `build_dig_op` / `dig_ops` (live + join tail) и отдельным каналом
 `terrain_bulk` (байты host `moon.sqlite` + granular snapshot) — второй
@@ -344,15 +350,16 @@ Godot RPC пакует `Vector3` как **float32** → ошибка поряд�
 superseded для **локомотивных** сборок с живым водителем. Пассажир /
 пешком / стоящие машины по-прежнему без client Jolt.
 
-**Стрим observers** (`_cli_assembly_motion`, CH_STREAM, ~15 Гц,
+**Стрим observers** (`_cli_assembly_motion`, CH_STREAM, ~30 Гц,
 `unreliable_ordered`):
 
-- корень + не-колёсные body groups — world pose + velocity (как сейчас);
-- **колёса не интерполируются независимо в world space** (это давало орбиты
-  вокруг стойки): relative-to-strut blend и/или скаляры
-  (`compression_m`, `steering_angle_rad`, `wheel_speed`) из
-  `get_wheel_runtime`;
-- клиентский буфер ~120 мс (как `RemotePlayer`).
+- корень + не-колёсные body groups — world pose + velocity;
+- **колёса не едут как body transforms** (world/rel slerp спина давал дрожь
+  на кочках/в воздухе): в пакете только скаляры на колесо
+  (`compression_m`, `steering_angle_rad`, `wheel_speed_rad_s` + group id);
+  observer ставит kinematic wheel = strut × compression × steer × spin,
+  spin интегрируется локально из скорости;
+- клиентский буфер ~100 мс (как `RemotePlayer`).
 
 Гость-водитель шлёт state на хост (`_srv_assembly_motion`); хост применяет к
 ghost и ретранслирует зрителям. Руль гостя применяется **локально** у
@@ -367,7 +374,10 @@ ghost и ретранслирует зрителям. Руль гостя при
   full snapshot mid-drive;
 - host parking-freeze **не** thaw'ит `_ghost_assemblies` (mirrored
   `drive_command` иначе снимает freeze с jointless ghost → ragdoll);
-- перед unghost / seat-exit last streamed pose коммитится в kernel motion.
+- перед unghost / seat-exit last streamed pose коммитится в kernel motion;
+- host ghost переписывает wheel `body_group_motions` из scalars (колёса
+  больше не в `"m"`) — иначе electric radius видит колёса в точке посадки
+  и гасит `powered` у уехавшего гостя.
 
 Актуаторы (поршни/роторы) на observers — позы групп из стрима / snapshot;
 полная client-side actuator sim — вне этой вехи.
@@ -535,7 +545,7 @@ dev-файлы, поэтому `save_version` просто поднимаетс�
 | 3 | Транспорт: ENet, host/join, `_remote_submit`, join-снапшот, спавн N игроков (`bootstrap.gd`, per-peer `VoxelViewer`) | ✅ (`db36f54`, `35c0e70`) — см. «Что уже работает»; host per-peer collision-only `VoxelViewer` (R-COOP-7) | два инстанса, видим друг друга, ходим; guest dig far from host |
 | 4 | Terrain replication (session dig_ops + SQLite/granular bulk на join) | частично (спайк B + join `dig_ops` + RC `terrain_bulk`; без debris) | session digs live; late join — session tail + cold SQLite holes |
 | 5 | Дельты состояния мира + HUD у клиента | interim: 1 Гц `_cli_stores` (changed stores/buffers/inventories); полный snapshot — топология; полные дельты — later | копаем/крафтим/transfer — HUD сторов у клиента оживает ≤1 с без snapshot-storm |
-| 6 | Physics replication (owner loco + observer stream) | в работе: relative wheels + owner-authoritative driver Jolt; observers kinematic | водитель (хост или гость) едет как в одиночке; зрители без орбит колёс |
+| 6 | Physics replication (owner loco + observer stream) | в работе: scalar wheel reconstruct + 30 Гц + owner-authoritative driver Jolt; observers kinematic | водитель (хост или гость) едет как в одиночке; зрители — кочки/руль/спин без дрожи |
 | 7 | Кресло: `seated`, ввод водителя, выход, PAX | частично (спайк C+D: occupancy + `toggle_control_seat` + `_srv_control_input` + `passenger_seat`; без ходьбы на платформе) | водитель (cockpit, хост или гость) ведёт; PAX — только freelook, тулбар скрыт |
 
 Этапы 0–2 не требовали сети и были полезны сами по себе. Этап 3 + спайк

@@ -220,6 +220,92 @@ static func joint_basis(frame: Dictionary) -> Basis:
 	return Basis(x_axis, y_axis, x_axis.cross(y_axis).normalized())
 
 
+## Coop observer/ghost: mount constants for scalar wheel reconstruct (no joint).
+## Empty dict if suspension/wheel topology cannot be resolved.
+static func resolve_observer_wheel_mount(
+	world: SimulationWorld,
+	suspension_element_id: int,
+	wheel_element_id: int
+) -> Dictionary:
+	if world == null:
+		return {}
+	var suspension: SimulationElement = world.get_element(suspension_element_id)
+	var wheel: SimulationElement = world.get_element(wheel_element_id)
+	if suspension == null or wheel == null:
+		return {}
+	var frame := wheel_frame_assembly_local(wheel)
+	if frame.is_empty():
+		return {}
+	var socket: Dictionary = mount_pad_anchor_assembly_local(
+		suspension,
+		"wheel_socket"
+	)
+	var plug_local: Vector3 = plug_point_assembly_local(wheel)
+	var socket_local: Vector3 = (
+		socket["origin"] if not socket.is_empty() else plug_local
+	)
+	var hub_local: Vector3 = frame["hub"]
+	var up_local: Vector3 = frame["up"]
+	# Same droop bind as build_wheel_constraints: tip on socket, strut basis.
+	var bind_compression: float = (hub_local - plug_local).dot(up_local)
+	return {
+		"socket_local": socket_local,
+		"plug_local": plug_local,
+		"hub_local": hub_local,
+		"up_local": up_local,
+		"axle_local": Vector3(frame["axle"]),
+		"bind_compression_m": bind_compression,
+	}
+
+
+## Place a kinematic wheel body from blended strut pose + streamed scalars.
+## Compression along strut up; steer about up through the socket; spin about
+## the axle through the hub. Must NOT left-multiply spin/steer about the body
+## origin alone: when socket≈plug in assembly space the bind origin equals the
+## strut/chassis origin for every wheel, and spin-about-origin makes all tires
+## orbit the vehicle centreline (looks like “spinning around the front axle”).
+static func observer_wheel_global_transform(
+	strut_global: Transform3D,
+	mount: Dictionary,
+	compression_m: float,
+	steering_angle_rad: float,
+	spin_angle_rad: float
+) -> Transform3D:
+	var socket_local: Vector3 = mount.get("socket_local", Vector3.ZERO)
+	var plug_local: Vector3 = mount.get("plug_local", Vector3.ZERO)
+	var hub_local: Vector3 = mount.get("hub_local", Vector3.ZERO)
+	var up_local: Vector3 = mount.get("up_local", Vector3.UP)
+	var axle_local: Vector3 = mount.get("axle_local", Vector3.RIGHT)
+	var bind_c: float = float(mount.get("bind_compression_m", 0.0))
+	var up_world: Vector3 = (strut_global.basis * up_local).normalized()
+	if up_world.length_squared() <= 0.000001:
+		up_world = Vector3.UP
+	# Same droop bind as build_wheel_constraints (assembly-frame body).
+	var basis := strut_global.basis
+	var origin: Vector3 = (
+		strut_global * socket_local - strut_global.basis * plug_local
+	)
+	origin += up_world * (compression_m - bind_c)
+	# Body-local hub offset (= COM written at joint bind).
+	var hub_body: Vector3 = hub_local - socket_local + plug_local
+	var socket_world: Vector3 = strut_global * socket_local
+	# Steer about joint Y (up through socket on the strut).
+	if absf(steering_angle_rad) > 0.0000001:
+		var steer := Basis(up_world, steering_angle_rad)
+		basis = steer * basis
+		origin = socket_world + steer * (origin - socket_world)
+	var hub_world: Vector3 = origin + basis * hub_body
+	# Spin about axle through the tire centre — hub stays fixed.
+	var axle_world: Vector3 = (basis * axle_local).normalized()
+	if axle_world.length_squared() <= 0.000001:
+		return Transform3D(basis, origin)
+	if absf(spin_angle_rad) > 0.0000001:
+		var spin := Basis(axle_world, spin_angle_rad)
+		basis = spin * basis
+		origin = hub_world - basis * hub_body
+	return Transform3D(basis, origin)
+
+
 ## One tire cylinder replaces the wheel's authored colliders on the wheel body.
 ## Record shape matches ColliderProjectionUtil.build_collision_shapes.
 static func build_wheel_collider_record(

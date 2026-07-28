@@ -57,8 +57,9 @@ static func tick_cable_ropes(
 		# in topology_revision, so this is one dict lookup and two compares, and
 		# a frozen cable costs nothing else: no anchor resolve, no body lookup,
 		# no solver step. Any weld, grind, split or merge on that assembly bumps
-		# the revision and drops it back to full simulation for ~0.5 s until it
-		# re-freezes.
+		# the revision — and the cable is then re-routed analytically and re-baked
+		# on the spot. Baked is baked: it does not go back to the solver
+		# (see cable_frozen_current).
 		if CablePhysicsTickCoordinator.cable_frozen_current(projection, link, state):
 			live[link.link_id] = state
 			continue
@@ -181,10 +182,12 @@ static func tick_one_xpbd_rope(
 		body_a if body_a != null and body_a == body_b else null
 	)
 	# A frozen cable is caught by the tick loop's fast path and never reaches
-	# here — either it was never frozen, or _cable_frozen_current just thawed it
-	# (clearing _frozen and resetting the settle counter). So there is nothing
-	# to clean up here, and touching _still_ticks would reset the very counter
-	# _cable_try_freeze is trying to accumulate at the end of this function.
+	# here — either it was never frozen, or it stopped being bakeable at all and
+	# cable_frozen_current thawed it (clearing _frozen and resetting the settle
+	# counter). A stale bake alone does not land here: that is re-routed in place.
+	# So there is nothing to clean up here, and touching _still_ticks would reset
+	# the very counter cable_try_freeze is trying to accumulate at the end of
+	# this function.
 	if not state is Dictionary:
 		state = CablePhysicsTickCoordinator.XpbdCableRopeSolverScript.create_state(
 			anchor_a,
@@ -289,10 +292,11 @@ static func tick_one_xpbd_rope(
 
 
 ## Freeze a same-body cable once its host has been at rest long enough for the
-## cable to hang itself, then leave it frozen indefinitely — it thaws only when
-## the machine changes under it (see _cable_frozen_current), not when it drives.
-## The at-rest counter RESETS the moment the host moves, so a cable never
-## freezes mid-shake.
+## cable to hang itself. This is the ONLY time the solver ever shapes such a
+## cable: from here on it stays baked for good, and a machine change under it is
+## answered by re-routing the baked shape, not by simulating again (see
+## cable_frozen_current). The at-rest counter RESETS the moment the host moves,
+## so a cable never freezes mid-shake.
 
 
 static func cable_try_freeze(
@@ -365,15 +369,20 @@ static func cable_try_freeze(
 ## under it? One dict lookup on the state, one on the assembly, two compares —
 ## and if it holds, the caller skips the entire rope tick for this cable.
 ##
-## Waking is entirely the assembly's own change-reporting. Any weld, grind,
+## The stamp is entirely the assembly's own change-reporting. Any weld, grind,
 ## split or merge on that assembly bumps its topology_revision; the assembly
-## vanishing (a split re-roots into new ids) fails the lookup. Either way the
-## stamp no longer matches and the cable drops back to full simulation, where it
-## re-settles and re-freezes in about half a second. The winch is the one change
-## that is a link property rather than an assembly mutation, so rest length is
-## compared directly. Nothing here reads the cable's geometry or the body's
-## pose: a driving, tilting, slamming machine changes none of these numbers, and
-## that is the point — the cable is bolted to the frame and rides it for free.
+## vanishing (a split re-roots into new ids) fails the lookup. The winch is the
+## one change that is a link property rather than an assembly mutation, so rest
+## length is compared directly. Nothing here reads the cable's geometry or the
+## body's pose: a driving, tilting, slamming machine changes none of these
+## numbers, and that is the point — the cable is bolted to the frame and rides
+## it for free.
+##
+## A stale stamp does NOT mean "simulate again". Baked is baked: the cable is
+## re-routed analytically against the machine as it now stands and re-baked in
+## the same tick (see reroute_and_rebake). Re-settling a strapped utility cable
+## in the solver bought nothing a hanging curve does not give — it just paid a
+## settle spike on every weld, on every cable on that machine at once.
 
 
 static func cable_frozen_current(
@@ -384,13 +393,90 @@ static func cable_frozen_current(
 	var frozen: Dictionary = (state as Dictionary).get("_frozen", {})
 	if frozen.is_empty():
 		return false
-	if not is_equal_approx(float(frozen.get("rest_m", -1.0)), link.rest_length_m):
-		CablePhysicsTickCoordinator.thaw(projection, state as Dictionary, link)
-		return false
 	var assembly: SimulationAssembly = projection._world.get_assembly_raw(int(frozen.get("assembly_id", 0)))
-	if assembly == null or assembly.topology_revision != int(frozen.get("revision", -1)):
-		CablePhysicsTickCoordinator.thaw(projection, state as Dictionary, link)
+	if (
+		is_equal_approx(float(frozen.get("rest_m", -1.0)), link.rest_length_m)
+		and assembly != null
+		and assembly.topology_revision == int(frozen.get("revision", -1))
+	):
+		return true
+	return CablePhysicsTickCoordinator.reroute_and_rebake(projection, state as Dictionary, link)
+
+
+## The machine changed under a baked cable, so the baked shape is stale — but a
+## strapped utility cable does not need a solver to know what it looks like. Lay
+## it again as a hanging curve between its endpoints as they now stand
+## (CableCurveUtil, the same shape the routing preview draws) and re-bake in the
+## same tick: no thaw, no settle window, no solver step, and the mesh never sees
+## an intermediate frame.
+##
+## The one honest cost: an analytic curve does not drape over geometry, so a
+## cable that would have laid itself over a newly welded part becomes a plain
+## span across it. On a short taut cable bolted along one frame that is invisible;
+## it is the reason this path is only ever taken for same-body cables.
+##
+## Resolution comes from the link, not from the old stamp: a split re-roots the
+## assembly into fresh ids, so the id recorded beside the old shape can be gone
+## while the cable itself is perfectly fine on its new host. Only two things send
+## a cable back to the solver — losing its body, or its ends no longer sharing
+## one. Both mean it stopped being the kind of cable a bake can describe.
+
+
+static func reroute_and_rebake(
+	projection,
+	state: Dictionary, link: IndustryElectricLink) -> bool:
+	var element: SimulationElement = projection._world.get_element(link.element_a)
+	if element == null:
+		CablePhysicsTickCoordinator.thaw(projection, state, link)
 		return false
+	var assembly: SimulationAssembly = projection._world.get_assembly_raw(element.assembly_id)
+	var body := CablePhysicsTickCoordinator.rope_endpoint_body(projection, link.element_a)
+	if (
+		assembly == null
+		or body == null
+		or body != CablePhysicsTickCoordinator.rope_endpoint_body(projection, link.element_b)
+	):
+		CablePhysicsTickCoordinator.thaw(projection, state, link)
+		return false
+	var anchor_a := CableAnchorUtil.endpoint_world_position(
+		projection._world,
+		link.element_a,
+		link.port_a,
+		link.attach_a
+	)
+	var anchor_b := CableAnchorUtil.endpoint_world_position(
+		projection._world,
+		link.element_b,
+		link.port_b,
+		link.attach_b
+	)
+	var gravity := GravityField.resolve_gravity_accel(
+		projection,
+		(anchor_a + anchor_b) * 0.5
+	)
+	var up := -gravity.normalized() if gravity.length_squared() > 0.0 else Vector3.UP
+	# Same point count the solver would have produced for this span, so the mesh
+	# keeps its resolution across a re-bake instead of visibly coarsening.
+	var segments := maxi(
+		CablePhysicsTickCoordinator.XpbdCableRopeSolverScript.particle_count(
+			link.rest_length_m, anchor_a.distance_to(anchor_b)
+		) - 1,
+		1
+	)
+	var to_local := body.global_transform.affine_inverse()
+	var path_local := PackedVector3Array()
+	for point: Vector3 in CableCurveUtil.sample_span(
+		anchor_a, anchor_b, link.rest_length_m, up, segments
+	):
+		path_local.append(to_local * point)
+	state["_frozen"] = {
+		"body": body,
+		"path_local": path_local,
+		"assembly_id": assembly.assembly_id,
+		"revision": assembly.topology_revision,
+		"rest_m": link.rest_length_m,
+	}
+	link.baked_path_local = path_local
 	return true
 
 
@@ -422,12 +508,16 @@ static func seed_frozen_from_bake(
 	}}
 
 
-## Drop a cable's frozen shape AND its at-rest counter, and the persisted bake
-## with it. The counter matters: the machine just changed under the cable, so it
-## must get the full settle window to re-hang against the new geometry before it
-## can freeze again — without the reset a still machine re-freezes the very next
-## tick, snapshotting the stale shape it had before the change. Clearing the
-## link's bake matters too, or a save taken mid-thaw would restore the old shape.
+## Give a cable back to the solver: drop its frozen shape, its at-rest counter
+## and the persisted bake. This is now the rare path — a stale bake is re-routed
+## in place, so the only cables that land here are the ones a bake can no longer
+## describe at all (body gone, or the two ends no longer on one body). Such a
+## cable is a genuinely different cable and has to be re-solved from scratch.
+##
+## The counter reset matters: it must get the full settle window before it can
+## freeze again, or a still machine re-freezes the very next tick and snapshots
+## the stale shape it had before the change. Clearing the link's bake matters
+## too, or a save taken mid-thaw would restore the old shape.
 
 
 static func thaw(

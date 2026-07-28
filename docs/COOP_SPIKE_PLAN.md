@@ -12,10 +12,10 @@
   подтверждённых объёмов + session `_dig_ops` на join. `dig_terrain_debris` —
   far future (не «просто разблокировать»).
 - Этап C — сделан целиком (код): стрим движущихся сборок `_cli_assembly_motion`
-  (15 Гц, CH_STREAM) + посадка гостя через per-peer occupancy (без угона
-  `_rover_seat_*` хоста) + реле руля `_srv_control_input` на CH_STREAM
-  (20 Гц, НЕ команда гейтвея) + поле `"seat"` в позе для аватара на кресле.
-  Приёмка глазами в двух окнах — ещё нет.
+  (30 Гц, CH_STREAM; колёса — scalar reconstruct на observers) + owner-
+  authoritative loco у водителя + посадка гостя через per-peer occupancy
+  (без угона `_rover_seat_*` хоста) + поле `"seat"` в позе для аватара на
+  кресле. Приёмка глазами в двух окнах — ещё нет.
 - Этап D — сделан (код): `passenger_seat` slice01-деталь (ControlSeat без
   руля), посадка через `toggle_control_seat` + `passenger: true` / archetype,
   freelook, `"seat": element_id` в позе; водитель vs пассажир разведены

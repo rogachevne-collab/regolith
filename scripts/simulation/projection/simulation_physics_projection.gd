@@ -340,13 +340,22 @@ func rope_path(link_id: int) -> PackedVector3Array:
 			# instance straight into a typed RigidBody3D var errors on the
 			# assignment itself, before any null/validity check runs.
 			var body_variant: Variant = frozen.get("body")
-			if body_variant is RigidBody3D and is_instance_valid(body_variant):
+			# is_instance_valid FIRST: `x is T` on a freed Object errors every
+			# frame from industry_network_projection._process (platform 8×
+			# connect_cable → rebuild frees rope bodies → ~70k spam).
+			if (
+				is_instance_valid(body_variant)
+				and body_variant is RigidBody3D
+			):
 				var body := body_variant as RigidBody3D
 				var xf := body.global_transform
 				var out := PackedVector3Array()
 				for point: Vector3 in (frozen.get("path_local") as PackedVector3Array):
 					out.append(xf * point)
 				return out
+			# Stale freeze after body teardown — drop it so the next ask
+			# rebuilds from the live solver / analytic sag.
+			(state as Dictionary).erase("_frozen")
 		if use_xpbd_cable_rope:
 			return XpbdCableRopeSolverScript.path(state)
 		return CableRopeSolver.path(state)

@@ -33,15 +33,15 @@ const CONTROL_INPUT_STALE_MS := 300
 ## Moving-assembly motion stream (spike stage C): rate and the squared
 ## linear/angular velocity thresholds below which an assembly counts as parked
 ## and is not streamed (clients keep it from the last snapshot).
-const ASSEMBLY_INTERVAL := 1.0 / 15.0
+const ASSEMBLY_INTERVAL := 1.0 / 30.0
 const ASSEMBLY_SPEED_SQ := 0.0025  # (0.05 m/s)^2
 const ASSEMBLY_SPIN_SQ := 0.0025   # (0.05 rad/s)^2
 ## Client-side smoothing of the assembly stream, same scheme as RemotePlayer:
-## render ~120 ms in the past, blend between buffered frames. A stream that
+## render ~100 ms in the past, blend between buffered frames. A stream that
 ## goes quiet (assembly parked) is dropped after STALE_MS — the sim-truth pose
 ## from the last packet stays where it is.
-const ASSEMBLY_INTERP_DELAY_MS := 120
-const ASSEMBLY_BUFFER_LIMIT := 8
+const ASSEMBLY_INTERP_DELAY_MS := 100
+const ASSEMBLY_BUFFER_LIMIT := 10
 const ASSEMBLY_STALE_MS := 1500
 const SNAPSHOT_DEBOUNCE := 0.3
 ## Min gap between full-snapshot broadcasts. Slightly above 1s so structural
@@ -166,6 +166,18 @@ var _assembly_streams: Dictionary = {}
 var _remote_physics_owners: Dictionary = {}
 ## Client: assembly we currently simulate locally as the seated driver (0 = none).
 var _local_physics_assembly_id := 0
+## Observer/ghost: wheel_element_id → integrated spin angle (rad). Driven by
+## streamed wheel_speed; never slerped from body transforms.
+var _observer_wheel_spin: Dictionary = {}
+## assembly_id → {wheel_element_id: mount dict} for scalar reconstruct.
+var _observer_wheel_mounts: Dictionary = {}
+## Client: false from `join` until `_finish_apply_join` (snapshot + terrain bulk
+## applied). Drops assembly-motion during the wait so blend cannot touch a
+## half-swapped world. Host stays true while hosting.
+var _replica_ready := false
+## uid → latest pose received before the RemotePlayer existed (join race:
+## host poses arrive while the guest is still awaiting terrain bulk).
+var _pose_inbox: Dictionary = {}
 var _snapshot_dirty := false
 var _snapshot_debounce := 0.0
 var _last_broadcast_ms := 0
@@ -418,11 +430,13 @@ func _cmd_host(port: int = PORT_DEFAULT) -> void:
 		return
 	multiplayer.multiplayer_peer = peer
 	_mode = Mode.HOST
+	_replica_ready = true
 	_registry = CoopPeerRegistry.new()
 	_pending_results.clear()
 	_guest_dig_retries.clear()
 	_dig_ops.clear()
 	_last_poses.clear()
+	_pose_inbox.clear()
 	_seed_last_poses_from_cold()
 	_clear_store_wire_cache()
 	_connect_host_hooks()
@@ -443,6 +457,12 @@ func _cmd_join(ip: String, port: int = PORT_DEFAULT) -> void:
 		return
 	multiplayer.multiplayer_peer = peer
 	_mode = Mode.CLIENT
+	# Snapshot + terrain bulk land later; ignore loco/stream until then.
+	_replica_ready = false
+	_pose_inbox.clear()
+	_assembly_streams.clear()
+	_observer_wheel_spin.clear()
+	_observer_wheel_mounts.clear()
 	_info("connecting to %s:%d ..." % [ip, port])
 
 
@@ -644,6 +664,7 @@ func _on_connected_to_server() -> void:
 
 func _on_connection_failed() -> void:
 	multiplayer.multiplayer_peer = null
+	_replica_ready = false
 	_mode = Mode.OFFLINE
 	_err("connection failed — is the host up and the IP right?")
 
@@ -660,6 +681,7 @@ func _cli_join_denied(reason: StringName) -> void:
 	else:
 		_err("join denied by host: %s" % reason)
 	multiplayer.multiplayer_peer = null
+	_replica_ready = false
 	_mode = Mode.OFFLINE
 
 
@@ -669,6 +691,7 @@ func _cli_join_payload(payload: Dictionary) -> void:
 	if verdict != &"ok":
 		_err("cannot join: %s" % verdict)
 		multiplayer.multiplayer_peer = null
+		_replica_ready = false
 		_mode = Mode.OFFLINE
 		return
 	_autojoin_admitted = true
@@ -691,7 +714,15 @@ func _apply_join(payload: Dictionary) -> void:
 
 	var world := _world()
 	world.authoritative = false
+	_replica_ready = false
+	_assembly_streams.clear()
+	_observer_wheel_spin.clear()
+	_observer_wheel_mounts.clear()
 	world.restore_snapshot(payload["snapshot"])
+	# Spawn host/peer avatars NOW — before terrain-bulk wait. Otherwise the
+	# guest drops ~15–20s of `_cli_pose` (host invisible until bulk finishes /
+	# viewers kick and it "feels like a reload").
+	_spawn_join_roster_avatars(payload)
 	## Cold digs (SQLite + granular) before session dig_ops tail — bulk is the
 	## host dig-stream truth; dig_ops only cover ops after the host flush.
 	await _apply_join_terrain_bulk(payload.get("terrain_bulk"))
@@ -787,6 +818,28 @@ func _clear_terrain_bulk_state() -> void:
 	_terrain_bulk_expect_chunks = 0
 
 
+## Avatars from the join roster (host + already-connected peers). Safe to call
+## more than once — `_spawn_avatar` is idempotent per uid.
+func _spawn_join_roster_avatars(payload: Dictionary) -> void:
+	var host_info: Dictionary = payload.get("host", {})
+	var host_uid := String(host_info.get("uid", ""))
+	if not host_uid.is_empty():
+		var host_avatar := _spawn_avatar(
+			host_uid,
+			String(host_info.get("nick", host_uid.substr(0, 6)))
+		)
+		var host_pose: Variant = host_info.get("pose")
+		if host_pose is Dictionary and (host_pose as Dictionary).has("p"):
+			host_avatar.push_pose(host_pose)
+	var peers: Dictionary = payload.get("peers", {})
+	for peer_key: Variant in peers:
+		var row: Dictionary = peers[peer_key]
+		var uid := String(row.get("uid", ""))
+		if uid.is_empty() or uid == _local_uid or uid == host_uid:
+			continue
+		_spawn_avatar(uid, String(row.get("nick", uid.substr(0, 6))))
+
+
 func _finish_apply_join(payload: Dictionary) -> void:
 	if _meteorites != null:
 		_meteorites.set("enabled", false)
@@ -797,24 +850,17 @@ func _finish_apply_join(payload: Dictionary) -> void:
 
 	_gateway.set_network_submit(_on_local_submit)
 
-	var host_info: Dictionary = payload["host"]
-	var host_uid := String(host_info["uid"])
-	var host_avatar := _spawn_avatar(host_uid, String(host_info["nick"]))
-	host_avatar.push_pose(host_info["pose"])
-	var peers: Dictionary = payload.get("peers", {})
-	for peer_key: Variant in peers:
-		var row: Dictionary = peers[peer_key]
-		var uid := String(row.get("uid", ""))
-		if uid.is_empty() or uid == _local_uid or uid == host_uid:
-			continue
-		_spawn_avatar(uid, String(row.get("nick", uid.substr(0, 6))))
+	# Idempotent — usually already spawned before terrain bulk.
+	_spawn_join_roster_avatars(payload)
 
+	var host_info: Dictionary = payload["host"]
 	var you_pose: Variant = payload.get("you_pose")
 	if you_pose is Dictionary and (you_pose as Dictionary).has("p"):
 		await _bootstrap.reseat_player_near(_pose_position(you_pose))
 	else:
 		var host_pos: Vector3 = _pose_position(host_info["pose"])
 		await _bootstrap.reseat_player_near(host_pos + _tangent_offset(host_pos, 4.0))
+	_replica_ready = true
 	_info("joined '%s' — welcome to their Moon" % String(host_info["nick"]))
 
 
@@ -1013,6 +1059,7 @@ func _clear_remote_physics_owner_assembly(assembly_id: int) -> void:
 	_remote_physics_owners.erase(assembly_id)
 	if _session != null and _session.projection != null:
 		_session.projection.set_assembly_network_ghost(assembly_id, false)
+	_forget_observer_assembly(assembly_id)
 	_assembly_streams.erase(assembly_id)
 
 
@@ -1353,9 +1400,9 @@ func _clear_store_wire_cache() -> void:
 ## read here is current.
 ##
 ## Packet shape per assembly: `{ "m": {group_id: motion_dict}, "w": {wheel_id: scalars} }`.
-## Legacy clients that only saw flat `{group_id: motion}` still parse via
-## `_unpack_assembly_stream_entry`. Wheel scalars feed visual spin; body poses
-## for wheels are applied relative-to-strut on the observer (see blend).
+## `"m"` is root + non-wheel groups only. Wheels are observer-reconstructed from
+## `"w"` scalars (compression / steer / spin rate) glued to the strut.
+## Legacy flat `{group_id: motion}` still parses via `_unpack_assembly_stream_entry`.
 func _broadcast_assembly_motion() -> void:
 	if _registry.peer_ids().is_empty():
 		return
@@ -1370,39 +1417,77 @@ func _broadcast_assembly_motion() -> void:
 		# `_srv_assembly_motion` and we rebroadcast that path separately.
 		if _remote_physics_owners.has(assembly.assembly_id):
 			continue
-		var root_id := world.root_body_group_id(assembly.assembly_id)
-		if root_id <= 0:
-			continue
-		var moving := _motion_is_live(assembly.motion)
-		var motions: Dictionary = {root_id: assembly.motion.to_dict()}
-		for group_id_variant: Variant in assembly.body_group_motions:
-			var group_motion: AssemblyMotionState = (
-				assembly.body_group_motions[group_id_variant]
-			)
-			if group_motion == null:
-				continue
-			motions[int(group_id_variant)] = group_motion.to_dict()
-			moving = moving or _motion_is_live(group_motion)
-		if moving:
-			batch[assembly.assembly_id] = {
-				"m": motions,
-				"w": _pack_wheel_scalars(assembly.assembly_id),
-			}
+		var packed := _pack_assembly_motion_entry(assembly.assembly_id, true)
+		if not packed.is_empty():
+			batch[assembly.assembly_id] = packed
 	if not batch.is_empty():
 		rpc("_cli_assembly_motion", batch)
 
 
-func _pack_wheel_scalars(assembly_id: int) -> Dictionary:
+## Non-wheel body poses + per-wheel scalars. Empty if assembly unknown, or
+## (when `require_live`) parked under the speed gate. Guest owner-upload passes
+## `require_live=false` so the host ghost keeps updating at crawl / airborne.
+func _pack_assembly_motion_entry(
+	assembly_id: int,
+	require_live: bool = true
+) -> Dictionary:
 	var world := _world()
-	if world == null or _session == null or _session.projection == null:
+	if world == null:
+		return {}
+	var assembly: SimulationAssembly = world.get_assembly_raw(assembly_id)
+	if assembly == null or assembly.motion == null:
+		return {}
+	var root_id := world.root_body_group_id(assembly_id)
+	if root_id <= 0:
+		return {}
+	var wheel_gids := _wheel_group_ids(assembly_id)
+	var moving := _motion_is_live(assembly.motion)
+	var motions: Dictionary = {root_id: assembly.motion.to_dict()}
+	for group_id_variant: Variant in assembly.body_group_motions:
+		var group_id := int(group_id_variant)
+		if wheel_gids.has(group_id):
+			continue
+		var group_motion: AssemblyMotionState = (
+			assembly.body_group_motions[group_id_variant]
+		)
+		if group_motion == null:
+			continue
+		motions[group_id] = group_motion.to_dict()
+		moving = moving or _motion_is_live(group_motion)
+	if require_live and not moving:
+		return {}
+	return {
+		"m": motions,
+		"w": _pack_wheel_scalars(assembly_id),
+	}
+
+
+func _wheel_group_ids(assembly_id: int) -> Dictionary:
+	var world := _world()
+	if world == null:
 		return {}
 	var out: Dictionary = {}
-	for record_variant: Variant in (
-		_session.projection.list_wheel_constraint_records(assembly_id)
-	):
-		if not record_variant is Dictionary:
+	var compiled: Dictionary = world.compile_body_groups(assembly_id)
+	for spec_variant: Variant in compiled.get("wheel_specs", []):
+		if not spec_variant is Dictionary:
 			continue
-		var wheel_id := int(record_variant.get("wheel_element_id", 0))
+		var gid := int(spec_variant.get("wheel_group_id", 0))
+		if gid > 0:
+			out[gid] = true
+	return out
+
+
+func _pack_wheel_scalars(assembly_id: int) -> Dictionary:
+	var world := _world()
+	if world == null:
+		return {}
+	var out: Dictionary = {}
+	var compiled: Dictionary = world.compile_body_groups(assembly_id)
+	for spec_variant: Variant in compiled.get("wheel_specs", []):
+		if not spec_variant is Dictionary:
+			continue
+		var wheel_id := int(spec_variant.get("wheel_element_id", 0))
+		var group_id := int(spec_variant.get("wheel_group_id", 0))
 		if wheel_id <= 0:
 			continue
 		var runtime: Dictionary = world.get_wheel_runtime(wheel_id)
@@ -1411,7 +1496,13 @@ func _pack_wheel_scalars(assembly_id: int) -> Dictionary:
 		out[wheel_id] = {
 			"c": float(runtime.get("compression_m", 0.0)),
 			"s": float(runtime.get("steering_angle_rad", 0.0)),
-			"v": float(runtime.get("wheel_speed", 0.0)),
+			"v": float(
+				runtime.get(
+					"wheel_speed_rad_s",
+					runtime.get("wheel_speed", 0.0)
+				)
+			),
+			"g": group_id,
 		}
 	return out
 
@@ -1446,6 +1537,10 @@ func _cli_assembly_motion(batch: Dictionary) -> void:
 	if _mode == Mode.OFFLINE:
 		return
 	if _mode == Mode.HOST:
+		return
+	# Join in progress: snapshot/terrain not finished — blending here crashed
+	# guests after bulk applied (stale streams on half-rebuilt projection).
+	if not _replica_ready:
 		return
 	# Local driver already simulates this assembly — ignore host echo.
 	if _local_physics_assembly_id > 0 and batch.has(_local_physics_assembly_id):
@@ -1528,6 +1623,12 @@ func _ingest_assembly_motion_batch(
 					"wheel_speed_rad_s": float(scalars.get("v", 0.0)),
 				}
 			)
+		# Host ghost: wheel poses no longer ride in `"m"`. Without rewriting
+		# wheel body_group_motions here they stay at the sit pose while the
+		# chassis streams away — IndustryElectricBudget then sees wheels
+		# outside distributor radius → powered=false → guest loses drive.
+		if host_ghost:
+			_sync_ghost_wheel_kernel_motions(assembly_id, motions, wheels)
 		var stream: Dictionary = _assembly_streams.get_or_add(
 			assembly_id,
 			{"root_id": 0, "samples": []}
@@ -1541,13 +1642,69 @@ func _ingest_assembly_motion_batch(
 		})
 		while samples.size() > ASSEMBLY_BUFFER_LIMIT:
 			samples.pop_front()
-		if host_ghost:
-			# Host has no client _process path historically — keep ghost alive
-			# via the same sample buffer (host now runs the blend loop too).
-			pass
 
 
-func _process(_delta: float) -> void:
+## Host: derive wheel group kernel poses from strut + scalars so electric
+## radius / element_world_transform stay on the driven vehicle.
+func _sync_ghost_wheel_kernel_motions(
+	assembly_id: int,
+	chassis_motions: Dictionary,
+	wheels: Dictionary
+) -> void:
+	var world := _world()
+	if world == null:
+		return
+	var root_id := world.root_body_group_id(assembly_id)
+	var compiled: Dictionary = world.compile_body_groups(assembly_id)
+	var wheel_motions: Dictionary = {}
+	for spec_variant: Variant in compiled.get("wheel_specs", []):
+		if not spec_variant is Dictionary:
+			continue
+		var spec: Dictionary = spec_variant
+		var wheel_gid := int(spec.get("wheel_group_id", 0))
+		var strut_gid := int(spec.get("suspension_group_id", 0))
+		var wheel_id := int(spec.get("wheel_element_id", 0))
+		if wheel_gid <= 0 or wheel_id <= 0:
+			continue
+		var strut_motion: AssemblyMotionState = chassis_motions.get(
+			strut_gid,
+			chassis_motions.get(root_id)
+		)
+		if strut_motion == null:
+			continue
+		var mount: Dictionary = (
+			WheelBodyProjectionUtil.resolve_observer_wheel_mount(
+				world,
+				int(spec.get("suspension_element_id", 0)),
+				wheel_id
+			)
+		)
+		if mount.is_empty():
+			continue
+		var scalars: Variant = wheels.get(wheel_id)
+		if not scalars is Dictionary:
+			scalars = wheels.get(str(wheel_id), {})
+		if not scalars is Dictionary:
+			scalars = {}
+		var wheel_xf := WheelBodyProjectionUtil.observer_wheel_global_transform(
+			strut_motion.transform,
+			mount,
+			float(scalars.get("c", 0.0)),
+			float(scalars.get("s", 0.0)),
+			0.0
+		)
+		var wheel_motion := AssemblyMotionState.new()
+		wheel_motion.transform = wheel_xf
+		wheel_motion.linear_velocity = strut_motion.linear_velocity
+		wheel_motion.angular_velocity = Vector3.ZERO
+		wheel_motion.sleeping = false
+		wheel_motion.frozen = false
+		wheel_motions[wheel_gid] = wheel_motion
+	if not wheel_motions.is_empty():
+		world.sync_assembly_body_group_motions(assembly_id, wheel_motions)
+
+
+func _process(delta: float) -> void:
 	if _mode == Mode.OFFLINE:
 		return
 	if _assembly_streams.is_empty():
@@ -1557,10 +1714,10 @@ func _process(_delta: float) -> void:
 	# Client observers + host ghosts for guest-owned assemblies.
 	# Owner-sim upload runs from `_physics_process` (must not gate on streams).
 	if _mode == Mode.CLIENT or not _remote_physics_owners.is_empty():
-		_tick_assembly_stream_blend()
+		_tick_assembly_stream_blend(delta)
 
 
-func _tick_assembly_stream_blend() -> void:
+func _tick_assembly_stream_blend(delta: float) -> void:
 	var now := Time.get_ticks_msec()
 	var render_t := now - ASSEMBLY_INTERP_DELAY_MS
 	for assembly_id_variant: Variant in _assembly_streams.keys():
@@ -1571,10 +1728,12 @@ func _tick_assembly_stream_blend() -> void:
 		var stream: Dictionary = _assembly_streams[assembly_id_variant]
 		var samples: Array = stream["samples"]
 		if samples.is_empty():
+			_forget_observer_assembly(assembly_id)
 			_assembly_streams.erase(assembly_id_variant)
 			continue
 		var newest: Dictionary = samples[samples.size() - 1]
 		if now - int(newest["t"]) > ASSEMBLY_STALE_MS:
+			_forget_observer_assembly(assembly_id)
 			_assembly_streams.erase(assembly_id_variant)
 			continue
 		var previous: Dictionary = newest
@@ -1594,36 +1753,40 @@ func _tick_assembly_stream_blend() -> void:
 			int(stream["root_id"]),
 			previous["motions"],
 			newest["motions"],
-			factor
+			previous.get("wheels", {}),
+			newest.get("wheels", {}),
+			factor,
+			delta
 		)
 
 
-## Write blended group poses onto frozen kinematic bodies. Non-wheel groups
-## lerp in world space; wheel groups use strut-relative blend so independent
-## world slerps cannot open an orbit around the suspension mount.
+## Write blended group poses onto frozen kinematic bodies. Chassis groups
+## lerp in world space; wheels are reconstructed from streamed scalars on the
+## already-blended strut (no body-transform slerp — that jittered spin/air).
 func _apply_assembly_blend(
 	assembly_id: int,
 	root_id: int,
 	from_motions: Dictionary,
 	to_motions: Dictionary,
-	factor: float
+	from_wheels: Dictionary,
+	to_wheels: Dictionary,
+	factor: float,
+	delta: float
 ) -> void:
 	var projection := _session.projection
 	var world := _world()
-	var wheel_to_strut: Dictionary = {}
+	var wheel_specs: Array = []
 	if world != null:
 		var compiled: Dictionary = world.compile_body_groups(assembly_id)
-		for spec_variant: Variant in compiled.get("wheel_specs", []):
-			if not spec_variant is Dictionary:
-				continue
-			var spec: Dictionary = spec_variant
-			wheel_to_strut[int(spec.get("wheel_group_id", 0))] = int(
-				spec.get("suspension_group_id", 0)
-			)
+		wheel_specs = compiled.get("wheel_specs", []) as Array
+	var wheel_gids: Dictionary = {}
+	for spec_variant: Variant in wheel_specs:
+		if spec_variant is Dictionary:
+			wheel_gids[int(spec_variant.get("wheel_group_id", 0))] = true
 	# Pass 1 — root + non-wheel groups (world-space blend).
 	for group_id_variant: Variant in to_motions:
 		var group_id := int(group_id_variant)
-		if wheel_to_strut.has(group_id):
+		if wheel_gids.has(group_id):
 			continue
 		_write_blended_body_pose(
 			projection,
@@ -1634,47 +1797,88 @@ func _apply_assembly_blend(
 			to_motions,
 			factor
 		)
-	# Pass 2 — wheels glued to (already blended) strut via relative transform.
-	for wheel_gid_variant: Variant in wheel_to_strut:
-		var wheel_gid := int(wheel_gid_variant)
-		if not to_motions.has(wheel_gid):
+	# Pass 2 — scalar reconstruct per wheel onto blended strut.
+	_apply_observer_wheel_scalars(
+		assembly_id,
+		root_id,
+		wheel_specs,
+		from_wheels,
+		to_wheels,
+		factor,
+		delta
+	)
+
+
+func _apply_observer_wheel_scalars(
+	assembly_id: int,
+	root_id: int,
+	wheel_specs: Array,
+	from_wheels: Dictionary,
+	to_wheels: Dictionary,
+	factor: float,
+	delta: float
+) -> void:
+	if wheel_specs.is_empty() or to_wheels.is_empty():
+		return
+	var projection := _session.projection
+	var world := _world()
+	if projection == null or world == null:
+		return
+	var mounts: Dictionary = _observer_wheel_mounts.get_or_add(assembly_id, {})
+	for spec_variant: Variant in wheel_specs:
+		if not spec_variant is Dictionary:
 			continue
-		var strut_gid := int(wheel_to_strut[wheel_gid])
-		var wheel_to: AssemblyMotionState = to_motions[wheel_gid]
-		var wheel_from: AssemblyMotionState = from_motions.get(
-			wheel_gid,
-			wheel_to
+		var spec: Dictionary = spec_variant
+		var wheel_id := int(spec.get("wheel_element_id", 0))
+		var wheel_gid := int(spec.get("wheel_group_id", 0))
+		var strut_gid := int(spec.get("suspension_group_id", 0))
+		if wheel_id <= 0 or wheel_gid <= 0:
+			continue
+		var to_s: Variant = to_wheels.get(wheel_id)
+		if not to_s is Dictionary:
+			# Packet may key wheels as String after RPC.
+			to_s = to_wheels.get(str(wheel_id))
+		if not to_s is Dictionary:
+			continue
+		var from_s: Variant = from_wheels.get(wheel_id, to_s)
+		if not from_s is Dictionary:
+			from_s = from_wheels.get(str(wheel_id), to_s)
+		var from_dict: Dictionary = from_s
+		var to_dict: Dictionary = to_s
+		var compression := lerpf(
+			float(from_dict.get("c", 0.0)),
+			float(to_dict.get("c", 0.0)),
+			factor
 		)
-		var strut_to: AssemblyMotionState = to_motions.get(
-			strut_gid,
-			to_motions.get(root_id, wheel_to)
+		var steer := lerpf(
+			float(from_dict.get("s", 0.0)),
+			float(to_dict.get("s", 0.0)),
+			factor
 		)
-		var strut_from: AssemblyMotionState = from_motions.get(
-			strut_gid,
-			from_motions.get(root_id, strut_to)
+		var speed := lerpf(
+			float(from_dict.get("v", 0.0)),
+			float(to_dict.get("v", 0.0)),
+			factor
 		)
-		if strut_to == null or strut_from == null:
-			_write_blended_body_pose(
-				projection,
-				assembly_id,
-				root_id,
-				wheel_gid,
-				from_motions,
-				to_motions,
-				factor
+		var spin := float(_observer_wheel_spin.get(wheel_id, 0.0))
+		spin += speed * maxf(delta, 0.0)
+		# Keep angle bounded so the float doesn't grow without limit.
+		spin = fposmod(spin, TAU)
+		_observer_wheel_spin[wheel_id] = spin
+		var mount: Variant = mounts.get(wheel_id)
+		if not mount is Dictionary or (mount as Dictionary).is_empty():
+			mount = WheelBodyProjectionUtil.resolve_observer_wheel_mount(
+				world,
+				int(spec.get("suspension_element_id", 0)),
+				wheel_id
 			)
+			if mount is Dictionary and not (mount as Dictionary).is_empty():
+				mounts[wheel_id] = mount
+		if not mount is Dictionary or (mount as Dictionary).is_empty():
 			continue
-		var rel_from := (
-			strut_from.transform.affine_inverse() * wheel_from.transform
-		)
-		var rel_to := strut_to.transform.affine_inverse() * wheel_to.transform
-		var rel := Transform3D(
-			Basis(Quaternion(rel_from.basis).slerp(Quaternion(rel_to.basis), factor)),
-			rel_from.origin.lerp(rel_to.origin, factor)
-		)
 		var strut_body: PhysicsBody3D = (
 			projection.get_physics_body(assembly_id)
-			if strut_gid == root_id
+			if strut_gid == root_id or strut_gid <= 0
 			else projection.get_group_physics_body(assembly_id, strut_gid)
 		)
 		var wheel_body: PhysicsBody3D = projection.get_group_physics_body(
@@ -1688,7 +1892,23 @@ func _apply_assembly_blend(
 			or not is_instance_valid(wheel_body)
 		):
 			continue
-		wheel_body.global_transform = strut_body.global_transform * rel
+		wheel_body.global_transform = (
+			WheelBodyProjectionUtil.observer_wheel_global_transform(
+				strut_body.global_transform,
+				mount,
+				compression,
+				steer,
+				spin
+			)
+		)
+
+
+func _forget_observer_assembly(assembly_id: int) -> void:
+	var mounts: Variant = _observer_wheel_mounts.get(assembly_id)
+	if mounts is Dictionary:
+		for wheel_id_variant: Variant in mounts:
+			_observer_wheel_spin.erase(int(wheel_id_variant))
+	_observer_wheel_mounts.erase(assembly_id)
 
 
 func _write_blended_body_pose(
@@ -1776,6 +1996,9 @@ func _cli_pose(uid: String, pose: Dictionary) -> void:
 		return
 	if _avatars.has(uid):
 		(_avatars[uid] as RemotePlayer).push_pose(pose)
+	else:
+		# Avatar not spawned yet (terrain-bulk wait) — keep latest for flush.
+		_pose_inbox[uid] = pose
 
 
 func _local_pose() -> Dictionary:
@@ -1871,36 +2094,21 @@ func _tick_local_owner_motion_upload(delta: float) -> void:
 		return
 	_owner_motion_accum = 0.0
 	var assembly_id := _local_physics_assembly_id
-	var world := _world()
-	if world == null:
+	# Always pack while seated — parked speed gate would freeze the host ghost
+	# at crawl / between airborne velocity dips.
+	var packed := _pack_assembly_motion_entry(assembly_id, false)
+	if packed.is_empty():
 		return
-	var assembly: SimulationAssembly = world.get_assembly_raw(assembly_id)
-	if assembly == null or assembly.motion == null:
-		return
-	var root_id := world.root_body_group_id(assembly_id)
-	if root_id <= 0:
-		return
-	var motions: Dictionary = {root_id: assembly.motion.to_dict()}
-	for group_id_variant: Variant in assembly.body_group_motions:
-		var group_motion: AssemblyMotionState = (
-			assembly.body_group_motions[group_id_variant]
-		)
-		if group_motion == null:
-			continue
-		motions[int(group_id_variant)] = group_motion.to_dict()
 	var drive_cmd := 0.0
-	var loco: AssemblyLocomotionController = (
-		world.get_locomotion_controller(assembly_id)
-	)
-	if loco != null:
-		drive_cmd = loco.drive_command
-	rpc_id(1, "_srv_assembly_motion", assembly_id, {
-		"m": motions,
-		"w": _pack_wheel_scalars(assembly_id),
-		# Host keeps electric demand (ghost has no wheel tick) so battery
-		# drain / powered stay authoritative.
-		"d": drive_cmd,
-	})
+	var world := _world()
+	if world != null:
+		var loco: AssemblyLocomotionController = (
+			world.get_locomotion_controller(assembly_id)
+		)
+		if loco != null:
+			drive_cmd = loco.drive_command
+	packed["d"] = drive_cmd
+	rpc_id(1, "_srv_assembly_motion", assembly_id, packed)
 
 
 func _client_seat_replica_ok(element_id: int) -> bool:
@@ -2010,17 +2218,29 @@ func resolve_seat_world_transform(element_id: int) -> Variant:
 
 func _spawn_avatar(uid: String, nick: String) -> RemotePlayer:
 	if _avatars.has(uid):
-		return _avatars[uid]
+		var existing := _avatars[uid] as RemotePlayer
+		_flush_pose_inbox_to(uid, existing)
+		return existing
 	var avatar := RemotePlayerScene.instantiate() as RemotePlayer
 	avatar.setup(uid, nick)
 	avatar.set_seat_transform_resolver(resolve_seat_world_transform)
 	_avatars_root.add_child(avatar)
 	_avatars[uid] = avatar
+	_flush_pose_inbox_to(uid, avatar)
 	# R-COOP-7: host must stream terrain around remote diggers (guest dig far
 	# from host player → is_area_editable). Clients keep only the local viewer.
 	if _mode == Mode.HOST:
 		avatar.enable_host_stream_proxy()
 	return avatar
+
+
+func _flush_pose_inbox_to(uid: String, avatar: RemotePlayer) -> void:
+	if avatar == null or not _pose_inbox.has(uid):
+		return
+	var pose: Variant = _pose_inbox[uid]
+	_pose_inbox.erase(uid)
+	if pose is Dictionary:
+		avatar.push_pose(pose)
 
 
 func _despawn_avatar(uid: String) -> void:
@@ -2030,6 +2250,7 @@ func _despawn_avatar(uid: String) -> void:
 	if is_instance_valid(avatar):
 		avatar.queue_free()
 	_avatars.erase(uid)
+	_pose_inbox.erase(uid)
 
 
 func _teardown_host() -> void:
@@ -2050,6 +2271,10 @@ func _teardown_host() -> void:
 		_clear_remote_physics_owner_assembly(int(assembly_id_variant))
 	_remote_physics_owners.clear()
 	_assembly_streams.clear()
+	_observer_wheel_spin.clear()
+	_observer_wheel_mounts.clear()
+	_pose_inbox.clear()
+	_replica_ready = false
 	_mode = Mode.OFFLINE
 	_info("stopped hosting")
 
@@ -2063,6 +2288,11 @@ func _teardown_client_and_reload() -> void:
 	_pending_dig_ops.clear()
 	_pending_dig_accum = 0.0
 	_clear_terrain_bulk_state()
+	_assembly_streams.clear()
+	_observer_wheel_spin.clear()
+	_observer_wheel_mounts.clear()
+	_pose_inbox.clear()
+	_replica_ready = false
 	_mode = Mode.OFFLINE
 	# Reload rebuilds the single-player world from this machine's own save,
 	# re-enables persistence + meteorites and drops the replica — cheaper and
