@@ -201,7 +201,15 @@ func invalidate_solid(from_cell: Vector3i, to_cell: Vector3i) -> void:
 		mini(maxi(from_cell.y, to_cell.y), size.y - 1),
 		mini(maxi(from_cell.z, to_cell.z), size.z - 1)
 	)
-	for y in range(lo.y, hi.y + 1):
+	# The wake box reaches one cell higher than the forget box, and that row is
+	# the whole point of it: support is what the cell *below* stopped being, so
+	# the mass that cared about the change is sitting on top of the box, not
+	# inside it. Without the extra row a heap banked on something that was then
+	# taken away just hung there — the floating slab over the trench — because
+	# every cell that had actually lost its footing was one step outside the
+	# cells being invalidated.
+	var wake_hi_y := mini(hi.y + 1, size.y - 1)
+	for y in range(lo.y, wake_hi_y + 1):
 		for z in range(lo.z, hi.z + 1):
 			for x in range(lo.x, hi.x + 1):
 				var i := index(x, y, z)
@@ -211,7 +219,8 @@ func invalidate_solid(from_cell: Vector3i, to_cell: Vector3i) -> void:
 				# whole box instead meant a single drill bite queued tens of
 				# thousands of cells, nearly all of them empty, and that storm
 				# was what the frame rate was paying for while digging.
-				_solid_known[i] = 0
+				if y <= hi.y:
+					_solid_known[i] = 0
 				if _mass[i] > 0.0:
 					_wake(x, y, z)
 
@@ -402,8 +411,16 @@ func take_fraction(x: int, y: int, z: int, fraction: float) -> float:
 	if mass - removed < MIN_MASS:
 		removed = mass
 	_mass[i] = mass - removed
-	_invalidate_column_at_mass_index(i)
-	_touch(i)
+	# `_mark_dirty`, not the bare `_touch` this used to do. Touching only
+	# re-queues the cell for the next sweep; it tells the renderer nothing, and
+	# this is the one mutator that used to say nothing. That is the ghost-pebble
+	# bug: a shovel drains a cell in fractions, the last fraction empties it
+	# through here, and with no dirty mark the cell's chips are never
+	# reconsidered — stones standing on ground that holds nothing, which no
+	# further collecting can ever clear because there is nothing left to
+	# collect. Every mutator tells the renderer now. The simulation queue is
+	# unaffected: `_wake` below touches this same cell first thing.
+	_mark_dirty(i)
 	_wake(x, y, z)
 	return removed * cell_volume_m3()
 

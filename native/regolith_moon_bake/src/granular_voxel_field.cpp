@@ -108,13 +108,19 @@ void GranularVoxelField::invalidate_solid(const Vector3i &from_cell, const Vecto
 			std::min(std::max(from_cell.x, to_cell.x), size_.x - 1),
 			std::min(std::max(from_cell.y, to_cell.y), size_.y - 1),
 			std::min(std::max(from_cell.z, to_cell.z), size_.z - 1));
-	for (int y = lo.y; y <= hi.y; ++y) {
+	// The wake box reaches one cell higher than the forget box: support is what
+	// the cell below stopped being, so the mass that cared sits on top of the
+	// box rather than inside it. See the script — the floating slab.
+	const int wake_hi_y = std::min(hi.y + 1, size_.y - 1);
+	for (int y = lo.y; y <= wake_hi_y; ++y) {
 		for (int z = lo.z; z <= hi.z; ++z) {
 			for (int x = lo.x; x <= hi.x; ++x) {
 				const int i = index(x, y, z);
 				// Forgetting is free; waking is not. Only cells that actually
 				// hold material can have lost their support.
-				solid_known_[i] = 0;
+				if (y <= hi.y) {
+					solid_known_[i] = 0;
+				}
 				if (mass_[i] > 0.0f) {
 					wake(x, y, z);
 				}
@@ -290,15 +296,13 @@ double GranularVoxelField::take_fraction(int x, int y, int z, double fraction) {
 		removed = mass;
 	}
 	mass_[i] = (float)(mass - removed);
-	// Column memo must track every mass write, including the ones that skip
-	// `mark_dirty` (script parity for the mesher dirty list stays as-is).
-	invalidate_column_at_mass_index(i);
-	// `touch`, not `mark_dirty` — which is what the script does, and is very
-	// probably a bug there: every other mutator tells the renderer the cell
-	// changed and this one only re-queues it for simulation. Transliterated
-	// as-is on purpose. Fixing it belongs in the script first, where the
-	// behaviour can be compared against, not smuggled in by a port.
-	touch(i);
+	// `mark_dirty`, not the bare `touch` this used to do — and it was fixed in
+	// the script first, which is where the note this replaces said it belonged.
+	// See `GranularVoxelField.take_fraction` there: touching only re-queues the
+	// cell for simulation, and the renderer never hearing about the fraction
+	// that empties a cell is the ghost-pebble bug. `mark_dirty` invalidates the
+	// column memo itself, so the separate call that stood here is gone.
+	mark_dirty(i);
 	wake(x, y, z);
 	return removed * cell_volume_m3();
 }

@@ -11,8 +11,10 @@ extends Node
 ##
 ## The script is the specification. Wherever they disagree, the native side is
 ## wrong by definition — including where the script does something odd, which
-## is why `take_fraction` not marking its cell dirty is reproduced rather than
-## fixed here.
+## is reproduced rather than quietly improved by the port. When the odd thing
+## turns out to be a bug, it gets fixed in the script and the port follows in
+## the same commit; `take_fraction` marking its cell dirty was exactly that, and
+## used to stand here as the example of the rule.
 
 const LABEL := "GRANULAR-FIELD-PARITY"
 const CELL := 0.25
