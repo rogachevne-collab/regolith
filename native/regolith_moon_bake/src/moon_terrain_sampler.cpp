@@ -53,6 +53,29 @@ MoonTerrainSampler::MoonTerrainSampler(float radius_voxels, bool bake_macro) :
 	build_caves();
 }
 
+namespace {
+std::mutex g_sampler_registry_mutex;
+std::map<int, std::weak_ptr<const MoonTerrainSampler>> g_sampler_registry;
+} // namespace
+
+std::shared_ptr<const MoonTerrainSampler> MoonTerrainSampler::acquire(
+		float radius_voxels) {
+	const int key = int(radius_voxels * 16.f);
+	/// Held across construction for the same reason the macro registry's is: a
+	/// second asker must wait and share, not race a duplicate build.
+	std::lock_guard<std::mutex> guard(g_sampler_registry_mutex);
+	auto it = g_sampler_registry.find(key);
+	if (it != g_sampler_registry.end()) {
+		if (auto existing = it->second.lock()) {
+			return existing;
+		}
+	}
+	std::shared_ptr<const MoonTerrainSampler> built =
+			std::make_shared<const MoonTerrainSampler>(radius_voxels);
+	g_sampler_registry[key] = built;
+	return built;
+}
+
 void MoonTerrainSampler::build_caves() {
 	caves_.clear();
 	const float radius_m = radius_voxels_ * kVoxelScale;

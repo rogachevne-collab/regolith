@@ -100,8 +100,10 @@ void MoonHeightmapBake::setup(float radius_voxels) {
 	if (sampler_ != nullptr && std::fabs(sampler_radius_voxels_ - radius_voxels) < 0.001f) {
 		return;
 	}
-	/// Sampler is immutable after construction; generation threads only read it.
-	sampler_ = std::make_shared<const MoonTerrainSampler>(radius_voxels);
+	/// Sampler is immutable after construction; generation threads only read it,
+	/// and every baker at this radius therefore shares one — see
+	/// `MoonTerrainSampler::acquire`. Two are asked for on every launch.
+	sampler_ = MoonTerrainSampler::acquire(radius_voxels);
 	sampler_radius_voxels_ = radius_voxels;
 }
 

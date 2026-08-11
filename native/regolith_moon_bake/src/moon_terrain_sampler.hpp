@@ -207,6 +207,28 @@ public:
 	/// that sample a handful of directions and don't want a cube bake).
 	explicit MoonTerrainSampler(float radius_voxels, bool bake_macro = true);
 
+	/// One sampler per radius for the whole process — the same registry
+	/// MoonMacroRelief already keeps, one level up, because the macro bake was
+	/// never the only thing being built twice.
+	///
+	/// Two of these are asked for on every launch at `MoonGeometry.radius_voxels()`:
+	/// the play generator's (`MoonNativeSdfGenerator`) and the relief sampler's
+	/// (`MoonReliefSampler`), plus one per panorama bake. Same radius means the
+	/// same mare regions, the same crater index, the same ray sources, the same
+	/// rilles and the same caves — built from scratch each time, and the cave
+	/// pass alone samples H(n) through the shared macro grid for every anchor
+	/// of up to four hundred caves.
+	///
+	/// Safe to share because the sampler is immutable after construction and is
+	/// already read from generation threads through a `shared_ptr<const>`;
+	/// nothing on the object is per-caller state. Weak refs, so the memory goes
+	/// back once every holder is gone.
+	///
+	/// Only the baked flavour is pooled. `bake_macro=false` is what parity
+	/// tests ask for precisely because they want their own, so it is built
+	/// fresh and never enters the registry.
+	static std::shared_ptr<const MoonTerrainSampler> acquire(float radius_voxels);
+
 	/// Macro layer only (mare/highland base, meso roughness, huge/large/med
 	/// craters) — what MoonMacroRelief bakes. No stride: macro wavelengths
 	/// are ≥ ~140 m, far above any voxel stride we mesh.
