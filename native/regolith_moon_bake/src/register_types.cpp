@@ -1,5 +1,6 @@
 #include "register_types.h"
 
+#include "granular_grain_kernel.hpp"
 #include "granular_voxel_field.hpp"
 #include "moon_heightmap_bake.hpp"
 
@@ -15,6 +16,7 @@ void initialize_regolith_moon_bake_module(ModuleInitializationLevel p_level) {
 	}
 	ClassDB::register_class<MoonHeightmapBake>();
 	ClassDB::register_class<GranularVoxelField>();
+	ClassDB::register_class<GranularGrainKernel>();
 }
 
 void uninitialize_regolith_moon_bake_module(ModuleInitializationLevel p_level) {

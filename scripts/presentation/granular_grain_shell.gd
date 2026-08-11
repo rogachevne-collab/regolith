@@ -204,12 +204,59 @@ var _last_write_ms := 0.0
 var _seat_floor := 0.0
 
 
+## The layout arithmetic in C++ — see `granular_grain_kernel.hpp` for what it
+## cost interpreted and what the port is held to. Null when the extension is not
+## loaded, and that is the whole of the fallback: `lay` keeps its own copy of
+## the arithmetic below and runs it instead, so a stale or missing binary is
+## slow rather than broken.
+##
+## Untyped on purpose. `GranularGrainKernel` is a class the extension registers,
+## and naming it in an annotation makes this file fail to *parse* when the
+## extension is absent — which is the one situation the fallback exists for.
+var _kernel: Object = null
+
+
+## A kernel carrying this shell's constants, or null when the extension is not
+## loaded. Static and free of any shell state but the seat floor, because the
+## parity gate wants one of its own without a scene, a node or a MultiMesh.
+static func make_kernel(seat_floor: float) -> Object:
+	if not ClassDB.class_exists(&"GranularGrainKernel"):
+		return null
+	_load_meshes()
+	var kernel: Object = ClassDB.instantiate(&"GranularGrainKernel")
+	kernel.call(
+		"configure",
+		{
+			"max_grains_per_cell": MAX_GRAINS_PER_CELL,
+			"slots_per_cell": SLOTS_PER_CELL,
+			"grain_size_m": GRAIN_SIZE_M,
+			"grain_size_min_fraction": GRAIN_SIZE_MIN_FRACTION,
+			"fines_mass": FINES_MASS,
+			"boulder_chance": BOULDER_CHANCE,
+			"boulder_min_mass": BOULDER_MIN_MASS,
+			"boulder_min_m": BOULDER_MIN_M,
+			"boulder_max_m": BOULDER_MAX_M,
+			"patch_spread_cells": PATCH_SPREAD_CELLS,
+			"seat_nestle_cells": SEAT_NESTLE_CELLS,
+			"seat_sink_cells": SEAT_SINK_CELLS,
+			"seat_floor": clampf(seat_floor, 0.0, 0.95),
+			"mesh_scales": _mesh_scales,
+			"mesh_offsets": _mesh_offsets,
+		}
+	)
+	return kernel
+
+
 ## `up` is the region's local up, which the chip shader needs to know which way
 ## is down before it can shade an underside. `seat_floor` is the surface's fill
 ## floor — see `_seat_floor`.
 func setup(local_up: Vector3, seat_floor := 0.0) -> void:
 	_seat_floor = clampf(seat_floor, 0.0, 0.95)
 	_load_meshes()
+	# After `_load_meshes`: the kernel is handed the mesh scales and offsets by
+	# value, so it has to be built once they exist and rebuilt if they change.
+	# They do not change — they are static and loaded once per process.
+	_kernel = make_kernel(_seat_floor)
 	# Their own material, and this is the one place that is right. The rule that
 	# spoil must not have its own lighting language is about a *surface*
 	# competing with the ground; small separate objects need a material that
@@ -335,6 +382,26 @@ func lay(
 	var x := index % field.size.x
 	var y := index / plane
 	var z := (index / field.size.x) % field.size.z
+	# Everything below this point is the same arithmetic in C++ — see
+	# `make_kernel`. The plug (`backing`) and the flake skirt stayed here
+	# because the heap never draws either, which is why `DRAW_FINES` is asked
+	# out here rather than inside the kernel: a branch nobody exercises is how
+	# a port grows a second unreviewed picture.
+	if _kernel != null and not backing and not DRAW_FINES:
+		_kernel.call(
+			"lay",
+			multimesh.get_rid(),
+			base,
+			variant,
+			index,
+			Vector3i(x, y, z),
+			cell_size,
+			mass,
+			surface_pos,
+			surface_nrm
+		)
+		_last_write_ms += float(Time.get_ticks_usec() - started) / 1000.0
+		return
 	var held := minf(mass, 1.0)
 	# How much of this cell's height actually holds material. Chips are spread
 	# through it, so a part full cell reads as a thin scatter lying on the
